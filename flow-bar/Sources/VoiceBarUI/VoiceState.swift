@@ -3847,6 +3847,10 @@ public final class VoiceState {
                 }
                 playbackAmplitudeEnvelope = playbackAmplitude
                 playbackAmplitudeStartedAt = playbackAmplitude.map { _ in playbackStart }
+                // X1-34 (C6 L3): Hide is independent of Pause, so resuming the same parked player keeps a teleprompter
+                // the eye hid ("reading playing hidden"). Any other read starts shown. Read before the clears below.
+                let keepsHiddenOnResume = isTeleprompterDismissed && parkedRead?.playbackID != nil &&
+                    parkedRead?.playbackID == event["playback_id"] as? String
                 clearRetainedTeleprompter()
                 // A speaking event precedes the fresh subtitle payload. Do not let
                 // timings from the previous utterance animate a similar new one.
@@ -3866,7 +3870,7 @@ public final class VoiceState {
                 updateLongReadDocument(longRead, readbackID: playbackReadbackID,
                                        chunkText: event["text"] as? String ?? "", displayValue: event["display"])
                 mode = .speaking
-                isTeleprompterDismissed = false
+                isTeleprompterDismissed = keepsHiddenOnResume
                 // Every speaking edge is the daemon playing: the resumed read or its replacement.
                 retireParkedRead()
                 currentPlayback = (event["playback_id"] as? String).flatMap { id in

@@ -23,6 +23,8 @@ struct SettingsPlaybackScrubBar: View {
     var isGrowing = false
     var allowsSeeking = true
     var isTeleprompter = false
+    /// Why a scrubber that cannot seek is frozen. Nil keeps the missing-timing reason.
+    var disabledReason: String?
 
     init(playback: SettingsAudioPlayback, url: URL, accessibilityNoun: String) {
         self.init(
@@ -35,7 +37,7 @@ struct SettingsPlaybackScrubBar: View {
     init(position: @escaping () -> SettingsAudioPlaybackPosition,
          seek: @escaping (TimeInterval) -> Void, accessibilityNoun: String,
          isPlaying: Bool = true, isGrowing: Bool = false,
-         allowsSeeking: Bool = true, isTeleprompter: Bool = false) {
+         allowsSeeking: Bool = true, isTeleprompter: Bool = false, disabledReason: String? = nil) {
         self.position = position
         self.seek = seek
         self.accessibilityNoun = accessibilityNoun
@@ -43,6 +45,7 @@ struct SettingsPlaybackScrubBar: View {
         self.isGrowing = isGrowing
         self.allowsSeeking = allowsSeeking
         self.isTeleprompter = isTeleprompter
+        self.disabledReason = disabledReason
     }
 
     static let tickInterval: TimeInterval = 0.25
@@ -79,8 +82,9 @@ struct SettingsPlaybackScrubBar: View {
         .background { if isTeleprompter, allowsSeeking { PillControlTooltip(text: helpText) } }
     }
 
-    private var helpText: String {
-        allowsSeeking ? "Drag to seek; ← and → step \(Int(SettingsAudioPlayback.keyboardSeekStep)) seconds" : "No word timing available"
+    var helpText: String {
+        allowsSeeking ? "Drag to seek; ← and → step \(Int(SettingsAudioPlayback.keyboardSeekStep)) seconds"
+            : disabledReason ?? "No word timing available"
     }
 
     private var tickingContent: some View {

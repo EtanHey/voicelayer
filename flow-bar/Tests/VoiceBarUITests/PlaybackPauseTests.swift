@@ -304,19 +304,23 @@ final class PlaybackPauseTests: XCTestCase {
         XCTAssertEqual(state.playbackAudioLevel(), 0)
     }
 
-    func testPauseCollapsesTheTeleprompterAndResumeExpandsIt() {
+    /// X1-34 (Etan QA 2026-11-10, reversing P16's collapse): "paused on its own should not hide the teleprompter, but
+    /// just pause". Hide is the eye's job, paused or playing.
+    func testPauseKeepsTheTeleprompterAndHideCollapsesIt() {
         let (state, _) = speakingState()
         XCTAssertEqual(presentation(for: state).visualState, .teleprompter)
 
         state.handleEvent(pausedEvent())
-        let paused = presentation(for: state)
-        XCTAssertEqual(paused.visualState, .compactStatus)
-        // Reading keeps its time/meter/Stop wing when paused, independent of the narrower recording row.
-        XCTAssertEqual(paused.geometry.trailingWingWidth, VoiceBarPresentation.readingTrailingWingWidth(visibleCoreOcclusionInset: 0))
+        XCTAssertEqual(presentation(for: state).visualState, .teleprompter)
+        state.dismissTeleprompter()
+        let hidden = presentation(for: state)
+        XCTAssertEqual(hidden.visualState, .compactStatus)
+        // Reading keeps its time/meter/terminal wing when collapsed, independent of the narrower recording row.
+        XCTAssertEqual(hidden.geometry.trailingWingWidth, VoiceBarPresentation.readingTrailingWingWidth(visibleCoreOcclusionInset: 0))
 
         resume(state, offset: 2500)
         XCTAssertFalse(state.isPlaybackPaused)
-        XCTAssertEqual(presentation(for: state).visualState, .teleprompter)
+        XCTAssertTrue(state.isTeleprompterDismissed, "Resume does not reopen a teleprompter the eye hid")
     }
 
     func testPauseToggleNotifiesPanelLayout() {

@@ -42,8 +42,7 @@ final class VoiceBarSnapshotTests: XCTestCase {
                          "speaking", "paused", "teleprompter-expanded", "teleprompter-collapsed",
                          "queue-1", "queue-10", "last-item", "paused-controls", "hidden", "snoozed",
                          "busy-note", "typed", "setup-error"]
-    private let aliases = ["last-item": "speaking", "teleprompter-collapsed": "speaking", "snoozed": "hidden",
-                           "paused-controls": "paused"]
+    private let aliases = ["last-item": "speaking", "teleprompter-collapsed": "speaking", "snoozed": "hidden"]
     private var referenceEnvironment: [String: String]?
     private var recordedEnvironment: [String: String]?
     private var comparisonCanvasHeight: CGFloat {
