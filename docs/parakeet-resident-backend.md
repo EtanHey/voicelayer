@@ -129,6 +129,15 @@ takes; the whole-take decode and Whisper both heard the words. Takes up to 30 s,
 and longer takes whose final window is already at least 12.5 s, decode exactly
 as before (`chunk_plan` and `generate_planned` in `src/parakeet-worker.py`).
 
+Upper-bound qualification (c8 T3, M1 Pro, real model, public synthetic speech
+from `scripts/qualify-parakeet-fold-bound.py`, two voices, speech to the last
+sample): folded windows of 31.7–40.4999 s and folded final windows of 40.4 s
+inside 68.4 s and 96.4 s takes lost no words against the uniform split. Their
+only differences were en-GB spellings ("grey", "harbour") that a whole-take
+decode also produces. Peak MLX memory rose from 3.41 GB (30 s window) to
+3.69 GB (40.5 s); decode time stayed 0.55–0.75 s per 40 s window. No
+degradation near 40.5 s, so the 12.5 s fold threshold stands.
+
 Native decode and full-input retries receive the same private, read-only,
 byte-identical full-WAV snapshot. Parakeet window retries receive temporary,
 read-only clips bound to that snapshot; those clips are removed after decoding.
