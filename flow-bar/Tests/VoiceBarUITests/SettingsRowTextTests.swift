@@ -25,29 +25,6 @@ final class SettingsRowTextTests: XCTestCase {
         XCTAssertEqual(SettingsRowLabel.lineLimit, 2)
     }
 
-    func testRowActionsShowOnHoverSelectionOrFocusAndStayReachable() throws {
-        let source = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Sources/VoiceBarUI/SettingsView.swift"), encoding: .utf8)
-        let start = try XCTUnwrap(source.range(of: "private func dictionaryEntryCard("))
-        let end = try XCTUnwrap(source.range(of: "private func deleteDictionaryEntryButton("))
-        let section = String(source[start.lowerBound..<end.lowerBound])
-        XCTAssertTrue(section.contains("let showsActions = isSelected || hoveredTermRowID == rowID"))
-        XCTAssertTrue(section.contains("|| focusedTermAction?.rowID == rowID"))
-        XCTAssertTrue(section.contains("rowActionsVisible: showsActions"), "Copy uses the shared reveal path")
-        XCTAssertEqual(section.components(separatedBy: "SettingsRowActionReveal(visible: showsActions)").count - 1, 2,
-                       "Edit and Delete use the shared reveal path")
-        let reveal = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Sources/VoiceBarUI/SettingsRowActionReveal.swift"), encoding: .utf8)
-        let opacity = try XCTUnwrap(reveal.range(of: ".opacity(visible ? 1 : 0)"))
-        let hitTesting = try XCTUnwrap(reveal.range(of: ".allowsHitTesting(visible)"))
-        let focus = try XCTUnwrap(reveal.range(of: ".focusable(enabled, interactions: .edit)"))
-        XCTAssertLessThan(opacity.lowerBound, focus.lowerBound, "focus must remain outside the transparent content")
-        XCTAssertLessThan(hitTesting.lowerBound, focus.lowerBound)
-        XCTAssertTrue(section.contains(".accessibilityAction(named: \"Edit\")"))
-    }
-
     // MARK: - Helper text contrast (≥ 4.5:1, light and dark)
 
     func testHelperAndWarningTextMeetFourAndAHalfToOneOnTheWindowBackground() throws {

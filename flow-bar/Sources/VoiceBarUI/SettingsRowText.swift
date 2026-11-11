@@ -62,8 +62,7 @@ struct SettingsRowLabel: View {
     var badge: String?
     var titleBadge: SettingsPill?
     var isSelected = false
-    /// The notch drawer wraps row copy in full (lead review, c7 07:55Z: "no truncated copy anywhere"); the window
-    /// keeps the V12 two-line limit with a tooltip for the rest.
+    /// Both the drawer and Settings window wrap copy fully, including long device names.
     @Environment(\.settingsRowWrapsFully) private var wrapsFully
 
     private var limit: Int? { isSelected || wrapsFully ? nil : Self.lineLimit }
@@ -203,7 +202,7 @@ struct SettingsRowLayout: Layout {
 }
 
 private struct SettingsRowWrapsFullyKey: EnvironmentKey {
-    static let defaultValue = false
+    static let defaultValue = true
 }
 
 extension EnvironmentValues {

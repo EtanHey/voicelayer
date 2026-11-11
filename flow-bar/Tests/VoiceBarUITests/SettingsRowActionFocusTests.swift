@@ -64,49 +64,27 @@ final class SettingsRowActionFocusTests: XCTestCase {
         }
     }
 
-    func testDictionaryCopyEditDeleteRevealOnActionFocusAndShiftTabReturns() throws {
+    func testUnselectedDictionaryTermsDoNotAddHiddenTabStops() throws {
         try withHost(dictionaryPane(), tab: .dictionary) { host, window in
-            // No row is selected and the pointer cannot hover this offscreen window.
-            let rest = try EtanQA0510Tests.fixedScaleBitmap(host)
-            try save(host, as: "before-dictionary-row-focus")
-            var actionFrames: [CGRect] = []
-            for _ in 0..<12 {
+            for _ in 0..<10 {
                 try tab(window)
-                guard let frame = (try? focusedFrame(window, in: host)), frame.minX > 280,
-                      frame.width < 40, frame.height < 40 else { continue }
-                actionFrames.append(frame)
-                let focused = try EtanQA0510Tests.fixedScaleBitmap(host)
-                XCTAssertGreaterThan(paintedDifference(rest, focused, in: frame), 0.1,
-                                     "each formerly hidden action paints when it receives focus")
-                XCTAssertNotNil(host.hitTest(NSPoint(x: frame.midX, y: frame.midY)))
-                if actionFrames.count == 3 { break }
+                if let frame = try? focusedFrame(window, in: host) {
+                    XCTAssertFalse(frame.minX > 280 && frame.width < 50 && frame.height < 40,
+                                   "An unselected term must not put actions in the key loop: \(frame)")
+                }
             }
-            XCTAssertEqual(actionFrames.count, 3, "Tab reaches Copy, Edit and Delete with no hover or selection")
-            guard actionFrames.count == 3 else { return }
-            XCTAssertLessThan(actionFrames[0].midX, actionFrames[1].midX)
-            XCTAssertLessThan(actionFrames[1].midX, actionFrames[2].midX)
-            try save(host, as: "after-dictionary-row-focus")
-            try tab(window, backwards: true)
-            XCTAssertEqual(try focusedFrame(window, in: host), actionFrames[1])
-            try pressSpace(window)
-            XCTAssertTrue(try lines(host).contains { $0.text.contains("edit term") }, "Space on Edit opens the real editor")
         }
     }
 
-    func testIncludedDictionaryCopyAlsoRevealsOnFocus() throws {
-        try withHost(dictionaryPane(included: true), tab: .dictionary) { host, window in
-            let rest = try EtanQA0510Tests.fixedScaleBitmap(host)
-            for _ in 0..<12 {
+    func testSpaceWithoutASelectedTermDoesNotRemoveDictionaryEntries() throws {
+        try withHost(dictionaryPane(), tab: .dictionary) { host, window in
+            for _ in 0..<8 {
                 try tab(window)
-                guard let frame = try? focusedFrame(window, in: host), frame.minX > 280,
-                      frame.width < 40, frame.height < 40 else { continue }
-                let focused = try EtanQA0510Tests.fixedScaleBitmap(host)
-                XCTAssertGreaterThan(paintedDifference(rest, focused, in: frame), 0.1)
-                XCTAssertNotNil(host.hitTest(NSPoint(x: frame.midX, y: frame.midY)))
-                try save(host, as: "after-included-dictionary-row-focus")
-                return
+                try pressSpace(window)
+                // Escape dismisses any native menu; no deletion has been confirmed.
+                try window.sendEvent(key("\u{1b}", code: 53, window: window))
             }
-            XCTFail("Tab must reach the included term's Copy action without selecting or hovering the row")
+            XCTAssertTrue(try lines(host).contains { $0.text.contains("kubernetes") })
         }
     }
 

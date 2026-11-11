@@ -611,12 +611,12 @@ public struct SettingsView: View {
     /// A term deleted from Your terms that Undo can still put back (4 s; spec Dictionary).
     @State private var pendingDeletion: DictionaryPendingDeletion?
     @State private var hoveredTermRowID: String?
-    private struct TermActionFocus: Hashable {
-        enum Action: Hashable { case copy, edit, delete }
+    private struct TermRemoval {
+        let canonical: String
         let rowID: String
-        let action: Action
     }
-    @FocusState private var focusedTermAction: TermActionFocus?
+    @State private var termRemoval: TermRemoval?
+    @FocusState private var focusedTermAction: String?
     /// The last Set up / Reinstall: which one ran, and its result (nil while it runs).
     @State private var relaySetupFeedback: (
         action: SettingsRelaySetupFeedback.Action,
@@ -1391,9 +1391,11 @@ public struct SettingsView: View {
             ForEach(Array(visibleRows.enumerated()), id: \.offset) { index, row in
                 microphonePriorityRow(row, at: index, visibleCount: visibleRows.count)
             }
-            Label(SettingsGeneralCopy.microphoneNote, systemImage: "info.circle")
-                .font(.system(size: 11.5))
-                .foregroundStyle(SettingsPanePalette.helper)
+            if !visibleRows.isEmpty {
+                Label(SettingsGeneralCopy.microphoneNote, systemImage: "info.circle")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(SettingsPanePalette.helper)
+            }
         } header: {
             Text("Microphone priority")
                 .id(SettingsFocus.microphonePriority)
@@ -2590,6 +2592,16 @@ public struct SettingsView: View {
                         : AnyTransition.opacity.combined(with: .move(edge: .bottom)))
             }
         }
+        .alert("Delete term?", isPresented: Binding(get: { termRemoval != nil }, set: { if !$0 { termRemoval = nil } }),
+               presenting: termRemoval) { removal in
+            Button("Cancel", role: .cancel) { termRemoval = nil }
+            Button("Delete", role: .destructive) {
+                termRemoval = nil
+                deleteTerm(removal.canonical, rowID: removal.rowID)
+            }
+        } message: { removal in
+            Text("Remove “\(removal.canonical)” from your dictionary? You can undo this for four seconds.")
+        }
         .animation(reduceMotion ? .easeOut(duration: 0.15) : .easeOut(duration: 0.2), value: pendingDeletion)
         .task(id: pendingDeletion?.deadline) {
             guard let deadline = pendingDeletion?.deadline else { return }
@@ -2760,12 +2772,7 @@ public struct SettingsView: View {
                 focusedEditorField = .list
             }
             .accessibilityAddTraits(selectedTermRowID == rowID ? .isSelected : [])
-            .accessibilityAction(named: "Edit") {
-                if isEditable { termSheet = DictionaryTermEdit(original: entry) }
-            }
-            .accessibilityAction(named: "Delete") {
-                if isEditable { deleteTerm(entry.canonical, rowID: rowID) }
-            }
+
     }
 
     /// A term's misheard spellings, as the row's description, only when it has some.
@@ -2796,61 +2803,35 @@ public struct SettingsView: View {
         isEditable: Bool
     ) -> some View {
         let isSelected = selectedTermRowID == rowID
-        // Spec: hover or selection shows the row's actions. They keep their width while hidden, so the text never
-        // reflows under the pointer; VoiceOver reaches them as row actions instead.
-        let showsActions = isSelected || hoveredTermRowID == rowID || settingsHoverPreview.termRowID == rowID
-            || focusedTermAction?.rowID == rowID
-        // Lane S PR 3: one line per term, its misheard spellings after it as helper text; long ones wrap, never cut.
         let label = Self.dictionaryTermLine(entry)
             .frame(minWidth: SettingsRowLabel.textMinWidth, maxWidth: .infinity, alignment: .leading)
-        let actions = HStack(spacing: 4) {
-            SettingsCopyButton(text: entry.canonical, label: "term \(entry.canonical)", rowActionsVisible: showsActions)
-                .focused($focusedTermAction, equals: TermActionFocus(rowID: rowID, action: .copy))
-            if isEditable {
-                Button {
-                    termSheet = DictionaryTermEdit(original: entry)
-                } label: {
-                    Image(systemName: "pencil")
-                        .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.borderless)
-                .modifier(SettingsRowActionReveal(visible: showsActions) {
-                    termSheet = DictionaryTermEdit(original: entry)
-                })
-                .focused($focusedTermAction, equals: TermActionFocus(rowID: rowID, action: .edit))
-                .help("Edit term")
-                .accessibilityLabel("Edit term \(entry.canonical)")
-                deleteDictionaryEntryButton(entry.canonical, rowID: rowID)
-                    .modifier(SettingsRowActionReveal(visible: showsActions) {
-                        deleteTerm(entry.canonical, rowID: rowID)
-                    })
-                    .focused($focusedTermAction, equals: TermActionFocus(rowID: rowID, action: .delete))
-            }
-        }
-        .fixedSize()
-        // Trailing controls keep their natural width; when the text column can't keep its minimum beside them they
-        // wrap under the text (V12).
         return SettingsRowLayout {
             label
-            actions
+            // One native menu for the selected row, rather than three hidden Tab stops on every term.
+            Menu {
+                Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(entry.canonical, forType: .string) }
+                if isEditable {
+                    Button("Edit…") { termSheet = DictionaryTermEdit(original: entry) }
+                    Divider()
+                    Button("Delete…", role: .destructive) { requestTermRemoval(entry.canonical, rowID: rowID) }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .focusable(isSelected, interactions: .edit)
+            .focused($focusedTermAction, equals: rowID)
+            .accessibilityLabel("Actions for term \(entry.canonical)")
+            .help(isEditable ? "Copy, edit or delete term" : "Copy included term")
         }
         .frame(minHeight: DictionaryCardLayout.headerHeight)
     }
 
-    @ViewBuilder
-    private func deleteDictionaryEntryButton(_ canonical: String, rowID: String) -> some View {
-        Button {
-            deleteTerm(canonical, rowID: rowID)
-        } label: {
-            Image(systemName: "trash")
-                .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.borderless)
-        .foregroundStyle(.red)
-        .help("Delete term")
-        .accessibilityLabel("Delete term \(canonical)")
+    private func requestTermRemoval(_ canonical: String, rowID: String) {
+        guard termRemoval == nil else { return }
+        termRemoval = TermRemoval(canonical: canonical, rowID: rowID)
     }
 
     /// The rows arrow keys move through, in display order.
@@ -2872,7 +2853,7 @@ public struct SettingsView: View {
               let row = dictionaryDisplayIndex.entries(source: "personal", matching: dictionarySearch)
                   .first(where: { $0.rowID == rowID })
         else { return }
-        deleteTerm(row.entry.canonical, rowID: rowID)
+        requestTermRemoval(row.entry.canonical, rowID: rowID)
     }
 
     private func deleteTerm(_ canonical: String, rowID: String) {

@@ -59,6 +59,7 @@ public struct SpeechSettingsView: View {
                                 previewControl(kind)
                             }
                             .accessibilityIdentifier("speech-\(kind.rawValue)-latency")
+                            .help(profile.latencyLabel + ". Time from requesting speech until its first sound.")
                             .settingsLockedReasonBubble()
                             SettingsRow(title: "Rate", textMinWidth: Self.rateTitleWidth) {
                                 rateControl(kind, profile: profile, controls: controls)
@@ -87,7 +88,7 @@ public struct SpeechSettingsView: View {
                                 if let lock = Self.lockFooter(kind, controls: controls) {
                                     Label(lock, systemImage: "lock.fill").fixedSize(horizontal: false, vertical: true)
                                 }
-                                if kind == .long { Text("Changes apply to the next speech.").font(.caption) }
+                                Text("Changes apply to the next speech.").font(.caption)
                             }.font(.callout).foregroundStyle(.secondary)
                         }
                     }
