@@ -877,7 +877,13 @@ public struct BarView: View {
         ) else { return }
         let armed = settingsDrawer != nil && !isSettingsDrawerOpen
             && historyPull.rawProgress >= NotchHistoryMorph.settingsPullThreshold
-        if armed != isSettingsPullArmed { isSettingsPullArmed = armed }
+        if armed != isSettingsPullArmed {
+            // C6 L2 (N17): the grip and "Release for Settings" cross in one beat, never a one-frame swap.
+            withAnimation(NotchDrawerMotion.easeOut(armed ? NotchDrawerMotion.hintInDuration
+                                                          : NotchDrawerMotion.hintOutDuration)) {
+                isSettingsPullArmed = armed
+            }
+        }
         historyFlight = nil // the pointer owns the value now
         historyBridge?.historyOpenRequested() // grabbing History cancels a waiting notch menu
         if !isHistoryMounted {
@@ -1041,7 +1047,8 @@ public struct BarView: View {
         switch historyPull.release(progress: historyProgress, cancelled: cancelled) {
         case let .settle(open, velocity):
             if open, opensSettings || pullOpensSettings && !isHistoryPresented {
-                // Pulled past open: Settings, at the same spot and on the same spring.
+                // Pulled past open: Settings, at the same spot and on the same spring (History's list crossfades
+                // into the drawer, `notchLowerPanelContent`).
                 surface.send(.openSettings(.general))
                 animateHistory(toOpen: true, velocity: velocity)
             } else if open == isHistoryPresented {
@@ -1565,49 +1572,16 @@ public struct BarView: View {
 
     @ViewBuilder
     private var notchLowerPanelContent: some View {
-        if notchPresentation.visualState == .history, let tab = settingsTabShown, let settingsDrawer {
-            VStack(spacing: 0) {
-                NotchSettingsDrawer(
-                    selectedTab: tab, appearance: notchAppearance, context: settingsDrawer, request: surface.settingsRequest,
-                    history: {
-                        AnyView(historyPanelContent(listHeight: NotchSettingsDrawerPresentation.historyListHeight)
-                            .padding(.top, NotchHistoryMorph.listTopInset))
-                    },
-                    onSelectTab: { surface.send(.selectSettingsTab($0)) }
-                )
-                .simultaneousGesture(drawerBodyDragGesture)
-                // 0510 N4: the panes scroll inside themselves, so the drawer gets History's grip to push it closed.
-                NotchHistoryExtendHandle(
-                    palette: notchPalette, onDrag: dragDrawerGrip, onDragEnd: endDrawerGripDrag
-                )
+        if notchPresentation.visualState == .history {
+            // C6 L2 (S9): History's list and the Settings drawer crossfade at the threshold (and back), sharing this
+            // frame while they cross. The tab switch inside the drawer crossfades in `NotchSettingsDrawer`.
+            NotchDrawerCrossfade(
+                key: settingsTabShown != nil && settingsDrawer != nil,
+                animation: NotchDrawerMotion.easeOut(NotchDrawerMotion.contentInDuration),
+                transition: NotchDrawerMotion.contentTransition(reduceMotion: accessibilityReduceMotion)
+            ) { showsSettings in
+                notchDrawerContent(showsSettings: showsSettings)
             }
-            .frame(maxHeight: .infinity, alignment: .top)
-            .modifier(NotchHistoryRowsMorph(progress: historyFrozenProgress ?? historyProgress,
-                                            keepsPointer: drawerHoldsPointer))
-        } else if notchPresentation.visualState == .history {
-            VStack(spacing: 0) {
-                historyPanelContent()
-                    .padding(.horizontal, NotchHistoryMorph.listHorizontalInset)
-                    .padding(.top, NotchHistoryMorph.listTopInset)
-                    .simultaneousGesture(drawerBodyDragGesture)
-                NotchHistoryExtendHandle(
-                    palette: notchPalette,
-                    rows: (historyRows, NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count),
-                           adjustHistoryRows),
-                    showsGrip: !isSettingsPullArmed,
-                    onDrag: dragHistoryHandle,
-                    onDragEnd: { cancelled in
-                        if historyRowsPull.phase != .idle { endHistoryRowsPull(cancelled: cancelled) }
-                    }
-                )
-                // 0510 N6: the hint takes the handle's band (the overpull stretches the shell under it), never a row.
-                .overlay {
-                    if isSettingsPullArmed { settingsPullHint }
-                }
-            }
-                .frame(maxHeight: .infinity, alignment: .top)
-                .modifier(NotchHistoryRowsMorph(progress: historyFrozenProgress ?? historyProgress,
-                                                keepsPointer: drawerHoldsPointer))
         } else if isMorphTeleprompterContentPresented {
             // T2/T8 (Etan QA 2026-11-09): text, then the scrubber close to the eye row, then the height handle under
             // the eye row. No footer row; the tight gaps leave the room to the text.
@@ -1647,6 +1621,55 @@ public struct BarView: View {
             .padding(.top, TeleprompterA.bodyTopInset)
             .padding(.bottom, TeleprompterA.bodyBottomInset)
             .transition(.opacity)
+        }
+    }
+
+    /// History's list or the Settings drawer (C6 L2: `NotchDrawerCrossfade` crossfades between the two).
+    @ViewBuilder
+    private func notchDrawerContent(showsSettings: Bool) -> some View {
+        if showsSettings, let settingsDrawer {
+            VStack(spacing: 0) {
+                NotchSettingsDrawer(
+                    selectedTab: settingsTabShown ?? .general, appearance: notchAppearance, context: settingsDrawer, request: surface.settingsRequest,
+                    history: {
+                        AnyView(historyPanelContent(listHeight: NotchSettingsDrawerPresentation.historyListHeight)
+                            .padding(.top, NotchHistoryMorph.listTopInset))
+                    },
+                    onSelectTab: { surface.send(.selectSettingsTab($0)) }
+                )
+                .simultaneousGesture(drawerBodyDragGesture)
+                // 0510 N4: the panes scroll inside themselves, so the drawer gets History's grip to push it closed.
+                NotchHistoryExtendHandle(
+                    palette: notchPalette, onDrag: dragDrawerGrip, onDragEnd: endDrawerGripDrag
+                )
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+            .modifier(NotchHistoryRowsMorph(progress: historyFrozenProgress ?? historyProgress,
+                                            keepsPointer: drawerHoldsPointer))
+        } else {
+            VStack(spacing: 0) {
+                historyPanelContent()
+                    .padding(.horizontal, NotchHistoryMorph.listHorizontalInset)
+                    .padding(.top, NotchHistoryMorph.listTopInset)
+                    .simultaneousGesture(drawerBodyDragGesture)
+                NotchHistoryExtendHandle(
+                    palette: notchPalette,
+                    rows: (historyRows, NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count),
+                           adjustHistoryRows),
+                    showsGrip: !isSettingsPullArmed,
+                    onDrag: dragHistoryHandle,
+                    onDragEnd: { cancelled in
+                        if historyRowsPull.phase != .idle { endHistoryRowsPull(cancelled: cancelled) }
+                    }
+                )
+                // 0510 N6: the hint takes the handle's band (the overpull stretches the shell under it), never a row.
+                .overlay {
+                    if isSettingsPullArmed { settingsPullHint }
+                }
+            }
+                .frame(maxHeight: .infinity, alignment: .top)
+                .modifier(NotchHistoryRowsMorph(progress: historyFrozenProgress ?? historyProgress,
+                                                keepsPointer: drawerHoldsPointer))
         }
     }
 
