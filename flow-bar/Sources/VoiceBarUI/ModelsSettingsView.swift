@@ -284,8 +284,8 @@ public struct ModelsSettingsView: View {
         let busyReason = Self.effortDisabledReason(for: state)
         let disabled = row.lockedReason != nil || busyReason != nil || onToggleProcessing == nil
             || processingPending[row.key] != nil
-        return SettingsRow(title: row.key.title, description: row.line) {
-            if row.experimental { SettingsPill(text: "Experimental", tint: .orange) }
+        return SettingsRow(title: row.key.title, description: row.line,
+                           titleBadge: row.experimental ? SettingsPill(text: "Experimental", tint: .orange) : nil) {
             Toggle(row.key.title, isOn: Binding(
                 get: { processingPending[row.key] ?? row.isOn },
                 set: { onToggleProcessing?(row.key, $0) }

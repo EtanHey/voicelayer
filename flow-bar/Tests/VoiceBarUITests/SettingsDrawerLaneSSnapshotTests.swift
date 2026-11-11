@@ -138,13 +138,19 @@ final class SettingsDrawerLaneSSnapshotTests: XCTestCase {
         XCTAssertGreaterThan(button.box.minX, title.maxX, "[S1] and to its right, in the trailing column")
     }
 
-    /// Shot 5, hover: the reason appears beside the switch, at the switch's height.
-    func testHoveringTheLockedSwitchShowsWhyBesideIt() throws {
+    /// Shot 5, hover: the reason appears just above the switch and covers nothing on the row: the title, the
+    /// Experimental badge and the description all stay readable (lead review, c7 07:55Z).
+    func testHoveringTheLockedSwitchShowsWhyAboveItCoveringNothing() throws {
         let lines = try SettingsDrawerLaneSLayoutTests.paintedLines(Self.drawer(.transcription, updates: nil)
             .environment(\.settingsHoverPreview, SettingsHoverPreview(lockedReasons: true)), height: 1100)
         let reason = try SettingsDrawerLaneSLayoutTests.line(lines, containing: "unavailable with parakeet")
         let title = try SettingsDrawerLaneSLayoutTests.line(lines, containing: "smart chunks")
-        XCTAssertEqual(reason.box.midY, title.box.midY, accuracy: 8, "[S4] the bubble is on the switch's line")
+        let badge = try SettingsDrawerLaneSLayoutTests.line(lines, containing: "experimental")
+        let description = try SettingsDrawerLaneSLayoutTests.line(lines, containing: "splits long")
+        XCTAssertLessThan(reason.box.maxY, title.box.minY + 2, "[S4] the bubble sits above the switch's row line")
         XCTAssertGreaterThan(reason.box.maxX, Self.drawerWidth * 0.6, "[S4] anchored at the switch, trailing side")
+        for word in [title, badge, description] {
+            XCTAssertFalse(reason.box.intersects(word.box), "[S4] the bubble covers '\(word.text)'")
+        }
     }
 }

@@ -102,7 +102,7 @@ final class ProcessingTogglesTests: XCTestCase {
             encoding: .utf8
         )
         XCTAssertFalse(source.contains("Text(row.lockedReason ?? row.line)"))
-        XCTAssertTrue(source.contains("SettingsRow(title: row.key.title, description: row.line)"))
+        XCTAssertTrue(source.contains("SettingsRow(title: row.key.title, description: row.line,"))
         XCTAssertTrue(source.contains(".settingsLockedReason(disabled ? row.lockedReason ?? busyReason : nil)"))
         XCTAssertTrue(source.contains("SettingsRow(title: row.title, description: row.line)"),
                       "Unload when idle follows the same rule")

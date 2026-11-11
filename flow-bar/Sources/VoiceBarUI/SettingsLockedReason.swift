@@ -23,7 +23,8 @@ struct SettingsLockedReasonKey: PreferenceKey {
 enum SettingsLockedReasonMotion {
     static let showDelay: Duration = .milliseconds(180)
     static let fadeIn: Double = 0.15
-    static let gap: CGFloat = 8
+    /// Space between the bubble's bottom and the switch's top.
+    static let lift: CGFloat = 4
 }
 
 /// On the disabled switch. A nil reason leaves the switch untouched (no hover catcher over a live control).
@@ -64,7 +65,8 @@ struct SettingsLockedReasonSource: ViewModifier {
     }
 }
 
-/// On the row, outside any `.opacity` that mutes it: draws the reason just left of the switch, centred on it.
+/// On the row, outside any `.opacity` that mutes it: draws the reason just above the switch, its trailing edge on the
+/// switch's, so nothing on the row (title, badge, description) is covered (lead review, c7 07:55Z).
 struct SettingsLockedReasonBubbleHost: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -74,11 +76,10 @@ struct SettingsLockedReasonBubbleHost: ViewModifier {
                 if let preference, preference.isShown {
                     let rect = proxy[preference.bounds]
                     SettingsReasonBubble(text: preference.reason)
-                        .frame(width: max(0, rect.minX - SettingsLockedReasonMotion.gap), alignment: .trailing)
-                        .frame(height: rect.height)
-                        .offset(y: rect.minY)
+                        .frame(width: rect.maxX, alignment: .trailing)
+                        .offset(y: rect.minY - SettingsReasonBubble.height - SettingsLockedReasonMotion.lift)
                         .transition(reduceMotion ? .opacity
-                            : .opacity.combined(with: .scale(scale: 0.97, anchor: .trailing)))
+                            : .opacity.combined(with: .scale(scale: 0.97, anchor: .bottomTrailing)))
                         .allowsHitTesting(false)
                         .accessibilityHidden(true) // the switch carries it as its hint
                 }
@@ -93,6 +94,7 @@ struct SettingsReasonBubble: View {
         light: SettingsPanePalette.RGB(0xFFFFFF), dark: SettingsPanePalette.RGB(0x3A3A3C),
         name: "VoiceBarSettingsReasonBubble"))
     static let font = Font.system(size: 11.5, weight: .medium)
+    static let height: CGFloat = 22
 
     let text: String
 
@@ -108,7 +110,7 @@ struct SettingsReasonBubble: View {
         }
         .fixedSize()
         .padding(.horizontal, 8)
-        .frame(height: 22)
+        .frame(height: Self.height)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(Self.fill)

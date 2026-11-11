@@ -121,9 +121,7 @@ final class SettingsTranscriptionPaneTests: XCTestCase {
         let unload = ModelsSettingsView.unloadWhenIdleRow(for: picker)!
         SettingsRowClippingGuard.check(rows.map {
             SettingsRowCase(title: $0.key.title, description: $0.line,
-                            controls: $0.experimental
-                                ? AnyView(HStack { SettingsPill(text: "Experimental"); SettingsRowCase.toggle })
-                                : SettingsRowCase.toggle)
+                            controls: SettingsRowCase.toggle) // Experimental is a title badge now (lane S)
         } + [
             SettingsRowCase(title: unload.title, description: unload.line,
                             controls: SettingsRowCase.toggle),

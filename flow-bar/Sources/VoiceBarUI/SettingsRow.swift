@@ -7,6 +7,9 @@ struct SettingsRow<Lead: View, Trailing: View>: View {
     var description: String?
     /// A status pill that sits on the description line, after it (the mic in use: "Connected · Used for dictation").
     var badge: String?
+    /// A pill on the title line, after the title ("Smart chunks [Experimental]"), so the trailing column holds only
+    /// the row's control and the description gets the full text column.
+    var titleBadge: SettingsPill?
     var isSelected = false
     @ViewBuilder var lead: () -> Lead
     @ViewBuilder var trailing: () -> Trailing
@@ -15,7 +18,8 @@ struct SettingsRow<Lead: View, Trailing: View>: View {
         SettingsRowLayout {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 lead()
-                SettingsRowLabel(title: title, description: description, badge: badge, isSelected: isSelected)
+                SettingsRowLabel(title: title, description: description, badge: badge, titleBadge: titleBadge,
+                                 isSelected: isSelected)
             }
             HStack(spacing: 6) { trailing() }
                 .fixedSize()
@@ -26,10 +30,10 @@ struct SettingsRow<Lead: View, Trailing: View>: View {
 }
 
 extension SettingsRow where Lead == EmptyView {
-    init(title: String, description: String? = nil, badge: String? = nil, isSelected: Bool = false,
-         @ViewBuilder trailing: @escaping () -> Trailing) {
-        self.init(title: title, description: description, badge: badge, isSelected: isSelected,
-                  lead: { EmptyView() }, trailing: trailing)
+    init(title: String, description: String? = nil, badge: String? = nil, titleBadge: SettingsPill? = nil,
+         isSelected: Bool = false, @ViewBuilder trailing: @escaping () -> Trailing) {
+        self.init(title: title, description: description, badge: badge, titleBadge: titleBadge,
+                  isSelected: isSelected, lead: { EmptyView() }, trailing: trailing)
     }
 }
 

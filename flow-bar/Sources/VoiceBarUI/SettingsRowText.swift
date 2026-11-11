@@ -60,12 +60,16 @@ struct SettingsRowLabel: View {
     let title: String
     let description: String?
     var badge: String?
+    var titleBadge: SettingsPill?
     var isSelected = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            ClippingAwareText(text: title, font: Self.titleFont, lineLimit: isSelected ? nil : Self.lineLimit)
-                .foregroundStyle(.primary)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                ClippingAwareText(text: title, font: Self.titleFont, lineLimit: isSelected ? nil : Self.lineLimit)
+                    .foregroundStyle(.primary)
+                if let titleBadge { titleBadge }
+            }
             if let description, !description.isEmpty {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     ClippingAwareText(text: description, font: Self.descriptionFont,
