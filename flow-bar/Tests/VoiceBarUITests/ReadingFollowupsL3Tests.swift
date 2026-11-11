@@ -3,7 +3,7 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// C7 L3 follow-ups from the Cursor pre-review (c7/cursor/C4.md): F1, F3, F4, F6, F7.
+/// C7 L3 follow-ups from the Cursor pre-review (c7/cursor/C4.md): F1, F3, F4, F6, F7; and Sol R900 P2.
 @MainActor
 final class ReadingFollowupsL3Tests: XCTestCase {
     private var now: TimeInterval = 1_000
@@ -63,6 +63,50 @@ final class ReadingFollowupsL3Tests: XCTestCase {
         XCTAssertEqual(seeks.count, 1)
         XCTAssertEqual(seeks.first?["wordIndex"] as? Int, 26)
         XCTAssertNil(state.pendingSpeechSeekWordIndex)
+    }
+
+    // MARK: R900 P2: a newer explicit navigation supersedes a queued word click
+
+    /// Sol R900 P2: click untimed word 26, scrub, then the word's timing lands inside the window. The scrub is the
+    /// newer intent; the queued click must never drag the voice back to word 26.
+    func testANewerScrubCancelsAQueuedWordClick() throws {
+        let state = try readingState(timedWords: 25)
+        state.seekSpeechWord(utteranceID: "u-v09", wordIndex: 26)
+        now += 0.2
+        state.seek(offsetMs: 1_000)
+        let scrubAt = try XCTUnwrap(sent.lastIndex { $0["cmd"] as? String == "seek" }, "the scrub was sent")
+        XCTAssertNil(state.pendingSpeechSeekWordIndex, "the scrub retires the waiting click and its underline")
+        now += 0.2 // +0.4 s: well inside the 1.5 s window
+        state.handleEvent(try words(from: 25))
+        XCTAssertFalse(sent[(scrubAt + 1)...].contains { $0["cmd"] as? String == "speech_seek" },
+                       "no word seek after the newer scrub")
+    }
+
+    /// The same intent rule for every other playback navigation the reading player offers.
+    func testEveryNewerPlaybackNavigationCancelsAQueuedWordClick() throws {
+        let actions: [(name: String, cmd: String, run: (VoiceState) -> Void)] = [
+            ("another word click", "speech_seek", { $0.seekSpeechWord(utteranceID: "u-v09", wordIndex: 10) }),
+            ("pause", "pause", { $0.togglePlaybackPause() }),
+            ("speed change", "set_playback_speed", { $0.cyclePlaybackSpeed() }),
+            ("skip to next read", "read_next", { $0.skipToNextRead() }),
+            ("previous read", "previous_read", { $0.playPreviousRead() }),
+            ("stop", "stop", { $0.stop() }),
+        ]
+        for action in actions {
+            sent = []
+            let state = try readingState(timedWords: 25)
+            state.handleEvent(["type": "read_queue", "count": 1, "current_request_id": "r-current"])
+            state.handleEvent(["type": "playback_session", "phase": "playing", "previous_available": true])
+            state.seekSpeechWord(utteranceID: "u-v09", wordIndex: 26)
+            now += 0.2
+            action.run(state)
+            let at = try XCTUnwrap(sent.lastIndex { $0["cmd"] as? String == action.cmd }, "\(action.name) was sent")
+            XCTAssertNil(state.pendingSpeechSeekWordIndex, "\(action.name) retires the waiting click")
+            now += 0.2
+            state.handleEvent(try words(from: 25))
+            XCTAssertFalse(sent[(at + 1)...].contains { $0["cmd"] as? String == "speech_seek" },
+                           "no queued word seek fires after \(action.name)")
+        }
     }
 
     // MARK: F3: before the first chunk, a click waits for its word

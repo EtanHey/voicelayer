@@ -1518,6 +1518,7 @@ public final class VoiceState {
     }
 
     private func stopSelectionRead() {
+        supersedePendingSpeechSeek()
         invalidateSelectionSpeechIdentity()
         clearReadQueue()
         // BARE-STOP: a read stop is speech-scoped; it must never land on a dictation take that just opened.
@@ -1558,6 +1559,7 @@ public final class VoiceState {
     /// shown for, so a double press or a press racing auto-advance is a daemon no-op.
     public func skipToNextRead() {
         guard mode == .speaking || mode == .idle, let current = readQueueCurrentRequestID else { return }
+        supersedePendingSpeechSeek()
         if readQueueCount == 0 {
             invalidateSelectionSpeechIdentity()
             clearReadQueue()
@@ -2297,6 +2299,7 @@ public final class VoiceState {
     }
 
     public func stop(physicalPress: Bool = false) {
+        supersedePendingSpeechSeek()
         if let deferred = deferredBarRecording {
             switch deferred {
             case .queued(var request):
@@ -2385,6 +2388,7 @@ public final class VoiceState {
     }
 
     public func cancel(bypassingProcessingGuard: Bool = false) {
+        supersedePendingSpeechSeek()
         if mode == .speaking, showsReadingProcessingSpinner {
             sendCommand?(["cmd": "stop", "id": UUID().uuidString])
             return
@@ -2785,6 +2789,13 @@ public final class VoiceState {
     }
     private var pendingSpeechSeek: PendingSpeechSeek?
 
+    /// Sol R900 P2: a queued word click is the user's intent only until they navigate again. Any newer explicit
+    /// playback navigation (a scrub, pause/resume, a speed change, skip, previous read, stop or cancel) retires it,
+    /// so a timing that lands afterwards never drags the voice back to the old word. Another word click replaces it.
+    private func supersedePendingSpeechSeek() {
+        pendingSpeechSeek = nil
+    }
+
     /// Sends a pending click once its word is timed: same read, still playing, same word, inside the window.
     /// Anything else drops it.
     private func firePendingSpeechSeekIfTimed() {
@@ -2805,6 +2816,7 @@ public final class VoiceState {
     public func seek(offsetMs: Int) {
         guard mode == .speaking || isTeleprompterReadback, offsetMs >= 0,
               mode != .speaking || !isPlaybackPaused else { return }
+        supersedePendingSpeechSeek()
         var command: [String: Any] = ["cmd": "seek", "offset_ms": offsetMs]
         if isTeleprompterReadback {
             guard let retainedReadbackID else { showConfirmation("Replay prefix audio unavailable"); return }
@@ -2838,6 +2850,7 @@ public final class VoiceState {
 
     public func stopSpeechDuringCapture() {
         guard isCaptureSettlementPending, parkedRead != nil else { return }
+        supersedePendingSpeechSeek()
         sendCommand?(["cmd": "stop", "scope": "speech", "id": UUID().uuidString])
         clearCurrentSelectionReadIdentity()
         parkedRead = nil
@@ -2856,6 +2869,7 @@ public final class VoiceState {
     @discardableResult
     private func togglePlaybackPause(sendsElapsed: Bool) -> String? {
         guard mode == .speaking, let sendCommand else { return nil }
+        supersedePendingSpeechSeek()
         let id = UUID().uuidString
         var command: [String: Any] = ["id": id]
         let scope = parkedRead.map { ($0.playbackID, $0.generation) } ?? (currentPlayback?.id, currentPlayback?.generation)
@@ -3216,6 +3230,7 @@ public final class VoiceState {
         guard let sendCommand else { return nil }
         let id = UUID().uuidString
         let next = Self.nextPlaybackSpeed(after: playbackSpeed)
+        supersedePendingSpeechSeek()
         playbackSpeed = next
         sendCommand(["cmd": "set_playback_speed", "speed": next, "id": id])
         return id
@@ -3229,6 +3244,7 @@ public final class VoiceState {
             showConfirmation("No previous read")
             return nil
         }
+        supersedePendingSpeechSeek()
         let id = UUID().uuidString
         sendCommand(["cmd": "previous_read", "id": id])
         return id
@@ -6052,6 +6068,7 @@ public final class VoiceState {
     ) {
         // Speech-only retirement; recorder intent payloads and stop/cancel bodies stay unchanged.
         if retiresSelections, command == .stop || command == .cancel { invalidateSelectionSpeechIdentity() }
+        if command == .stop || command == .cancel { supersedePendingSpeechSeek() }
         let id = UUID().uuidString
         var payloadWithID = payload
         payloadWithID["id"] = id
