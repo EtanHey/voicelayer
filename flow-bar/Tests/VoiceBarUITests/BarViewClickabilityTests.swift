@@ -359,10 +359,11 @@ final class BarViewClickabilityTests: XCTestCase {
             "type": "playback_state", "state": "paused", "playback_id": "p-1", "generation": 2,
             "offset_ms": 900, "chunk_offset_ms": 900,
         ])
+        // X1-34 (C6 L3): the paused hidden read keeps its eye beside the terminal X.
         let paused = makeInteractivePanelHost(
             state: state,
             router: router,
-            configuration: Self.readingConfiguration(trailingFromOuter: 1)
+            configuration: Self.readingConfiguration(trailingFromOuter: 2)
         )
         XCTAssertEqual(paused.layout.presentation.visualState, .compactStatus)
         let playRect = paused.controlRects[Self.pauseIndex]
@@ -603,7 +604,9 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertFalse(speaking.contains("notchButton("))
         XCTAssertEqual(speaking.components(separatedBy: "notchTeleprompterButton(").count - 1, 2)
         XCTAssertTrue(speaking.contains("icon: \"eye\""))
-        XCTAssertTrue(speaking.contains("icon: \"stop.fill\""))
+        // X1-32 (C6 L3): the terminal glyph (Stop square, or X once paused) comes from the reading state.
+        XCTAssertTrue(speaking.contains("VoiceBarPresentation.readingTerminalControl("))
+        XCTAssertEqual(VoiceBarPresentation.readingTerminalControl(for: .playing).iconName, "stop.fill")
 
         let teleprompterStart = try XCTUnwrap(source.range(of: "private func notchTeleprompterButton"))
         XCTAssertTrue(source[teleprompterStart.lowerBound...]

@@ -1375,7 +1375,8 @@ public struct BarView: View {
         .accessibilityValue(VoiceState.speedLabel(state.playbackSpeed))
     }
 
-    /// P16: Pause collapses the teleprompter and Play expands it again; the shell's own morph animates both.
+    /// P16: Pause parks the read on its word. X1-34 (Etan QA 2026-11-10): the teleprompter stays as it was, readable;
+    /// only the eye hides or shows it, paused or playing.
     private func playbackPauseButton(_ control: VoiceBarPlaybackPauseControl) -> some View {
         notchButton(
             icon: control.iconName,
@@ -1478,9 +1479,11 @@ public struct BarView: View {
     /// Stop sits in its eye row. Collapsed (paused or hidden) there is no eye row, so Stop follows the meter; a hidden
     /// but playing read puts Show teleprompter over the meter's last slot, one pitch inside Stop.
     /// X4 (Etan, PR #860): the row is centred in the visible wing, with no blank outer region.
+    /// X1-34: pause no longer collapses; a hidden read, playing or paused, keeps its eye here.
     private var notchSpeakingTrailingContent: some View {
         let isCompact = notchPresentation.bandState == .compactStatus
-        let showsReveal = isCompact && state.isTeleprompterDismissed && !state.isPlaybackPaused
+        let showsReveal = VoiceBarPresentation.showsWingTeleprompterReveal(
+            reading: VoiceBarPresentation.readingState(for: state), bandState: notchPresentation.bandState)
         return VoiceBarReadingTrailingRow(showsStop: isCompact) {
             VoiceBarReadingTimeRegion(
                 elapsedMilliseconds: { state.playbackElapsedMilliseconds() },
@@ -1502,21 +1505,27 @@ public struct BarView: View {
             }
             .frame(width: WaveformLayout.viewportWidth, alignment: .trailing)
         } stop: {
-            playbackStopButton
+            readingTerminalButton
         }
         // As when recording, the row is centred clear of the PHYSICAL notch (the glass hides the wing's first points).
         .padding(.leading, max(0, notchPresentation.visibleCoreOcclusionInset))
     }
 
-    /// The live red Stop. Collapsed it sits in the right wing; with the teleprompter open, in the eye row (T7).
-    private var playbackStopButton: some View {
-        notchTeleprompterButton(
-            icon: "stop.fill",
-            isDestructive: true,
-            accessibilityLabel: "Stop speaking"
+    /// The live read's terminal control. Collapsed it sits in the right wing; with the teleprompter open, in the eye
+    /// row (T7). X1-32: the red Stop square while audio plays, an X ("Close read") once paused. Both end the read
+    /// through the same Stop route, so the real-Stop host stays on it.
+    private var readingTerminalButton: some View {
+        let control = VoiceBarPresentation.readingTerminalControl(
+            for: VoiceBarPresentation.readingState(for: state) ?? .playing)
+        return notchTeleprompterButton(
+            icon: control.iconName,
+            isDestructive: control.isDestructive,
+            accessibilityLabel: control.accessibilityLabel
         ) {
             commandRouter.handleStop()
         }
+        .accessibilityHint(control.accessibilityHint)
+        .contentTransition(.symbolEffect(.replace))
         .background(playbackStopHostProbe)
     }
 
@@ -1816,13 +1825,16 @@ public struct BarView: View {
         }
         .frame(maxWidth: .infinity)
         .overlay(alignment: .leading) {
-            // T8: "Word timing unavailable" sits at the row's leading edge, clear of the centred group, so it adds no
-            // height between the scrubber and this row.
-            if state.showsTeleprompterScrubber, let notice = TeleprompterPlaybackScrubBar(state: state).timingNotice {
+            // T8: the scrubber's notice sits at the row's leading edge, clear of the centred group, so it adds no
+            // height between the scrubber and this row. R883: paused, it is the pause reason ("Paused. Press Play to
+            // seek"), drawn because the frozen slider is disabled and `.help` never shows in this panel; otherwise
+            // "Word timing unavailable". Its native tooltip repeats it in full should the line ever truncate.
+            if state.showsTeleprompterScrubber, let notice = TeleprompterPlaybackScrubBar(state: state).notice {
                 Text(notice)
                     .font(.system(size: 10))
                     .foregroundStyle(notchPalette.tertiary.color)
                     .lineLimit(1)
+                    .background(PillControlTooltip(text: notice))
                     .allowsHitTesting(false)
             }
         }
@@ -1834,7 +1846,7 @@ public struct BarView: View {
         if state.isTeleprompterReadback {
             notchTeleprompterDismissButton
         } else if state.mode == .speaking {
-            playbackStopButton
+            readingTerminalButton
         }
     }
 
