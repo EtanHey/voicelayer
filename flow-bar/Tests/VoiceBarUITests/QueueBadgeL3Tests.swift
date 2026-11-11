@@ -51,49 +51,71 @@ final class QueueBadgeL3Tests: XCTestCase {
         }
     }
 
-    /// Its trailing edge stays within the 5 pt of the core-side inset the hardware notch's glass leaves visible
-    /// (13.5 pt compact core inset − 8.5 pt M4 occlusion), for the widest count we draw.
-    func testTheBadgeStaysVisibleBesideTheHardwareNotch() {
-        let ten = VoiceBarQueueCountBadge.size(for: "10")
-        let overhang = VoiceBarQueueCountBadge.centreOffset.width + ten.width / 2
-        XCTAssertLessThanOrEqual(overhang, 5.0001, "\"10\" overhangs Forward's trailing edge by \(overhang) pt")
-    }
 
     private func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
 
-    // MARK: - M4 defect (lead, 2026-11-11): the badge sat ON Forward's glyph
+    // MARK: - M4 defects (lead, 2026-11-11): the badge sat ON Forward's glyph, then was clipped by the screen top
 
     /// Forward's glyph must stay fully readable at 1, 3 and 10 queued: every pixel of its ink, rendered exactly as the
-    /// notch draws it (12 pt medium in the 20 pt plate) through the badge placement BarView uses, keeps its ink.
+    /// notch draws it (12 pt medium in the 20 pt plate, centred in the 32 pt top row) through the badge placement
+    /// BarView uses, keeps its ink.
     func testForwardGlyphInkIsUntouchedByTheBadge() throws {
-        let bare = try pixels(badge: nil)
+        let bare = try row(badge: nil)
         let ink = bare.indices.filter { bare[$0].isInk }
         XCTAssertGreaterThan(ink.count, 200, "the Forward glyph rendered")
         for count in ["1", "3", "10"] {
-            let badged = try pixels(badge: count)
+            let badged = try row(badge: count)
             let covered = ink.filter { !badged[$0].isInk }
-            XCTAssertEqual(covered.count, 0,
-                           "badge \(count) covers \(covered.count) of \(ink.count) Forward ink pixels")
+            XCTAssertEqual(covered.count, 0, "badge \(count) covers \(covered.count) of \(ink.count) Forward ink pixels")
         }
     }
 
-    /// The pill grows away from the glyph: wider counts never come closer to the ink than one digit does.
-    func testWiderCountsKeepTheirClearance() throws {
-        let bare = try pixels(badge: nil)
-        let ink = bare.indices.filter { bare[$0].isInk }
-        let inkTop = ink.map { $0 / Self.side }.min() ?? 0
+    /// The badge is drawn whole inside the wing's top row: the row starts at the screen's top edge (inset 0) and the
+    /// shell clips there, so a badge too close to either edge loses its rounding ("not rounded properly").
+    func testTheBadgeIsWholeAndRoundedInsideTheTopRow() throws {
+        let clearance = 1.5 * Self.scale
         for count in ["1", "3", "10"] {
-            let badged = try pixels(badge: count)
-            let badge = badged.indices.filter { badged[$0].isBadgeBlue }
-            XCTAssertFalse(badge.isEmpty, "badge \(count) drawn")
-            let badgeBottom = badge.map { $0 / Self.side }.max() ?? 0
-            XCTAssertLessThan(badgeBottom, inkTop, "badge \(count)'s fill ends above the glyph's ink")
+            let badged = try row(badge: count)
+            let blue = badged.indices.filter { badged[$0].isBadgeBlue }
+            XCTAssertFalse(blue.isEmpty, "badge \(count) drawn")
+            let rows = blue.map { $0 / Self.width }, columns = blue.map { $0 % Self.width }
+            let top = CGFloat(rows.min()!), bottom = CGFloat(rows.max()! + 1)
+            let measured = CGSize(width: CGFloat(columns.max()! - columns.min()! + 1), height: bottom - top)
+            let expected = VoiceBarQueueCountBadge.size(for: count)
+            XCTAssertGreaterThanOrEqual(top, clearance, "badge \(count) starts \(top / Self.scale) pt below the top edge")
+            XCTAssertLessThanOrEqual(bottom, CGFloat(Self.height) - clearance,
+                                     "badge \(count) ends \((CGFloat(Self.height) - bottom) / Self.scale) pt above the row's bottom")
+            // Whole: the drawn fill is the badge's full size (antialiased rim aside), never a shaved or flattened one.
+            XCTAssertEqual(measured.height, expected.height * Self.scale, accuracy: Self.scale,
+                           "badge \(count) drawn \(measured.height / Self.scale) pt tall of \(expected.height)")
+            XCTAssertEqual(measured.width, expected.width * Self.scale, accuracy: Self.scale,
+                           "badge \(count) drawn \(measured.width / Self.scale) pt wide of \(expected.width)")
         }
     }
 
-    private static let scale: CGFloat = 4
-    private static let canvas: CGFloat = 48
-    private static var side: Int { Int(canvas * scale) }
+    /// Wider counts keep clear of the ink and inside the 5 pt beside Forward that the hardware notch's glass leaves
+    /// visible (13.5 pt compact core inset − 8.5 pt M4 occlusion).
+    func testWiderCountsKeepTheirClearance() throws {
+        let bare = try row(badge: nil)
+        let ink = bare.indices.filter { bare[$0].isInk }
+        let inkBottom = ink.map { $0 / Self.width }.max() ?? 0
+        let trailing = Int((Self.controlOrigin.x + VoiceBarNotchContract.material.compactControlSize) * Self.scale)
+        for count in ["1", "3", "10"] {
+            let badged = try row(badge: count)
+            let blue = badged.indices.filter { badged[$0].isBadgeBlue }
+            XCTAssertGreaterThan(blue.map { $0 / Self.width }.min() ?? 0, inkBottom, "badge \(count) starts below the ink")
+            let overhang = CGFloat((blue.map { $0 % Self.width }.max() ?? 0) + 1 - trailing) / Self.scale
+            XCTAssertLessThanOrEqual(overhang, 5.0001, "badge \(count) overhangs Forward by \(overhang) pt")
+        }
+    }
+
+    private static let scale: CGFloat = 8
+    private static let rowSize = CGSize(width: 48, height: VoiceBarNotchContract.topHeight)
+    /// Forward's plate in the row: centred vertically, with room on its trailing side for the badge's overhang.
+    private static let controlOrigin = CGPoint(x: 14, y: (VoiceBarNotchContract.topHeight -
+                                                          VoiceBarNotchContract.material.compactControlSize) / 2)
+    private static var width: Int { Int(rowSize.width * scale) }
+    private static var height: Int { Int(rowSize.height * scale) }
 
     private struct Pixel {
         let r: UInt8, g: UInt8, b: UInt8
@@ -102,32 +124,35 @@ final class QueueBadgeL3Tests: XCTestCase {
         var isBadgeBlue: Bool { Int(b) - Int(r) > 80 }
     }
 
-    private func pixels(badge: String?) throws -> [Pixel] {
+    /// The wing's top row as the shell clips it: 32 pt tall, top edge at the screen top (inset 0).
+    private func row(badge: String?) throws -> [Pixel] {
+        let size = VoiceBarNotchContract.material.compactControlSize
         let control = Image(systemName: "forward.end.fill")
             .font(.system(size: VoiceBarNotchControlOptics.resolve(for: "forward.end.fill").pointSize, weight: .medium))
             .foregroundStyle(Color.white)
-            .frame(width: VoiceBarNotchContract.material.compactControlSize,
-                   height: VoiceBarNotchContract.material.compactControlSize)
+            .frame(width: size, height: size)
             .queueCountBadge(badge, accessibilityLabel: nil)
-            .frame(width: Self.canvas, height: Self.canvas)
+            .offset(x: Self.controlOrigin.x, y: Self.controlOrigin.y)
+            .frame(width: Self.rowSize.width, height: Self.rowSize.height, alignment: .topLeading)
             .background(Color.black)
+            .clipped()
             .environment(\.voiceBarNotchAppearance, .dark)
         let renderer = ImageRenderer(content: control)
         renderer.scale = Self.scale
         let image = try XCTUnwrap(renderer.cgImage)
-        if let dir = ProcessInfo.processInfo.environment["VOICEBAR_L3_BADGE_DEBUG_DIR"] {
-            let rep = NSBitmapImageRep(cgImage: image)
-            try rep.representation(using: .png, properties: [:])?
-                .write(to: URL(fileURLWithPath: dir).appendingPathComponent("badge-\(badge ?? "none").png"))
-        }
         let width = image.width, height = image.height
-        XCTAssertEqual(width, Self.side)
+        XCTAssertEqual(width, Self.width)
+        XCTAssertEqual(height, Self.height)
+        if let dir = ProcessInfo.processInfo.environment["VOICEBAR_L3_BADGE_DEBUG_DIR"] {
+            try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: dir).appendingPathComponent("row-badge-\(badge ?? "none").png"))
+        }
         var data = [UInt8](repeating: 0, count: width * height * 4)
         let context = try XCTUnwrap(CGContext(data: &data, width: width, height: height, bitsPerComponent: 8,
                                               bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
                                               bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        // A bitmap context's memory starts at the top row, so index / side is the row from the top.
+        // A bitmap context's memory starts at the top row, so index / width is the row from the top.
         return (0 ..< height).flatMap { row in
             (0 ..< width).map { column in
                 let at = (row * width + column) * 4
