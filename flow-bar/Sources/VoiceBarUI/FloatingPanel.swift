@@ -188,6 +188,16 @@ public final class FloatingPillPanel: NSPanel {
     public var contextMenuHitTestProvider: ((NSPoint) -> Bool)?
     public var isPillDragEnabled = true
     private var dragStartWasInVisiblePill = false
+    /// Set once the panel is configured as a notch surface (C6 L2, Q-F02). A notch never moves its window: every
+    /// drag on it belongs to the notch's own gestures (the History/Settings pull, the grips). Later writes to
+    /// `isPillDragEnabled` or `isMovableByWindowBackground` (the app's mode-change handler wrote the anchor's
+    /// free-drag flag on every voice-mode change) cannot turn window dragging back on.
+    public private(set) var notchScreenKind: VoiceBarNotchScreenKind?
+
+    override public var isMovableByWindowBackground: Bool {
+        get { super.isMovableByWindowBackground }
+        set { super.isMovableByWindowBackground = notchScreenKind == nil && newValue }
+    }
 
     public init(content: NSView) {
         super.init(
@@ -272,11 +282,12 @@ public final class FloatingPillPanel: NSPanel {
     }
 
     public func shouldHandlePillDrag(startedInVisiblePill: Bool) -> Bool {
-        isPillDragEnabled && startedInVisiblePill
+        notchScreenKind == nil && isPillDragEnabled && startedInVisiblePill
     }
 
     /// Shared by the resident app and UIE2E host: notch gestures must never move the whole window.
     public func configureNotchDragging(screenKind: VoiceBarNotchScreenKind, allowsFreeDrag: Bool, mode: VoiceMode) {
+        notchScreenKind = screenKind
         if screenKind == .flatDisplayFallback {
             isPillDragEnabled = false
             isMovableByWindowBackground = false
