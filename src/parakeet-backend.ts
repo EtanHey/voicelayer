@@ -139,7 +139,7 @@ function uncoveredInternalSpeech(gaps: SpeechGap[], probabilities: number[], inf
 
 export interface ParakeetBackendDeps {
   fallbackBackend: STTBackend;
-  transcribe?: (path: string) => Promise<ParakeetResponse>;
+  transcribe?: (path: string, signal?: AbortSignal) => Promise<ParakeetResponse>;
   isAvailable?: () => boolean;
   unload?: () => Promise<void>;
   env?: () => NodeJS.ProcessEnv;
@@ -238,6 +238,7 @@ export class ParakeetBackend implements STTBackend {
         outcome: "VERIFIED_ZERO_PCM", fallbackEvidencePath, languageWarning, languageEvidence };
     };
     const fallback = async (reason: string, parakeet: unknown = null, parakeetErrorStatus?: string, parakeetCleanupFailure?: { name: string; message: string }): Promise<STTResult> => {
+      options?.signal?.throwIfAborted();
       if (info?.allZero) return zeroPCM(parakeet);
       if (!WHISPER_FAILURE_REASONS.has(reason) && !reason.startsWith("provider-")) throw new Error("Whisper requires a Parakeet failure");
       console.error(`[voicelayer] ${JSON.stringify({ event: "parakeet_fallback", reason, uncovered_spans_s: uncoveredSpans })}`);
@@ -250,6 +251,7 @@ export class ParakeetBackend implements STTBackend {
         // Never allocate Whisper while cleanup of our P model is unconfirmed.
         await (this.deps.unload ?? (() => parakeetServer.unload()))();
         noteRecognizerEngine("whisper", { phase: "loading", error: null }); noteRecognizerEffective("whisper", reason);
+        options?.signal?.throwIfAborted();
         const result = await this.deps.fallbackBackend.transcribe(inputPath, options);
         noteRecognizerEngine("whisper", { phase: result.backend.startsWith("whisper-server") ? "ready" : "sleeping", available: true, error: null });
         const probabilities = info && speechEvidence && sileroProbabilities(speechEvidence, info, inputSha256);
@@ -297,7 +299,7 @@ export class ParakeetBackend implements STTBackend {
     }
     let returned: ParakeetResponse | null = null;
     try {
-      const result = returned = await (this.deps.transcribe ?? (path => parakeetServer.transcribe(path)))(inputPath);
+      const result = returned = await (this.deps.transcribe ?? ((path, signal) => parakeetServer.transcribe(path, signal)))(inputPath, options?.signal);
       await finishLanguage();
       if (info.allZero) return zeroPCM(result);
       if ((result.attemptEvidence?.inputSha256 && result.attemptEvidence.inputSha256 !== inputSha256) ||
@@ -364,7 +366,7 @@ export class ParakeetBackend implements STTBackend {
             try {
               const clip = spanWav(inputBytes, info.dataOffset, plan, info.sampleRate);
               writeFileSync(clipPath, clip, { flag: "wx", mode: 0o400 });
-              repairParakeet = await (this.deps.transcribe ?? (path => parakeetServer.transcribe(path)))(clipPath);
+              repairParakeet = await (this.deps.transcribe ?? ((path, signal) => parakeetServer.transcribe(path, signal)))(clipPath, options?.signal);
               const clipInfo = parakeetWavInfo(clip);
               const risk = parakeetOutputRisk(repairParakeet, clipInfo);
               const evidence = repairParakeet.attemptEvidence;
@@ -404,6 +406,7 @@ export class ParakeetBackend implements STTBackend {
       return { text: result.text, backend: this.name, durationMs: Date.now() - started, outcome: "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN", languageWarning, languageEvidence, attemptEvidence: result.attemptEvidence };
     } catch (error) {
       if (error instanceof STTQualificationError || returned !== null) throw error;
+      if (options?.signal?.aborted) throw error;
       noteRecognizerEngine("parakeet", { phase: "error", error: error instanceof ParakeetServiceError && error.cleanupFailure ? "cleanup-unconfirmed" : "parakeet-provider-error" });
       // No retry of Parakeet after a provider/protocol error; owned child cleanup
       // belongs to the manager. The next request may cold-start a healthy child.

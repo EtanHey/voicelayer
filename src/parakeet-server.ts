@@ -211,7 +211,7 @@ export class ParakeetServer {
     } finally { child.pending.delete(id); clearTimeout(timer); }
   }
 
-  private async ensure(): Promise<Child> {
+  private async ensure(signal?: AbortSignal): Promise<Child> {
     assertRecognizerNotDownloading("parakeet");
     if (this.closed) throw new Error("Parakeet owner is shut down");
     if (!this.options.command && !this.options.canLaunch?.()) throw new Error("Parakeet must be owned by the VoiceBar MCP daemon");
@@ -219,6 +219,7 @@ export class ParakeetServer {
       if (this.child.proc.exitCode === null && !this.child.fault && !this.child.stopping) return this.child;
       await this.stopChild();
     }
+    signal?.throwIfAborted();
     migrateLegacyParakeetRuntime();
     const configured = this.options.command;
     const command = typeof configured === "function" ? configured() : configured ?? parakeetCommand();
@@ -265,10 +266,23 @@ export class ParakeetServer {
     });
   }
 
-  async transcribe(audioPath: string): Promise<ParakeetResponse> {
-    return this.residency.use(() => this.serial(async () => {
-      const child = await this.ensure();
+  async transcribe(audioPath: string, signal?: AbortSignal): Promise<ParakeetResponse> {
+    signal?.throwIfAborted();
+    let loading = true;
+    const cancelledLoad = Promise.withResolvers<never>();
+    const cancelLoad = () => { if (loading) cancelledLoad.reject(signal!.reason); };
+    signal?.addEventListener("abort", cancelLoad, { once: true });
+    const operation = this.residency.use(() => this.serial(async () => {
+      signal?.throwIfAborted();
+      const child = await this.ensure(signal);
+      loading = false;
+      // A timed-out waiter leaves the serialized owner load running for retry.
+      signal?.throwIfAborted();
+      const abort = () => { const child = this.child; if (child) { this.fail(child, new Error("Parakeet request cancelled")); try { child.proc.kill("SIGTERM"); } catch {} } };
+      signal?.addEventListener("abort", abort, { once: true });
       try {
+      try {
+        signal?.throwIfAborted();
         const result = await this.command(child, { op: "transcribe", audio_path: audioPath }, this.options.requestMs ?? 120_000);
         if (child.fault) throw child.fault;
         if (typeof result.text !== "string" || result.complete !== true || result.sample_rate !== 16000 ||
@@ -287,7 +301,10 @@ export class ParakeetServer {
         if (child.proc.exitCode !== null && child.proc.exitCode !== 0) throw new ParakeetServiceError("ERROR", result, "Parakeet child failed after response");
         return result as unknown as ParakeetResponse;
       } catch (error) { await this.stopPreserving(error); throw error; }
+      } finally { signal?.removeEventListener("abort", abort); }
     }));
+    try { return await (signal ? Promise.race([operation, cancelledLoad.promise]) : operation); }
+    finally { signal?.removeEventListener("abort", cancelLoad); }
   }
 
   private async stopChild(): Promise<void> {

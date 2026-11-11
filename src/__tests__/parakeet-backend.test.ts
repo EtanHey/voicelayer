@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { mkdirSync, writeFileSync, readFileSync, statSync, existsSync } from "fs";
 import { createHash } from "crypto";
 import { testTmp } from "./setup/test-tmp";
@@ -65,6 +65,14 @@ describe("opt-in resident Parakeet router", () => {
   });
   test("fallback remains available when P is absent", async () => {
     const { fallback } = setup(); const b = new ParakeetBackend({ fallbackBackend: fallback, isAvailable: () => false }); expect(await b.isAvailable()).toBe(true);
+  });
+  test("cancelled P request never launches Whisper fallback", async () => {
+    const controller = new AbortController(); const { fallback } = setup();
+    const call = spyOn(fallback, "transcribe");
+    const backend = new ParakeetBackend({ fallbackBackend: fallback, unload: async () => {},
+      transcribe: async () => { controller.abort(); throw new Error("cancelled"); } });
+    try { await expect(backend.transcribe(path, { signal: controller.signal })).rejects.toThrow(); expect(call).not.toHaveBeenCalled(); }
+    finally { call.mockRestore(); }
   });
   test("a continuity prompt cannot override the selected P backend", async () => {
     const { backend, calls } = setup(); expect((await backend.transcribe(path, { promptOverride: "previous phrase" })).backend).toBe("parakeet-resident"); expect(calls).toEqual(["P"]);

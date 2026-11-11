@@ -38,6 +38,7 @@ export interface STTPolishEnv {
 }
 
 export interface STTPolishInput {
+  signal?: AbortSignal;
   rawText: string;
   cleanedText: string;
   surface?: STTPolishSurface;
@@ -1579,6 +1580,7 @@ function polishFailureKind(error: unknown): STTPolishFailureKind {
 async function checkPolishEndpointHealth(
   endpoint: string,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<{ ok: true } | { ok: false; error: string; failureKind: STTPolishFailureKind }> {
   let healthEndpoint: string;
   try {
@@ -1598,7 +1600,7 @@ async function checkPolishEndpointHealth(
   try {
     const response = await fetch(healthEndpoint, {
       method: "GET",
-      signal: controller.signal,
+      signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
     });
     if (!response.ok) {
       return {
@@ -1634,7 +1636,7 @@ async function requestPolishOverHttp(
   cleanedText: string,
   env: STTPolishEnv,
   timeoutMs: number,
-  options: { retryReason?: STTPolishRetryReason } = {},
+  options: { retryReason?: STTPolishRetryReason; signal?: AbortSignal } = {},
 ): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -1642,7 +1644,7 @@ async function requestPolishOverHttp(
     const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
+      signal: options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal,
       body: JSON.stringify({
         model: getSTTPolishModel(env),
         messages: [
@@ -1786,7 +1788,9 @@ async function requestPolishOverSocket(
   socketPath: string,
   request: STTPolishSocketRequest,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<string> {
+  signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
     let settled = false;
     let connection: { end: () => void } | null = null;
@@ -1797,6 +1801,7 @@ async function requestPolishOverSocket(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
       writer?.close();
       try {
         connection?.end?.();
@@ -1813,14 +1818,17 @@ async function requestPolishOverSocket(
       reject(error);
     };
 
+    const abort = () => finishReject(signal!.reason);
     const timer = setTimeout(() => {
       finishReject(new PolishTransportError(`polish request timed out after ${timeoutMs}ms`, "timeout"));
     }, timeoutMs);
 
+    signal?.addEventListener("abort", abort, { once: true });
     Bun.connect<SocketOutboundQueue>({
       unix: socketPath,
       socket: {
         open(socket) {
+          if (settled) { socket.end(); return; }
           socket.data = new SocketOutboundQueue(socket, "stt-polish", undefined, () => {
             finishReject(new Error("polish socket write failed"));
           });
@@ -1882,6 +1890,7 @@ function writePolishLog(
   cleanedText: string,
   env: STTPolishEnv,
 ): void {
+  if (env.QA_VOICE_STT_POLISH_LOG === "0") return;
   const path = getSTTPolishLogPath(env);
   const row = `${JSON.stringify({
     created_at: new Date().toISOString(),
@@ -1913,15 +1922,21 @@ function writePolishLog(
 }
 
 export async function polishTranscriptionText(input: STTPolishInput): Promise<STTPolishResult> {
+  input.signal?.throwIfAborted();
   const env = input.env ?? processingEnv();
   if (getSTTPolishMode(env) === "off" || !input.cleanedText.trim() || getSTTPolishEndpoint(env) !== DEFAULT_POLISH_ENDPOINT) return polishTranscriptionTextReady(input);
   const { withSTTPolishServer } = await import("./stt-polish-server");
+  input.signal?.throwIfAborted();
+  const interrupted = Promise.withResolvers<never>();
+  const abort = () => interrupted.reject(input.signal!.reason);
+  input.signal?.addEventListener("abort", abort, { once: true });
   const startedAt = performance.now();
   const budget = getSTTPolishTimeoutMs(env, input.rawText.length > input.cleanedText.length ? input.rawText : input.cleanedText);
   const deadline = startedAt + budget;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
+      interrupted.promise,
       withSTTPolishServer(() => polishTranscriptionTextReady(input, startedAt, deadline), { env }),
       new Promise<STTPolishResult>(resolve => {
         timer = setTimeout(() => {
@@ -1937,10 +1952,11 @@ export async function polishTranscriptionText(input: STTPolishInput): Promise<ST
         }, budget);
       }),
     ]);
-  } finally { clearTimeout(timer); }
+  } finally { clearTimeout(timer); input.signal?.removeEventListener("abort", abort); }
 }
 
 async function polishTranscriptionTextReady(input: STTPolishInput, startedAt = performance.now(), deadlineOverride?: number): Promise<STTPolishResult> {
+  input.signal?.throwIfAborted();
   const env = input.env ?? processingEnv();
   const mode = getSTTPolishMode(env);
   const surface = input.surface ?? "dictation";
@@ -1992,6 +2008,7 @@ async function polishTranscriptionTextReady(input: STTPolishInput, startedAt = p
     const health = await checkPolishEndpointHealth(
       endpoint,
       Math.min(getSTTPolishHealthTimeoutMs(env), remainingMs()),
+      input.signal,
     );
     if (!health.ok) {
       const result = buildResult(
@@ -2013,6 +2030,7 @@ async function polishTranscriptionTextReady(input: STTPolishInput, startedAt = p
         input.cleanedText,
         env,
         remainingMs(),
+        { signal: input.signal },
       );
       const result = applyPolishCandidate(
         input.cleanedText,
@@ -2051,7 +2069,7 @@ async function polishTranscriptionTextReady(input: STTPolishInput, startedAt = p
                 input.cleanedText,
                 env,
                 remainingMs(),
-                { retryReason },
+                { retryReason, signal: input.signal },
               );
               latestResult = applyPolishCandidate(
                 input.cleanedText,
@@ -2116,7 +2134,7 @@ async function polishTranscriptionTextReady(input: STTPolishInput, startedAt = p
             input.cleanedText,
             env,
             remainingMs(),
-            { retryReason },
+            { retryReason, signal: input.signal },
           );
           const retryResult = applyPolishCandidate(
             input.cleanedText,
@@ -2180,6 +2198,7 @@ async function polishTranscriptionTextReady(input: STTPolishInput, startedAt = p
         surface,
       },
       getSTTPolishSocketTimeoutMs(env),
+      input.signal,
     );
     const result = applyPolishCandidate(
       input.cleanedText,

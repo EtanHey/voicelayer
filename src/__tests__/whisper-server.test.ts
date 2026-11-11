@@ -338,6 +338,26 @@ usage: whisper-server [options]
   });
 
   describe("ensureServer lifecycle", () => {
+    for (const abortLoad of [false, true]) it(`resident API lazily loads once; cancelled load=${abortLoad} keeps its child`, async () => {
+      const originalFetch = globalThis.fetch, ready = Promise.withResolvers<boolean>(), started = Promise.withResolvers<void>();
+      const exited = Promise.withResolvers<number>(), controller = new AbortController();
+      let loads = 0, kills = 0, inference = 0;
+      __resetWhisperServerStateForTests(null); __clearWhisperServerLaunchRecordForTests();
+      __setWhisperServerTestHooksForTests({ findServerBinary: () => "/fixture/whisper-server", findModel: () => "/fixture/model.bin",
+        spawn: () => { loads++; return { pid: 31342, exitCode: null, exited: exited.promise, stderr: null, kill: () => { kills++; exited.resolve(0); } }; },
+        isServerHealthy: async () => { if (!loads) return false; started.resolve(); return ready.promise; }, findPortListenerPids: () => loads ? [31342] : [] });
+      globalThis.fetch = (async () => Response.json({ text: "retained words" })) as typeof fetch;
+      try {
+        const pending = transcribeViaServer(makePcm16Wav(1), undefined, { residentOnly: true, signal: controller.signal, onInferenceStarted: () => inference++ });
+        await Promise.race([started.promise, pending.then(() => { throw new Error("inference preceded load"); })]);
+        if (abortLoad) { controller.abort(); await expect(pending).rejects.toThrow(); expect(kills).toBe(0); expect(inference).toBe(0); }
+        ready.resolve(true); await ensureServer();
+        if (!abortLoad) expect(await pending).toBe("retained words");
+        expect(await transcribeViaServer(makePcm16Wav(1), undefined, { residentOnly: true })).toBe("retained words");
+        expect(loads).toBe(1); expect(kills).toBe(0);
+      } finally { ready.resolve(true); await stopServerAndWait(); globalThis.fetch = originalFetch; __setWhisperServerTestHooksForTests({}); __resetWhisperServerStateForTests(null); __clearWhisperServerLaunchRecordForTests(); }
+    });
+
     it("fails promptly when a real child exits during startup", async () => {
       __setWhisperServerTestHooksForTests({
         findServerBinary: () => process.execPath,

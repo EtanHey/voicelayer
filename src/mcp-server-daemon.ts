@@ -28,6 +28,7 @@ import { recoverSpeechArchives, interruptLiveSpeech, flushSpeechArchives } from 
  */
 
 import { createSpeechControl, loadSpeechSecret } from "./speech-control";
+import { startTranscriptionsHttpIfEnabled } from "./transcriptions-http";
 import { getBackend, shutdownSTTBackends } from "./stt";
 import {
   DISABLE_VOICELAYER,
@@ -253,6 +254,7 @@ async function main() {
   });
 
   // Bootstrap only after connection setup; even its first lock attempt stays off the pre-connect path.
+  const transcriptions = startTranscriptionsHttpIfEnabled();
   void withFreshAsyncVoiceAdmission(() => warmSelectedRecognizer()).catch(() => {
     console.error("[voicelayer-daemon] Boot recognizer warm-up failed; dictation can retry");
   });
@@ -316,6 +318,7 @@ async function main() {
     unsubscribePolishStatus();
     stopSTTPolishServer();
     daemon.stop(); // Stop new admissions before cancelling/draining STT.
+    transcriptions?.stop(true);
     await shutdownSTTBackends();
     disconnectFromBar();
     await flushSpeechArchives();

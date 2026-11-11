@@ -23,6 +23,7 @@ import { join } from "path";
 import { calculateRMS } from "./audio-utils";
 import { resolveBinary, resolveBinaryAsync } from "./resolve-binary";
 import {
+  unloadOwnedServer, whisperServerLaunchRecord,
   shutdownWhisperServer,
   isServerAvailable,
   transcribeViaServer,
@@ -111,8 +112,10 @@ function residentBackendWithFallbackReason(
 }
 
 export interface STTTranscribeOptions extends TranscribeAudioOptions {
-  /** Cancel admission while an already admitted capture awaits maintenance. */
+  /** Cancellation stays request-scoped; it must never select another recognizer. */
   signal?: AbortSignal;
+  residentOnly?: boolean;
+  onWhisperInferenceStarted?: () => void;
   promptOverride?: string;
 }
 
@@ -2314,7 +2317,7 @@ export class WhisperCppBackend implements STTBackend {
         stdout: "pipe",
         stderr: "pipe",
         env,
-        ...(this.lifecycle.signal ? { signal: this.lifecycle.signal, killSignal: "SIGKILL" } : {}),
+        ...((this.lifecycle.signal || options?.signal) ? { signal: AbortSignal.any([this.lifecycle.signal, options?.signal].filter((s): s is AbortSignal => s !== undefined)), killSignal: "SIGKILL" } : {}),
       });
       if (this.lifecycle.signal) {
         const exited = proc.exited;
@@ -2327,6 +2330,7 @@ export class WhisperCppBackend implements STTBackend {
         new Response(proc.stderr).text(),
       ]);
       const exitCode = await proc.exited;
+      options?.signal?.throwIfAborted();
 
       if (exitCode !== 0) {
         throw new WhisperCliError({ stdout, stderr, exitCode });
@@ -2659,6 +2663,8 @@ export class WhisperServerBackend implements STTBackend {
           : {}),
       };
     } catch (err) {
+      options?.signal?.throwIfAborted();
+      if (options?.residentOnly && whisperServerLaunchRecord() && (await unloadOwnedServer(() => false)).outcome !== "accept") throw new Error("Whisper cleanup unconfirmed");
       console.error(
         `[voicelayer] whisper-server failed, falling back to whisper-cli: ${
           err instanceof Error ? err.message : String(err)
@@ -2782,6 +2788,7 @@ export class WhisperServerBackend implements STTBackend {
       const tailText = await this.transcribeResident(
         tailWav,
         buildWhisperServerOptions({
+          ...options,
           promptOverride: combinePromptOverride(
             options?.promptOverride,
             fullText,
@@ -3449,12 +3456,15 @@ export function buildWhisperServerOptions(
     .trim();
 
   const result: WhisperServerTranscribeOptions = {};
+  if (options?.signal) result.signal = options.signal;
+  if (options?.residentOnly) result.residentOnly = true;
+  if (options?.onWhisperInferenceStarted) result.onInferenceStarted = options.onWhisperInferenceStarted;
   const requestedLanguage = requestedLanguageCode(options?.detectedLanguage ?? options?.language);
   result.language = requestedLanguage ?? languageConfig.whisperLang;
   if (prompt) {
     result.prompt = prompt;
   }
-  return result.language || result.prompt ? result : undefined;
+  return result.language || result.prompt || result.signal ? result : undefined;
 }
 
 // --- Wispr Flow Backend ---
@@ -3629,7 +3639,7 @@ function observeRecognizerBackend<T extends STTBackend>(backend: T): T {
       return result;
     } catch (error) {
       // A cloud failure says nothing about either local engine's lifecycle.
-      if (!backend.name.startsWith("wispr")) {
+      if (!backend.name.startsWith("wispr") && !options?.signal?.aborted) {
         const engine = readRecognizerStatus().effective ?? (backend.name.startsWith("parakeet") ? "parakeet" : "whisper");
         if (readRecognizerStatus().engines[engine].error !== "cleanup-unconfirmed") noteRecognizerEngine(engine, { phase: "error", error: "transcription-failed" });
       }

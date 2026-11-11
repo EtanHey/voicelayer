@@ -615,20 +615,30 @@ describe("STT backends", () => {
       await Bun.write(wavPath, makePcm16Wav(31));
       const requestSizes: number[] = [];
       const prompts: Array<string | undefined> = [];
+      const signal = new AbortController().signal;
+      const admissions: unknown[] = [];
       const backend = new WhisperServerBackend({
         isServerAvailable: () => true,
         transcribeViaServer: async (wavData, options) => {
           requestSizes.push(wavData.byteLength);
           prompts.push(options?.prompt);
+          admissions.push([options?.signal, options?.residentOnly]);
           return requestSizes.length === 1
             ? "Let's plan the backfill migration"
             : "backfill migration. And lastly, how long do you think it'll take to do the backfill? Okay.";
         },
       });
 
-      const result = await backend.transcribe(wavPath);
+      const result = await backend.transcribe(wavPath, {
+        signal,
+        residentOnly: true,
+      });
 
       expect(requestSizes).toHaveLength(2);
+      expect(admissions).toEqual([
+        [signal, true],
+        [signal, true],
+      ]);
       expect(requestSizes[1]).toBeLessThan(requestSizes[0]);
       expect(prompts[1]).toContain("Let's plan the backfill migration");
       // Etan's ruling B (2026-10-19): tail verify is log-only, so the full-decode text stands.

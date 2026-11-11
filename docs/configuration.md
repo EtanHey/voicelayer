@@ -33,6 +33,37 @@ does not change existing saved values, environment overrides, or the Accurate de
 Saved preferences remain in `~/.local/state/voicelayer/whisper-performance.json`. Override
 per-process with `QA_VOICE_WHISPER_PERFORMANCE_EFFORT=fast|balanced|accurate`.
 
+## Transcription API (opt-in)
+
+Set `"transcriptions_enabled": true` in `~/.local/state/voicelayer/processing-settings.json`
+(or `$VOICELAYER_STATE_DIR/processing-settings.json`), preserving its other fields, then restart VoiceBar.
+This persists across login, reboot and update relaunch. Default is OFF; a defined
+`VOICELAYER_TRANSCRIPTIONS_ENABLED=1` or `0` overrides the saved setting. The daemon serves
+`http://127.0.0.1:8179/v1/audio/transcriptions` (override the port with
+`VOICELAYER_TRANSCRIPTIONS_PORT`). Only `127.0.0.1` binds are accepted.
+Configure T3's exact base string as `http://127.0.0.1:8179/v1`. Changing the port
+or any URL bytes requires granting client consent again.
+Use the dedicated token from `~/.voicelayer/transcriptions.secret`, or
+`$VOICELAYER_STATE_DIR/transcriptions.secret` when set, as the Bearer API key.
+It is generated on first enabled start with mode 0600; it does not unlock speech control.
+The same token is reused across restarts; restarting does not rotate it.
+POST multipart `file` (complete mono 16kHz PCM16 WAV, at most 25 MiB), optional
+`language` and `prompt`, and `response_format=json` (default) or `text`. The client
+language hint is ignored; VoiceLayer's own language settings remain authoritative.
+Any `model` is accepted and ignored, as are `languages[]` and `keywords[]`.
+JSON returns `{ "text": "..." }`.
+Busy voice work returns 409; retry once idle. Uploads use the current recognizer,
+dictionary, punctuation, polish and paragraphs without capture, paste or playback.
+Disable duplicate cleanup in the client. Accepted WAVs are saved before inference
+in the existing History archive, including failures, with `upload_source: "t3"`
+metadata; the existing VoiceBar source discriminator/UI is unchanged. Temporary
+multipart data stays in memory; upload text is excluded from polish logs.
+An unloaded model loads through the same single owner used by live dictation.
+Missing/downloading assets or unconfirmed cleanup return 503 with retained audio.
+A 100-second request budget leaves cleanup time before T3's two-minute timeout.
+Disconnects/timeouts retain a failure receipt; an ongoing load continues for retry.
+Set the saved setting to false (and remove any enable override), then restart to close the endpoint.
+
 ## Testing
 
 ```bash
