@@ -616,6 +616,7 @@ public struct SettingsView: View {
         let rowID: String
     }
     @State private var termRemoval: TermRemoval?
+    @State private var removalEscapeClaim = UUID()
     @FocusState private var focusedTermAction: String?
     /// The last Set up / Reinstall: which one ran, and its result (nil while it runs).
     @State private var relaySetupFeedback: (
@@ -2583,22 +2584,37 @@ public struct SettingsView: View {
                     }
                 }
             }
+            if let removal = termRemoval {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Delete term?").font(.system(size: 13, weight: .semibold))
+                    Text("Remove “\(removal.canonical)” from your dictionary?")
+                        .font(SettingsRowLabel.descriptionFont).foregroundStyle(SettingsPanePalette.helper)
+                    HStack {
+                        Spacer()
+                        Button("Cancel") { termRemoval = nil }
+                        Button("Delete", role: .destructive) {
+                            termRemoval = nil
+                            deleteTerm(removal.canonical, rowID: removal.rowID)
+                        }
+                    }
+                }
+                .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                .background(.bar)
+                .onAppear {
+                    if notchEmbeddedTab != nil {
+                        NotchEscapeOwnership.shared.claim(removalEscapeClaim) { termRemoval = nil }
+                    }
+                }
+                .onDisappear { NotchEscapeOwnership.shared.release(removalEscapeClaim) }
+                .onExitCommand { termRemoval = nil }
+                .accessibilityIdentifier("dictionary-delete-confirmation")
+            }
             if let pendingDeletion {
                 dictionaryUndoBar(pendingDeletion)
                     .transition(reduceMotion
                         ? AnyTransition.opacity
                         : AnyTransition.opacity.combined(with: .move(edge: .bottom)))
             }
-        }
-        .alert("Delete term?", isPresented: Binding(get: { termRemoval != nil }, set: { if !$0 { termRemoval = nil } }),
-               presenting: termRemoval) { removal in
-            Button("Cancel", role: .cancel) { termRemoval = nil }
-            Button("Delete", role: .destructive) {
-                termRemoval = nil
-                deleteTerm(removal.canonical, rowID: removal.rowID)
-            }
-        } message: { removal in
-            Text("Remove “\(removal.canonical)” from your dictionary? You can undo this for four seconds.")
         }
         .animation(reduceMotion ? .easeOut(duration: 0.15) : .easeOut(duration: 0.2), value: pendingDeletion)
         .task(id: pendingDeletion?.deadline) {
@@ -3225,7 +3241,7 @@ public struct SettingsView: View {
     }
 
     private var hasPendingDictionaryEdit: Bool {
-        termSheet != nil || pendingDeletion != nil
+        termSheet != nil || pendingDeletion != nil || termRemoval != nil
     }
 
     /// Arriving on the tab never finds an editor already open (UI pass #17: the first row was).

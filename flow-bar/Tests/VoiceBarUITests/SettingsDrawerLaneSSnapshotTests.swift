@@ -59,7 +59,7 @@ final class SettingsDrawerLaneSSnapshotTests: XCTestCase {
             openAtLogin: SettingsToggleInput(isOn: { true }, set: { _ in }),
             mouseSideButtons: SettingsToggleInput(isOn: { true }, set: { _ in }),
             initialTab: tab,
-            initialAdvancedExpanded: advanced
+            initialAdvancedExpanded: advanced, installedVersion: .init(version: "2.4.0", commit: "8e1d535")
         )
     }
 

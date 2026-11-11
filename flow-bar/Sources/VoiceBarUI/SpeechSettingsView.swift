@@ -58,7 +58,6 @@ public struct SpeechSettingsView: View {
                             }
                             .accessibilityIdentifier("speech-\(kind.rawValue)-latency")
                             .help(profile.latencyLabel + ". Time from requesting speech until its first sound.")
-                            .settingsLockedReasonBubble()
                             SettingsRow(title: "Rate", textMinWidth: Self.rateTitleWidth) {
                                 rateControl(kind, profile: profile, controls: controls)
                             }
@@ -105,6 +104,8 @@ public struct SpeechSettingsView: View {
         }
         .onChange(of: controls?.shortLimit) { _, limit in thresholdDraft.reconcile(limit) }
         .formStyle(.grouped)
+        // Draw above the Form, so short Voice rows cannot clip the reason at the card edge.
+        .settingsLockedReasonBubble()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("speech-settings-form")
     }
@@ -138,7 +139,7 @@ public struct SpeechSettingsView: View {
                 .controlSize(.small).fixedSize()
                 .disabled(!canApply)
                 .accessibilityIdentifier("speech-threshold-apply")
-                .settingsLockedReason(canApply ? nil : blocked, stateLabel: nil)
+                .settingsLockedReason(canApply ? nil : blocked, stateLabel: nil, lift: 16)
                 Button("Revert") { thresholdDraft.revert() }
                     .controlSize(.small).fixedSize()
                     .help(SpeechThresholdDraft.revertHelp + " " + SpeechThresholdDraft.reportStatus)
@@ -148,7 +149,6 @@ public struct SpeechSettingsView: View {
             }
             .help(SpeechThresholdDraft.confirmedLabel(controls?.shortLimit))
             .accessibilityIdentifier("speech-threshold-applied")
-            .settingsLockedReasonBubble()
         }
     }
 

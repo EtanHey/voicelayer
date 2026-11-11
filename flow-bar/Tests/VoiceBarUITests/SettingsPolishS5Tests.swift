@@ -14,12 +14,12 @@ final class SettingsPolishS5Tests: XCTestCase {
         if tab == .speech || tab == .dictionary { return SettingsDrawerLaneS3Tests.pane(tab) }
         return SettingsDrawerLaneSSnapshotTests.pane(tab, advanced: true)
     }
-    static func drawer(_ tab: SettingsTab, light: Bool = false) -> some View {
+    static func drawer(_ tab: SettingsTab, light: Bool = false, updates: NotchUpdateController? = nil) -> some View {
         NotchSettingsDrawer(selectedTab: tab, appearance: light ? .light : .dark,
-            context: .init(updates: nil, pane: { tab, _ in AnyView(pane(tab).notchDrawerPane(tab)) }), onSelectTab: { _ in })
+            context: .init(updates: updates, pane: { tab, _ in AnyView(pane(tab).notchDrawerPane(tab)) }), onSelectTab: { _ in })
     }
     static func render(_ view: some View, width: CGFloat = 420, height: CGFloat = 1100,
-                       light: Bool = false, name: String? = nil) throws -> NSBitmapImageRep {
+                       light: Bool = false, name: String? = nil, scrollOffset: CGFloat? = nil) throws -> NSBitmapImageRep {
         let framed = VStack(spacing: 0) {
             view.frame(width: width, height: height)
             Text("M1 synthetic · macOS 26: native glass unavailable")
@@ -37,6 +37,14 @@ final class SettingsPolishS5Tests: XCTestCase {
         VLOrderTestWindow(window)
         host.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(1.0))
+        if let offset = scrollOffset, let scroll = SettingsDrawerLaneSSnapshotTests.scrollViews(in: host).first,
+           let document = scroll.documentView {
+            let end = max(0, document.bounds.height - scroll.contentView.bounds.height)
+            let y = document.isFlipped ? min(offset, end) : end - min(offset, end)
+            scroll.contentView.scroll(to: CGPoint(x: 0, y: y))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        }
         let bitmap = try EtanQA0510Tests.fixedScaleBitmap(host)
         if let name {
             try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
@@ -53,19 +61,28 @@ final class SettingsPolishS5Tests: XCTestCase {
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string.lowercased() }
             .filter { !$0.hasPrefix("m1 synthetic") }
     }
-    func testCaptureAllChangedPanes() throws {
+    func testCaptureAllChangedPanes() async throws {
+        let updates = await SettingsDrawerLaneSSnapshotTests.updates()
         for tab in [SettingsTab.general, .transcription, .speech, .dictionary] {
-            _ = try Self.render(Self.drawer(tab), height: tab == .general ? 1500 : 1100, name: "\(tab.title.lowercased())-drawer-dark")
+            _ = try Self.render(Self.drawer(tab, updates: tab == .general ? updates : nil), height: tab == .general ? 1500 : 1100, name: "\(tab.title.lowercased())-drawer-dark")
             _ = try Self.render(Self.pane(tab), width: 780, height: tab == .general ? 1500 : 1100, name: "\(tab.title.lowercased())-window-dark")
         }
+        for tab in [SettingsTab.speech, .dictionary] {
+            _ = try Self.render(Self.drawer(tab), height: 470, name: "\(tab.title.lowercased())-scrolled", scrollOffset: 150)
+        }
+        _ = try Self.render(Self.drawer(.speech).environment(\.settingsHoverPreview,
+            SettingsHoverPreview(lockedReasons: true)), name: "speech-hover")
         _ = try Self.render(Self.drawer(.transcription, light: true), light: true, name: "transcription-drawer-light")
         _ = try Self.render(Self.pane(.transcription), width: 780, light: true, name: "transcription-window-light")
     }
     func testDictionaryLoadingAndEmptyStatesUseCompactRows() throws {
         for loaded in [false, true] {
             let preview = STTVocabularyPreview(updatedAt: nil, entries: [])
+            let loadingGate = DispatchSemaphore(value: 0)
+            defer { loadingGate.signal() }
             let pane = SettingsView(hotkeyEnabled: true, missingPermissions: [], availableDevices: { [] },
                 selectedDeviceID: { nil }, modelsStatus: { .loading }, onRefreshModelsStatus: {},
+                vocabularyPreview: { if !loaded { loadingGate.wait() }; return preview },
                 vocabularyRevision: { 0 }, initialTab: .dictionary,
                 initialDictionaryPreview: loaded ? preview : nil)
             let lines = try Self.ocr(Self.render(pane.notchDrawerPane(.dictionary), height: 470,

@@ -88,6 +88,69 @@ final class SettingsRowActionFocusTests: XCTestCase {
         }
     }
 
+    func testDictionaryDeletionRequiresConfirmationAndCancelAndUndoKeepTheTerm() throws {
+        var removed: [String] = []
+        let preview = STTVocabularyPreview(updatedAt: "2026-11-11T00:00:00Z", entries: [
+            STTDictionaryEntry(canonical: "Kubernetes", variants: []),
+            STTDictionaryEntry(canonical: "TypeScript", variants: [])])
+        let pane = SettingsView(hotkeyEnabled: true, missingPermissions: [], availableDevices: { [] },
+            selectedDeviceID: { nil }, modelsStatus: { .loading }, onRefreshModelsStatus: {},
+            vocabularyPreview: { preview }, vocabularyRevision: { 0 }, onRemovePromptTerm: { removed.append($0) },
+            initialTab: .dictionary, initialDictionaryPreview: preview)
+        try withHost(pane, tab: .dictionary) { host, window in
+            try clickAX("Kubernetes", in: host)
+            try pressSpace(window)
+            XCTAssertFalse(try lines(host).contains { $0.text.contains("delete term?") })
+            XCTAssertTrue(removed.isEmpty)
+            try window.sendEvent(key("\u{7f}", code: 51, window: window))
+            settle()
+            XCTAssertTrue(try lines(host).contains { $0.text.contains("delete term?") })
+            XCTAssertTrue(removed.isEmpty, "Asking does not remove the term")
+            try save(host, as: "after-dictionary-delete-confirmation")
+            try clickAX("Cancel", in: host)
+            XCTAssertFalse(try lines(host).contains { $0.text.contains("delete term?") })
+            XCTAssertTrue(try lines(host).contains { $0.text == "kubernetes" })
+            try clickAX("Kubernetes", in: host)
+            try window.sendEvent(key("\u{7f}", code: 51, window: window))
+            settle()
+            try clickAX("Delete", in: host)
+            XCTAssertTrue(try lines(host).contains { $0.text.contains("undo") })
+            XCTAssertFalse(try lines(host).contains { $0.text == "kubernetes" })
+            XCTAssertTrue(removed.isEmpty, "Confirmation starts the existing undo interval")
+            try clickAX("Undo", in: host)
+            XCTAssertTrue(try lines(host).contains { $0.text == "kubernetes" })
+            XCTAssertTrue(removed.isEmpty, "Undo sends no removal")
+            try save(host, as: "after-dictionary-undo")
+            try clickAX("Edit term Kubernetes", in: host)
+            XCTAssertTrue(try lines(host).contains { $0.text.contains("edit term") })
+            try save(host, as: "after-dictionary-editor")
+            try clickAX("Cancel", in: host)
+        }
+    }
+
+    private func axElements(_ root: Any, depth: Int = 0) -> [NSObject] {
+        guard depth < 30, let object = root as? NSObject,
+              object.responds(to: NSSelectorFromString("accessibilityRole")) else { return [] }
+        let children = object.value(forKey: "accessibilityChildren") as? [Any] ?? []
+        return [object] + children.flatMap { axElements($0, depth: depth + 1) }
+    }
+
+    private func clickAX(_ label: String, in host: NSView) throws {
+        let objects = axElements(host)
+        let node = try XCTUnwrap(objects.first { ($0.value(forKey: "accessibilityLabel") as? String) == label },
+                                "Missing \(label): \(objects.compactMap { $0.value(forKey: "accessibilityLabel") })")
+        let rect = try XCTUnwrap(node.value(forKey: "accessibilityFrame") as? NSValue).rectValue
+        let window = try XCTUnwrap(host.window)
+        let local = window.convertFromScreen(rect)
+        let point = CGPoint(x: local.midX, y: local.midY)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            window.sendEvent(try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: 1)))
+        }
+        settle()
+    }
+
     private func microphonePane(recording: Bool = false, reorder: @escaping ([String]) -> Void) -> SettingsView {
         SettingsView(hotkeyEnabled: true, missingPermissions: [], availableDevices: { [] }, selectedDeviceID: { nil },
             prioritySnapshot: { SettingsDrawerLaneSSnapshotTests.micSnapshot() }, onReorderPriority: reorder,

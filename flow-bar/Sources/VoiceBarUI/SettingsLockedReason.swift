@@ -9,12 +9,13 @@ struct SettingsLockedReasonPreference {
     let reason: String
     let bounds: Anchor<CGRect>
     let isShown: Bool
+    var lift: CGFloat = SettingsLockedReasonMotion.lift
 }
 
 struct SettingsLockedReasonKey: PreferenceKey {
-    static let defaultValue: SettingsLockedReasonPreference? = nil
-    static func reduce(value: inout SettingsLockedReasonPreference?, nextValue: () -> SettingsLockedReasonPreference?) {
-        value = value ?? nextValue()
+    static let defaultValue: [SettingsLockedReasonPreference] = []
+    static func reduce(value: inout [SettingsLockedReasonPreference], nextValue: () -> [SettingsLockedReasonPreference]) {
+        value += nextValue()
     }
 }
 
@@ -31,6 +32,7 @@ enum SettingsLockedReasonMotion {
 struct SettingsLockedReasonSource: ViewModifier {
     let reason: String?
     var stateLabel: String? = "Locked"
+    var lift: CGFloat = SettingsLockedReasonMotion.lift
     @FocusState private var isFocused: Bool
     @Environment(\.settingsHoverPreview) private var hoverPreview
     @State private var isHovered = false
@@ -65,7 +67,7 @@ struct SettingsLockedReasonSource: ViewModifier {
                 }
             }
             .anchorPreference(key: SettingsLockedReasonKey.self, value: .bounds) { anchor in
-                reason.map { SettingsLockedReasonPreference(reason: $0, bounds: anchor, isShown: isHovered || isFocused || hoverPreview.lockedReasons) }
+                reason.map { [SettingsLockedReasonPreference(reason: $0, bounds: anchor, isShown: isHovered || isFocused || hoverPreview.lockedReasons, lift: lift)] } ?? []
             }
             .modifier(OptionalAccessibilityHint(text: reason))
             .onChange(of: reason) { _, new in if new == nil { hover(false) } }
@@ -93,15 +95,17 @@ struct SettingsLockedReasonBubbleHost: ViewModifier {
     func body(content: Content) -> some View {
         content.overlayPreferenceValue(SettingsLockedReasonKey.self) { preference in
             GeometryReader { proxy in
-                if let preference, preference.isShown {
+                ForEach(Array(preference.enumerated()), id: \.offset) { _, preference in
+                  if preference.isShown {
                     let rect = proxy[preference.bounds]
                     SettingsReasonBubble(text: preference.reason)
                         .frame(width: rect.maxX, alignment: .trailing)
-                        .offset(y: rect.minY - SettingsReasonBubble.height - SettingsLockedReasonMotion.lift)
+                        .offset(y: rect.minY - SettingsReasonBubble.height - preference.lift)
                         .transition(reduceMotion ? .opacity
                             : .opacity.combined(with: .scale(scale: 0.97, anchor: .bottomTrailing)))
                         .allowsHitTesting(false)
                         .accessibilityHidden(true) // the switch carries it as its hint
+                  }
                 }
             }
         }
@@ -154,8 +158,9 @@ struct OptionalAccessibilityHint: ViewModifier {
 
 extension View {
     /// The switch side: `reason` non-nil means the switch is locked and hovering it shows why.
-    func settingsLockedReason(_ reason: String?, stateLabel: String? = "Locked") -> some View {
-        modifier(SettingsLockedReasonSource(reason: reason, stateLabel: stateLabel))
+    func settingsLockedReason(_ reason: String?, stateLabel: String? = "Locked",
+                              lift: CGFloat = SettingsLockedReasonMotion.lift) -> some View {
+        modifier(SettingsLockedReasonSource(reason: reason, stateLabel: stateLabel, lift: lift))
     }
 
     /// The row side: put this after the row's dimming so the bubble is not dimmed with it.

@@ -71,7 +71,7 @@ final class SettingsDrawerLaneS3Tests: XCTestCase {
             speechControls: { controls }, speechConnected: { true }, speechBusyReason: { busyReason },
             onChangeSpeech: { _, _ in }, onSelectSpeechEngine: { _, _, _ in }, onPreviewSpeech: { _ in },
             vocabularyPreview: { preview }, vocabularyRevision: { 0 },
-            initialTab: tab, initialDictionaryPreview: preview
+            initialTab: tab, initialDictionaryPreview: preview, installedVersion: .init(version: "2.4.0", commit: "8e1d535")
         )
     }
 

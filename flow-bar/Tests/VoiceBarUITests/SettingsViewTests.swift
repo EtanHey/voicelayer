@@ -113,18 +113,6 @@ final class SettingsViewTests: XCTestCase {
         XCTAssertLessThan(editable.lowerBound, pencil.lowerBound)
     }
 
-    /// U3 spec: the trash deletes at once and offers a 4 s Undo; there is no "Delete?" confirm step any more.
-    func testTrashDeletesWithUndoInsteadOfAConfirmStep() throws {
-        let source = try settingsViewSource()
-        let deleteButtonSource = try XCTUnwrap(source.functionBody(named: "deleteDictionaryEntryButton"))
-
-        XCTAssertTrue(deleteButtonSource.contains("deleteTerm(canonical, rowID: rowID)"))
-        XCTAssertFalse(source.contains("Button(\"Delete?\""))
-        XCTAssertFalse(source.contains("pendingDeleteCanonical"))
-        XCTAssertTrue(source.contains("Button(\"Undo\") { undoDeletion() }"))
-        XCTAssertTrue(source.contains(".onDeleteCommand { deleteSelectedTerm() }"))
-    }
-
     func testDictionaryDoesNotRenderOldSplitSections() throws {
         let source = try settingsViewSource()
 
