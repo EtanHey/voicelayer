@@ -52,7 +52,38 @@ public enum VoiceBarBackingScaleSynchronizer {
         guard let layer else { return }
         layer.contentsScale = scale
         layer.sublayers?.forEach { apply(scale, to: $0) }
+        // N12: only a layer that owns its drawing is asked to draw again. One whose contents were handed to it
+        // has nothing to draw with, so `setNeedsDisplay()` empties it. SwiftUI's SF Symbol `ImageLayer` is such
+        // a layer (every symbol on macOS 27, the bitmap ones on macOS 26): SwiftUI refills it only when that one
+        // glyph next changes. This pass runs after every panel layout change, so the drawer's tab icons vanished
+        // until their tab was selected.
+        guard canRedraw(layer) else { return }
         layer.setNeedsDisplay()
+    }
+
+    /// Redraw ownership, not what the contents are (R886). A layer that can render itself is re-rendered at the
+    /// new scale even when it currently holds an image.
+    /// - A view's backing layer follows its view: `layerContentsRedrawPolicy == .never` is AppKit's contract
+    ///   for "never mark this layer for display, its contents are managed". In the live panel SwiftUI's
+    ///   `ImageLayer` belongs to an `_NSGraphicsView` that declares exactly that and overrides no drawing
+    ///   method; its text `CGDrawingView`, button bezels and labels declare a redrawing policy.
+    /// - Any other layer draws when its class overrides `display()` or `draw(in:)`, or its delegate implements
+    ///   `display(_:)` or `draw(_:in:)` (the scroller's knob is such a layer). A bare `ImageLayer` under
+    ///   `_SwiftUILayerDelegate`, as an offscreen host makes it, has neither.
+    /// Measured on macOS 26.5 and 27.0.
+    static func canRedraw(_ layer: CALayer) -> Bool {
+        if let view = layer.delegate as? NSView, view.layer === layer {
+            return view.layerContentsRedrawPolicy != .never
+        }
+        let layerClass: AnyClass = type(of: layer)
+        for selector in [#selector(CALayer.display), #selector(CALayer.draw(in:))]
+            where class_getMethodImplementation(layerClass, selector)
+            != class_getMethodImplementation(CALayer.self, selector) {
+            return true
+        }
+        guard let delegate = layer.delegate else { return false }
+        return delegate.responds(to: #selector(CALayerDelegate.display(_:)))
+            || delegate.responds(to: #selector(CALayerDelegate.draw(_:in:)))
     }
 
     private static func layerScales(in layer: CALayer?) -> [CGFloat] {

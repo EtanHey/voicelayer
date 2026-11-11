@@ -10,7 +10,7 @@
     "formal/idle-wings/MutantNoResume.cfg": "b16f546b1729de2adea5b5fbdaa60eb44ae298a6a94e60a85bc5325668b26ddf",
     "formal/idle-wings/Fixed.cfg": "3b502f7dd707b735a8838b2e942ecb303227c20edbf12c11063070aeae375996",
     "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "e23414d8b9dce29b38292f2ab265a52d2a38fc1839e0fdc916c813455a453b3e",
-    "flow-bar/Sources/VoiceBarUI/FloatingPanel.swift": "ddc9c2625d83261eefa07011719aac70ee165faf3b152bd6d673718f5c1dc33d",
+    "flow-bar/Sources/VoiceBarUI/FloatingPanel.swift": "08674e470d0f05413d718198df92bb02b85be935d49cbc62de782cc3466e8885",
     "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "72b1f673796430d1fc504fb8d3f75c12a7b4b482f9c9f547ac6c0e41b82ed973",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
