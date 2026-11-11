@@ -67,31 +67,10 @@ final class SettingsViewTests: XCTestCase {
 
     // MARK: - Dictionary canonical cards
 
-    func testDictionaryCardsExposeDeleteAffordance() throws {
-        let source = try settingsViewSource()
-
-        XCTAssertTrue(
-            source.contains("deleteDictionaryEntryButton"),
-            "each canonical term card needs a delete affordance (shown on hover or selection; U3 spec)"
-        )
-    }
-
-    /// U3 spec, lane S PR 3: a term's misheard spellings ("Also heard as …") follow it on the same line as helper
-    /// text, only when it has some, and wrap rather than clip (Etan's video, 299.8 s: tall two-line rows).
-    func testVariantSummaryIsTheRowDescriptionOnlyWhenThereAreVariants() throws {
-        let source = try settingsViewSource()
-        let header = try XCTUnwrap(source.functionBody(named: "dictionaryEntryHeader"))
-        let line = try XCTUnwrap(source.components(separatedBy: "static func dictionaryTermLine(").dropFirst().first?
-            .components(separatedBy: "\n    }\n").first)
-
-        XCTAssertTrue(header.contains("Self.dictionaryTermLine(entry)"))
-        XCTAssertTrue(line.contains("if !entry.variants.isEmpty"))
-        XCTAssertTrue(line.contains("variantSummary(entry.variants)"))
-        XCTAssertFalse(line.contains(".lineLimit(1)"))
-        XCTAssertEqual(
-            SettingsView.variantSummary(["voice lair", "voice layer"]),
-            "Also heard as voice lair, voice layer"
-        )
+    /// The full list remains available for help/accessibility while the compact row previews one variant.
+    func testVariantSummaryPreservesEveryVariant() {
+        XCTAssertEqual(SettingsView.variantSummary(["voice lair", "voice layer"]),
+                       "Also heard as voice lair, voice layer")
     }
 
     func testBundledDictionaryRowsHaveNoEditAffordance() throws {

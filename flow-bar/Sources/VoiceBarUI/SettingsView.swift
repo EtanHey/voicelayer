@@ -883,8 +883,8 @@ public struct SettingsView: View {
         _microphoneDrag = State(initialValue: initialMicrophoneDrag)
         // The list is there on the first frame instead of flashing "No known input devices" until onAppear.
         _microphoneSnapshot = State(initialValue: prioritySnapshot())
-        _includedTermsExpanded = State(initialValue: initialIncludedTermsExpanded)
-        _yourTermsExpanded = State(initialValue: initialYourTermsExpanded)
+        _includedTermsExpanded = State(initialValue: initialIncludedTermsExpanded || !Self.dictionaryQuery(initialDictionarySearch).isEmpty)
+        _yourTermsExpanded = State(initialValue: initialYourTermsExpanded || !Self.dictionaryQuery(initialDictionarySearch).isEmpty)
         _selectedTermRowID = State(initialValue: initialSelectedTermRowID)
         _selectedHistoryScope = State(initialValue: initialHistoryScope)
         if let historyPlayback {
@@ -2503,7 +2503,7 @@ public struct SettingsView: View {
                         SettingsDisclosureHeader(yourTermsTitle, isExpanded: $yourTermsExpanded)
                             .font(Self.dictionaryGroupFont)
                             .help(yourTermsExpanded ? "Collapse your terms" : "Show your terms")
-                        if yourTermsExpanded || isSearching {
+                        if yourTermsExpanded {
                             switch Self.dictionaryPlaceholder(
                                 loaded: hasLoadedDictionaryOnce, personalIsEmpty: personal.isEmpty,
                                 searching: isSearching
@@ -2546,7 +2546,7 @@ public struct SettingsView: View {
                         if includedHeader.showsChevron, includedTermsExpanded, !isSearching {
                             includedTermsSummary(expanded: includedTermsExpanded)
                         }
-                        if includedTermsExpanded || isSearching {
+                        if includedTermsExpanded {
                             ForEach(included, id: \.rowID) { row in
                                 dictionaryEntryCard(row.entry, rowID: row.rowID, isEditable: false)
                                 Divider()
@@ -2592,10 +2592,13 @@ public struct SettingsView: View {
                     HStack {
                         Spacer()
                         Button("Cancel") { termRemoval = nil }
+                            .focusable(interactions: .edit)
+                            .onKeyPress(.space) { termRemoval = nil; return .handled }
                         Button("Delete", role: .destructive) {
-                            termRemoval = nil
-                            deleteTerm(removal.canonical, rowID: removal.rowID)
+                            confirmTermRemoval()
                         }
+                        .focusable(interactions: .edit)
+                        .onKeyPress(.space) { confirmTermRemoval(); return .handled }
                     }
                 }
                 .padding(12).frame(maxWidth: .infinity, alignment: .leading)
@@ -2629,6 +2632,12 @@ public struct SettingsView: View {
                 saveTermSheet(saved)
             }, onCancel: { termSheet = nil })
         })
+        .onChange(of: dictionarySearch) { _, search in
+            if !Self.dictionaryQuery(search).isEmpty {
+                yourTermsExpanded = true
+                includedTermsExpanded = true
+            }
+        }
         .onChange(of: termSheet) { _, sheet in
             // A save could re-add the very term waiting for its Undo window; send that removal first.
             if sheet != nil { DictionaryDeletion.commitNow(pending: &pendingDeletion, commit: commitDeletion) }
@@ -2810,6 +2819,11 @@ public struct SettingsView: View {
                     .buttonStyle(.borderless)
                     .foregroundStyle(SettingsPanePalette.helper)
                     .focusable(isSelected, interactions: .edit)
+                    .onKeyPress(.space) {
+                        guard isSelected else { return .ignored }
+                        termSheet = DictionaryTermEdit(original: entry)
+                        return .handled
+                    }
                     .help("Edit term")
                     .accessibilityLabel("Edit term \(entry.canonical)")
                 }
@@ -2839,6 +2853,12 @@ public struct SettingsView: View {
         .frame(minHeight: DictionaryCardLayout.headerHeight)
     }
 
+    private func confirmTermRemoval() {
+        guard let removal = termRemoval else { return }
+        termRemoval = nil
+        deleteTerm(removal.canonical, rowID: removal.rowID)
+    }
+
     private func requestTermRemoval(_ canonical: String, rowID: String) {
         guard termRemoval == nil else { return }
         termRemoval = TermRemoval(canonical: canonical, rowID: rowID)
@@ -2846,12 +2866,11 @@ public struct SettingsView: View {
 
     /// The rows arrow keys move through, in display order.
     private var visibleTermRowIDs: [String] {
-        let isSearching = !Self.dictionaryQuery(dictionarySearch).isEmpty
         var rows: [String] = []
-        if yourTermsExpanded || isSearching {
+        if yourTermsExpanded {
             rows += dictionaryDisplayIndex.entries(source: "personal", matching: dictionarySearch).map(\.rowID)
         }
-        if includedTermsExpanded || isSearching {
+        if includedTermsExpanded {
             rows += dictionaryDisplayIndex.entries(source: "bundled", matching: dictionarySearch).map(\.rowID)
         }
         return rows

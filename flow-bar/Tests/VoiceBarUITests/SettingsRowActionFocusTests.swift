@@ -96,9 +96,9 @@ final class SettingsRowActionFocusTests: XCTestCase {
         let pane = SettingsView(hotkeyEnabled: true, missingPermissions: [], availableDevices: { [] },
             selectedDeviceID: { nil }, modelsStatus: { .loading }, onRefreshModelsStatus: {},
             vocabularyPreview: { preview }, vocabularyRevision: { 0 }, onRemovePromptTerm: { removed.append($0) },
-            initialTab: .dictionary, initialDictionaryPreview: preview)
+            initialTab: .dictionary, initialDictionaryPreview: preview, initialSelectedTermRowID: "personal:Kubernetes")
         try withHost(pane, tab: .dictionary) { host, window in
-            try clickAX("Kubernetes", in: host)
+            try focusList(window, in: host)
             try pressSpace(window)
             XCTAssertFalse(try lines(host).contains { $0.text.contains("delete term?") })
             XCTAssertTrue(removed.isEmpty)
@@ -107,48 +107,63 @@ final class SettingsRowActionFocusTests: XCTestCase {
             XCTAssertTrue(try lines(host).contains { $0.text.contains("delete term?") })
             XCTAssertTrue(removed.isEmpty, "Asking does not remove the term")
             try save(host, as: "after-dictionary-delete-confirmation")
-            try clickAX("Cancel", in: host)
+            XCTAssertTrue(NotchEscapeOwnership.shared.cancelNewest())
+            settle()
             XCTAssertFalse(try lines(host).contains { $0.text.contains("delete term?") })
             XCTAssertTrue(try lines(host).contains { $0.text == "kubernetes" })
-            try clickAX("Kubernetes", in: host)
+            try focusList(window, in: host)
             try window.sendEvent(key("\u{7f}", code: 51, window: window))
             settle()
-            try clickAX("Delete", in: host)
+            try activatePainted("Delete", in: host, window: window)
             XCTAssertTrue(try lines(host).contains { $0.text.contains("undo") })
             XCTAssertFalse(try lines(host).contains { $0.text == "kubernetes" })
             XCTAssertTrue(removed.isEmpty, "Confirmation starts the existing undo interval")
-            try clickAX("Undo", in: host)
+            try save(host, as: "after-dictionary-pending-undo")
+            window.sendEvent(try key("z", code: 6, window: window, modifiers: .command))
+            settle()
             XCTAssertTrue(try lines(host).contains { $0.text == "kubernetes" })
             XCTAssertTrue(removed.isEmpty, "Undo sends no removal")
             try save(host, as: "after-dictionary-undo")
-            try clickAX("Edit term Kubernetes", in: host)
+            try focusList(window, in: host)
+            var focusedEdit = false
+            for _ in 0..<8 {
+                try tab(window)
+                if let frame = try? focusedFrame(window, in: host), frame.minX > 280,
+                   frame.width < 40, frame.height < 40 {
+                    try pressSpace(window)
+                    focusedEdit = try lines(host).contains { $0.text.contains("edit term") }
+                    break
+                }
+            }
+            XCTAssertTrue(focusedEdit, "Tab reaches the selected term's Edit action and Space opens its editor")
             XCTAssertTrue(try lines(host).contains { $0.text.contains("edit term") })
             try save(host, as: "after-dictionary-editor")
-            try clickAX("Cancel", in: host)
+            XCTAssertTrue(NotchEscapeOwnership.shared.cancelNewest())
+            settle()
         }
     }
 
-    private func axElements(_ root: Any, depth: Int = 0) -> [NSObject] {
-        guard depth < 30, let object = root as? NSObject,
-              object.responds(to: NSSelectorFromString("accessibilityRole")) else { return [] }
-        let children = object.value(forKey: "accessibilityChildren") as? [Any] ?? []
-        return [object] + children.flatMap { axElements($0, depth: depth + 1) }
+    private func focusList(_ window: NSWindow, in host: NSView) throws {
+        for _ in 0..<16 {
+            try tab(window)
+            if let frame = try? focusedFrame(window, in: host), frame.width > 300, frame.height > 150 { return }
+        }
+        XCTFail("Tab did not reach the Dictionary list")
     }
 
-    private func clickAX(_ label: String, in host: NSView) throws {
-        let objects = axElements(host)
-        let node = try XCTUnwrap(objects.first { ($0.value(forKey: "accessibilityLabel") as? String) == label },
-                                "Missing \(label): \(objects.compactMap { $0.value(forKey: "accessibilityLabel") })")
-        let rect = try XCTUnwrap(node.value(forKey: "accessibilityFrame") as? NSValue).rectValue
-        let window = try XCTUnwrap(host.window)
-        let local = window.convertFromScreen(rect)
-        let point = CGPoint(x: local.midX, y: local.midY)
-        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-            window.sendEvent(try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-                context: nil, eventNumber: 0, clickCount: 1, pressure: 1)))
+    private func activatePainted(_ label: String, in host: NSView, window: NSWindow) throws {
+        let words = try lines(host)
+        let rect = try XCTUnwrap(words.first { $0.text == label.lowercased() },
+                                 "Missing painted \(label): \(words.map(\.text))").box
+        for _ in 0..<16 {
+            try tab(window)
+            if let frame = try? focusedFrame(window, in: host), frame.insetBy(dx: -2, dy: -2).contains(
+                CGPoint(x: rect.midX, y: rect.midY)) {
+                try pressSpace(window)
+                return
+            }
         }
-        settle()
+        XCTFail("Tab did not reach painted \(label)")
     }
 
     private func microphonePane(recording: Bool = false, reorder: @escaping ([String]) -> Void) -> SettingsView {
