@@ -61,12 +61,20 @@ public enum VoiceBarBackingScaleSynchronizer {
         layer.setNeedsDisplay()
     }
 
-    /// Redraw ownership, not what the contents are: the layer's class draws (`display()` or `draw(in:)` is
-    /// overridden) or its delegate does (`display(_:)` or `draw(_:in:)`). Such a layer is re-rendered at the new
-    /// scale even when it currently holds an image. Measured on macOS 26.5 and 27.0: SwiftUI's `ImageLayer`
-    /// overrides neither and its `_SwiftUILayerDelegate` implements neither; its text `CGDrawingLayer` overrides
-    /// `draw(in:)`.
+    /// Redraw ownership, not what the contents are (R886). A layer that can render itself is re-rendered at the
+    /// new scale even when it currently holds an image.
+    /// - A view's backing layer follows its view: `layerContentsRedrawPolicy == .never` is AppKit's contract
+    ///   for "never mark this layer for display, its contents are managed". In the live panel SwiftUI's
+    ///   `ImageLayer` belongs to an `_NSGraphicsView` that declares exactly that and overrides no drawing
+    ///   method; its text `CGDrawingView`, button bezels and labels declare a redrawing policy.
+    /// - Any other layer draws when its class overrides `display()` or `draw(in:)`, or its delegate implements
+    ///   `display(_:)` or `draw(_:in:)` (the scroller's knob is such a layer). A bare `ImageLayer` under
+    ///   `_SwiftUILayerDelegate`, as an offscreen host makes it, has neither.
+    /// Measured on macOS 26.5 and 27.0.
     static func canRedraw(_ layer: CALayer) -> Bool {
+        if let view = layer.delegate as? NSView, view.layer === layer {
+            return view.layerContentsRedrawPolicy != .never
+        }
         let layerClass: AnyClass = type(of: layer)
         for selector in [#selector(CALayer.display), #selector(CALayer.draw(in:))]
             where class_getMethodImplementation(layerClass, selector)

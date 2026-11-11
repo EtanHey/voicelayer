@@ -90,6 +90,41 @@ final class NotchGlyphRepaintN12Tests: XCTestCase {
         XCTAssertEqual(handed.contentsScale, 2, "the pass still carries the screen's scale to every layer")
     }
 
+    /// The live panel's shape (measured in the running QA app on macOS 27): SwiftUI's `ImageLayer` is the backing
+    /// layer of an `_NSGraphicsView`, which draws nothing and declares `layerContentsRedrawPolicy == .never`.
+    /// Every NSView answers `draw(_:in:)`, so asking the delegate alone would empty that layer again; the view's
+    /// own policy decides. A view that draws keeps being redrawn.
+    func testAViewBackedLayerFollowsItsViewsRedrawPolicy() throws {
+        let container = NSView(frame: CGRect(x: 0, y: 0, width: 80, height: 40))
+        container.wantsLayer = true
+        let handedView = N12HandedContentsView(frame: CGRect(x: 4, y: 4, width: 14, height: 14))
+        handedView.wantsLayer = true
+        handedView.layerContentsRedrawPolicy = .never
+        let image = try n12SolidImage(side: 28)
+        let handedLayer = try XCTUnwrap(handedView.layer)
+        handedLayer.contents = image
+        let drawingView = N12DrawingView(frame: CGRect(x: 24, y: 4, width: 14, height: 14))
+        drawingView.wantsLayer = true
+        container.addSubview(handedView)
+        container.addSubview(drawingView)
+        let window = Self.window(holding: container)
+        defer { window.contentView = nil; window.close() }
+        container.displayIfNeeded()
+        Self.commit()
+        XCTAssertTrue(handedLayer.delegate === handedView, "fixture: the view is its layer's delegate, as in the panel")
+        XCTAssertTrue(handedView.responds(to: #selector(CALayerDelegate.draw(_:in:))),
+                      "fixture: every NSView answers draw(_:in:), so the delegate test alone cannot tell")
+        let drawsBefore = drawingView.draws
+        XCTAssertGreaterThan(drawsBefore, 0, "fixture: the drawing view painted once")
+
+        VoiceBarBackingScaleSynchronizer.synchronize(container, to: 2)
+        Self.commit()
+
+        XCTAssertTrue(try XCTUnwrap(handedLayer.contents, "[N12] the pass emptied a never-redraw view's layer")
+            as AnyObject === image, "[N12] a never-redraw view's handed contents must survive the pass")
+        XCTAssertGreaterThan(drawingView.draws, drawsBefore, "[R886] a view that draws must be drawn again by the pass")
+    }
+
     /// SwiftUI's own image layers, in the real drawer. The warning triangle is a bitmap symbol on every macOS (the
     /// General pane's "Needs attention" glyph, natively wiped on the M1 too); on macOS 27 the five tab glyphs are
     /// image layers as well.
@@ -222,5 +257,21 @@ private final class N12DrawingDelegate: NSObject, CALayerDelegate {
 private final class N12SelfRenderingLayer: CALayer {
     override func display() {
         contents = try? n12SolidImage(side: Int(bounds.width * contentsScale))
+    }
+}
+
+/// SwiftUI's `_NSGraphicsView` shape: a plain backing layer whose contents are handed to it; no drawing override.
+private final class N12HandedContentsView: NSView {
+    override func makeBackingLayer() -> CALayer { CALayer() }
+}
+
+/// A view that draws its own layer.
+private final class N12DrawingView: NSView {
+    private(set) var draws = 0
+
+    override func draw(_ dirtyRect: NSRect) {
+        draws += 1
+        NSColor.white.setFill()
+        dirtyRect.fill()
     }
 }
