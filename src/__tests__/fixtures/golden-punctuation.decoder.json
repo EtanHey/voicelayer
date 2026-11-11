@@ -1,0 +1,6 @@
+{
+  "text": "I fixed the bug. Did it work?",
+  "backend": "parakeet-resident",
+  "audio_sha256": "ba417d9c28520d45f2a58791832ee214c364f58df491417e45f305fde39b98d8",
+  "recorded_with": "isolated MCP daemon; identity corrector; polish off"
+}

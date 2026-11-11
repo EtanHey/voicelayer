@@ -141,6 +141,27 @@ for await (const line of rl) {
   test("owned restart and unload are usable without permanent shutdown", async () => {
     const s = make(); await s.start(); await s.restart(); expect(await s.health()).toBe(true); await s.unload(); expect(await s.health()).toBe(false); await s.start();
   });
+  test("request abort confirms owned child exit before allowing replacement", async () => {
+    const controller = new AbortController(), s = make(); await s.start();
+    const owner = s as unknown as { command: (child: unknown, value: Record<string, unknown>, timeout: number) => Promise<Record<string, unknown>> };
+    const command = owner.command.bind(owner);
+    using hook = spyOn(owner, "command").mockImplementation((child, value, timeout) => {
+      if (value.op === "transcribe") queueMicrotask(() => controller.abort());
+      return command(child, value, timeout);
+    });
+    await expect(s.transcribe("normal", controller.signal)).rejects.toThrow();
+    expect(s.pid).toBeNull(); expect((await s.transcribe("normal")).complete).toBe(true);
+  });
+  test("abort during stale cleanup cannot launch a replacement", async () => {
+    const controller = new AbortController(); let loads = 0;
+    const s = make({ onState: phase => { if (phase === "loading") loads++; } }); await s.start();
+    const owner = s as unknown as { stopChild: () => Promise<void>; child: { fault: Error | null } };
+    const stop = owner.stopChild.bind(owner);
+    using hook = spyOn(owner, "stopChild").mockImplementation(async () => { await stop(); controller.abort(); });
+    owner.child.fault = new Error("stale");
+    await expect(s.transcribe("normal", controller.signal)).rejects.toThrow();
+    expect(loads).toBe(1); expect(s.pid).toBeNull();
+  });
   test("shutdown rejects later operations and is idempotent", async () => {
     const s = make(); await s.start(); await s.shutdown(); await s.shutdown(); await expect(s.transcribe("normal")).rejects.toThrow("shut down");
   });

@@ -564,7 +564,9 @@ export async function finalizeTranscriptionResultForSurface(
   surface: STTPolishSurface | null,
   env: STTFinalizeEnv = processingEnv(),
   boundaryContext?: BoundaryContext,
+  signal?: AbortSignal,
 ): Promise<FinalizedTranscriptionResult> {
+  signal?.throwIfAborted();
   const cleanedText = measureTakeStage("dictionary_rules", () => finalizeTranscriptionText(rawText, env));
   // A long unformatted final needs paragraphs regardless of polish state.
   // Existing layout and safe acoustic boundaries win; the floor changes only whitespace.
@@ -585,7 +587,9 @@ export async function finalizeTranscriptionResultForSurface(
     cleanedText,
     surface,
     env,
+    signal,
   }));
+  signal?.throwIfAborted();
   appendControlLayerEvent(
     "transcription.polish",
     {
@@ -767,6 +771,7 @@ export function consumeCancelSignalForRecording(): boolean {
 }
 
 export interface VoiceBarRecordingArchiveInput {
+  uploadSource?: "t3";
   inputDevice?: RecordingInputDevice | null;
   audioBytes: Uint8Array;
   transcript: string | null;
@@ -1241,6 +1246,7 @@ function writeVoiceBarRecordingArchive(
     id,
     created_at: createdAtIso,
     source: input.source,
+    ...(input.uploadSource ? { upload_source: input.uploadSource } : {}),
     mode: input.pushToEnd ? "ptt" : "vad",
     silence_mode: input.silenceMode,
     duration_ms: input.durationMs,
@@ -4131,7 +4137,7 @@ function stampPausedSpans(archivePath: string, spans: RecordingPauseSpan[] | und
   });
 }
 
-function updateArchivedRecordingMetadata(
+export function updateArchivedRecordingMetadata(
   audioPath: string,
   applyUpdates: (metadata: Record<string, unknown>) => void,
   required = false,

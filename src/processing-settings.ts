@@ -76,7 +76,7 @@ export function setProcessingSetting(
 ): void {
   const raw = readFile(env);
   const next: Record<string, unknown> = { version: 1 };
-  for (const known of PROCESSING_KEYS) {
+  for (const known of [...PROCESSING_KEYS, "transcriptions_enabled"]) {
     if (known in raw) next[known] = raw[known];
   }
   next[key] = key === "model_polish" ? (value ? "on" : "off") : value;
@@ -98,6 +98,10 @@ export function setProcessingSetting(
 export function processingEnv(base: Env = process.env): Env {
   const settings = readProcessingSettings(base);
   const overlay: Env = {};
+  const enabled = readFile(base).transcriptions_enabled;
+  if (base.VOICELAYER_TRANSCRIPTIONS_ENABLED === undefined && typeof enabled === "boolean") {
+    overlay.VOICELAYER_TRANSCRIPTIONS_ENABLED = enabled ? "1" : "0";
+  }
   for (const key of PROCESSING_KEYS) {
     const value = settings[key];
     if (value === undefined || base[PROCESSING_ENV_VARS[key]] !== undefined) continue;

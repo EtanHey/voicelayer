@@ -1450,6 +1450,9 @@ function recordSuccessfulInferenceRtf(
 }
 
 export interface WhisperServerTranscribeOptions {
+  signal?: AbortSignal;
+  residentOnly?: boolean;
+  onInferenceStarted?: () => void;
   language?: string;
   prompt?: string;
   /** Optional request-specific cap, used by advisory work inside a larger deadline. */
@@ -1521,7 +1524,14 @@ async function transcribeViaServerAttempt(
   allowRetry: boolean,
   options?: WhisperServerTranscribeOptions,
 ): Promise<string> {
-  const serverPort = port ?? (await ensureServer());
+  options?.signal?.throwIfAborted();
+  let cancelLoad: (() => void) | undefined;
+  const cancelled = new Promise<never>((_, reject) => { cancelLoad = () => reject(options?.signal?.reason); });
+  options?.signal?.addEventListener("abort", cancelLoad!, { once: true });
+  let serverPort: number;
+  try { serverPort = port ?? await Promise.race([ensureServer(), cancelled]); }
+  finally { options?.signal?.removeEventListener("abort", cancelLoad!); }
+  options?.signal?.throwIfAborted();
 
   const formData = new FormData();
   formData.append(
@@ -1562,12 +1572,14 @@ async function transcribeViaServerAttempt(
   try {
     let resp: Response;
     try {
+      options?.onInferenceStarted?.();
       resp = await fetch(`http://127.0.0.1:${serverPort}/inference`, {
         method: "POST",
         body: formData,
-        signal: controller.signal,
+        signal: options?.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal,
       });
     } catch (err) {
+      options?.signal?.throwIfAborted();
       // The request exceeded its audio/host-specific bound. That says nothing
       // about server health: killing a process that just served adjacent
       // chunks turns one oversized request into a needless model restart.

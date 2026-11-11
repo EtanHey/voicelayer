@@ -15,8 +15,7 @@ export function speechSecretPath(): string {
   const ttsSecret = process.env.VOICELAYER_TTS_DAEMON_SECRET_FILE || process.env.VOICELAYER_TTS_AUTH_TOKEN_FILE;
   return ttsSecret || join(homedir(), ".voicelayer", "daemon.secret");
 }
-export function loadSpeechSecret(): string {
-  const path = speechSecretPath();
+export function loadSpeechSecret(path = speechSecretPath()): string {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   try { writeFileSync(path, randomBytes(32).toString("hex"), { flag: "wx", mode: 0o600 }); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
