@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, utimesSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { randomUUID } from "crypto";
 import * as receipts from "../transcription-stage-receipt";
@@ -41,4 +41,19 @@ test("retention never follows a store alias into an external directory", () => {
   mkdirSync(outside); const victim = join(outside, "keep.json"); writeFileSync(victim, "keep"); symlinkSync(outside, alias);
   (receipts as any).pruneTranscriptionStageReceipts(alias);
   expect(readFileSync(victim, "utf8")).toBe("keep");
+});
+
+test("same-millisecond attempts keep the newest writes rather than UUID order", () => {
+  const store = mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "retention-tie-"));
+  const take = join(store, "2026-11-11", "2026-11-11T00-00-00-000Z-1234abcd");
+  mkdirSync(take, { recursive: true, mode: 0o700 });
+  const now = Date.UTC(2026, 10, 11), files: string[] = [];
+  for (let i = 0; i < 7; i++) {
+    const attempt = `00000000-0000-4000-8000-${(7 - i).toString().padStart(12, "0")}`;
+    const path = join(take, `stt-stages-${attempt}.json`);
+    writeFileSync(path, JSON.stringify({ schema_version: 1, attempt_id: attempt, created_at: new Date(now).toISOString() }), { mode: 0o600 });
+    utimesSync(path, (now + i) / 1000, (now + i) / 1000); files.push(path);
+  }
+  receipts.pruneTranscriptionStageReceipts(store, now);
+  expect(files.map(existsSync)).toEqual([false, false, true, true, true, true, true]);
 });

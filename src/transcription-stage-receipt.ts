@@ -13,7 +13,7 @@ export function pruneTranscriptionStageReceipts(store: string, now = Date.now())
   };
   try {
     if (!privateDirectory(store) || realpathSync(store) !== store) return;
-    const entries: Array<{ path: string; take: string; created: number; ino: number; dev: number }> = [];
+    const entries: Array<{ path: string; take: string; created: number; modified: number; ino: number; dev: number }> = [];
     for (const day of readdirSync(store)) {
       if (!/^\d{4}-\d{2}-\d{2}$/u.test(day)) continue;
       const dayPath = join(store, day);
@@ -30,11 +30,11 @@ export function pruneTranscriptionStageReceipts(store: string, now = Date.now())
           try { receipt = JSON.parse(readFileSync(path, "utf8")); } catch { continue; }
           const created = Date.parse(receipt.created_at);
           if (receipt.schema_version !== 1 || name !== `stt-stages-${receipt.attempt_id}.json` || !Number.isFinite(created)) continue;
-          entries.push({ path, take, created, ino: s.ino, dev: s.dev });
+          entries.push({ path, take, created, modified: s.mtimeMs, ino: s.ino, dev: s.dev });
         }
       }
     }
-    const newest = [...entries].sort((a, b) => b.created - a.created || b.path.localeCompare(a.path));
+    const newest = [...entries].sort((a, b) => b.created - a.created || b.modified - a.modified || b.path.localeCompare(a.path));
     const kept = new Set<string>(), perTake = new Map<string, number>();
     for (const entry of newest) {
       const count = perTake.get(entry.take) ?? 0;
