@@ -1743,7 +1743,8 @@ public struct BarView: View {
                     onSeek: state.seek,
                     onTextLinesChange: { state.reportTeleprompterTextLines($0) },
                     narrationOrigin: state.narrationOrigin,
-                    allowsBrowsing: !state.isTeleprompterDismissed
+                    allowsBrowsing: !state.isTeleprompterDismissed,
+                    readIdentity: state.teleprompterReadIdentity
                 )
                 .transition(TeleprompterPreparingHandoff.transition)
             } else if preparingHandoff.showsText(isPreparing: state.isPreparingSpeech) {

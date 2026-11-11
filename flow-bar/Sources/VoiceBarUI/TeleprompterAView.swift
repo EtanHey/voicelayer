@@ -23,6 +23,8 @@ public struct TeleprompterAView: View {
     public var narrationOrigin: String?
     /// V3-8: scrolling browses the text (off while the teleprompter is hidden behind its eye).
     public var allowsBrowsing = true
+    /// R893 P2: the read this text belongs to; a new read follows its own voice even when its text is identical.
+    public var readIdentity: String?
 
     /// T1/T2/T3/T6 (Etan QA 2026-11-09): the footer row is gone. Back/Forward and the speed sit beside Pause in the
     /// leading wing, the height handle sits under the eye row (`TeleprompterAHeightHandle`), and "Reading" is removed.
@@ -32,7 +34,7 @@ public struct TeleprompterAView: View {
                 playbackElapsedMilliseconds: @escaping () -> Int,
                 onSpeechSeek: ((String, Int) -> Void)? = nil, onSeek: ((Int) -> Void)? = nil,
                 onTextLinesChange: ((Int) -> Void)? = nil, narrationOrigin: String? = nil,
-                allowsBrowsing: Bool = true) {
+                allowsBrowsing: Bool = true, readIdentity: String? = nil) {
         self.text = text
         self.wordBoundaries = wordBoundaries
         self.displayBlocks = displayBlocks
@@ -48,6 +50,7 @@ public struct TeleprompterAView: View {
         self.onTextLinesChange = onTextLinesChange
         self.narrationOrigin = narrationOrigin
         self.allowsBrowsing = allowsBrowsing
+        self.readIdentity = readIdentity
     }
 
     @State private var cache = TeleprompterAModelCache()
@@ -78,8 +81,9 @@ public struct TeleprompterAView: View {
         }
         .onAppear { onTextLinesChange?(model.lines.count) }
         .onChange(of: model.lines.count) { _, count in onTextLinesChange?(count) }
-        // A different read starts on its own spoken line.
+        // A different read starts on its own spoken line: new text, or (R893 P2) a new read of the same text.
         .onChange(of: text) { _, _ in follow.returnToReading() }
+        .onChange(of: readIdentity) { _, _ in follow.returnToReading() }
         .onChange(of: allowsBrowsing) { _, allows in if !allows { follow.returnToReading() } }
     }
 
@@ -229,10 +233,24 @@ struct TeleprompterReturnToReadingButton: View {
     }
 }
 
+/// The Back to reading press cue. R893 P3: with Reduce Motion the pill never scales; it dims instead.
+enum TeleprompterReturnPress {
+    static func scale(isPressed: Bool, reduceMotion: Bool) -> CGFloat {
+        isPressed && !reduceMotion ? 0.97 : 1
+    }
+
+    static func opacity(isPressed: Bool, reduceMotion: Bool) -> Double {
+        isPressed && reduceMotion ? 0.7 : 1
+    }
+}
+
 private struct TeleprompterReturnPressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .scaleEffect(TeleprompterReturnPress.scale(isPressed: configuration.isPressed, reduceMotion: reduceMotion))
+            .opacity(TeleprompterReturnPress.opacity(isPressed: configuration.isPressed, reduceMotion: reduceMotion))
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }

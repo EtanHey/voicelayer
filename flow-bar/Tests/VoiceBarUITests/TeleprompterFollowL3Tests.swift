@@ -79,6 +79,49 @@ final class TeleprompterFollowL3Tests: XCTestCase {
         wait(for: [shown], timeout: 3)
     }
 
+    // MARK: - R893 P2: a new read follows its own voice, even with identical text
+
+    func testANewReadWithTheSameTextStopsBrowsing() throws {
+        let host = mount(clock: { 60_000 }, readIdentity: "read:1")
+        defer { host.window?.close() }
+        let catcher = try catcherView(host)
+        let centre = catcher.convert(NSPoint(x: catcher.bounds.midX, y: catcher.bounds.midY), to: nil)
+        XCTAssertTrue(catcher.takes(window: host.window, locationInWindow: centre, deltaY: 30, isPrecise: true))
+        let browsing = expectation(for: NSPredicate { [self] _, _ in
+            host.layoutSubtreeIfNeeded()
+            return tooltips(host).contains("Follow the voice again")
+        }, evaluatedWith: nil)
+        wait(for: [browsing], timeout: 3)
+        // Another agent reads the same selection: same string, new utterance.
+        host.rootView = teleprompter(clock: { 1_000 }, readIdentity: "read:2")
+        let following = expectation(for: NSPredicate { [self] _, _ in
+            host.layoutSubtreeIfNeeded()
+            return !tooltips(host).contains("Follow the voice again")
+        }, evaluatedWith: nil)
+        wait(for: [following], timeout: 3)
+    }
+
+    func testTheSameReadKeepsBrowsingWhenItsViewIsRebuilt() throws {
+        let host = mount(clock: { 60_000 }, readIdentity: "read:1")
+        defer { host.window?.close() }
+        let catcher = try catcherView(host)
+        let centre = catcher.convert(NSPoint(x: catcher.bounds.midX, y: catcher.bounds.midY), to: nil)
+        XCTAssertTrue(catcher.takes(window: host.window, locationInWindow: centre, deltaY: 30, isPrecise: true))
+        host.rootView = teleprompter(clock: { 61_000 }, readIdentity: "read:1")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        host.layoutSubtreeIfNeeded()
+        XCTAssertTrue(tooltips(host).contains("Follow the voice again"), "pause, resume and chunks keep the browse")
+    }
+
+    /// R893 P3: Reduce Motion removes the press scale; the pill dims instead, so the press still reads.
+    func testBackToReadingPressNeverScalesUnderReduceMotion() {
+        XCTAssertEqual(TeleprompterReturnPress.scale(isPressed: true, reduceMotion: true), 1)
+        XCTAssertLessThan(TeleprompterReturnPress.opacity(isPressed: true, reduceMotion: true), 1)
+        XCTAssertEqual(TeleprompterReturnPress.scale(isPressed: true, reduceMotion: false), 0.97)
+        XCTAssertEqual(TeleprompterReturnPress.opacity(isPressed: true, reduceMotion: false), 1)
+        XCTAssertEqual(TeleprompterReturnPress.scale(isPressed: false, reduceMotion: false), 1)
+    }
+
     func testCatcherNeverTakesAClick() throws {
         let host = mount(clock: { 0 })
         defer { host.window?.close() }
@@ -97,16 +140,21 @@ final class TeleprompterFollowL3Tests: XCTestCase {
 
     private static let longText = (1 ... 120).map { "word\($0)" }.joined(separator: " ")
 
-    private func mount(clock: @escaping () -> Int, allowsBrowsing: Bool = true) -> NSHostingView<AnyView> {
-        var words: [[String: Any]] = []
-        for index in 0 ..< 120 { words.append(["offset_ms": index * 500, "duration_ms": 400, "text": "word\(index + 1)"]) }
-        let boundaries = words.map {
-            TeleprompterBoundary(offsetMs: $0["offset_ms"] as! Int, durationMs: $0["duration_ms"] as! Int,
-                                 text: $0["text"] as! String)
-        }
-        let view = TeleprompterAView(text: Self.longText, wordBoundaries: boundaries, visibleLines: 3,
-                                     playbackElapsedMilliseconds: clock, allowsBrowsing: allowsBrowsing)
-        let host = NSHostingView(rootView: AnyView(view))
+    private static var boundaries: [TeleprompterBoundary] {
+        (0 ..< 120).map { TeleprompterBoundary(offsetMs: $0 * 500, durationMs: 400, text: "word\($0 + 1)") }
+    }
+
+    private func teleprompter(clock: @escaping () -> Int, allowsBrowsing: Bool = true,
+                              readIdentity: String? = nil) -> AnyView {
+        AnyView(TeleprompterAView(text: Self.longText, wordBoundaries: Self.boundaries, visibleLines: 3,
+                                  playbackElapsedMilliseconds: clock, allowsBrowsing: allowsBrowsing,
+                                  readIdentity: readIdentity))
+    }
+
+    private func mount(clock: @escaping () -> Int, allowsBrowsing: Bool = true,
+                       readIdentity: String? = nil) -> NSHostingView<AnyView> {
+        let host = NSHostingView(rootView: teleprompter(clock: clock, allowsBrowsing: allowsBrowsing,
+                                                        readIdentity: readIdentity))
         host.frame = NSRect(x: 0, y: 0, width: TeleprompterA.columnWidth + 20, height: 120)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
