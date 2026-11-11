@@ -523,3 +523,21 @@ extension NotchSurfaceHostedFlowTests {
         XCTAssertEqual(harness.surface.settingsRows, 9, "closing keeps the remembered height")
     }
 }
+
+extension NotchSurfaceHostedFlowTests {
+    /// C6 L2c (Q-F48): letting go of the Settings grip tells the app how tall the drawer is drawn, before its rows
+    /// change, so the hit gate settles from the drawn shell.
+    func testQF48LettingGoOfTheGripReportsTheDrawnDrawerHeight() throws {
+        let harness = makeHarness()
+        let eight = try openSettingsFromHistory(harness)
+        var now: TimeInterval = 0
+        harness.model.drawnHistoryClock = { now }
+        _ = harness.model.takeDrawnHistoryLowerSurface()
+        try drag(from: grip(eight, rows: 8), dy: -2 * NotchHistoryMorph.rowHeight, in: harness.panel)
+        wait { harness.model.historyRows == 10 }
+        now = 0.1
+        let drawn = try XCTUnwrap(harness.model.takeDrawnHistoryLowerSurface(), "the release reported the drawn height")
+        XCTAssertEqual(drawn, NotchHistoryMorph.lowerSurfaceHeight(rows: 10), accuracy: NotchHistoryMorph.rowHeight / 2,
+                       "the drawer was drawn about ten rows tall when it was let go")
+    }
+}

@@ -999,6 +999,7 @@ public struct BarView: View {
         }
         // A push that closed the panel part-way and was let go short of closing springs it open again.
         if historyProgress < 1 { animateHistory(toOpen: true) }
+        reportDrawnDrawerHeight() // Q-F48: before the rows change, so the hit gate settles from what is drawn
         let previous = historyRows
         if isSettingsDrawerOpen {
             // N16: the Settings drawer settles on the nearest whole row and remembers it.
@@ -1029,6 +1030,16 @@ public struct BarView: View {
         withAnimation(NotchHistoryMorph.rowsAnimation(from: historyRowsExtent, to: rows, velocity: velocity)) {
             historyRowsExtent = CGFloat(rows)
         }
+    }
+
+    /// C6 L2c (Q-F48): tells the app how tall the drawer a pointer just let go of is drawn, so its hit gate does not
+    /// pass clicks on those rows through to the app behind while the rows settle.
+    private func reportDrawnDrawerHeight() {
+        let time = NotchHistoryClock.now()
+        guard let input = historyMorphInput else { return }
+        presentationModel?.noteDrawnHistoryLowerSurface(
+            input.geometry(at: renderedHistoryProgress(at: time)).lowerSurfaceHeight
+        )
     }
 
     /// What the panel draws at `time`: the running spring's position, else the model value.
@@ -1073,6 +1084,7 @@ public struct BarView: View {
             if open, opensSettings || pullOpensSettings && !isHistoryPresented {
                 // Pulled past open: Settings, at the same spot and on the same spring (History's list crossfades
                 // into the drawer, `notchLowerPanelContent`).
+                if isHistoryPresented { reportDrawnDrawerHeight() } // Q-F48: the stretched shell is on screen
                 surface.send(.openSettings(.general))
                 animateHistory(toOpen: true, velocity: velocity)
             } else if open == isHistoryPresented {

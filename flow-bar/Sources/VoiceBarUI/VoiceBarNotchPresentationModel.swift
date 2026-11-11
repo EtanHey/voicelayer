@@ -1,3 +1,4 @@
+import Foundation
 import CoreGraphics
 import Observation
 
@@ -137,6 +138,25 @@ public final class VoiceBarNotchPresentationModel {
         guard historyRows != rows else { return }
         historyRows = rows
         resolvePresentation()
+    }
+
+    /// C6 L2c (Q-F48): the drawer height a pointer drew, reported when a grip, a handle or a pull past open is let
+    /// go (before the drawer's rows change). The app's hit gate takes it once, for the same-size layout change that
+    /// follows, so rows the pointer already drew take clicks at once. It lapses after the gate's settle window.
+    @ObservationIgnored private var drawnHistoryLowerSurface: (height: CGFloat, at: TimeInterval)?
+    @ObservationIgnored public var drawnHistoryClock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+
+    public func noteDrawnHistoryLowerSurface(_ height: CGFloat) {
+        guard height.isFinite else { return }
+        drawnHistoryLowerSurface = (height, drawnHistoryClock())
+    }
+
+    /// The drawn height, once, while it is still fresh; nil otherwise.
+    public func takeDrawnHistoryLowerSurface() -> CGFloat? {
+        defer { drawnHistoryLowerSurface = nil }
+        guard let drawn = drawnHistoryLowerSurface,
+              drawnHistoryClock() - drawn.at < VoiceBarPanelHitGate.settleDuration else { return nil }
+        return drawn.height
     }
 
     /// U5: the Teleprompter A handle's own pointer hold. Separate from History's, so neither releases the other's.

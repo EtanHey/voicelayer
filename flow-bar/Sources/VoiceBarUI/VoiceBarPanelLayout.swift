@@ -153,6 +153,33 @@ public struct VoiceBarPanelLayout: Equatable {
         hoverRetentionRect.contains(point)
     }
 
+    /// C6 L2c (Q-F48): this layout with its lower surface drawn `lowerSurfaceHeight` tall, hanging from the same top
+    /// edge (the notch never moves; only its body grows or shrinks). The hit gate uses it for what a pointer has
+    /// already drawn.
+    public func withDrawnLowerSurface(_ lowerSurfaceHeight: CGFloat) -> VoiceBarPanelLayout {
+        let geometry = presentation.geometry
+        let drawnGeometry = VoiceBarNotchGeometry(
+            coreWidth: geometry.coreWidth, topHeight: geometry.topHeight,
+            leadingWingWidth: geometry.leadingWingWidth, trailingWingWidth: geometry.trailingWingWidth,
+            bodyLeadingExtent: geometry.bodyLeadingExtent, bodyTrailingExtent: geometry.bodyTrailingExtent,
+            lowerSurfaceHeight: max(0, lowerSurfaceHeight)
+        )
+        let drawn = presentation.drawn(at: drawnGeometry)
+        let rect = CGRect(
+            x: visibleContentRect.minX,
+            y: visibleContentRect.maxY - drawnGeometry.totalHeight,
+            width: drawnGeometry.totalWidth,
+            height: drawnGeometry.totalHeight
+        )
+        return VoiceBarPanelLayout(
+            presentation: drawn, panelSize: panelSize, visibleContentRect: rect,
+            interactiveHitRect: interactiveHitRect, hoverExpansionRect: hoverExpansionRect,
+            hoverRetentionRect: hoverRetentionRect, interactionRegion: interactionRegion,
+            controlRegion: controlRegion, visibleRegion: VoiceBarNotchVisibleRegion(presentation: drawn),
+            localHoverCoreRect: localHoverCoreRect
+        )
+    }
+
     /// 2.3 U2: the left wing in window space; the microphone list hangs from it.
     public var leadingWingWindowRect: CGRect {
         let geometry = presentation.geometry
@@ -199,14 +226,31 @@ public struct VoiceBarPanelHitGate: Equatable {
         self.layout = layout
     }
 
+    /// Whether `next` is a same-size change the gate would settle into (rather than apply at once).
+    public func settles(into next: VoiceBarPanelLayout) -> Bool {
+        next != layout && next.presentation.geometry != layout.presentation.geometry && next.panelSize == layout.panelSize
+    }
+
     /// Returns true when the layout changed, so the caller can refresh the window's event gate.
+    ///
+    /// C6 L2c (Q-F48): `drawnLowerSurfaceHeight` is the drawer height a pointer has ALREADY drawn when this change
+    /// arrives: a released grip or handle, or a pull released past open into Settings. The shell is not animating
+    /// from the previous layout then; it is on screen where the pointer left it and moves from there to `next`, so
+    /// the gate settles from that drawn shell instead. Without it, every row the drag had drawn below the old
+    /// layout passed clicks through to the app behind for 500 ms (a quick second pull "reached the background").
     @discardableResult
-    public mutating func update(to next: VoiceBarPanelLayout, now: TimeInterval) -> Bool {
+    public mutating func update(
+        to next: VoiceBarPanelLayout, now: TimeInterval, drawnLowerSurfaceHeight: CGFloat? = nil
+    ) -> Bool {
         let expired = !settlingFrom.isEmpty && now >= settlesAt
         if expired { settlingFrom.removeAll() }
         guard next != layout else { return expired }
         if next.presentation.geometry == layout.presentation.geometry {
             // Only the interaction configuration changed; nothing is animating.
+        } else if next.panelSize == layout.panelSize, let drawnLowerSurfaceHeight {
+            // The pointer drew this shell; it supersedes whatever the gate was settling from.
+            settlesAt = now + Self.settleDuration
+            settlingFrom = [next.withDrawnLowerSurface(drawnLowerSurfaceHeight)]
         } else if next.panelSize == layout.panelSize {
             if settlingFrom.isEmpty { settlesAt = now + Self.settleDuration }
             if !settlingFrom.contains(layout) {
