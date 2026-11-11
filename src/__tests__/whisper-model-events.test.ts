@@ -1,3 +1,4 @@
+import { writeWhisperServerOwnership, clearWhisperServerOwnership } from "../whisper-server-ownership";
 import { mkdirSync, writeFileSync } from "fs";
 import { testTmp } from "./setup/test-tmp";
 import { afterEach, expect, test } from "bun:test";
@@ -29,15 +30,18 @@ test("adoption and stop emit model state changes without a health poll", async (
   const unsubscribe = onWhisperModelStateChange(() => { changes++; });
   __setWhisperServerTestHooksForTests({
     isServerHealthy: async () => true,
-    findPortListenerPids: () => [],
+    findPortListenerPids: () => [process.pid],
   });
+  writeWhisperServerOwnership(port, { pid: process.pid, owner_pid: process.pid,
+    started_at: new Date().toISOString(), binary: "/synthetic/whisper-server", args: [],
+    model_path: process.env.QA_VOICE_WHISPER_MODEL, performance_effort: "accurate", acceleration_mode: "cpu" });
   try {
     await ensureServer(port);
     expect(changes).toBe(1);
     stopServer();
     expect(changes).toBe(2);
   } finally {
-    unsubscribe();
+    unsubscribe(); clearWhisperServerOwnership(port);
     if (savedModel === undefined) delete process.env.QA_VOICE_WHISPER_MODEL;
     else process.env.QA_VOICE_WHISPER_MODEL = savedModel;
   }
