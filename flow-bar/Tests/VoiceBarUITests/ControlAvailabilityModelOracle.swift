@@ -154,6 +154,7 @@ enum ModelOracle {
             if c == "PausePlayback" && !["playing", "previous", "preparing", "paused"].contains(x.playback) {
                 return "No live playback to pause"
             }
+            if c == "Seek" && x.playback == "paused" { return "Paused. Press Play to seek" }
             return c == "Seek" && x.playback == "preparing" ? "Preparing audio; seeking is not ready" : ""
         }
         return "Unknown control"
@@ -189,7 +190,7 @@ enum ModelOracle {
         if transportSet.contains(c) {
             return (c == "PausePlayback" || !unfinished(x)) && (c != "Previous" || x.previous)
                 && (c != "NextRead" || x.next) && (c != "ResumePlayback" || x.playback == "paused")
-                && (c != "PausePlayback" || speech(x)) && (c != "Seek" || x.playback != "preparing")
+                && (c != "PausePlayback" || speech(x)) && (c != "Seek" || !["preparing", "paused"].contains(x.playback))
         }
         return true
     }

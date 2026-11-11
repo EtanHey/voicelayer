@@ -1,7 +1,7 @@
 import Foundation
 
 // L4 → L5 control-availability contract. Rules follow `formal/control-availability` (model 4bf20052,
-// vendored at docs/control-availability/model/ControlAvailability.tla). Every rule reads typed phases;
+// refined for paused Seek at docs/control-availability/model/ControlAvailability.tla). Rules read typed phases;
 // no surface passes a loose busy/unfinished flag. Handlers still re-check after their final await.
 
 // MARK: - Result
@@ -163,6 +163,8 @@ public struct ControlFacts: Equatable, Sendable {
     public var capture: CapturePhase
     public var processing: ProcessingWork
     public var playback: PlaybackPhase
+    /// History's external voice/admission refusal; never evidence of its own live clip.
+    public var historyVoiceBusy: Bool
     public var presentation: PresentationFacts
     /// `VoiceMode.error` is showing.
     public var voiceError: Bool
@@ -173,11 +175,13 @@ public struct ControlFacts: Equatable, Sendable {
 
     /// Every fact is required: there is no silent default for the gate or any phase.
     public init(connection: ControlConnection, gate: ControlVoiceGate, capture: CapturePhase,
-                processing: ProcessingWork, playback: PlaybackPhase, presentation: PresentationFacts,
+                processing: ProcessingWork, playback: PlaybackPhase, historyVoiceBusy: Bool,
+                presentation: PresentationFacts,
                 voiceError: Bool, physicalGesture: Bool, settingsService: SettingsService,
                 pending: Set<PendingOperation>) {
         self.connection = connection; self.gate = gate; self.capture = capture
         self.processing = processing; self.playback = playback; self.presentation = presentation
+        self.historyVoiceBusy = historyVoiceBusy
         self.voiceError = voiceError; self.physicalGesture = physicalGesture
         self.settingsService = settingsService; self.pending = pending
     }
@@ -421,6 +425,7 @@ public enum VoiceControlAvailability {
             if f.agentAsk { return answeringQuestion }
             if f.hasUnfinishedTake { return "Finish capture or transcription before reading" }
             if c != .readClipboard, f.speech { return "Finish the current playback first" }
+            if isHistoryPlay(c), f.historyVoiceBusy { return SettingsHistoryCopy.playBusy }
             if pending { return "Preview in progress…" }
             return nil
 
@@ -436,6 +441,7 @@ public enum VoiceControlAvailability {
             case .resumePlayback where f.playback != .paused: return "Playback is not paused"
             case .pausePlayback where !f.speech: return "No live playback to pause"
             case .seek where f.playback == .preparing: return "Preparing audio; seeking is not ready"
+            case .seek where f.playback == .paused: return "Paused. Press Play to seek"
             default: return nil
             }
         case .speedChip:

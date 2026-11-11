@@ -1,12 +1,16 @@
 {
   "model": "docs/control-availability/model/ControlAvailability.tla",
   "modelCommit": "4bf20052",
-  "modelBlob": "7d00d4ec5587665ad152c647d571c023d9555f3e",
+  "modelBlob": "6d6afd9e1a5774057e597e65d987ee202a3daa3d",
+  "baseModelBlob": "7d00d4ec5587665ad152c647d571c023d9555f3e",
+  "refinements": [
+    "Seek refuses paused playback, matching VoiceState.seek"
+  ],
   "policy": "Fixed",
   "seeds": 2992,
   "lines": 146608,
   "format": "seedKey|control|visible|handler|UIReason, sorted bytewise; '#Selection' rows are SelectionCanRead|-|SelectionReason; seedKey = sorted field=value pairs",
-  "tableSha256": "c4417bb8947c3010e5ff29a3cd5236aa0a1c02091d672538c63c8f3f3a87aada",
+  "tableSha256": "c4bc608f29662843c77cc3c57fa305db8519f0ecfbdcfc0ccd5cee768eab1515",
   "reasons": [
     "A recording owns the microphone",
     "Already selected and healthy",
@@ -35,6 +39,7 @@
     "No unfinished take",
     "Nothing queued",
     "Open Settings first",
+    "Paused. Press Play to seek",
     "Playback is not paused",
     "Preparing audio; seeking is not ready",
     "Recover VoiceBar before re-transcribing",

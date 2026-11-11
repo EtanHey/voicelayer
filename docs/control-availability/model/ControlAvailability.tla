@@ -1,6 +1,7 @@
 ----------------------- MODULE ControlAvailability -----------------------
 \* A bounded one-dispatch contract: arbitrary factored snapshots, then one
 \* handler call. This is availability/refinement, NOT whole-app liveness.
+\* Derived from 4bf20052; L4f refines Seek to the current source refusal while paused.
 EXTENDS Naturals, FiniteSets
 CONSTANTS Policy, Scenario
 VARIABLES s, prior, last, outcome, feedback, dispatched
@@ -163,7 +164,8 @@ UIReason(c,x) == CASE c \in Emergency -> IF Unfinished(x) THEN "" ELSE "No unfin
     ELSE IF c = "NextRead" /\ ~x.next THEN "Nothing queued"
     ELSE IF c = "ResumePlayback" /\ x.playback # "paused" THEN "Playback is not paused"
     ELSE IF c = "PausePlayback" /\ x.playback \notin {"playing", "previous", "preparing", "paused"} THEN "No live playback to pause"
-    ELSE IF c = "Seek" /\ x.playback = "preparing" THEN "Preparing audio; seeking is not ready" ELSE ""
+    ELSE IF c = "Seek" /\ x.playback = "preparing" THEN "Preparing audio; seeking is not ready"
+    ELSE IF c = "Seek" /\ x.playback = "paused" THEN "Paused. Press Play to seek" ELSE ""
   [] OTHER -> "Unknown control"
 
 FixedEnabled(c,x) == Visible(c,x) /\ UIReason(c,x) = ""
@@ -241,7 +243,7 @@ LocalGuard(c,x) == CASE c \in Emergency -> Unfinished(x)
        (c = "PausePlayback" \/ ~Unfinished(x) \/ Policy = "MutPlayback") /\
        (c # "Previous" \/ x.previous) /\ (c # "NextRead" \/ x.next) /\
        (c # "ResumePlayback" \/ x.playback = "paused") /\
-       (c # "PausePlayback" \/ Speech(x)) /\ (c # "Seek" \/ x.playback # "preparing")
+       (c # "PausePlayback" \/ Speech(x)) /\ (c # "Seek" \/ x.playback \notin {"preparing", "paused"})
   [] OTHER -> TRUE
 DaemonGuard(c,x) == CASE c \in Archives -> x.connected /\ x.gate = "open" /\
        ~Unfinished(x) /\ ~Speech(x) /\ ~x.agentAsk /\ Mode(x) = "idle"

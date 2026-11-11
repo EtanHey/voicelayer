@@ -20,7 +20,8 @@ ROOT = HERE.parents[1]
 MODEL = HERE / "model" / "ControlAvailability.tla"
 MANIFEST = HERE / "model-table.json"
 MODEL_COMMIT = "4bf20052"
-MODEL_BLOB = "7d00d4ec5587665ad152c647d571c023d9555f3e"
+MODEL_BLOB = "6d6afd9e1a5774057e597e65d987ee202a3daa3d"
+BASE_MODEL_BLOB = "7d00d4ec5587665ad152c647d571c023d9555f3e"
 TABLE_MODULE = """---- MODULE ControlAvailabilityTable ----
 EXTENDS ControlAvailability, TLC
 Row(x) == <<x, [c \\in Controls |-> <<Visible(c,x), UIReason(c,x), Handler(c,x)>>],
@@ -131,14 +132,15 @@ def run_tlc():
 
 def generate():
     blob = subprocess.check_output(["git", "hash-object", str(MODEL)], cwd=ROOT).decode().strip()
-    assert blob == MODEL_BLOB, f"vendored model drifted from {MODEL_COMMIT}: {blob}"
+    assert blob == MODEL_BLOB, f"refined model drifted from its pinned blob (base {MODEL_COMMIT}): {blob}"
     rows = run_tlc()
     lines = canonical_lines(rows)
     text = "\n".join(lines) + "\n"
     reasons = sorted({line.rsplit("|", 1)[1] for line in lines} - {""})
     return text, {
         "model": "docs/control-availability/model/ControlAvailability.tla",
-        "modelCommit": MODEL_COMMIT, "modelBlob": MODEL_BLOB, "policy": "Fixed",
+        "modelCommit": MODEL_COMMIT, "modelBlob": MODEL_BLOB, "baseModelBlob": BASE_MODEL_BLOB,
+        "refinements": ["Seek refuses paused playback, matching VoiceState.seek"], "policy": "Fixed",
         "seeds": len(rows), "lines": len(lines),
         "format": "seedKey|control|visible|handler|UIReason, sorted bytewise; '#Selection' rows are "
                   "SelectionCanRead|-|SelectionReason; seedKey = sorted field=value pairs",

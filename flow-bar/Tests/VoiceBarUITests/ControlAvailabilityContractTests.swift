@@ -117,6 +117,69 @@ final class ControlAvailabilityContractTests: XCTestCase {
         XCTAssertFalse(eval(.hide, f).isEnabled)
     }
 
+    @MainActor
+    func testHistoryPlayerAdapterDistinguishesOwnClipFromExternalAdmission() {
+        let player = SettingsAudioPlayback(start: { _ in true }, stop: {})
+        player.toggle(URL(fileURLWithPath: "/fixture/history.wav"))
+        defer { player.stop() }
+        XCTAssertNotNil(player.playingURL)
+        XCTAssertFalse(player.isVoiceBusy, "Own History playback does not acquire an external voice owner")
+        for phase in [PlaybackPhase.preparing, .playing, .paused] {
+            var r = Self.reading(mode: .idle, paused: phase == .paused)
+            r.isPlaybackPreparing = phase == .preparing
+            let f = ControlAvailabilityAdapter.facts(r, historyPlayback: player)
+            XCTAssertEqual(f.playback, phase)
+            XCTAssertFalse(f.historyVoiceBusy)
+            for c in [VoiceControl.preview(.short), .preview(.long), .historyPlay(audio: true)] {
+                XCTAssertEqual(eval(c, f).outcome, .unavailable("Finish the current playback first"))
+            }
+            XCTAssertTrue(eval(.stopSpeaking, f).isEnabled)
+            XCTAssertFalse(eval(.update, f).isEnabled)
+        }
+
+        player.setVoiceOwner("fixture", busy: true)
+        XCTAssertNil(player.playingURL)
+        XCTAssertTrue(player.isVoiceBusy)
+        let f = ControlAvailabilityAdapter.facts(Self.reading(mode: .idle), historyPlayback: player)
+        XCTAssertEqual(f.playback, .none, "An external owner is not the History player's own clip")
+        XCTAssertTrue(f.historyVoiceBusy)
+        XCTAssertFalse(eval(.stopSpeaking, f).isEnabled)
+        XCTAssertEqual(eval(.historyPlay(audio: true), f).reason, SettingsHistoryCopy.playBusy)
+    }
+
+    @MainActor
+    func testHistoryAdmissionAndOwnPlaybackRemainIndependent() {
+        var admitted = true
+        let player = SettingsAudioPlayback(start: { _ in true }, stop: {}, canPlay: { admitted })
+        defer { player.stop() }
+        for ownClip in [false, true] {
+            admitted = true
+            if ownClip { player.toggle(URL(fileURLWithPath: "/fixture/history.wav")) }
+            for externalBusy in [false, true] {
+                admitted = !externalBusy
+                let f = ControlAvailabilityAdapter.facts(Self.reading(mode: .idle), historyPlayback: player)
+                XCTAssertEqual(f.playback, ownClip ? .playing : .none)
+                XCTAssertEqual(f.historyVoiceBusy, externalBusy)
+                XCTAssertEqual(eval(.historyPlay(audio: true), f).reason,
+                               ownClip ? "Finish the current playback first"
+                                   : externalBusy ? SettingsHistoryCopy.playBusy : nil)
+                XCTAssertEqual(eval(.preview(.short), f).isEnabled, !ownClip,
+                               "History's canPlay refusal is not a speech preview owner")
+            }
+        }
+    }
+
+    func testSeekRefusesPausedPlaybackWithExistingExplanation() {
+        for processing in ControlCells.processings {
+            let f = ControlCells.facts(.connected(canQueueRecording: true), .open, .none, processing, .paused)
+            let a = eval(.seek, f)
+            XCTAssertTrue(a.isVisible)
+            XCTAssertEqual(a.outcome, .unavailable("Paused. Press Play to seek"))
+            XCTAssertEqual(a.tooltip, a.reason)
+            XCTAssertEqual(a.accessibilityHint, a.reason)
+        }
+    }
+
     func testAdapterMapsVoiceStateToPhases() {
         typealias R = VoiceStateReading
         XCTAssertEqual(ControlAvailabilityAdapter.facts(Self.reading(mode: .recording, admission: .capturing,
@@ -198,7 +261,7 @@ final class ControlAvailabilityContractTests: XCTestCase {
                           agentAskSession: ask, hasQueuedRecording: queued, processingTakeCount: processing,
                           isHistoryRetranscriptionPending: history, supportsRecordingJobs: true,
                           isPlaybackPreparing: false, isPlaybackPaused: paused, isTeleprompterReadback: readback,
-                          isHistoryPlaybackBusy: historyAudio, isHidden: false, drawer: .none,
+                          isHistoryPlaybackActive: historyAudio, isHistoryVoiceBusy: false, isHidden: false, drawer: .none,
                           isModalPresented: false, hotkeyPhase: hotkey, modelsSettings: .ready, pending: [])
     }
 }

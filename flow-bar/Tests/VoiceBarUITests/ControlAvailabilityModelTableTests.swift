@@ -220,7 +220,7 @@ enum ControlCells {
                       _ presentation: PresentationFacts = shown, voiceError: Bool = false,
                       gesture: Bool = false, pending: Set<PendingOperation> = []) -> ControlFacts {
         ControlFacts(connection: connection, gate: gate, capture: capture, processing: processing, playback: playback,
-                     presentation: presentation, voiceError: voiceError, physicalGesture: gesture,
+                     historyVoiceBusy: false, presentation: presentation, voiceError: voiceError, physicalGesture: gesture,
                      settingsService: .ready, pending: pending)
     }
 

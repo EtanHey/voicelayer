@@ -28,8 +28,10 @@ public struct VoiceStateReading: Equatable {
     public var isPlaybackPreparing: Bool
     public var isPlaybackPaused: Bool
     public var isTeleprompterReadback: Bool
-    /// `historyPlayback.isVoiceBusy`: the native History player is audible.
-    public var isHistoryPlaybackBusy: Bool
+    /// `historyPlayback.playingURL != nil`: the History player's OWN clip, independent of external admission.
+    public var isHistoryPlaybackActive: Bool
+    /// `historyPlayback.isVoiceBusy`: external voice owners or the player's `canPlay` admission refusal.
+    public var isHistoryVoiceBusy: Bool
     public var isHidden: Bool
     public var drawer: DrawerState
     public var isModalPresented: Bool
@@ -41,7 +43,8 @@ public struct VoiceStateReading: Equatable {
                 recordingMode: String?, isRecordingPaused: Bool, isAskCapture: Bool,
                 agentAskSession: AgentAskSession, hasQueuedRecording: Bool, processingTakeCount: Int,
                 isHistoryRetranscriptionPending: Bool, supportsRecordingJobs: Bool, isPlaybackPreparing: Bool,
-                isPlaybackPaused: Bool, isTeleprompterReadback: Bool, isHistoryPlaybackBusy: Bool,
+                isPlaybackPaused: Bool, isTeleprompterReadback: Bool, isHistoryPlaybackActive: Bool,
+                isHistoryVoiceBusy: Bool,
                 isHidden: Bool, drawer: DrawerState, isModalPresented: Bool, hotkeyPhase: HotkeyPhase,
                 modelsSettings: SettingsService, pending: Set<PendingOperation>) {
         self.mode = mode; self.isConnected = isConnected; self.gate = gate
@@ -52,7 +55,8 @@ public struct VoiceStateReading: Equatable {
         self.isHistoryRetranscriptionPending = isHistoryRetranscriptionPending
         self.supportsRecordingJobs = supportsRecordingJobs; self.isPlaybackPreparing = isPlaybackPreparing
         self.isPlaybackPaused = isPlaybackPaused; self.isTeleprompterReadback = isTeleprompterReadback
-        self.isHistoryPlaybackBusy = isHistoryPlaybackBusy; self.isHidden = isHidden; self.drawer = drawer
+        self.isHistoryPlaybackActive = isHistoryPlaybackActive; self.isHistoryVoiceBusy = isHistoryVoiceBusy
+        self.isHidden = isHidden; self.drawer = drawer
         self.isModalPresented = isModalPresented; self.hotkeyPhase = hotkeyPhase
         self.modelsSettings = modelsSettings; self.pending = pending
     }
@@ -60,6 +64,16 @@ public struct VoiceStateReading: Equatable {
 
 /// The one adapter from app state to `ControlFacts`. Every surface calls this; none re-derives phases.
 public enum ControlAvailabilityAdapter {
+    /// Read both independent facts from the actual History player in the same actor turn.
+    /// L5 uses this overload when the surface owns a player; it never derives playback from `isVoiceBusy`.
+    @MainActor
+    public static func facts(_ reading: VoiceStateReading, historyPlayback: SettingsAudioPlayback) -> ControlFacts {
+        var r = reading
+        r.isHistoryPlaybackActive = historyPlayback.playingURL != nil
+        r.isHistoryVoiceBusy = historyPlayback.isVoiceBusy
+        return facts(r)
+    }
+
     public static func facts(_ r: VoiceStateReading) -> ControlFacts {
         ControlFacts(
             connection: r.isConnected && r.mode != .disconnected
@@ -68,6 +82,7 @@ public enum ControlAvailabilityAdapter {
             capture: capture(r),
             processing: processing(r),
             playback: playback(r),
+            historyVoiceBusy: r.isHistoryVoiceBusy,
             presentation: PresentationFacts(hidden: r.isHidden, drawer: r.drawer, modal: r.isModalPresented),
             voiceError: r.mode == .error,
             physicalGesture: r.hotkeyPhase != .idle,
@@ -106,7 +121,7 @@ public enum ControlAvailabilityAdapter {
         if r.agentAskSession == .speaking { return .askSpeaking }
         if r.isPlaybackPreparing { return .preparing }
         if r.isPlaybackPaused { return .paused }
-        if r.mode == .speaking || r.isHistoryPlaybackBusy { return .playing }
+        if r.mode == .speaking || r.isHistoryPlaybackActive { return .playing }
         if r.isTeleprompterReadback { return .readback }
         return .none
     }
