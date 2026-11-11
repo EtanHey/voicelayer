@@ -118,7 +118,16 @@ Native word timings do not prove acoustic completeness. Neither these tests nor 
 proves that all real words were recovered. No original recording is cropped or
 faded. Span-repair clips copy PCM samples without changing them; native text is
 never replaced by a span hypothesis. Native Parakeet runs the complete
-input with the measured 30-second chunk/2-second overlap settings.
+input with the measured 30-second chunk/2-second overlap settings, with one
+exception: a final window shorter than 12.5 s is never decoded alone. The
+previous window extends to the end of the input instead (at most 40.5 s), so
+every overlap stays 2 s and every earlier boundary is unchanged. On a real
+31.7 s press-stopped take, the 3.7 s final window decoded to zero tokens and the
+merge kept the earlier chunk, so the last words vanished without any retry
+(c8 T1). Over 3-4 s final windows that empty decode recurred on several real
+takes; the whole-take decode and Whisper both heard the words. Takes up to 30 s,
+and longer takes whose final window is already at least 12.5 s, decode exactly
+as before (`chunk_plan` and `generate_planned` in `src/parakeet-worker.py`).
 
 Native decode and full-input retries receive the same private, read-only,
 byte-identical full-WAV snapshot. Parakeet window retries receive temporary,
