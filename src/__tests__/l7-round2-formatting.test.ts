@@ -15,6 +15,7 @@ for (const [raw, expected] of [
   ["terrible anyway—that went pretty well", "terrible anyway, that went pretty well"],
   ["Keep this, — that stays.", "Keep this, that stays."],
   ["Keep this.—That stays.", "Keep this. That stays."],
+  ["Keep this — `a—b` beside us.", "Keep this, `a—b` beside us."],
   ["Open https://x.test/a—b, — then leave.", "Open https://x.test/a—b, then leave."],
 ] as const) test("prose dash has no invented hesitation: " + raw, async () => {
   const r = await finalizeTranscriptionResultForSurface(raw, null, env());

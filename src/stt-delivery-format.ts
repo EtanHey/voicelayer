@@ -45,7 +45,7 @@ export function formatDeliveryDashes(text: string): string {
     (all: string, left: string, right: string, at: number) => {
       const previous = text[offset + at - 1];
       const punctuation = left || right || (previous && /[,;:.!?]/u.test(previous) ? "" : ",");
-      const next = prose[at + all.length];
+      const next = text[offset + at + all.length];
       return punctuation + (next && !/[\r\n]/u.test(next) ? " " : "");
     }));
 }
