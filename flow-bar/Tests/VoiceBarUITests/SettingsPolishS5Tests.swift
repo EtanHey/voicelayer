@@ -93,6 +93,26 @@ final class SettingsPolishS5Tests: XCTestCase {
         _ = try Self.render(Self.drawer(.transcription, light: true), light: true, name: "transcription-drawer-light")
         _ = try Self.render(Self.pane(.transcription), width: 780, light: true, name: "transcription-window-light")
     }
+    func testCaptureMicrophoneDragEdgesAndLockedRecognizerRadios() throws {
+        let rows: [MicrophonePriorityRow] = [
+            .init(uid: "mic-a", deviceID: "1", label: "Mic A", isConnected: true),
+            .init(uid: "mic-b", deviceID: "2", label: "Mic B", isConnected: true),
+            .init(uid: "mic-off", deviceID: nil, label: "Mic Off", isConnected: false)]
+        for (name, source) in [("down", "mic-a"), ("up", "mic-off")] {
+            let pane = SettingsView(hotkeyEnabled: true, missingPermissions: [], availableDevices: { [] },
+                selectedDeviceID: { nil }, prioritySnapshot: { .init(rows: rows, nextDeviceName: "Mic A") },
+                modelsStatus: { .loading }, onRefreshModelsStatus: {}, vocabularyRevision: { 0 },
+                initialTab: .general, initialMicrophoneDrag: .init(sourceUID: source, targetIndex: 1),
+                installedVersion: .init(version: "2.4.0", commit: nil))
+            _ = try Self.render(pane, width: 780, height: 620, name: "microphone-drag-\(name)")
+        }
+        for selectable in [false, true] {
+            _ = try Self.render(RecognizerPickerView(state: SettingsDrawerLaneSSnapshotTests.recognizer(),
+                onSelect: selectable ? { _ in } : nil), width: 420, height: 240,
+                name: selectable ? "recognizer-radio-enabled" : "recognizer-radio-locked")
+        }
+    }
+
     func testDictionaryLoadingAndEmptyStatesUseCompactRows() throws {
         for loaded in [false, true] {
             let preview = STTVocabularyPreview(updatedAt: nil, entries: [])

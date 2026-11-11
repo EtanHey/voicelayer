@@ -112,3 +112,11 @@ extension View {
         })
     }
 }
+
+/// Geometry receipt for hosted layout checks; no product state or behavior reads this preference.
+struct SettingsControlFrameKey: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
+    }
+}

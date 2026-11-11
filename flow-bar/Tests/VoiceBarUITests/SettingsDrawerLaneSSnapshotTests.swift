@@ -163,7 +163,7 @@ final class SettingsDrawerLaneSSnapshotTests: XCTestCase {
     func testHoveringTheLockedSwitchShowsWhyAboveItCoveringNothing() throws {
         let lines = try SettingsDrawerLaneSLayoutTests.paintedLines(Self.drawer(.transcription, updates: nil)
             .environment(\.settingsHoverPreview, SettingsHoverPreview(lockedReasons: true)), height: 1100)
-        let reason = try SettingsDrawerLaneSLayoutTests.line(lines, containing: "needs whisper")
+        let reason = try SettingsDrawerLaneSLayoutTests.line(lines, containing: "unavailable with parakeet")
         let title = try SettingsDrawerLaneSLayoutTests.line(lines, containing: "smart chunks")
         let badge = try SettingsDrawerLaneSLayoutTests.line(lines, containing: "experimental")
         let description = try SettingsDrawerLaneSLayoutTests.line(lines, containing: "splits long")

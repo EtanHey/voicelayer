@@ -6,6 +6,24 @@ import XCTest
 
 @MainActor
 final class DictionaryDisclosureStateTests: XCTestCase {
+    func testWhitespaceKeepsBothGroupsCollapsedAndRealSearchOpensBoth() throws {
+        let preview = STTVocabularyPreview(updatedAt: nil,
+            entries: [.init(canonical: "Typewriter", variants: [])], displayEntries: [
+                .init(source: "personal", entry: .init(canonical: "Typewriter", variants: [])),
+                .init(source: "bundled", entry: .init(canonical: "TypeScript", variants: []))])
+        for (search, visible) in [("   ", false), ("  Type  ", true)] {
+            let pane = SettingsView(hotkeyEnabled: true, missingPermissions: [], availableDevices: { [] },
+                selectedDeviceID: { nil }, modelsStatus: { .loading }, onRefreshModelsStatus: {},
+                vocabularyPreview: { preview }, vocabularyRevision: { 0 }, initialTab: .dictionary,
+                initialDictionarySearch: search, initialDictionaryPreview: preview,
+                initialIncludedTermsExpanded: false, initialYourTermsExpanded: false)
+            let lines = try SettingsPolishS5Tests.ocr(SettingsPolishS5Tests.render(pane.notchDrawerPane(.dictionary), height: 470))
+            XCTAssertEqual(lines.contains { $0 == "typewriter" }, visible)
+            XCTAssertEqual(lines.contains { $0 == "typescript" }, visible)
+            if !visible { XCTAssertFalse(lines.contains { $0.contains("of 1") }, "Whitespace is not a filtered search") }
+        }
+    }
+
     func testIncludedChevronMatchesCollapsedExpandedAndSearchContent() throws {
         let entry = STTDictionaryEntry(canonical: "TypeScript", variants: [])
         let preview = STTVocabularyPreview(updatedAt: "2026-11-11T00:00:00Z", entries: [],

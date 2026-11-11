@@ -155,12 +155,17 @@ public struct RecognizerPickerView: View {
         SettingsRowLayout {
             Button { state.select(engine, send: onSelect) } label: {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Image(systemName: onSelect != nil && !state.isSelectionDisabled
-                        ? Self.selectionSymbol(isSelected: state.selected == engine)
-                        : state.selected == engine ? "checkmark" : "lock.fill")
+                    Image(systemName: Self.selectionSymbol(isSelected: state.selected == engine))
                         .font(.system(size: 14))
                         .foregroundStyle(state.selected == engine ? Color.accentColor : Color.secondary)
+                        .opacity(onSelect != nil && !state.isSelectionDisabled ? 1 : 0.45)
                         .accessibilityHidden(true)
+                    if onSelect == nil || state.isSelectionDisabled {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(SettingsPanePalette.helper)
+                            .accessibilityHidden(true)
+                    }
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             ClippingAwareText(text: Self.rowTitle(engine), font: SettingsRowLabel.titleFont,

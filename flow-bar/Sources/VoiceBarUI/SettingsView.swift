@@ -1426,6 +1426,10 @@ public struct SettingsView: View {
                     makeMicrophoneDefault(at: index)
                 }
                 .controlSize(.small)
+                .background(GeometryReader { proxy in
+                    Color.clear.preference(key: SettingsControlFrameKey.self,
+                        value: ["microphone-default-\(index)": proxy.frame(in: .global)])
+                })
                 .disabled(microphoneEditReason != nil)
                 .opacity(isHovered ? 1 : 0)
                 .animation(.easeOut(duration: 0.12), value: isHovered)
@@ -1490,8 +1494,8 @@ public struct SettingsView: View {
         }
     }
 
-    /// Half the gap between two priority rows' content, so the line sits on the divider between them.
-    private static let dropLineOffset: CGFloat = 11.5
+    /// Half the 3 pt stroke plus clearance: stay just outside this row, independent of Form gaps or text height.
+    private static let dropLineOffset: CGFloat = 2
 
     private func makeMicrophoneDefault(at index: Int) {
         guard microphoneEditReason == nil, let uids = microphoneSnapshot.makingDefaultUIDs(at: index) else { return }
