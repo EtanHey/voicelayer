@@ -84,6 +84,44 @@ public enum NotchHistoryPresentation {
         }
     }
 
+    // MARK: Categories (lane H)
+
+    public struct EmptyState: Equatable, Sendable {
+        public let title: String
+        public let detail: String
+    }
+
+    /// The selector's height and the gap under it; the list gives up this much, the drawer's height does not change.
+    public static let categorySelectorHeight: CGFloat = 22
+    public static let categorySelectorGap: CGFloat = 4
+    public static let categorySelectorFontSize: CGFloat = 11.5
+    public static let categorySelectorLabel = "History category"
+    public static let emptyRowIdentifier = "history-empty-row"
+
+    public static func categoryIdentifier(_ scope: SettingsHistoryScope) -> String { "history-category-\(scope.rawValue)" }
+
+    /// A segment's tooltip (every notch control has one, R0856-09).
+    public static func categoryTooltip(_ scope: SettingsHistoryScope) -> String {
+        switch scope {
+        case .recording: "What you dictated"
+        case .ask: "Your answers to spoken questions"
+        case .speech: "Text read aloud to you"
+        }
+    }
+
+    /// `isLoaded` is false only while a category's first archive read is still running.
+    public static func emptyState(for scope: SettingsHistoryScope, isLoaded: Bool = true) -> EmptyState {
+        guard isLoaded else { return EmptyState(title: "Loading…", detail: " ") }
+        switch scope {
+        case .recording:
+            return EmptyState(title: "No dictations yet", detail: "What you dictate shows up here.")
+        case .ask:
+            return EmptyState(title: "No asks yet", detail: "Your answers to an agent's spoken questions show up here.")
+        case .speech:
+            return EmptyState(title: "Nothing read aloud yet", detail: "Text VoiceBar reads to you shows up here.")
+        }
+    }
+
     public static let openHint = "Opens this recording in the History window"
 
     /// "history-row-1" for the newest row: one-based, by position in the list.

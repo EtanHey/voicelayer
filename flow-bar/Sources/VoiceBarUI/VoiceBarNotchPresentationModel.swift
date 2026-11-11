@@ -1,3 +1,4 @@
+import Foundation
 import CoreGraphics
 import Observation
 
@@ -23,6 +24,8 @@ public final class VoiceBarNotchPresentationModel {
     public private(set) var isReducedMotionEnabled = false
 
     private var hasTeleprompter = false
+    /// C7 L3 V10: a read is on screen; its canvas keeps the teleprompter height (see VoiceBarNotchPresentation).
+    private var holdsReadingCanvas = false
     private var isRecording = false
     private var hasCompactStatus = false
     private var keepsIdleExpanded = false
@@ -76,8 +79,10 @@ public final class VoiceBarNotchPresentationModel {
         visibleCoreOcclusionInset: CGFloat = 0,
         virtualNotchIdleCoreHeight: CGFloat? = nil,
         transientNoteWidth: CGFloat? = nil,
-        feedback: VoiceBarNotchFeedback? = nil
+        feedback: VoiceBarNotchFeedback? = nil,
+        holdsReadingCanvas: Bool = false
     ) {
+        self.holdsReadingCanvas = holdsReadingCanvas
         self.hasTeleprompter = hasTeleprompter
         self.isRecording = isRecording
         self.hasCompactStatus = hasCompactStatus
@@ -139,6 +144,27 @@ public final class VoiceBarNotchPresentationModel {
         resolvePresentation()
     }
 
+    /// C6 L2c (Q-F48): the drawer height a pointer drew, reported when a grip, a handle or a pull past open is let
+    /// go AND the release changes the drawer's rows (before they change). It is bound to that resize: the rows it
+    /// resizes to. The app's hit gate takes it at the next same-size change it settles into, and applies it only if
+    /// that change is exactly this resize (`VoiceBarPanelHitGate.update(to:now:drawnReport:)`); any other change
+    /// discards it. It lapses after the gate's settle window. R891: a same-row release reports nothing.
+    @ObservationIgnored private var drawnDrawer: (report: NotchDrawnDrawerReport, at: TimeInterval)?
+    @ObservationIgnored public var drawnHistoryClock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+
+    public func noteDrawnHistoryLowerSurface(_ height: CGFloat, resizingTo rows: Int) {
+        guard height.isFinite else { return }
+        drawnDrawer = (NotchDrawnDrawerReport(lowerSurfaceHeight: height, rows: rows), drawnHistoryClock())
+    }
+
+    /// The report, once, while it is still fresh; nil otherwise. Taking it always clears it.
+    public func takeDrawnHistoryLowerSurface() -> NotchDrawnDrawerReport? {
+        defer { drawnDrawer = nil }
+        guard let drawn = drawnDrawer,
+              drawnHistoryClock() - drawn.at < VoiceBarPanelHitGate.settleDuration else { return nil }
+        return drawn.report
+    }
+
     /// U5: the Teleprompter A handle's own pointer hold. Separate from History's, so neither releases the other's.
     public private(set) var isTeleprompterHandlePullActive = false
 
@@ -183,7 +209,7 @@ public final class VoiceBarNotchPresentationModel {
             visibleCoreOcclusionInset: visibleCoreOcclusionInset,
             virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
             transientNoteWidth: transientNoteWidth, feedback: feedback
-        )
+        ).holdingReadingCanvas(holdsReadingCanvas)
         guard next != presentation else { return }
 
         motionCoordinator.replaceTarget(

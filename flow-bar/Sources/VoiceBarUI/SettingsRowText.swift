@@ -59,19 +59,34 @@ struct SettingsRowLabel: View {
 
     let title: String
     let description: String?
+    var badge: String?
+    var titleBadge: SettingsPill?
     var isSelected = false
+    /// The notch drawer wraps row copy in full (lead review, c7 07:55Z: "no truncated copy anywhere"); the window
+    /// keeps the V12 two-line limit with a tooltip for the rest.
+    @Environment(\.settingsRowWrapsFully) private var wrapsFully
+
+    private var limit: Int? { isSelected || wrapsFully ? nil : Self.lineLimit }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            ClippingAwareText(text: title, font: Self.titleFont, lineLimit: isSelected ? nil : Self.lineLimit)
-                .foregroundStyle(.primary)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                ClippingAwareText(text: title, font: Self.titleFont, lineLimit: limit)
+                    .foregroundStyle(.primary)
+                if let titleBadge { titleBadge }
+            }
             if let description, !description.isEmpty {
-                ClippingAwareText(text: description, font: Self.descriptionFont,
-                                  lineLimit: isSelected ? nil : Self.lineLimit)
-                    .foregroundStyle(SettingsPanePalette.helper)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    ClippingAwareText(text: description, font: Self.descriptionFont,
+                                      lineLimit: limit)
+                        .foregroundStyle(SettingsPanePalette.helper)
+                    if let badge { SettingsPill(text: badge) }
+                }
+            } else if let badge {
+                SettingsPill(text: badge)
             }
         }
-        .frame(minWidth: Self.textMinWidth, maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -177,9 +192,24 @@ struct SettingsRowLayout: Layout {
         let plan = plan(width: bounds.width, subviews: subviews)
         subviews[0].place(at: bounds.origin, anchor: .topLeading,
                           proposal: ProposedViewSize(width: plan.textSize.width, height: nil))
+        // Beside the text, controls are centred on it (lane S DESIGN.md §3): a switch or button beside a two-line
+        // row sits in the middle of the row, not on the title's line.
         let controlsOrigin = plan.wraps
             ? CGPoint(x: bounds.minX, y: bounds.minY + plan.textSize.height + spacing / 2)
-            : CGPoint(x: bounds.maxX - plan.controlsSize.width, y: bounds.minY)
+            : CGPoint(x: bounds.maxX - plan.controlsSize.width,
+                      y: bounds.minY + max(0, (plan.textSize.height - plan.controlsSize.height) / 2))
         subviews[1].place(at: controlsOrigin, anchor: .topLeading, proposal: ProposedViewSize(plan.controlsSize))
+    }
+}
+
+private struct SettingsRowWrapsFullyKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Set by the notch drawer: row titles and descriptions wrap to as many lines as they need.
+    var settingsRowWrapsFully: Bool {
+        get { self[SettingsRowWrapsFullyKey.self] }
+        set { self[SettingsRowWrapsFullyKey.self] = newValue }
     }
 }

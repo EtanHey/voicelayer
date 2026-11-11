@@ -22,8 +22,16 @@ public struct NotchSettingsDrawerContext {
 public enum NotchSettingsDrawerPresentation {
     public static let tabBarHeight: CGFloat = 46
     public static let horizontalInset: CGFloat = 8
+    /// The grouped Form's own side inset (macOS draws its cards this far inside the scroll view). The drawer cancels
+    /// it so a section card's edges are the tab bar's edges.
+    public static let groupedFormInset: CGFloat = 20
+    /// Height of the fade at a pane's scrolling top edge (lane S PR 3: Etan's video showed a card's labels cut through
+    /// under the tab bar while scrolling).
+    public static let scrollEdgeFade: CGFloat = 20
+    /// A grouped card's row inset; the version row uses it on both sides so its text and button line up with the
+    /// rows above it.
     public static let rowLeadingPadding: CGFloat = 10
-    public static let rowTrailingPadding: CGFloat = 8
+    public static let rowTrailingPadding: CGFloat = 10
     public static let titleFontSize: CGFloat = 13
     public static let detailFontSize: CGFloat = 11.5
     public static let tabGlyphSize: CGFloat = 13
@@ -220,8 +228,10 @@ struct NotchDrawerButton: View {
     }
 }
 
-/// The version row under General: the full build line (never truncated, wraps to a second line if it must), Check
-/// for updates, and when a release is newer, its notes and an Update button.
+/// The version row under General: "VoiceBar" with its action on the same line (Check for updates, or Release notes and
+/// Update when a release is newer), then the full build line and the update status across the full width below
+/// (never truncated; either wraps to a second line if it must). Etan (QA 2026-11-11): it read cramped when the status
+/// was squeezed beside the button into two short lines; it now uses the card rows' 10 pt insets (lane S DESIGN.md §10).
 struct NotchSettingsVersionRow: View {
     let updates: NotchUpdateController
     let appearance: VoiceBarNotchAppearance
@@ -229,38 +239,12 @@ struct NotchSettingsVersionRow: View {
     private var palette: VoiceBarNotchContrastPalette { .resolve(for: appearance) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 10) {
-                NotchGlyph(systemName: "info.circle", color: palette.secondary.color, appearance: appearance)
-                    .frame(width: 20)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(NotchSettingsDrawerPresentation.versionTitle)
-                        .font(.system(size: NotchSettingsDrawerPresentation.titleFontSize))
-                        .foregroundStyle(palette.primary.color)
-                    Text(updates.buildLine)
-                        .font(.system(size: NotchSettingsDrawerPresentation.detailFontSize))
-                        .monospacedDigit()
-                        .foregroundStyle(palette.tertiary.color)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                        .accessibilityIdentifier("notch-settings-build-line")
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            HStack(spacing: 8) {
-                Spacer().frame(width: 20)
-                if updates.phase == .checking || updates.phase == .updating {
-                    ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 16, height: 16)
-                }
-                if let status = NotchSettingsDrawerPresentation.updateStatus(updates.phase) {
-                    Text(status)
-                        .font(.system(size: NotchSettingsDrawerPresentation.detailFontSize))
-                        .foregroundStyle(palette.secondary.color)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    Spacer()
-                }
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .center, spacing: 8) {
+                Text(NotchSettingsDrawerPresentation.versionTitle)
+                    .font(.system(size: NotchSettingsDrawerPresentation.titleFontSize, weight: .medium))
+                    .foregroundStyle(palette.primary.color)
+                Spacer(minLength: 8)
                 if let version = updates.availableVersion {
                     if let url = NotchUpdateController.releaseNotesURL(version: version) {
                         NotchDrawerButton(title: NotchSettingsDrawerPresentation.releaseNotes, palette: palette) {
@@ -278,10 +262,144 @@ struct NotchSettingsVersionRow: View {
                     }
                 }
             }
+            Text(updates.buildLine)
+                .font(.system(size: NotchSettingsDrawerPresentation.detailFontSize))
+                .monospacedDigit()
+                .foregroundStyle(palette.tertiary.color)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .accessibilityIdentifier("notch-settings-build-line")
+            if let status = NotchSettingsDrawerPresentation.updateStatus(updates.phase) {
+                HStack(spacing: 6) {
+                    if updates.phase == .checking || updates.phase == .updating {
+                        ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 12, height: 12)
+                    }
+                    Text(status)
+                        .font(.system(size: NotchSettingsDrawerPresentation.detailFontSize))
+                        .foregroundStyle(palette.secondary.color)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.leading, NotchSettingsDrawerPresentation.rowLeadingPadding)
         .padding(.trailing, NotchSettingsDrawerPresentation.rowTrailingPadding)
-        .padding(.vertical, 6)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .overlay(alignment: .top) {
+            Rectangle().fill(palette.primary.color.opacity(0.1)).frame(height: 0.5)
+        }
         .task { if updates.status == nil { await updates.checkForUpdates(force: false) } }
+    }
+}
+
+extension SettingsTab {
+    /// The drawer panes that are grouped Forms (Dictionary scrolls its own list; History is the notch's rows).
+    var notchUsesGroupedForm: Bool {
+        switch self {
+        case .general, .transcription, .speech: true
+        case .dictionary, .history: false
+        }
+    }
+}
+
+/// Cancels a grouped Form's 20 pt side inset inside the drawer (lane S, Etan QA 2026-11-11 "the gutters on the sides
+/// are still huge"). The Form is laid out 20 pt wider on each side than the pane, so its cards land on the pane's
+/// edges; the drawer clips the pane, so the overlay scroller, which would sit in the clipped strip, is inset back to
+/// just inside the visible edge.
+struct NotchGroupedFormGutter: ViewModifier {
+    let isGroupedForm: Bool
+
+    func body(content: Content) -> some View {
+        if isGroupedForm {
+            content
+                .padding(.horizontal, -NotchSettingsDrawerPresentation.groupedFormInset)
+                .modifier(NotchScrollEdgeFade(isActive: true))
+                .background(NotchFormScrollerInset(trailing: NotchSettingsDrawerPresentation.groupedFormInset - 1))
+        } else {
+            content
+        }
+    }
+}
+
+/// Finds the pane's scroll view (a sibling of this probe under the same hosting container) and insets its vertical
+/// scroller. If AppKit's tree ever differs it finds nothing and changes nothing: the scroller is then clipped, never
+/// misplaced.
+struct NotchFormScrollerInset: NSViewRepresentable {
+    let trailing: CGFloat
+
+    func makeNSView(context: Context) -> Probe { Probe(trailing: trailing) }
+    func updateNSView(_ view: Probe, context: Context) {
+        view.trailing = trailing
+        view.apply()
+    }
+
+    final class Probe: NSView {
+        var trailing: CGFloat
+
+        init(trailing: CGFloat) {
+            self.trailing = trailing
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable) required init?(coder: NSCoder) { nil }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            DispatchQueue.main.async { [weak self] in self?.apply() }
+        }
+
+        override func layout() {
+            super.layout()
+            apply()
+        }
+
+        func apply() {
+            guard let scrollView = Self.scrollView(near: self) else { return }
+            let insets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: trailing)
+            if scrollView.scrollerInsets.right != insets.right { scrollView.scrollerInsets = insets }
+        }
+
+        /// The nearest NSScrollView among this probe's ancestors' descendants, searching outward three levels.
+        static func scrollView(near view: NSView) -> NSScrollView? {
+            var ancestor = view.superview
+            for _ in 0 ..< 3 {
+                guard let current = ancestor else { return nil }
+                if let found = firstScrollView(in: current, skipping: view) { return found }
+                ancestor = current.superview
+            }
+            return nil
+        }
+
+        private static func firstScrollView(in root: NSView, skipping probe: NSView) -> NSScrollView? {
+            for subview in root.subviews where subview !== probe {
+                if let scroll = subview as? NSScrollView { return scroll }
+                if let found = firstScrollView(in: subview, skipping: probe) { return found }
+            }
+            return nil
+        }
+    }
+}
+
+/// Fades a scrolling pane's top edge over `scrollEdgeFade` points, so content scrolled up under the tab bar (or the
+/// Dictionary toolbar) dissolves instead of being cut through mid-line. At rest the first section header sits below
+/// the fade.
+struct NotchScrollEdgeFade: ViewModifier {
+    let isActive: Bool
+
+    func body(content: Content) -> some View {
+        if isActive {
+            content.mask {
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                        .frame(height: NotchSettingsDrawerPresentation.scrollEdgeFade)
+                    Color.black
+                }
+            }
+        } else {
+            content
+        }
     }
 }

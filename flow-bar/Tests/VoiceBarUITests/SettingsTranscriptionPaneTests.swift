@@ -95,7 +95,8 @@ final class SettingsTranscriptionPaneTests: XCTestCase {
         let rows = ModelsSettingsView.processingRows(for: Self.controls, recognizer: state(selected: .parakeet))
         XCTAssertEqual(rows[2].lockedReason, "Unavailable with Parakeet")
         let source = (try? String(contentsOf: Self.source("ModelsSettingsView.swift"), encoding: .utf8)) ?? ""
-        XCTAssertTrue(source.contains(".modifier(OptionalHelp(text: row.lockedReason))"))
+        XCTAssertTrue(source.contains(".settingsLockedReason(disabled ? row.lockedReason ?? busyReason : nil)"),
+                      "the reason shows on hover of the switch (Etan, QA 2026-11-11)")
     }
 
     func testTheLastDictationNoteNamesTheTimeAndTheWriter() throws {
@@ -119,12 +120,10 @@ final class SettingsTranscriptionPaneTests: XCTestCase {
         let rows = ModelsSettingsView.processingRows(for: Self.controls, recognizer: picker)
         let unload = ModelsSettingsView.unloadWhenIdleRow(for: picker)!
         SettingsRowClippingGuard.check(rows.map {
-            SettingsRowCase(title: $0.key.title, description: $0.rowDescription,
-                            controls: $0.experimental
-                                ? AnyView(HStack { SettingsPill(text: "Experimental"); SettingsRowCase.toggle })
-                                : SettingsRowCase.toggle)
+            SettingsRowCase(title: $0.key.title, description: $0.line,
+                            controls: SettingsRowCase.toggle) // Experimental is a title badge now (lane S)
         } + [
-            SettingsRowCase(title: unload.title, description: unload.captionLines.joined(separator: " "),
+            SettingsRowCase(title: unload.title, description: unload.line,
                             controls: SettingsRowCase.toggle),
             SettingsRowCase(title: "Language", description: "Auto detects English and Hebrew per recording.",
                             controls: AnyView(Picker("", selection: .constant("Auto")) { Text("Auto").tag("Auto") }

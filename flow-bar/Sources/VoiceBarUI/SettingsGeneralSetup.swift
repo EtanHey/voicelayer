@@ -211,6 +211,8 @@ enum SettingsMicrophoneRowPresentation {
         return snapshot.nextDeviceName != nil && snapshot.nextDeviceName == row.label
     }
 
+    static let usedBadge = "Used for dictation"
+
     /// Make default is offered on any connected, prioritizable mic below the top, whether or not it is the one in use.
     static func offersMakeDefault(_ row: MicrophonePriorityRow, at index: Int) -> Bool {
         row.canPrioritize && row.isConnected && index > 0
@@ -233,6 +235,10 @@ enum SettingsGeneralCopy {
     static let hideTitle = "Hide the notch"
     static let hideDescription = "VoiceBar keeps working. Click its Dock icon to bring the notch back."
     static let relayTitle = "F5 key helper"
+    static let shortcutsHeader = "Shortcuts"
+    static let singleTapTitle = "Tap F5"
+    static let readClipboardTitle = "Read clipboard aloud"
+    static let diagnosticDescription = "Copies the build and recognizer facts for a bug report."
     static let microphoneNote =
         "Drag to reorder. VoiceBar uses the first connected microphone. Disconnected ones keep their place."
 

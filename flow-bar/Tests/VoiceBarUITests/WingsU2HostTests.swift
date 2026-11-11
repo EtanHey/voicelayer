@@ -120,11 +120,11 @@ final class WingsU2HostTests: XCTestCase {
             configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
         )
         XCTAssertEqual(host.layout.presentation.visualState, .recording)
-        // Pause takes the third left-wing slot, as Lock does on a VAD take. F2 balances both wings
-        // at that three-control width; the right wing still holds no control.
+        // Pause takes the third left-wing slot, as Lock does on a VAD take. C7-W: both wings take the time/meter
+        // wing's width (102 pt, wider than the three controls' 99.5); the right wing still holds no control.
         assertFixedWings(host, leading: 3, trailing: 0,
-                         trailingWidth: VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl,
-                         leadingWidth: VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl)
+                         trailingWidth: VoiceBarNotchContract.recordingTrailingWingWidth,
+                         leadingWidth: VoiceBarNotchContract.recordingTrailingWingWidth)
         // From the core outward: Cancel, then Pause, then Stop.
         firstClick(host, control: 0)
         XCTAssertEqual(host.router.calls, ["cancel"])

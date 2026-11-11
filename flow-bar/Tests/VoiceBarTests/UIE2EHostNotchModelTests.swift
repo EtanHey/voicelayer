@@ -43,10 +43,11 @@ final class UIE2EHostNotchModelTests: XCTestCase {
         XCTAssertEqual(model.presentation.visualState, .recording)
         // Recording pause: a PTT take's left wing is Stop · Pause · ✕, the three-control width Lock already uses
         // on a VAD take (73.5 + 4 + 22 = 99.5 pt).
-        XCTAssertEqual(model.presentation.geometry.leadingWingWidth,
-                       VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl)
-        XCTAssertEqual(model.presentation.geometry.trailingWingWidth,
-                       VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl)
+        // C7-W: the time/meter wing (102 pt on a flat display) is the wider of the two and sets both wings.
+        XCTAssertEqual(model.presentation.geometry.leadingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth)
+        XCTAssertEqual(model.presentation.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth)
+        XCTAssertGreaterThanOrEqual(VoiceBarNotchContract.recordingTrailingWingWidth,
+                                    VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl)
         // One envelope feed: the QA host resolves the same geometry from the same state.
         let host = UIE2EHost.panelLayout(for: state).presentation.geometry
         XCTAssertEqual(host.leadingWingWidth, model.presentation.geometry.leadingWingWidth, accuracy: 0.001)

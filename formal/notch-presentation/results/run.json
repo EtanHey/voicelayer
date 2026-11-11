@@ -31,13 +31,13 @@
     "formal/notch-presentation/MutTextWing.cfg": "8a14cd224cda080ee1841ee8391e1e9703fc61efd85dce194f4072b721cfd307",
     "formal/notch-presentation/Fixed.cfg": "87d27589a3cf2adf8e4c1e7652b70d9826bebb861b8a406e59db80e09e559029",
     "formal/notch-presentation/OldQuitCause.cfg": "6c6fc8f33a06e3fd7babba4d98b5e7cb980fd966daf42659204397f0424a80b6",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "71aa8297b9c50760d8c91c25d4faf502261f57d78dedcc2c8a869a643bd16e2f",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchContract.swift": "56b27fd8729ad4817a8b6d8fbc30c1eb91b33660b3112cef03a4946aa7dc03d6",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchFeedback.swift": "192998017375294a13990c9a38cf4c35daf51d8c6255e56489591613f5028ab0",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarPresentation.swift": "93ebe88508ab242d4b5c1b9c22aa51b7349d5941c2c9e20478838b532c2bfc6a",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "3a6be142701d447bf0e906d87fa7496af6000f31a40550622ad05d5ce46c3e93",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "d098ef082568298419c075cbe1012c8147da0d01b7d1dace9c8c99692a0fa27c",
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "ae033e7245a647023611a7218b1b0ec1a926cc2315b12ae1ad6a8057fca578c1",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "3e78530b541c0886bb561700440033339b1691ed93a337b5fb1416b315c7f003",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchContract.swift": "163e51464d24b7fb61006c18737c5cdfa57868923e061abcc2623a2922720b8f",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchFeedback.swift": "108b54e6417ed65edb4fdfd99a0da37659edcfbab7451a9b4c72048b0612d7d9",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarPresentation.swift": "caba39e10caeb9434109ca59170653ac8cb276ae9649b3e4d03e245499ecb8ea",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "2a4ebd4a6b1415d6cd283fcbc562956b0e1adb08049d3c32e1079a663800cb2b",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "ccf99809cc50361527ded7796d4fbae8febbb29d72148272e3f695e30ecdb7d9",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "6641bb301ba01de2475f7542c26da792aeffbe47626398590c4d8d87c5041943",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
@@ -274,8 +274,8 @@
       "kind": "temporal",
       "target": "NoteNeverStuck",
       "status": "EXPECTED_FAIL",
-      "generated": 139660,
-      "distinct": 26076
+      "generated": 205673,
+      "distinct": 31918
     },
     "MutTypedTab": {
       "role": "mutant",

@@ -145,6 +145,9 @@ public enum NotchHistoryMorph {
 
     /// A press that moves less than this is a click, never a drag.
     public static let dragSlop: CGFloat = 3
+    /// C7-W: a press on the recording wing that travels no further than this is a click (a dab), not a pull. Measured
+    /// on the M1: flicks of 16 pt and more already open History; 10 pt and less did nothing.
+    public static let wingClickTravel: CGFloat = 10
     /// Etan, QA 0510 N5: the first sample past the slop hands the panel over with no displacement (Codex R2) only
     /// while it is within this distance of the press. Travel beyond it is pointer motion the panel catches up on, so
     /// a quick flick whose second sample lands 40 pt away moves the panel like a slow drag over the same distance.

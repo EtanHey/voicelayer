@@ -103,6 +103,23 @@ final class ReadingStateL3Tests: XCTestCase {
         wait(for: [gone], timeout: 3)
     }
 
+    /// R893 P2: the read identity the teleprompter's browse state is keyed to.
+    func testReadIdentityChangesForANewReadOfTheSameTextOnly() {
+        let state = speakingState()
+        state.handleEvent(["type": "state", "state": "speaking", "text": "One two three four five six",
+                           "duration_ms": 6000, "playback_id": "l3-read", "generation": 1, "utteranceId": "u-1"])
+        let first = state.teleprompterReadIdentity
+        state.handleEvent(pausedEvent())
+        XCTAssertEqual(state.teleprompterReadIdentity, first, "pause keeps the read")
+        state.handleEvent(["type": "state", "state": "speaking", "text": "One two three four five six",
+                           "duration_ms": 6000, "playback_id": "l3-read", "generation": 3, "utteranceId": "u-1",
+                           "playback_offset_ms": 2500])
+        XCTAssertEqual(state.teleprompterReadIdentity, first, "resume keeps the read")
+        state.handleEvent(["type": "state", "state": "speaking", "text": "One two three four five six",
+                           "duration_ms": 6000, "playback_id": "other-read", "generation": 1, "utteranceId": "u-2"])
+        XCTAssertNotEqual(state.teleprompterReadIdentity, first, "same text, new utterance: a new read")
+    }
+
     // MARK: - State naming and controls (new API)
 
     func testReadingStatesAreNamedAndIndependent() {

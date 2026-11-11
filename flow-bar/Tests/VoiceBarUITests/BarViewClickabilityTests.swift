@@ -152,8 +152,8 @@ final class BarViewClickabilityTests: XCTestCase {
         recording.isCollapsed = false
         XCTAssertEqual(
             makeHost(state: recording, router: SpyCommandRouter()).bounds.size,
-            // QA 0449: the three-control recording wing is 99.5 pt on both sides of the 185 pt core.
-            NSSize(width: 384, height: 32)
+            // C7-W: the recording wing is 102 pt on both sides of the 185 pt core (8 + 26 + 8 + 46 + 14).
+            NSSize(width: 389, height: 32)
         )
 
         let teleprompter = VoiceState()
@@ -766,7 +766,8 @@ final class BarViewClickabilityTests: XCTestCase {
     func testQueuedSpeechUsesOnlyASmallBadgeOnForward() throws {
         let source = try barViewSource()
 
-        XCTAssertTrue(source.contains("if let count = forward.countLabel"))
+        // L3 M4 defect fix: the badge is drawn by the shared, glyph-clear placement (QueueBadgeL3Tests pixel test).
+        XCTAssertTrue(source.contains(".queueCountBadge(forward.countLabel"))
         XCTAssertFalse(source.contains("private var queueVisualization"))
     }
 
@@ -868,7 +869,14 @@ final class BarViewClickabilityTests: XCTestCase {
                 }
                 var settingsOpens = 0
                 let configuration = state.mode == .recording
-                    ? VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
+                    ? VoiceBarNotchInteractionConfiguration(
+                        leadingControlCount: 3,
+                        // C7-W: the recording row sits out from the core, as the app configures it.
+                        leadingCoreInset: VoiceBarPresentation.recordingLeadingCoreInset(
+                            wingWidth: VoiceBarPresentation.recordingWingWidth(
+                                showsThirdControl: true, showsEarlierTakeProcessing: false,
+                                visibleCoreOcclusionInset: 0),
+                            showsEarlierTakeProcessing: false))
                     : VoiceBarNotchInteractionConfiguration(
                         leadingControlCount: 2, trailingControlCountFromCore: 2
                     )
