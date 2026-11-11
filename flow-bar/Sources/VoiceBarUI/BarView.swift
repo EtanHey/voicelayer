@@ -472,17 +472,28 @@ public struct BarView: View {
 
     private var isSettingsDrawerOpen: Bool { surface.drawer?.isSettings == true }
 
-    /// The rows the open drawer rests at: History's detent, or the expanded height for Settings (so the window
-    /// never resizes between the two). A closed drawer keeps its detent's rows for the close spring.
+    /// The rows the open drawer rests at: History's detent, or the Settings drawer's remembered height (N16). The
+    /// window holds every one of these, so it never resizes between them. A closed drawer keeps its rows for the
+    /// close spring.
     private var historyRows: Int {
         if let forcedHistoryRows { return forcedHistoryRows }
         let entries = state.recentTranscriptionEntries.count
         switch surface.drawer {
-        case .settings: return NotchSettingsDrawerPresentation.rows
+        case .settings: return surface.settingsRows
         case let .history(detent): return detent.rows(entryCount: entries)
-        case nil: return pullOpensSettings ? NotchSettingsDrawerPresentation.rows
+        case nil: return pullOpensSettings ? surface.settingsRows
             : surface.historyDetent.rows(entryCount: entries)
         }
+    }
+
+    /// The rows the open drawer's grip moves between: History's six to eight (never past its entries), or the
+    /// Settings drawer's eight to `maximumRows` (N16).
+    private var drawerRowRange: (minimum: Int, maximum: Int) {
+        if isSettingsDrawerOpen {
+            return (NotchSettingsDrawerPresentation.minimumRows, NotchSettingsDrawerPresentation.maximumRows)
+        }
+        return (NotchHistoryMorph.visibleRows,
+                NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count))
     }
 
     /// What the notch is doing, reported to the machine. Only agent speech closes a drawer and refuses a new one:
@@ -913,15 +924,16 @@ public struct BarView: View {
     /// collapsed rows it closes the panel with the pointer instead (0510 N4, `NotchHistoryMorph.handleDrag`).
     private func dragHistoryRows(to y: CGFloat, time: TimeInterval) {
         guard admitsCurrentDrawerGesture() else { return }
-        let maximum = NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count)
+        let range = drawerRowRange
         guard historyRowsPull.move(
             y: y, time: time, range: NotchHistoryMorph.rowHeight,
-            band: { NotchHistoryMorph.rowsRubberBand($0, maximum: maximum) },
+            band: { NotchHistoryMorph.rowsRubberBand($0, maximum: range.maximum, minimum: range.minimum) },
             seed: renderedHistoryRows(at: time)
         ) != nil else { return }
         let follow = NotchHistoryMorph.handleDrag(
-            rawRows: historyRowsPull.rawProgress, maximum: maximum,
-            openTravel: notchPresentationOpenHistoryHeight - VoiceBarNotchContract.topHeight
+            rawRows: historyRowsPull.rawProgress, maximum: range.maximum,
+            openTravel: notchPresentationOpenHistoryHeight - VoiceBarNotchContract.topHeight,
+            minimum: range.minimum
         )
         historyRowsFlight = nil
         historyFlight = nil
@@ -939,26 +951,33 @@ public struct BarView: View {
         isDrawerBodyDragActive || historyRowsPull.phase != .idle
     }
 
-    /// 0510 N4: Settings' grip pushes the drawer closed under the pointer, the same open/close pull as History's
-    /// body: it follows, and a release past halfway (or a flick up) closes it.
-    private func dragDrawerGrip(y: CGFloat, time: TimeInterval) {
+    /// C6 L2c (N16): Settings' grip resizes the drawer the way History's handle does. Down makes it taller, one
+    /// row per 46 pt up to `maximumRows` (stretching a little past it); up makes it shorter down to eight rows, and
+    /// pushed above those it closes the drawer with the pointer (0510 N4, `NotchHistoryMorph.handleDrag`).
+    private func dragSettingsGrip(y: CGFloat, time: TimeInterval) {
         guard !isDismissedDrawerGesture else { return }
-        if !isDrawerBodyDragActive {
-            guard case .idle = historyPull.phase, case .idle = historyRowsPull.phase, isHistoryPresented,
+        if case .idle = historyRowsPull.phase {
+            guard case .idle = historyPull.phase, !isDrawerBodyDragActive, isSettingsDrawerOpen,
                   (historyFrozenProgress ?? renderedHistoryProgress(at: time)) > 0.98 else { return }
-            isDrawerBodyDragActive = true
             drawerPullDismissalGeneration = surface.dismissalGeneration
-            historyPull.press(y: y, progress: historyProgress, time: time)
+            historyRowsPull.press(y: y, progress: historyRowsExtent, time: time)
         }
-        followHistoryPull(y: y, time: time, openHeight: notchPresentationOpenHistoryHeight)
+        dragHistoryRows(to: y, time: time)
     }
 
-    private func endDrawerGripDrag(cancelled: Bool) {
+    private func endSettingsGripDrag(cancelled: Bool) {
         defer { isDismissedDrawerGesture = false }
-        guard isDrawerBodyDragActive else { return }
-        endHistoryPull(cancelled: cancelled)
-        isDrawerBodyDragActive = false
+        guard historyRowsPull.phase != .idle else { return }
+        endHistoryRowsPull(cancelled: cancelled)
         drawerBodyDragEndedAt = NotchHistoryClock.now()
+    }
+
+    /// VoiceOver's adjust on the Settings grip: one row at a time, instantly (an assistive step never animates).
+    private func adjustSettingsRows(by delta: Int) {
+        guard delta != 0, isSettingsDrawerOpen else { return }
+        surface.setSettingsRows(surface.settingsRows + delta)
+        historyRowsFlight = nil
+        historyRowsExtent = CGFloat(historyRows)
     }
 
     /// A released (or cancelled) handle settles on the nearest whole row with the `pull` spring; the hit region and
@@ -969,19 +988,24 @@ public struct BarView: View {
         let rawRows = historyRowsPull.rawProgress
         guard case let .settle(_, velocity) = historyRowsPull.release(progress: historyRowsExtent, cancelled: cancelled)
         else { return }
-        // 2.4 Lane A: pushing the bottom edge up past the collapsed rows closes History (the mirror of pulling it
-        // down); the rows spring back to the detent for the next open. A cancelled push settles at the nearer end,
-        // so one that already closed the panel more than halfway closes it.
-        if NotchHistoryMorph.handleClosesHistory(rawRows: rawRows), !cancelled || historyProgress < 0.5 {
+        // 2.4 Lane A: pushing the bottom edge up past the collapsed rows closes the drawer (the mirror of pulling
+        // it down); the rows spring back to its resting height for the next open. A cancelled push settles at the
+        // nearer end, so one that already closed the panel more than halfway closes it.
+        if NotchHistoryMorph.handleCloses(rawRows: rawRows, minimum: drawerRowRange.minimum),
+           !cancelled || historyProgress < 0.5 {
             surface.send(.dismiss(.dragUp))
             settleHistoryRowsExtent(to: historyRows, velocity: 0)
             return
         }
         // A push that closed the panel part-way and was let go short of closing springs it open again.
         if historyProgress < 1 { animateHistory(toOpen: true) }
-        let detent = NotchHistoryDetent.nearest(rows: historyRowsExtent)
         let previous = historyRows
-        surface.send(.setHistoryDetent(detent))
+        if isSettingsDrawerOpen {
+            // N16: the Settings drawer settles on the nearest whole row and remembers it.
+            surface.setSettingsRows(NotchSettingsDrawerPresentation.settledRows(historyRowsExtent))
+        } else {
+            surface.send(.setHistoryDetent(NotchHistoryDetent.nearest(rows: historyRowsExtent)))
+        }
         // The same detent again (a drag that springs back) changes no rows, so settle the extent here.
         if historyRows == previous { settleHistoryRowsExtent(to: previous, velocity: velocity) }
         pendingHistoryRowsVelocity = velocity
@@ -1635,15 +1659,21 @@ public struct BarView: View {
                 NotchSettingsDrawer(
                     selectedTab: settingsTabShown ?? .general, appearance: notchAppearance, context: settingsDrawer, request: surface.settingsRequest,
                     history: {
-                        AnyView(historyPanelContent(listHeight: NotchSettingsDrawerPresentation.historyListHeight)
-                            .padding(.top, NotchHistoryMorph.listTopInset))
+                        // N16: the History tab's list follows the drawer's live height (the grip drags it).
+                        AnyView(historyPanelContent(
+                            listHeight: NotchSettingsDrawerPresentation.historyListHeight(rows: historyRowsExtent)
+                        )
+                        .padding(.top, NotchHistoryMorph.listTopInset))
                     },
                     onSelectTab: { surface.send(.selectSettingsTab($0)) }
                 )
                 .simultaneousGesture(drawerBodyDragGesture)
                 // 0510 N4: the panes scroll inside themselves, so the drawer gets History's grip to push it closed.
+                // C6 L2c (N16): the same grip drags it taller or shorter, and the height it is let go at is kept.
                 NotchHistoryExtendHandle(
-                    palette: notchPalette, onDrag: dragDrawerGrip, onDragEnd: endDrawerGripDrag
+                    palette: notchPalette,
+                    settingsRows: (surface.settingsRows, adjustSettingsRows),
+                    onDrag: dragSettingsGrip, onDragEnd: endSettingsGripDrag
                 )
             }
             .frame(maxHeight: .infinity, alignment: .top)
@@ -2103,7 +2133,9 @@ public struct BarView: View {
             model.send(.openSettings(tab))
         }
         if injectedSurface == nil { copy._ownSurface = State(initialValue: model) }
-        copy._historyRowsExtent = State(initialValue: CGFloat(Self.rows(for: drawer, entries: state.recentTranscriptionEntries.count)))
+        copy._historyRowsExtent = State(initialValue: CGFloat(Self.rows(
+            for: drawer, entries: state.recentTranscriptionEntries.count, settingsRows: model.settingsRows
+        )))
         copy._isHistoryMounted = State(initialValue: true)
         copy._historyProgress = State(initialValue: 1)
         return copy
@@ -2124,9 +2156,10 @@ public struct BarView: View {
         return copy
     }
 
-    static func rows(for drawer: NotchDrawer, entries: Int) -> Int {
+    static func rows(for drawer: NotchDrawer, entries: Int,
+                     settingsRows: Int = NotchSettingsDrawerPresentation.rows) -> Int {
         switch drawer {
-        case .settings: NotchSettingsDrawerPresentation.rows
+        case .settings: settingsRows
         case let .history(detent): detent.rows(entryCount: entries)
         }
     }

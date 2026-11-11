@@ -89,8 +89,8 @@ public enum NotchHistoryPresentation {
     /// "history-row-1" for the newest row: one-based, by position in the list.
     public static func rowAccessibilityIdentifier(index: Int) -> String { "history-row-\(index + 1)" }
     public static let extendHandleLabel = "Show more rows"
-    /// The Settings drawer's grip (0510 N4): drag it up to close.
-    public static let drawerGripLabel = "Drag up to close"
+    /// The Settings drawer's grip (0510 N4, N16): drag it to resize the drawer, or up to close it.
+    public static let drawerGripLabel = "Drag to resize, or up to close"
     /// 0510 N6: the overpull hint, which sits in the handle's band and never over a row.
     public static let settingsPullHint = "Release for Settings"
     public static let settingsPullHintIdentifier = "notch-settings-pull-hint"

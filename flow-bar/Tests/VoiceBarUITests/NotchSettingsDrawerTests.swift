@@ -43,3 +43,59 @@ final class NotchSettingsDrawerTests: XCTestCase {
         XCTAssertEqual(controller.makeRecentTranscriptsSubmenu().items.count, 8)
     }
 }
+
+/// C6 L2c (N16): the Settings drawer's height range and where it is remembered.
+final class NotchSettingsDrawerHeightTests: XCTestCase {
+    func testTheRangeIsEightToTheRowsTheWindowHoldsWithRoomUnderTheLastRow() {
+        XCTAssertEqual(NotchSettingsDrawerPresentation.minimumRows, 8)
+        XCTAssertEqual(NotchSettingsDrawerPresentation.maximumRows, 11)
+        let window = NotchHistoryMorph.historyCanvasLowerSurfaceHeight
+        XCTAssertEqual(window, 560, "History's window grew from 528 pt to hold the tallest drawer")
+        let tallest = NotchSettingsDrawerPresentation.lowerSurfaceHeight(rows: 11)
+        // Neither a one-line note nor the grip's stretch is ever clamped onto the last row.
+        XCTAssertLessThanOrEqual(tallest + VoiceBarNotchContract.transientNoteBandHeight, window)
+        XCTAssertLessThanOrEqual(tallest + NotchHistoryMorph.rubberBandRows * NotchHistoryMorph.rowHeight, window)
+        // A twelfth row would breach the 640 pt narrow-display guard (window + band + 17 pt outset).
+        let twelve = NotchSettingsDrawerPresentation.lowerSurfaceHeight(rows: 12)
+            + NotchSettingsDrawerPresentation.bottomClearance
+        XCTAssertGreaterThan(VoiceBarNotchContract.topHeight + twelve.rounded(.up) + 17, 640)
+        XCTAssertLessThanOrEqual(VoiceBarNotchContract.topHeight + window + 17, 640)
+        XCTAssertEqual(NotchSettingsDrawerPresentation.historyListHeight(rows: 8),
+                       NotchSettingsDrawerPresentation.historyListHeight)
+        XCTAssertEqual(NotchSettingsDrawerPresentation.historyListHeight(rows: 11)
+            - NotchSettingsDrawerPresentation.historyListHeight(rows: 8), 3 * NotchHistoryMorph.rowHeight)
+    }
+
+    func testAReleasedGripSettlesOnTheNearestWholeRowInRange() {
+        XCTAssertEqual(NotchSettingsDrawerPresentation.settledRows(9.4), 9)
+        XCTAssertEqual(NotchSettingsDrawerPresentation.settledRows(9.6), 10)
+        XCTAssertEqual(NotchSettingsDrawerPresentation.settledRows(11.5), 11)
+        XCTAssertEqual(NotchSettingsDrawerPresentation.settledRows(7.4), 8)
+        XCTAssertEqual(NotchSettingsDrawerPresentation.settledRows(.nan), 8)
+        XCTAssertTrue(NotchHistoryMorph.handleCloses(rawRows: 6.7, minimum: 8))
+        XCTAssertFalse(NotchHistoryMorph.handleCloses(rawRows: 6.8, minimum: 8), "a short push only shrinks")
+        XCTAssertEqual(NotchHistoryMorph.handleCloses(rawRows: 4.75, minimum: 6),
+                       NotchHistoryMorph.handleClosesHistory(rawRows: 4.75))
+        XCTAssertEqual(NotchHistoryMorph.rowsRubberBand(13, maximum: 11, minimum: 8), 11.3, accuracy: 0.001)
+    }
+
+    func testTheHeightIsRememberedInDefaultsAndClampedOnLoad() throws {
+        let suite = "com.voicelayer.tests.n16.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = NotchSettingsRowsStore.userDefaults(defaults)
+
+        let first = NotchSurfaceModel(settingsRowsStore: store)
+        first.log = { _ in }
+        XCTAssertEqual(first.settingsRows, 8, "never resized: eight rows")
+        first.setSettingsRows(10)
+        XCTAssertEqual(defaults.integer(forKey: NotchSettingsRowsStore.defaultsKey), 10)
+        XCTAssertEqual(NotchSurfaceModel(settingsRowsStore: store).settingsRows, 10, "a relaunch reopens at ten")
+
+        first.setSettingsRows(40)
+        XCTAssertEqual(first.settingsRows, 11)
+        defaults.set(2, forKey: NotchSettingsRowsStore.defaultsKey)
+        XCTAssertEqual(NotchSurfaceModel(settingsRowsStore: store).settingsRows, 8, "a stale saved value is clamped")
+        XCTAssertEqual(NotchSurfaceModel().settingsRows, 8, "the default store is the session only")
+    }
+}

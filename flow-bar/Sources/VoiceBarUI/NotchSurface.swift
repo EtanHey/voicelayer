@@ -217,8 +217,26 @@ public final class NotchSurfaceModel {
     public private(set) var journal: [NotchSurfaceJournalEntry] = []
     @ObservationIgnored public var log: (String) -> Void = { NSLog("%@", $0) }
     private static let journalLimit = 64
+    /// C6 L2c (N16): the Settings drawer's remembered height, in rows (a size preference, not a surface state: the
+    /// machine and its TLA+ model are unchanged). It reopens at this height.
+    public private(set) var settingsRows: Int
+    @ObservationIgnored private let settingsRowsStore: NotchSettingsRowsStore
 
-    public init() {}
+    public init(settingsRowsStore: NotchSettingsRowsStore = .session) {
+        self.settingsRowsStore = settingsRowsStore
+        settingsRows = NotchSettingsDrawerPresentation.clampedRows(
+            settingsRowsStore.load() ?? NotchSettingsDrawerPresentation.minimumRows
+        )
+    }
+
+    /// The Settings grip was let go at `rows` (or VoiceOver stepped it): clamp, remember, and keep it.
+    public func setSettingsRows(_ rows: Int) {
+        let rows = NotchSettingsDrawerPresentation.clampedRows(rows)
+        guard rows != settingsRows else { return }
+        settingsRows = rows
+        settingsRowsStore.save(rows)
+        log("[VoiceBar] notch settings drawer rows \(rows)")
+    }
 
     public var drawer: NotchDrawer? { machine.drawer }
     public var state: NotchSurfaceState { machine.state }

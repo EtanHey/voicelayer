@@ -270,7 +270,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// drives the same handoff.
     private let notchHistoryBridge = VoiceBarNotchHistoryBridge()
     /// 2.4 Lane A: the ONE notch surface (History and the Settings drawer); formal/notch-surface.
-    private let notchSurface = NotchSurfaceModel()
+    /// C6 L2c (N16): the Settings drawer reopens at the height it was left at, also after a relaunch.
+    private lazy var notchSurface = NotchSurfaceModel(settingsRowsStore: .userDefaults(defaults))
     private let notchHostWindow = HostWindowBox()
     /// 2.4 Lane A: the Settings drawer's build line and Check for updates. Never updates while anything is live.
     private lazy var notchUpdates: NotchUpdateController = MainActor.assumeIsolated {
