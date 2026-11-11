@@ -37,6 +37,7 @@ final class NotchThresholdMotionTests: XCTestCase {
             restoreAccessibility?()
             restoreAccessibility = nil
             NotchDrawerSwapProbe.observer = nil
+            NotchDrawerSwapProbe.transactionObserver = nil
             for window in windows {
                 window.isReleasedWhenClosed = false
                 window.orderOut(nil)
@@ -65,7 +66,8 @@ final class NotchThresholdMotionTests: XCTestCase {
 
     final class FrameLog {
         var frames: [NotchDrawerSwapFrame] = []
-        func reset() { frames.removeAll() }
+        var transactions: [(phase: NotchDrawerSwapPhase, animation: Animation?)] = []
+        func reset() { frames.removeAll(); transactions.removeAll() }
         /// Frames strictly between hidden and shown: the content was drawn part-way through a fade.
         func midway(_ phase: NotchDrawerSwapPhase) -> [NotchDrawerSwapFrame] {
             frames.filter { $0.phase == phase && $0.opacity > 0.02 && $0.opacity < 0.98 }
@@ -125,6 +127,7 @@ final class NotchThresholdMotionTests: XCTestCase {
             presentationModel: model, includesPanelOutsets: true, surface: surface, settingsDrawer: context
         )))
         NotchDrawerSwapProbe.observer = { frames.frames.append($0) }
+        NotchDrawerSwapProbe.transactionObserver = { frames.transactions.append(($0, $1)) }
         host.activeHitTestProvider = { _ in true }
         host.renderedSurfaceHitTestProvider = { _ in true }
         let panel = FloatingPillPanel(content: host)
@@ -193,6 +196,80 @@ final class NotchThresholdMotionTests: XCTestCase {
 
     private let firstRow = NotchHistoryPresentation.rowAccessibilityIdentifier(index: 0)
 
+    // MARK: Two halves of every motion check
+    //
+    // 1. Deterministic, everywhere: the switch reaches each swap side inside a transaction that carries THE motion's
+    //    animation (the incoming side its in-curve, the leaving side its out-curve). SwiftUI applies a transaction on
+    //    the update itself, not per display frame, so this holds on a headless runner too. Before the crossfade the
+    //    lower content had no swap modifier and no transaction reached it, so these checks fail on 40d704bc.
+    // 2. Drawn frames, where a display link ticks: the frames SwiftUI actually drew pass through the middle of the
+    //    fade. #860's hosted macOS runner never ticks one for an offscreen window (its 3 tests failed only on these
+    //    assertions while every final-state assertion passed; M1 and M4 pass them). Those assertions run behind a
+    //    capability probe and skip LOUDLY, with a GitHub warning annotation, where the probe sees no drawn frame.
+
+    /// The swap sides' transactions since the last reset that carry exactly `animation` in `phase`.
+    private func updates(_ harness: Harness, _ phase: NotchDrawerSwapPhase, _ animation: Animation) -> Int {
+        harness.frames.transactions.filter { $0.phase == phase && $0.animation == animation }.count
+    }
+
+    private func assertAnimatedSwitch(
+        _ harness: Harness, in inDuration: Double, out outDuration: Double, _ what: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) {
+        XCTAssertGreaterThan(updates(harness, .leaving, NotchDrawerMotion.easeOut(outDuration)), 0,
+                             "\(what): the leaving side is removed under its \(outDuration) s fade",
+                             file: file, line: line)
+        XCTAssertGreaterThan(updates(harness, .resting, NotchDrawerMotion.easeOut(inDuration)), 0,
+                             "\(what): the incoming side settles under its \(inDuration) s fade",
+                             file: file, line: line)
+    }
+
+    /// The ease-out curve (`cubic-bezier(0.23, 1, 0.32, 1)`) at the middle of a fade: a real interpolation, never a
+    /// step, so a frame drawn mid-fade shows both sides part-way.
+    func testTheFadeCurvePassesThroughTheMiddle() {
+        let curve = UnitCurve.bezier(startControlPoint: UnitPoint(x: 0.23, y: 1), endControlPoint: UnitPoint(x: 0.32, y: 1))
+        for progress in [0.05, 0.1, 0.25] {
+            let value = curve.value(at: progress)
+            XCTAssertGreaterThan(value, 0.02, "\(progress)")
+            XCTAssertLessThan(value, 0.98, "\(progress)")
+        }
+        XCTAssertEqual(curve.value(at: 1), 1, accuracy: 0.0001)
+    }
+
+    private static var drawsFramesCache: Bool?
+
+    /// Whether this process draws SwiftUI animation frames for an offscreen nonactivating panel, measured with a known
+    /// good 0.3 s linear animation on the same kind of window the harness uses.
+    private func drawsAnimationFrames() -> Bool {
+        // Exercises the hosted-runner path on a machine that does draw frames (the skip and its annotation).
+        if ProcessInfo.processInfo.environment["VOICEBAR_TEST_ASSUME_NO_DRAWN_FRAMES"] == "1" { return false }
+        if let cached = Self.drawsFramesCache { return cached }
+        let probe = FrameProbeState()
+        let host = NSHostingView(rootView: FrameProbeView(state: probe))
+        host.frame = NSRect(x: 0, y: 0, width: 40, height: 40)
+        let panel = NSPanel(contentRect: NSRect(x: -100_000, y: -100_000, width: 40, height: 40),
+                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.contentView = host
+        panel.orderBack(nil)
+        windows.append(panel)
+        drain(0.2)
+        withAnimation(.linear(duration: 0.3)) { probe.target = 1 }
+        drain(0.6)
+        let drawn = probe.seen.contains { $0 > 0.02 && $0 < 0.98 }
+        Self.drawsFramesCache = drawn
+        return drawn
+    }
+
+    private func requireDrawnAnimationFrames() throws {
+        guard drawsAnimationFrames() else {
+            let reason = "No SwiftUI animation frame is drawn for an offscreen window in this process (no display link "
+                + "ticks; #860's hosted runner). The deterministic transaction checks above ran; the drawn-frame "
+                + "checks run on the M1 and M4."
+            print("::warning title=NotchThresholdMotionTests skipped drawn-frame checks::\(reason)")
+            throw XCTSkip("LOUD SKIP: \(reason)")
+        }
+    }
+
     /// Releasing a pull past open swaps History's list for the Settings drawer: the list fades out under General.
     func testTheThresholdSwitchCrossfadesHistoryIntoSettings() throws {
         // (A release, not a programmatic open: only the user's switch is a content swap.)
@@ -212,12 +289,16 @@ final class NotchThresholdMotionTests: XCTestCase {
         try send(.leftMouseUp, at: NSPoint(x: start.x, y: start.y - 140), to: harness.panel)
         drain(0.8)
         XCTAssertEqual(harness.surface.drawer, .settings(.general), "the release opened Settings")
-        XCTAssertFalse(harness.frames.midway(.leaving).isEmpty,
-                       "History's list fades out across frames instead of vanishing in one")
-        XCTAssertFalse(harness.frames.midway(.resting).isEmpty, "General fades in across frames")
+        assertAnimatedSwitch(harness, in: NotchDrawerMotion.contentInDuration, out: NotchDrawerMotion.contentOutDuration,
+                             "History -> Settings")
         let after = visible(harness)
         XCTAssertFalse(after.contains(firstRow), "the crossfade finishes")
         XCTAssertTrue(after.contains("pane-general"))
+
+        try requireDrawnAnimationFrames()
+        XCTAssertFalse(harness.frames.midway(.leaving).isEmpty,
+                       "History's list fades out across frames instead of vanishing in one")
+        XCTAssertFalse(harness.frames.midway(.resting).isEmpty, "General fades in across frames")
     }
 
     /// A tab switch inside the drawer crossfades too (History tab → General).
@@ -232,10 +313,14 @@ final class NotchThresholdMotionTests: XCTestCase {
         try send(.leftMouseUp, at: general, to: harness.panel)
         drain(0.6)
         XCTAssertEqual(harness.surface.drawer, .settings(.general), "the click selected General")
-        XCTAssertFalse(harness.frames.midway(.leaving).isEmpty, "the History tab list fades out instead of vanishing")
-        XCTAssertFalse(harness.frames.midway(.resting).isEmpty, "General fades in")
+        assertAnimatedSwitch(harness, in: NotchDrawerMotion.tabInDuration, out: NotchDrawerMotion.tabOutDuration,
+                             "History tab -> General")
         XCTAssertTrue(visible(harness).contains("pane-general"))
         XCTAssertFalse(visible(harness).contains(firstRow))
+
+        try requireDrawnAnimationFrames()
+        XCTAssertFalse(harness.frames.midway(.leaving).isEmpty, "the History tab list fades out instead of vanishing")
+        XCTAssertFalse(harness.frames.midway(.resting).isEmpty, "General fades in")
     }
 
     /// N17: the grip hands off to "Release for Settings" and back as one crossfade, never a one-frame swap.
@@ -256,17 +341,50 @@ final class NotchThresholdMotionTests: XCTestCase {
             drain(0.02)
         }
         XCTAssertTrue(visible(harness).contains(hint), "pulling past open arms the Settings hint")
-
         drain(0.4)
-        XCTAssertFalse(harness.frames.midway(.resting).isEmpty, "the hint fades in over the grip")
+        XCTAssertGreaterThan(updates(harness, .resting, NotchDrawerMotion.easeOut(NotchDrawerMotion.hintInDuration)), 0,
+                             "the hint arrives under its fade-in")
+        let fadeIn = harness.frames.midway(.resting)
 
         // Back above the threshold: the hint fades out rather than vanishing in the next frame.
         harness.frames.reset()
         try send(.leftMouseDragged, at: NSPoint(x: start.x, y: start.y - 6), to: harness.panel)
         drain(0.6)
-        XCTAssertFalse(harness.frames.midway(.leaving).isEmpty, "the hint fades out across frames")
+        XCTAssertGreaterThan(updates(harness, .leaving, NotchDrawerMotion.easeOut(NotchDrawerMotion.hintOutDuration)), 0,
+                             "the hint leaves under its fade-out")
+        let fadeOut = harness.frames.midway(.leaving)
         XCTAssertFalse(visible(harness).contains(hint), "and then it is gone")
         try send(.leftMouseUp, at: NSPoint(x: start.x, y: start.y - 6), to: harness.panel)
         drain(0.5)
+
+        try requireDrawnAnimationFrames()
+        XCTAssertFalse(fadeIn.isEmpty, "the hint fades in over the grip")
+        XCTAssertFalse(fadeOut.isEmpty, "the hint fades out across frames")
+    }
+}
+
+/// The capability probe's animated value: a known-good animation, reported on every frame SwiftUI draws.
+@Observable final class FrameProbeState {
+    var target: Double = 0
+    var seen: [Double] = []
+}
+
+private struct FrameProbeView: View {
+    let state: FrameProbeState
+    var body: some View {
+        Color.gray.modifier(FrameProbeModifier(value: state.target, state: state))
+    }
+}
+
+private struct FrameProbeModifier: ViewModifier, Animatable {
+    var value: Double
+    let state: FrameProbeState
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        content.opacity(0.5 + value / 2).onChange(of: value, initial: true) { _, new in state.seen.append(new) }
     }
 }
