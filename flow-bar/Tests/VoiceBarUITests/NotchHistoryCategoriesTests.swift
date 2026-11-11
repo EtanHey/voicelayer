@@ -497,6 +497,36 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         XCTAssertEqual(harness.archive.selectedScope, .recording, "a removed monitor cannot finish its old gesture")
     }
 
+    func testR901MissingArchiveCallbackStillOpensHistory() throws {
+        for scope in [SettingsHistoryScope.ask,.speech] {
+            let harness=makeHarness(archiveCallback:false)
+            open(harness,.openHistory)
+            wait { harness.archive.speech != nil }
+            try swipe(harness,dx:-160)
+            if scope == .speech { try swipe(harness,dx:-160) }
+            let row=try XCTUnwrap(frame(identified:"history-row-2",harness))
+            let point=harness.panel.convertPoint(fromScreen:NSPoint(x:row.minX+30,y:row.midY))
+            try send(.leftMouseDown,at:point,to:harness.panel)
+            try send(.leftMouseUp,at:point,to:harness.panel)
+            drain(0.1)
+            XCTAssertEqual(harness.opens.values,["generic"],"a legacy host must get its History fallback")
+            XCTAssertEqual(harness.archive.selectedScope,scope,"the fallback retains the requested category")
+        }
+    }
+
+    func testR901CategorySelectionInvalidatesTheRestOfAPointerDrag() {
+        var pager=NotchHistoryCategoryPager(count:3)
+        XCTAssertTrue(pager.move(to:CGSize(width:-120,height:0)))
+        pager.select(1)
+        XCTAssertFalse(pager.move(to:CGSize(width:-180,height:0)),"do not restart at the old full translation")
+        XCTAssertEqual(pager.offset(width:400),0)
+        pager.end(width:400,flick:true)
+        XCTAssertEqual(pager.index,1,"release cannot advance beyond the explicitly selected category")
+        XCTAssertTrue(pager.move(to:CGSize(width:-140,height:0)),"the next physical drag still works")
+        pager.end(width:400)
+        XCTAssertEqual(pager.index,2)
+    }
+
     // MARK: Pictures (opt-in)
 
     /// Writes both History surfaces in each category, an empty category and one mid-swipe frame: the real History
@@ -670,16 +700,18 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         return Fixture(state: state, archive: archive, loads: loads, context: context)
     }
 
-    private func makeHarness(askCount: Int = 12) -> Harness {
+    private func makeHarness(askCount: Int = 12, archiveCallback: Bool = true) -> Harness {
         let fixture = makeFixture(askCount: askCount)
         let (state, archive, loads, context) = (fixture.state, fixture.archive, fixture.loads, fixture.context)
         let opens = OpenLog()
+        let archiveOpen: ((SettingsHistoryDestination) -> Void)? = archiveCallback
+            ? { opens.values.append("\($0.scope.rawValue):\($0.entryID)") } : nil
         let model = VoiceBarNotchPresentationModel()
         let surface = NotchSurfaceModel()
         surface.log = { _ in }
         let host = PillHostingView(rootView: AnyView(BarView(
             state: state, commandRouter: Router(), onOpenSettings: {}, onOpenHistory: { opens.values.append("generic") },
-            onOpenHistoryEntry: { opens.values.append("\($0.scope.rawValue):\($0.entryID)") },
+            onOpenHistoryEntry: archiveOpen,
             presentationModel: model, includesPanelOutsets: true, surface: surface, settingsDrawer: context
         ).historyCategories(archive: archive)))
         host.activeHitTestProvider = { _ in true }

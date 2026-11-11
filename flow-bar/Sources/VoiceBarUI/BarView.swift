@@ -2178,7 +2178,8 @@ public struct BarView: View {
             onOpenArchive: { destination in
                 guard !drawerBodyDragJustHappened else { return }
                 surface.send(.dismiss(.action))
-                onOpenHistoryEntry?(destination)
+                if let onOpenHistoryEntry { onOpenHistoryEntry(destination) }
+                else { onOpenHistory() }
             }
         )
     }

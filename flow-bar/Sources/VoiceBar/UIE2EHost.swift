@@ -146,7 +146,14 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         bindNotchModel(VoiceBarNotchPresentationModel(onLayoutInvalidated: { [weak self] in self?.updatePillLayout() }))
         let bar = PillHostingView(rootView: BarView(state: model.voice, commandRouter: VoiceBarCommandRouter(voiceState: model.voice),
             onOpenSettings: { self.settings.makeKeyAndOrderFront(nil) },
-            onOpenHistory: { self.model.tab = .history; self.model.requestID += 1; self.model.receipt("history-open") },
+            onOpenHistory: { self.model.historyDestination = nil; self.model.tab = .history; self.model.requestID += 1; self.model.receipt("history-open") },
+            onOpenHistoryEntry: { destination in
+                self.model.tab = .history
+                self.model.historyDestination = destination
+                self.model.requestID += 1
+                self.model.receipt("history-open-" + destination.scope.rawValue)
+                self.settings.makeKeyAndOrderFront(nil)
+            },
             presentationModel: notchModel,
             includesPanelOutsets: true,
             onOpenMicrophonePicker: { [weak self] in self?.surfaceHandoff.requestMenu(.microphone) },
@@ -667,6 +674,7 @@ final class UIE2EModel {
     var tab: SettingsTab = .general
     var focus: SettingsFocus?
     var requestID = 0
+    var historyDestination: SettingsHistoryDestination?
     var events: [String] = []
     var commands: [[String: Any]] = []
     var selectionText = "QA original selection"
@@ -1101,7 +1109,7 @@ private struct UIE2ESettings: View {
             onRevealHistoryFile: { _ in model.receipt("history-finder") },
             footerPresentation: { .resolve(isConnected: model.voice.isConnected, mode: model.voice.mode, captureLive: false,
                                             errorMessage: nil, remoteSTTConfigured: false) },
-            tabRequest: notchTab == nil ? .init(tab: model.tab, focus: model.focus, id: model.requestID) : notchRequest,
+            tabRequest: notchTab == nil ? .init(tab: model.tab, focus: model.focus, historyDestination: model.historyDestination, id: model.requestID) : notchRequest,
             initialDictionaryPreview: model.preview,
             onSelectedTabChange: { if notchTab == nil { model.tab = $0 } },
             historyPlayback: .init(start: { _ in fatalError("UIE2E forbids playback") }, stop: {}))

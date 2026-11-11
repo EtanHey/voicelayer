@@ -18,7 +18,6 @@ struct NotchHistoryCategoryPanel: View {
     var onOpenArchive: (SettingsHistoryDestination) -> Void = { _ in }
 
     @State private var pager: NotchHistoryCategoryPager
-    @State private var isDragging = false
     @State private var swipeCancellation = NotchHistorySwipeCancellation()
     @State private var swipeEndedAt: TimeInterval = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -146,14 +145,9 @@ struct NotchHistoryCategoryPanel: View {
         .simultaneousGesture(
             DragGesture(minimumDistance: NotchHistoryCategoryPager.slop)
                 .onChanged { value in
-                    if !isDragging {
-                        beginSwipe()
-                        isDragging = true
-                    }
                     _ = follow { $0.move(to: value.translation) }
                 }
                 .onEnded { value in
-                    isDragging = false
                     let throwDistance = value.predictedEndTranslation.width - value.translation.width
                     finish(width: width, flick: abs(throwDistance) > 60 && (throwDistance > 0) == (value.translation.width > 0))
                 }
@@ -230,7 +224,6 @@ struct NotchHistoryCategoryPanel: View {
     private func select(_ index: Int) {
         if pager.isSwiping { swipeEndedAt = ProcessInfo.processInfo.systemUptime }
         swipeCancellation.generation &+= 1
-        isDragging = false
         settle(NotchDrawerMotion.tabInDuration) { $0.select(index) }
     }
 
