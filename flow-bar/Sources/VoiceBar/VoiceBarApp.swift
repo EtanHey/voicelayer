@@ -2701,7 +2701,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             panelHitGate = gate
             return gate
         }
-        if gate.update(to: layout, now: now) {
+        // C6 L2c (Q-F48, R891): a drawer resize the pointer already drew settles from the drawn shell.
+        if gate.update(to: layout, now: now, takingDrawnReportFrom: notchPresentationModel) {
             panelHitGate = gate
             if gate.isSettling(now: now) {
                 panelHitGateSettleGeneration &+= 1

@@ -120,7 +120,7 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
         harness.host.layoutSubtreeIfNeeded()
     }
 
-    private func makeHarness(entries: Int = 20) -> Harness {
+    private func makeHarness(entries: Int = 20, pane: ((SettingsTab) -> AnyView)? = nil) -> Harness {
         let state = VoiceState(
             recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
             recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in },
@@ -142,9 +142,9 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
         surface.log = { _ in }
         let paneRequests = PaneRequests()
         let menuRequests = MenuRequests()
-        let context = NotchSettingsDrawerContext(updates: nil, pane: { _, request in
+        let context = NotchSettingsDrawerContext(updates: nil, pane: { tab, request in
             paneRequests.all.append(request)
-            return AnyView(EmptyView())
+            return pane?(tab) ?? AnyView(EmptyView())
         })
         let host = PillHostingView(rootView: BarView(
             state: state, commandRouter: router, onOpenSettings: {}, onOpenHistory: {},
@@ -806,3 +806,127 @@ extension NotchSurfaceHostedFlowTests {
         XCTAssertEqual(harness.surface.settingsRows, 9, "closing keeps the remembered height")
     }
 }
+
+extension NotchSurfaceHostedFlowTests {
+    /// C6 L2c (Q-F48): letting go of the Settings grip tells the app how tall the drawer is drawn, before its rows
+    /// change, so the hit gate settles from the drawn shell.
+    func testQF48LettingGoOfTheGripReportsTheDrawnDrawerHeight() throws {
+        let harness = makeHarness()
+        let eight = try openSettingsFromHistory(harness)
+        var now: TimeInterval = 0
+        harness.model.drawnHistoryClock = { now }
+        _ = harness.model.takeDrawnHistoryLowerSurface()
+        try drag(from: grip(eight, rows: 8), dy: -2 * NotchHistoryMorph.rowHeight, in: harness.panel)
+        wait { harness.model.historyRows == 10 }
+        now = 0.1
+        let drawn = try XCTUnwrap(harness.model.takeDrawnHistoryLowerSurface(), "the release reported the drawn height")
+        XCTAssertEqual(drawn.rows, 10, "bound to the resize it was made for")
+        XCTAssertEqual(drawn.lowerSurfaceHeight, NotchHistoryMorph.lowerSurfaceHeight(rows: 10),
+                       accuracy: NotchHistoryMorph.rowHeight / 2, "the drawer was drawn about ten rows tall when it was let go")
+    }
+}
+
+extension NotchSurfaceHostedFlowTests {
+    /// R891 P2: a same-row release (the grip stretched past 11 and let go) changes no rows, so it must leave no
+    /// drawn-height report behind for a later, unrelated same-size change (a note) to consume. The note's change
+    /// must settle from the actual 11-row layout, through the same consumption the app runs.
+    func testR891ASameRowReleaseLeavesNothingForALaterNoteChange() throws {
+        let harness = makeHarness()
+        let eight = try openSettingsFromHistory(harness)
+        var now: TimeInterval = 0
+        harness.model.drawnHistoryClock = { now }
+        try drag(from: grip(eight, rows: 8), dy: -3 * NotchHistoryMorph.rowHeight, in: harness.panel)
+        wait { harness.model.historyRows == 11 }
+        _ = harness.model.takeDrawnHistoryLowerSurface()
+
+        let settled = layout(harness.model)
+        try drag(from: grip(eight, rows: 11), dy: -0.4 * NotchHistoryMorph.rowHeight, steps: 4, in: harness.panel)
+        XCTAssertEqual(harness.model.historyRows, 11, "a stretch past the ceiling settles back on the same rows")
+        now = 0.2 // inside the 500 ms window
+
+        var gate = VoiceBarPanelHitGate(layout: settled)
+        var noted = VoiceBarNotchOperationalInput(mode: .idle, isHovered: true)
+        noted.isHistoryPanelOpen = true
+        noted.historyRows = 11
+        noted.transientNote = "Busy. Selection not read"
+        let presentation = VoiceBarPresentation.notchPresentation(from: noted)
+        let note = VoiceBarPanelLayout.make(
+            presentation: presentation,
+            interactionConfiguration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 2, trailingControlCountFromCore: 2),
+            canvasGeometry: VoiceBarNotchMorphCanvasLayout.resolve(for: presentation).canvasGeometry
+        )
+        XCTAssertTrue(gate.settles(into: note))
+        XCTAssertNil(harness.model.takeDrawnHistoryLowerSurface(), "a same-row release reports nothing")
+        gate.update(to: note, now: 0, takingDrawnReportFrom: harness.model) // the app's consumption
+        XCTAssertEqual(gate.settlingFrom, [settled], "the note settles from the drawer as it actually rests")
+    }
+}
+
+// MARK: - R890 P3: a pulled-taller drawer shows more of a real, scrollable pane
+
+/// Where each row of the probe pane and the pane's scroll viewport are drawn (same nested hosting view, so the
+/// `.global` frames are comparable).
+final class PaneProbe {
+    var viewport: CGRect = .zero
+    var rows: [Int: CGRect] = [:]
+    /// The highest row drawn entirely inside the viewport.
+    var lastFullyVisibleRow: Int? {
+        rows.filter { viewport.contains($0.value.insetBy(dx: 1, dy: 1)) }.keys.max()
+    }
+}
+
+private struct ProbePane: View {
+    let probe: PaneProbe
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(0 ..< 24, id: \.self) { index in
+                    Text("Probe row \(index)").frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+                        .background(GeometryReader { proxy in
+                            Color.clear.onChange(of: proxy.frame(in: .global), initial: true) { _, frame in
+                                probe.rows[index] = frame
+                            }
+                        })
+                }
+            }
+        }
+        .background(GeometryReader { proxy in
+            Color.clear.onChange(of: proxy.frame(in: .global), initial: true) { _, frame in probe.viewport = frame }
+        })
+    }
+}
+
+extension NotchSurfaceHostedFlowTests {
+    /// R890 P3: N16 must reveal more of the real pane, not only a longer background. A populated scrollable
+    /// General pane: a row clipped at eight rows is fully visible after the grip pulls the drawer to eleven, and
+    /// still after closing and reopening.
+    func testN16APulledTallerDrawerShowsRowsTheShortDrawerClipped() throws {
+        let probe = PaneProbe()
+        let harness = makeHarness(pane: { tab in tab == .general ? AnyView(ProbePane(probe: probe)) : AnyView(EmptyView()) })
+        let eight = try openSettingsFromHistory(harness)
+        wait { probe.lastFullyVisibleRow != nil }
+        let atEight = try XCTUnwrap(probe.lastFullyVisibleRow, "the probe pane is drawn in the drawer")
+
+        try drag(from: grip(eight, rows: 8), dy: -3 * NotchHistoryMorph.rowHeight, in: harness.panel)
+        wait { harness.model.historyRows == 11 }
+        drain(0.5)
+        let atEleven = try XCTUnwrap(probe.lastFullyVisibleRow)
+        XCTAssertGreaterThanOrEqual(atEleven, atEight + 2,
+                                    "[N16] three more drawer rows (138 pt) reveal at least two more 40 pt pane rows")
+        let revealed = atEight + 1
+        let revealedFrame = try XCTUnwrap(probe.rows[revealed])
+        XCTAssertTrue(probe.viewport.contains(revealedFrame.insetBy(dx: 1, dy: 1)),
+                      "row \(revealed), clipped at eight drawer rows, is fully visible at eleven")
+        print("[R890 P3] last fully visible pane row: \(atEight) at 8 drawer rows, \(atEleven) at 11; viewport \(probe.viewport.height) pt")
+
+        try click(control(3, harness), in: harness.panel) // the gear closes it
+        wait { !harness.model.isHistoryPanelOpen }
+        harness.surface.send(.openSettings(.general))
+        wait { harness.model.historyRows == 11 }
+        resize(harness)
+        drain(1.0)
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(probe.lastFullyVisibleRow), atEight + 2,
+                                    "[N16] reopened at eleven rows, the extra pane rows are still visible")
+    }
+}
+
