@@ -1228,6 +1228,11 @@ public struct BarView: View {
                     }
                 }
             }
+            // C7-W: Stop keeps the meter's inset from the band's edge; the row is still counted from the core.
+            .padding(.trailing, VoiceBarPresentation.recordingLeadingCoreInset(
+                wingWidth: notchPresentation.geometry.leadingWingWidth,
+                showsEarlierTakeProcessing: VoiceBarPresentation.showsEarlierTakeProcessing(for: state)
+            ) - VoiceBarNotchContract.compactCoreContentInset)
             // Keep the controls on their core-anchored hit regions as the symmetric wing grows.
             .frame(maxWidth: .infinity, alignment: .trailing)
             // R0856-05: the recording controls arrive with a wider wing; they show once its glass covers them.

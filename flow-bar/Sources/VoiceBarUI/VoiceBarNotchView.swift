@@ -576,6 +576,8 @@ struct VoiceBarNotchWingSlot: ViewModifier {
             .leading
         case .core:
             slot.side == .leading ? .trailing : .leading
+        case .outer:
+            slot.side == .leading ? .leading : .trailing
         }
     }
 }

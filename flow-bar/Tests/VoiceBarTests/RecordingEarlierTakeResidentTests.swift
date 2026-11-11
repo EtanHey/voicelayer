@@ -38,8 +38,11 @@ final class RecordingEarlierTakeResidentTests: XCTestCase {
             AppDelegate.refreshNotchPresentationModel(model, for: state) // the mode edge's own refresh
             RunLoop.main.run(until: Date().addingTimeInterval(0.05))
             XCTAssertEqual(state.mode, .recording, name)
-            XCTAssertEqual(model.presentation.geometry.leadingWingWidth - fixed, slot, accuracy: 0.001,
-                           "\(name): A transcribing while B records adds the spinner slot")
+            // C7-W: the time/meter wing (102 pt) is wider than Stop + Cancel + spinner (99.5 pt), so it sets the band;
+            // the spinner slot still fits and the hit rects make room for it.
+            XCTAssertEqual(model.presentation.geometry.leadingWingWidth, max(fixed + slot, recordingWidth), accuracy: 0.001,
+                           "\(name): A transcribing while B records has room for the spinner slot")
+            XCTAssertTrue(VoiceBarPresentation.showsEarlierTakeProcessing(for: state), "\(name): the spinner shows")
 
             callbacks = 0
             if name == "cancellation" { state.handleEvent(recording([["take_id": "A", "kind": "live", "phase": "processing"]])) }

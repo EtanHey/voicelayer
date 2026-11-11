@@ -2258,8 +2258,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             // Stop and Cancel, plus a third slot beside Stop: Lock on a VAD take, Pause on a PTT take. The count
             // follows the same `showsRecordingHold || showsRecordingPause` the presentation sizes the wing from, so
             // Stop, the outermost control, stays inside the hit region.
+            let hasThirdControl = state.recordingMode == "vad" || state.recordingMode == "ptt"
+            let earlierTake = VoiceBarPresentation.showsEarlierTakeProcessing(for: state)
+            // C7-W: the row sits where BarView draws it, out from the core by the wing's spare width.
             return VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: state.recordingMode == "vad" || state.recordingMode == "ptt" ? 3 : 2
+                leadingControlCount: hasThirdControl ? 3 : 2,
+                leadingCoreInset: VoiceBarPresentation.recordingLeadingCoreInset(
+                    wingWidth: VoiceBarPresentation.recordingWingWidth(
+                        showsThirdControl: hasThirdControl, showsEarlierTakeProcessing: earlierTake,
+                        visibleCoreOcclusionInset: visibleCoreOcclusionInset),
+                    showsEarlierTakeProcessing: earlierTake)
             )
         case .compactStatus:
             switch state.mode {

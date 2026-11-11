@@ -111,7 +111,8 @@ public struct VoiceBarPanelLayout: Equatable {
                 trailingControlCountFromCore: interactionConfiguration.trailingControlCountFromCore,
                 trailingControlCountFromOuter: interactionConfiguration.trailingControlCountFromOuter,
                 trailingOuterInset: interactionConfiguration.trailingOuterInset,
-                lowerControlCount: interactionConfiguration.lowerControlCount
+                lowerControlCount: interactionConfiguration.lowerControlCount,
+                leadingCoreInset: interactionConfiguration.leadingCoreInset
             )),
             visibleRegion: visibleRegion,
             localHoverCoreRect: localHoverCoreRect

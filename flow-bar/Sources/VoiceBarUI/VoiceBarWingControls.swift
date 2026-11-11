@@ -121,6 +121,10 @@ public enum VoiceBarRecordingWingLabel {
     /// QA 0449: 4 layout points plus digit side-bearing paint a clear 6 pt gap. X4: reading uses it too, so the time
     /// and the meter sit the same way whether VoiceBar is listening or reading aloud.
     public static let recordingTimeGap: CGFloat = 4
+    /// C7-W (Etan, QA 2026-11-11: "there's no enough gap" between the seconds and the waveform): the recording row's
+    /// own gap. 8 layout points plus the digits' side bearing paint 9.5 pt, more than three meter-bar spacings, so the
+    /// time and the meter read as two things. The reading row keeps `recordingTimeGap` (its wing has no room to spare).
+    public static let recordingMeterGap: CGFloat = 8
     /// X4: between the reading meter and the collapsed Stop: one control spacing, so a hidden read's eye sits exactly
     /// over the meter's last control slot, one pitch inside Stop.
     public static let readingStopGap: CGFloat = VoiceBarNotchContract.material.compactControlSpacing
@@ -157,13 +161,14 @@ struct VoiceBarReadingTrailingRow<Time: View, Meter: View, Stop: View>: View {
 
 }
 
-/// QA 0449: centre the time and meter as one row, without a blank outer region.
+/// The recording time and meter as one row. C7-W: the wing slot pins it to the wing's outer inset, the same inset
+/// Stop keeps from the left edge.
 struct VoiceBarRecordingTrailingRow<Time: View, Meter: View>: View {
     @ViewBuilder let time: Time
     @ViewBuilder let meter: Meter
 
     var body: some View {
-        HStack(alignment: .center, spacing: VoiceBarRecordingWingLabel.recordingTimeGap) {
+        HStack(alignment: .center, spacing: VoiceBarRecordingWingLabel.recordingMeterGap) {
             time
             meter
         }
