@@ -441,37 +441,68 @@ final class WingLayoutX4Tests: XCTestCase {
         }
     }
 
-    /// Item 1: the time never moves the meter, and its own right edge never moves, whatever the digits.
+    /// RULING-1: each clock class has one tabular lane; the meter gives it space without moving the band edge.
     func testC7WTimeDoesNotJitterAcrossDigitCounts() throws {
-        for inset in Self.insets {
-            let width = presentation(.recordingPTT, inset: inset).geometry.trailingWingWidth
-            var edges: [(String, CGFloat, CGFloat, CGFloat)] = []
-            for (name, ms) in [("0:18", 18_000), ("1:31", 91_000), ("9:59", 599_000), ("12:05", 725_000),
-                               ("1:02:03", 3_723_000)] {
-                let p = try paintRightWing(recordingRow(elapsedMilliseconds: ms), band: .recording, inset: inset,
-                                           width: width, name: "c7w-\(name.replacingOccurrences(of: ":", with: "-"))-\(inset)")
-                let firstBar = try XCTUnwrap(p.ink(x: 0 ..< p.width, y: 0 ..< p.height, Self.bar)).first
-                let text = try XCTUnwrap(p.ink(x: 0 ..< firstBar, y: 0 ..< p.height, Self.digit), "\(name) paints")
-                edges.append((name, CGFloat(text.first) / Self.scale, CGFloat(text.last + 1) / Self.scale,
-                              CGFloat(firstBar) / Self.scale))
-            }
-            print("[C7-W jitter] inset=\(inset): " + edges.map { "\($0.0) text=\($0.1)...\($0.2) meter=\($0.3)" }
-                .joined(separator: "; "))
-            for edge in edges {
-                XCTAssertEqual(edge.3, edges[0].3, "\(edge.0): the meter never moves")
-                // Ink, not advance: a final "1" paints 1.5 pt short of its monospaced cell.
-                XCTAssertEqual(edge.2, edges[0].2, accuracy: 1.5, "\(edge.0): the time's right edge holds")
-                XCTAssertGreaterThanOrEqual(edge.3 - edge.2, 9, "\(edge.0): a clear gap before the meter")
-                XCTAssertGreaterThanOrEqual(edge.1 - inset, 8, "\(edge.0): 8 pt clear of the physical notch")
+        let classes = [[0, 18_000, 599_000], [600_000, 725_000, 3_599_000],
+                       [3_600_000, 3_723_000, 35_999_000], [36_000_000, 359_999_000]]
+        var previousWidth: CGFloat = 0
+        for samples in classes {
+            let first = VoiceBarReadingTimeLabel.text(elapsedMilliseconds: samples[0])
+            let laneWidth = VoiceBarRecordingWingLabel.clockWidth(for: first)
+            XCTAssertGreaterThan(laneWidth, previousWidth, "exactly one wider lane at each clock-class boundary")
+            previousWidth = laneWidth
+            for ms in samples {
+                let time = VoiceBarReadingTimeLabel.text(elapsedMilliseconds: ms)
+                XCTAssertEqual(VoiceBarRecordingWingLabel.clockWidth(for: time), laneWidth, "\(time): no class jitter")
+                let inkWidth = (time as NSString).size(withAttributes: [.font: VoiceBarRecordingWingLabel.timeFont]).width
+                XCTAssertLessThanOrEqual(inkWidth, laneWidth, "\(time): full-size tabular digits fit")
             }
         }
-        // Monospaced digits: every m:ss time is one width, and every form the label takes fits its fixed region.
-        let advance = { (text: String) in (text as NSString).size(withAttributes: [.font: VoiceBarRecordingWingLabel.timeFont]).width }
-        XCTAssertEqual(advance("0:18"), advance("1:31"))
-        XCTAssertEqual(advance("0:18"), advance("9:59"))
-        for ms in [18_000, 91_000, 599_000, 725_000, 3_723_000] {
-            XCTAssertLessThanOrEqual(advance(VoiceBarReadingTimeLabel.text(elapsedMilliseconds: ms)),
-                                     VoiceBarRecordingWingLabel.width, "\(ms) ms fits the fixed region")
+        for inset in Self.insets {
+            let width = presentation(.recordingPTT, inset: inset).geometry.trailingWingWidth
+            for samples in classes {
+                var edges: [(String, CGFloat, CGFloat, CGFloat)] = []
+                for ms in samples {
+                    let name = VoiceBarReadingTimeLabel.text(elapsedMilliseconds: ms)
+                    let p = try paintRightWing(recordingRow(elapsedMilliseconds: ms), band: .recording, inset: inset,
+                                               width: width, name: "c7w-\(name.replacingOccurrences(of: ":", with: "-"))-\(inset)")
+                    let bars = try XCTUnwrap(p.ink(x: 0 ..< p.width, y: 0 ..< p.height, Self.bar))
+                    let text = try XCTUnwrap(p.ink(x: 0 ..< bars.first, y: 0 ..< p.height, Self.digit), "\(name) paints")
+                    let gap = CGFloat(bars.first - text.last - 1) / Self.scale
+                    print("[C7-W class] \(name) inset=\(inset) gap=\(gap) outer=\(width - CGFloat(bars.last + 1) / Self.scale)")
+                    XCTAssertGreaterThanOrEqual(gap, 9, "\(name): a clear gap before the meter")
+                    XCTAssertLessThanOrEqual(gap, 10, "\(name): no excess gap")
+                    XCTAssertEqual(width - CGFloat(bars.last + 1) / Self.scale,
+                                   VoiceBarNotchContract.material.compactContentInset, accuracy: 0.5,
+                                   "\(name): the meter keeps its trailing inset")
+                    XCTAssertGreaterThanOrEqual(CGFloat(text.first) / Self.scale - inset, 8,
+                                               "\(name): clear of the physical notch")
+                    edges.append((name, CGFloat(text.first) / Self.scale, CGFloat(text.last + 1) / Self.scale,
+                                  CGFloat(bars.first) / Self.scale))
+                }
+                for edge in edges {
+                    XCTAssertEqual(edge.3, edges[0].3, "\(edge.0): the meter holds within the class")
+                    XCTAssertEqual(edge.2, edges[0].2, accuracy: 1.5, "\(edge.0): tabular time edge holds")
+                }
+            }
+        }
+    }
+
+    func testC7RecordingClockClassPictures() throws {
+        guard let directory = ProcessInfo.processInfo.environment["VOICEBAR_X4_CANDIDATES"] else {
+            throw XCTSkip("set VOICEBAR_X4_CANDIDATES to write full recording-band pictures")
+        }
+        try GlassTextCapability.current.get().requireReadableText()
+        for fixture in [Fixture.recordingPTT, .recordingVAD] {
+            for (name, ms) in [("0-18", 18_000), ("12-05", 725_000), ("1-02-03", 3_723_000)] {
+                let state = state(fixture)
+                state.recordingTimingClock = { 100 + Double(ms) / 1000 }
+                XCTAssertEqual(state.recordingElapsedMilliseconds(), ms)
+                let host = mountBar(state)
+                let bitmap = try EtanQA0510Tests.fixedScaleBitmap(host, scale: Self.scale)
+                try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(
+                    to: URL(fileURLWithPath: directory).appendingPathComponent("\(fixture.rawValue)-\(name).png"))
+            }
         }
     }
 
@@ -616,10 +647,17 @@ final class WingLayoutX4Tests: XCTestCase {
             let coreSide = CGFloat(marks.first - coreMaxX) / s, outerSide = CGFloat(rightEdge - marks.last - 1) / s
             print("[X4 bar] \(fixture.rawValue): gap=\(gap) digitsY=\(digits.centreY / s) barsY=\(bars.centreY / s) " +
                   "core/outer=\(coreSide)/\(outerSide) left wing=\(CGFloat(coreMinX) / s - (270 - g.coreWidth / 2 - g.leadingWingWidth))")
-            XCTAssertGreaterThanOrEqual(gap, 5, "[X4-1] \(fixture)")
-            XCTAssertLessThanOrEqual(gap, 7, "[X4-1] \(fixture)")
+            let recording = fixture.isRecording
+            XCTAssertGreaterThanOrEqual(gap, recording ? 9 : 5, "[X4-1] \(fixture)")
+            XCTAssertLessThanOrEqual(gap, recording ? 10 : 7, "[X4-1] \(fixture)")
             XCTAssertEqual(bars.centreY, digits.centreY, accuracy: 1, "[X4-3] \(fixture)")
-            XCTAssertEqual(coreSide, outerSide, accuracy: 3, "[X4-2] \(fixture)")
+            if recording {
+                let b = try band(fixture, inset: 0)
+                XCTAssertEqual(b.leadingInset, b.trailingInset, accuracy: 0.5, "[X4-2] \(fixture): band ends balance")
+                XCTAssertEqual(outerSide, b.leadingInset, accuracy: 0.5, "[X4-2] \(fixture): painted meter inset")
+            } else {
+                XCTAssertEqual(coreSide, outerSide, accuracy: 3, "[X4-2] \(fixture)")
+            }
         }
     }
 }
