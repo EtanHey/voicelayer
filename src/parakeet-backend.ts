@@ -15,7 +15,18 @@ import { z } from "zod";
 import { probeParakeetLanguage, PARAKEET_LID_MIN_CONFIDENCE, type ParakeetLanguageInput, type ParakeetLanguageEvidence } from "./parakeet-lid";
 
 const WHISPER_FAILURE_REASONS = new Set(["parakeet-startup-failed", "input-format", "input-identity", "invalid-response",
-  "incomplete-response", "empty-response"]);
+  "incomplete-response", "accounting-gap-unverified", "accounting-gap-speech", "empty-response"]);
+
+// The worker reports PCM sample frames at 16 kHz, not decoder/VAD frames.
+// Tolerate only one sample (62.5 us), and only after probing its whole VAD window.
+export const PARAKEET_MAX_ACCOUNTING_GAP_FRAMES = 1;
+function smallAccountingGap(result: ParakeetResponse, info: WavInfo): boolean {
+  const gap = info.frames - result.covered_frames;
+  return result.complete && result.sample_rate === info.sampleRate && result.input_frames === info.frames &&
+    Number.isSafeInteger(result.covered_frames) && result.covered_frames >= 0 &&
+    gap > 0 && gap <= PARAKEET_MAX_ACCOUNTING_GAP_FRAMES && typeof result.text === "string" && !!result.text.trim() &&
+    result.attemptEvidence?.decodeCoverage !== "PARTIAL" && result.attemptEvidence?.tail !== "KNOWN_MISSING";
+}
 
 export class STTQualificationError extends Error {
   constructor(readonly outcome: STTOutcome, readonly attempt: unknown) {
@@ -66,13 +77,14 @@ export function parakeetWavInfo(bytes: Uint8Array): WavInfo {
   return { frames: dataBytes / 2, sampleRate, lastActiveSeconds: last, allZero, dataOffset };
 }
 
-export function parakeetOutputRisk(result: ParakeetResponse, info: WavInfo, lastSpeechSeconds?: number): string | null {
+export function parakeetOutputRisk(result: ParakeetResponse, info: WavInfo, lastSpeechSeconds?: number, probeAccountingGap = false): string | null {
   if (!result || typeof result.text !== "string") return "invalid-response";
   const evidence = result.attemptEvidence;
   if (evidence?.status && !["RETURNED", "EMPTY_RESPONSE"].includes(evidence.status)) return "provider-" + evidence.status.toLowerCase();
   if (evidence?.processExitCode !== undefined && evidence.processExitCode !== null && evidence.processExitCode !== 0) return "provider-error";
   if (evidence?.decodeCoverage === "PARTIAL" || evidence?.tail === "KNOWN_MISSING") return "incomplete-response";
-  if (!result.complete || result.sample_rate !== info.sampleRate || result.input_frames !== info.frames || result.covered_frames !== info.frames) return "incomplete-response";
+  if (!result.complete || result.sample_rate !== info.sampleRate || result.input_frames !== info.frames ||
+      (result.covered_frames !== info.frames && !(probeAccountingGap && smallAccountingGap(result, info)))) return "incomplete-response";
   if (!result.text.trim()) return "empty-response";
   if (info.allZero) return "zero-pcm-response";
   const duration = info.frames / info.sampleRate;
@@ -302,9 +314,10 @@ export class ParakeetBackend implements STTBackend {
       if (info.allZero) return zeroPCM(result);
       if ((result.attemptEvidence?.inputSha256 && result.attemptEvidence.inputSha256 !== inputSha256) ||
           (result.attemptEvidence?.inputPath && result.attemptEvidence.inputPath !== inputPath)) return fallback("input-identity", result);
-      let reason = parakeetOutputRisk(result, info);
+      const accountingGap = smallAccountingGap(result, info);
+      let reason = parakeetOutputRisk(result, info, undefined, accountingGap);
       const duration = info.frames / info.sampleRate;
-      if (reason === "invalid-timing") {
+      if (reason === "invalid-timing" && !accountingGap) {
         console.error(`[voicelayer] ${JSON.stringify({ event: "parakeet_coverage_unavailable", reason })}`);
         const fallbackEvidencePath = retain({ audioPath, submittedPath: inputPath, inputSha256, reason, parakeet: result,
           whisper: null, whisperStatus: "NOT_RUN", errorType: "InvalidTiming", deliveryText: result.text,
@@ -313,14 +326,25 @@ export class ParakeetBackend implements STTBackend {
           outcome: "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN", fallbackEvidencePath, languageWarning, languageEvidence };
       }
       const gaps = internalTokenGaps(result, duration);
-      if (!reason && duration >= 8 && (gaps.length > 0 || (result.last_token_end_s !== null &&
-          duration - result.last_token_end_s > Math.max(3, Math.min(8, duration * 0.05))))) {
+      if ((!reason || (accountingGap && reason === "invalid-timing")) && (accountingGap || (duration >= 8 &&
+          (gaps.length > 0 || (result.last_token_end_s !== null &&
+          duration - result.last_token_end_s > Math.max(3, Math.min(8, duration * 0.05))))))) {
         try { speechEvidence = await (this.deps.speechProbe ?? probeParakeetSpeech)(inputPath); }
         catch (error) { speechEvidence = { status: "UNKNOWN", threshold: PARAKEET_EMPTY_SPEECH_THRESHOLD, errorType: error instanceof Error ? error.name : "unknown" }; }
         const lastSpeechSeconds = lastSileroSpeech(speechEvidence, info, inputSha256);
-        if (lastSpeechSeconds === undefined) console.error("[voicelayer] Parakeet speech evidence unavailable or invalid; keeping Parakeet text (no energy fallback)");
-        reason = parakeetOutputRisk(result, info, lastSpeechSeconds);
+        if (lastSpeechSeconds === undefined) console.error(accountingGap
+          ? "[voicelayer] Parakeet speech evidence unavailable; accounting gap cannot be verified"
+          : "[voicelayer] Parakeet speech evidence unavailable or invalid; keeping Parakeet text (no energy fallback)");
+        reason = parakeetOutputRisk(result, info, lastSpeechSeconds, accountingGap);
         const probabilities = sileroProbabilities(speechEvidence, info, inputSha256);
+        if (accountingGap) {
+          uncoveredSpans = [{ start: result.covered_frames / info.sampleRate, end: duration }];
+          if (!probabilities) return fallback("accounting-gap-unverified", result);
+          // Include every window overlapping the gap, even a one-sample tail.
+          // A detector-positive window cannot establish that those frames were silent.
+          if (probabilities.slice(Math.floor(result.covered_frames / VAD_CHUNK_SAMPLES))
+              .some(p => p >= PARAKEET_EMPTY_SPEECH_THRESHOLD)) return fallback("accounting-gap-speech", result);
+        }
         if (probabilities) {
           uncoveredSpans = uncoveredInternalSpeech(gaps, probabilities, info);
           if (reason === "uncovered-tail" && result.last_token_end_s !== null && lastSpeechSeconds !== undefined)
@@ -348,12 +372,7 @@ export class ParakeetBackend implements STTBackend {
         // not evidence of silence. Keep the recording and admit guarded W.
         console.error(`[voicelayer] ${JSON.stringify({ event: "parakeet_empty_failure", speech_evidence: speechEvidence.status })}`);
       }
-      // Completed, input-bound native text with a frame-accounting discrepancy
-      // is a coverage concern. Explicit partial/error responses still fail over.
-      const accountingGap = reason === "incomplete-response" && result.complete && !!result.text.trim() &&
-        result.sample_rate === info.sampleRate && result.input_frames === info.frames &&
-        result.attemptEvidence?.decodeCoverage !== "PARTIAL" && result.attemptEvidence?.tail !== "KNOWN_MISSING";
-      if (reason && (accountingGap || reason === "uncovered-internal" || reason === "uncovered-tail")) {
+      if (reason && (reason === "uncovered-internal" || reason === "uncovered-tail")) {
         console.error(`[voicelayer] ${JSON.stringify({ event: "parakeet_coverage_retry", reason, uncovered_spans_s: uncoveredSpans })}`);
         nativeBoundaryPath = retain({ audioPath, submittedPath: inputPath, inputSha256, reason, parakeet: result,
           whisper: null, speechEvidence, errorType: null, stage: "native-or-input-boundary" });
@@ -404,6 +423,13 @@ export class ParakeetBackend implements STTBackend {
         return { text, backend: `${this.name}+${reason}+${repaired ? "span-repair" : "kept-native"}`,
           durationMs: Date.now() - started, outcome: "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN",
           languageWarning, languageEvidence, fallbackEvidencePath };
+      }
+      if (accountingGap && (!reason || reason === "invalid-timing")) {
+        const fallbackEvidencePath = retain({ audioPath, submittedPath: inputPath, inputSha256, reason: "accounting-gap-silence",
+          parakeet: result, speechEvidence, whisper: null, whisperStatus: "NOT_RUN", errorType: reason,
+          deliveryText: result.text, outcome: "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN", stage: "native-terminal" });
+        return { text: result.text, backend: this.name + "+accounting-gap-silence+kept-native", durationMs: Date.now() - started,
+          outcome: "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN", fallbackEvidencePath, languageWarning, languageEvidence };
       }
       if (reason) return fallback(reason, result);
       return { text: result.text, backend: this.name, durationMs: Date.now() - started, outcome: "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN", languageWarning, languageEvidence, attemptEvidence: result.attemptEvidence };

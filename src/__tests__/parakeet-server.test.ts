@@ -1,6 +1,7 @@
 import { ParakeetBackend } from "../parakeet-backend";
 import { describe, test, expect, beforeAll, afterEach, spyOn } from "bun:test";
-import { mkdirSync, writeFileSync } from "fs";
+import { mkdirSync, writeFileSync, readFileSync } from "fs";
+import { createHash } from "crypto";
 import { testTmp } from "./setup/test-tmp";
 import { ParakeetServer, ParakeetServiceError, parakeetCommand } from "../parakeet-server";
 
@@ -63,12 +64,14 @@ for await (const line of rl) {
     let whisperCalls = 0;
     const backend = new ParakeetBackend({ transcribe: p => s.transcribe(p), unload: () => s.unload(),
       env: () => ({QA_VOICE_WHISPER_LANG:"en"}),
+      speechProbe: async p => ({ status:"COMPLETE", threshold:.3, frames:16000, analyzedFrames:16000,
+        inputSha256:createHash("sha256").update(readFileSync(p)).digest("hex"), probabilities:Array(32).fill(.01) }),
       fallbackBackend: {name:"whisper-test",isAvailable:async()=>true,transcribe:async()=>{
         whisperCalls++; return {text:"Whisper kept the whole recording.",backend:"whisper-test",durationMs:1};
       }} });
     const result = await backend.transcribe(path);
     expect(whisperCalls).toBe(0); expect(result.text).toBe("A complete response.");
-    expect(result.backend).toBe("parakeet-resident+incomplete-response+kept-native");
+    expect(result.backend).toBe("parakeet-resident+accounting-gap-silence+kept-native");
     expect(result.outcome).toBe("NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN");
     expect(await s.health()).toBe(true);
   });

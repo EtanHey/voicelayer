@@ -1116,19 +1116,30 @@ async function ensureServerUnlocked(port: number): Promise<number> {
         (code) => fail(`whisper-server exited during startup (code ${code}); WHISPER_STARTUP_EXIT`),
         () => { /* A rejected exit promise does not confirm termination. */ },
       );
-      // Log the complete diagnostic stream; only the short machine reason
-      // reaches callers such as the Settings notice.
+      // Startup needs full diagnostics. Once healthy, retain only a bounded
+      // tail for stream close/error (normally child exit), never per inference.
+      let startupDiagnostics = true;
       if (proc.stderr) {
         const reader = (proc.stderr as ReadableStream<Uint8Array>).getReader();
         (async () => {
           const decoder = new TextDecoder();
+          let tail = "";
+          const diagnostic = (text: string) => {
+            if (!text) return;
+            if (startupDiagnostics) console.error("[voicelayer] whisper-server stderr: " + text);
+            else tail = (tail + text).slice(-4096).split("\n").slice(-20).join("\n");
+          };
           try {
             while (true) {
               const { done, value } = await reader.read();
               if (done) break;
-              console.error("[voicelayer] whisper-server stderr: " + decoder.decode(value, { stream: true }));
+              diagnostic(decoder.decode(value, { stream: true }));
             }
-          } catch {}
+          } catch {} finally {
+            diagnostic(decoder.decode());
+            if (tail) console.error("[voicelayer] whisper-server stderr tail: " + tail);
+            reader.releaseLock();
+          }
         })();
       }
 
@@ -1183,6 +1194,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
             performance_effort: launchedPerformanceEffort,
             acceleration_mode: plan.acceleration.mode,
           });
+          startupDiagnostics = false;
           console.error(
             `[voicelayer] whisper-server ready (PID ${proc.pid}, port ${port})`,
           );

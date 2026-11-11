@@ -422,6 +422,38 @@ usage: whisper-server [options]
       }
     }, SUBPROCESS_TEST_TIMEOUT_MS);
 
+    it("L11 R2: healthy Whisper logs only a bounded stderr tail on exit", async () => {
+      let spawned = false;
+      let stream!: ReadableStreamDefaultController<Uint8Array>;
+      const exit = Promise.withResolvers<number>(), logs: string[] = [];
+      const log = spyOn(console, "error").mockImplementation((...parts) => { logs.push(parts.join(" ")); });
+      __setWhisperServerTestHooksForTests({
+        findServerBinary: () => "/fixture/whisper-server", findModel: () => "/fixture/model.bin",
+        spawn: () => {
+          spawned = true;
+          return { pid: 31338, exited: exit.promise, exitCode: null,
+            stderr: new ReadableStream({ start(c) { stream = c; } }), kill: () => exit.resolve(0) };
+        }, isServerHealthy: async () => spawned, findPortListenerPids: () => spawned ? [31338] : [],
+      });
+      try {
+        await ensureServer(18994);
+        for (let i = 0; i < 300; i++) stream.enqueue(new TextEncoder().encode(`request-diagnostic-${i}: ${"x".repeat(120)}\n`));
+        await Bun.sleep(0);
+        expect(logs.join("\n")).not.toContain("request-diagnostic-");
+        stream.enqueue(new TextEncoder().encode("final-exit-diagnostic\n")); stream.close(); exit.resolve(7);
+        await Bun.sleep(0);
+        const diagnostics = logs.filter(l => l.includes("stderr"));
+        expect(diagnostics.join("\n")).toContain("final-exit-diagnostic");
+        expect(diagnostics.join("\n")).not.toContain("request-diagnostic-0:");
+        expect(diagnostics.join("\n").length).toBeLessThan(4500);
+      } finally {
+        try { stream.close(); } catch {} exit.resolve(0);
+        stopServer(); log.mockRestore(); __setWhisperServerTestHooksForTests({});
+        __resetWhisperServerStateForTests(null); __clearWhisperServerLaunchRecordForTests();
+        clearWhisperServerOwnership(18994);
+      }
+    });
+
     it("allows a slow live child with benign and Core ML fallback stderr", async () => {
       let spawned = false, healthPolls = 0;
       const exit = Promise.withResolvers<number>();

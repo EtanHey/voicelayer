@@ -1,5 +1,5 @@
 import { test, expect, beforeEach, afterEach, spyOn } from "bun:test";
-import { mkdirSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
+import { mkdirSync, existsSync, readFileSync, unlinkSync, writeFileSync, rmdirSync } from "fs";
 import { testTmp } from "./setup/test-tmp";
 import { selectRecognizer, type RecognizerTransitionDeps } from "../recognizer-controller";
 import { readRecognizerStatus, configureRecognizerBusyProbe, recognizerSettingsPath, onRecognizerStatusChange,
@@ -155,6 +155,24 @@ test("L11: failed Whisper selection restores persisted Parakeet across daemon re
   expect(await child.exited).toBe(0);
   expect(restarted.calls).toEqual(["P"]);
   expect(restarted.result).toMatchObject({outcome:"accept",recognizer_status:{desired:"parakeet",effective:"parakeet"}});
+});
+
+test("L11 R2: rollback write failure still restores Parakeet and reports the write error", async () => {
+  await selectRecognizer("parakeet", ops().deps);
+  const { calls, deps } = ops(), blockedTemp = `${recognizerSettingsPath()}.${process.pid}.tmp`;
+  const logs: string[] = [];
+  const log = spyOn(console, "error").mockImplementation((...parts) => { logs.push(parts.join(" ")); });
+  deps.startW = async () => { calls.push("startW"); mkdirSync(blockedTemp); throw new Error("Whisper unavailable"); };
+  try {
+    const result = await selectRecognizer("whisper", deps);
+    expect(calls).toEqual(["stopP", "stopW", "startW", "stopW", "startP", "reset"]);
+    expect(result).toMatchObject({ outcome: "reject", reason: "settings-write-failed", recognizer_status: {
+      effective: "parakeet", phase: "ready", engines: { whisper: { error: "settings-write-failed" } },
+    } });
+    expect(recognizerRecovery()?.engine).toBe("parakeet");
+    expect(logs.join("\n")).toContain("recognizer_selection_rollback_write_failed");
+    expect(logs.join("\n")).toContain("recognizer_recovered_after_rollback_write_failure");
+  } finally { log.mockRestore(); rmdirSync(blockedTemp); }
 });
 
 test("post-startup cleanup failure retains a dedicated barrier and stable reason", async () => {
