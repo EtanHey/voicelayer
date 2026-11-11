@@ -18,26 +18,31 @@ import XCTest
 ///    which is why the tab glyphs never vanished on a macOS 26 host or in an offscreen "glyph exists" test.
 @MainActor
 final class NotchGlyphRepaintN12Tests: XCTestCase {
-    /// The mechanism on its own, the same on every macOS: contents a layer was handed survive the pass.
+    /// The mechanism on its own, the same on every macOS: contents a layer was handed survive the pass, whether
+    /// an image (what SwiftUI hands a symbol layer) or a surface.
     func testRerasterizingKeepsContentsALayerWasHanded() throws {
-        let view = NSView(frame: CGRect(x: 0, y: 0, width: 40, height: 40))
-        view.wantsLayer = true
-        let handed = CALayer()
-        handed.frame = CGRect(x: 4, y: 4, width: 14, height: 14)
-        let image = try Self.solidImage(side: 28)
-        handed.contents = image
-        let root = try XCTUnwrap(view.layer)
-        root.addSublayer(handed)
-        let window = Self.window(holding: view)
-        defer { window.contentView = nil; window.close() }
+        let surface = try XCTUnwrap(IOSurface(properties: [
+            .width: 28, .height: 28, .bytesPerElement: 4, .pixelFormat: kCVPixelFormatType_32BGRA,
+        ]))
+        let handedContents: [(String, AnyObject)] = [("image", try Self.solidImage(side: 28)), ("surface", surface)]
+        for (kind, contents) in handedContents {
+            let view = NSView(frame: CGRect(x: 0, y: 0, width: 40, height: 40))
+            view.wantsLayer = true
+            let handed = CALayer()
+            handed.frame = CGRect(x: 4, y: 4, width: 14, height: 14)
+            handed.contents = contents
+            try XCTUnwrap(view.layer).addSublayer(handed)
+            let window = Self.window(holding: view)
+            defer { window.contentView = nil; window.close() }
 
-        VoiceBarBackingScaleSynchronizer.synchronize(view, to: 2)
-        Self.commit()
+            VoiceBarBackingScaleSynchronizer.synchronize(view, to: 2)
+            Self.commit()
 
-        XCTAssertEqual(handed.contentsScale, 2, "the pass still carries the screen's scale to every layer")
-        let contents = try XCTUnwrap(handed.contents, "[N12] the pass emptied a layer whose contents it was handed")
-        XCTAssertTrue(contents as AnyObject === image,
-                      "[N12] the pass replaced handed contents with an empty backing store: \(contents)")
+            XCTAssertEqual(handed.contentsScale, 2, "the pass still carries the screen's scale to every layer")
+            let kept = try XCTUnwrap(handed.contents, "[N12] the pass emptied a layer holding a handed \(kind)")
+            XCTAssertTrue(kept as AnyObject === contents,
+                          "[N12] the pass replaced a handed \(kind) with an empty backing store: \(kept)")
+        }
     }
 
     /// SwiftUI's own image layers, in the real drawer. The warning triangle is a bitmap symbol on every macOS (the
