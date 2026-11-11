@@ -228,6 +228,46 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         }
     }
 
+    func testH2SwipeReleaseCannotCopyButCopyWorksAfterCooldown() throws {
+        var copies = 0
+        let dictations = NotchHistoryPanel(
+            entries: [RecentTranscriptionEntry(text: "Synthetic copy target.")], activeRetranscriptionPath: nil,
+            palette: .resolve(for: .dark), onCopy: { _ in copies += 1; return true },
+            onPaste: { _ in XCTFail("unexpected paste") }, onRetranscribe: { _ in }, forcedHoverIndex: 0)
+        let archive = NotchHistoryArchiveStore(loadAsk: { _ in [] }, loadSpeech: { _ in [] })
+        let host = NSHostingView(rootView: NotchHistoryCategoryPanel(dictations: dictations, archive: archive)
+            .transaction { $0.disablesAnimations = true; $0.animation = nil })
+        host.frame = NSRect(x: 0, y: 0, width: 404, height: 276)
+        let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        window.orderBack(nil)
+        windows.append(window)
+        drain(0.2)
+        host.layoutSubtreeIfNeeded()
+        let copy = try XCTUnwrap(elements(host).first { $0.label == "Copy" && $0.frame.width > 0 }?.frame)
+        let point = window.convertPoint(fromScreen: NSPoint(x: copy.midX, y: copy.midY))
+        let monitor = try XCTUnwrap(swipeMonitor(host))
+        let listPoint = monitor.convert(NSPoint(x: monitor.bounds.midX, y: monitor.bounds.midY), to: nil)
+        for (phase, dx) in [(Int64(1), 0)] + Array(repeating: (Int64(2), -3), count: 8) + [(Int64(4), 0)] {
+            let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+                                           wheel1: 0, wheel2: Int32(dx), wheel3: 0))
+            cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+            cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
+            _ = monitor.route(try XCTUnwrap(NSEvent(cgEvent: cg)), in: window, at: listPoint)
+        }
+        try send(.leftMouseDown, at: point, to: window)
+        try send(.leftMouseUp, at: point, to: window)
+        drain(0.02)
+        XCTAssertEqual(copies, 0, "a click ending a swipe must not copy")
+        drain(0.4)
+        try send(.leftMouseDown, at: point, to: window)
+        try send(.leftMouseUp, at: point, to: window)
+        drain(0.02)
+        XCTAssertEqual(copies, 1, "an intentional copy after the cooldown still works")
+    }
+
     // MARK: Pictures (opt-in)
 
     /// Writes both History surfaces in each category, an empty category and one mid-swipe frame: the real History

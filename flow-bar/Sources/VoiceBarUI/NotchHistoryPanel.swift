@@ -11,9 +11,9 @@ struct NotchHistoryPanel: View {
     let activeRetranscriptionPath: String?
     let palette: VoiceBarNotchContrastPalette
     /// Returns whether the text reached the pasteboard; the tick shows only then (#161 review).
-    let onCopy: (RecentTranscriptionEntry) -> Bool
+    var onCopy: (RecentTranscriptionEntry) -> Bool
     var onPaste: (RecentTranscriptionEntry) -> Void
-    let onRetranscribe: (String) -> Void
+    var onRetranscribe: (String) -> Void
     /// A click on a row's text opens it in the History window (SPEC open question 1). Copy / Paste stay on hover.
     var onOpen: (RecentTranscriptionEntry) -> Void = { _ in }
     var onOpenAtIndex: ((Int) -> Void)?

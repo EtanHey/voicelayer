@@ -159,6 +159,11 @@ struct NotchHistoryCategoryPanel: View {
         panel.listHeight = listHeight
         panel.scope = scope
         // A click that ends a swipe is not a row click.
+        panel.onCopy = { entry in
+            guard !swipeJustHappened else { return false }
+            return dictations.onCopy(entry)
+        }
+        panel.onRetranscribe = { path in if !swipeJustHappened { dictations.onRetranscribe(path) } }
         panel.onOpen = { entry in if !swipeJustHappened { dictations.onOpen(entry) } }
         panel.onPaste = { entry in if !swipeJustHappened { dictations.onPaste(entry) } }
         let rows: [NotchHistoryArchiveStore.Row]?
