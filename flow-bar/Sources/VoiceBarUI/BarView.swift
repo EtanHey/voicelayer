@@ -362,7 +362,7 @@ public struct BarView: View {
     /// Visual shots only: render one History row as hovered without a pointer.
     private var historyForcedHoverIndex: Int?
     private var historyArchive: NotchHistoryArchiveStore = .shared
-    private var historyInitialScope: SettingsHistoryScope = .recording
+    private var historyInitialScope: SettingsHistoryScope?
     private var historyInitialSwipe: CGFloat = 0
     /// 2.4 Lane A: the ONE notch surface (formal/notch-surface). Which drawer is open lives there, never in a flag
     /// here. The app and the UIE2E host inject theirs; a BarView without one owns a private model.
@@ -2185,7 +2185,7 @@ public struct BarView: View {
 
     /// Visual shots and tests: the archive rows to show, the category to start on and a mid-swipe offset.
     func historyCategories(
-        archive: NotchHistoryArchiveStore, scope: SettingsHistoryScope = .recording, swipe: CGFloat = 0
+        archive: NotchHistoryArchiveStore, scope: SettingsHistoryScope? = nil, swipe: CGFloat = 0
     ) -> BarView {
         var copy = self
         copy.historyArchive = archive

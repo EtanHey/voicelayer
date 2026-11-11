@@ -268,6 +268,95 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         XCTAssertEqual(copies, 1, "an intentional copy after the cooldown still works")
     }
 
+    func testH2CategorySurvivesCloseReopenAcrossBothSurfaces() throws {
+        let harness = makeHarness()
+        open(harness, .openHistory)
+        wait { harness.archive.speech != nil }
+        try swipe(harness, dx: -160)
+        try swipe(harness, dx: -160)
+        XCTAssertEqual(shown(harness), [.speech])
+        harness.surface.send(.dismiss(.toggle))
+        drain(1.0)
+        XCTAssertTrue(harness.archive.ask == nil, "closed History must release transcript rows")
+        XCTAssertTrue(harness.archive.speech == nil)
+        let reads = harness.archive.readCount
+        NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange, object: nil)
+        drain(0.3)
+        XCTAssertEqual(harness.archive.readCount, reads, "closed History does not reload")
+        open(harness, .openSettings(.history))
+        wait { harness.archive.speech != nil }
+        XCTAssertEqual(shown(harness), [.speech], "category memory survives changing the History surface")
+        harness.surface.send(.openSettings(.general))
+        drain(0.8)
+        XCTAssertTrue(harness.archive.ask == nil)
+        XCTAssertTrue(harness.archive.speech == nil)
+        open(harness, .openSettings(.history))
+        wait { harness.archive.speech != nil }
+        XCTAssertEqual(shown(harness), [.speech])
+        let nextSession = makeHarness()
+        open(nextSession, .openHistory)
+        XCTAssertEqual(shown(nextSession), [.recording], "a new session starts on Dictations")
+    }
+
+    func testH2ArchivesReleaseOnlyWhenTheLastSurfaceCloses() {
+        let rows = [NotchHistoryArchiveStore.Row(entry: RecentTranscriptionEntry(text: "Synthetic archive row."), detail: nil)]
+        let archive = NotchHistoryArchiveStore(loadAsk: { _ in rows }, loadSpeech: { _ in rows })
+        archive.surfaceOpened()
+        archive.surfaceOpened()
+        wait { archive.speech != nil }
+        XCTAssertEqual(archive.readCount, 1)
+        archive.surfaceClosed()
+        XCTAssertNotNil(archive.ask, "another History surface is still open")
+        archive.surfaceClosed()
+        XCTAssertTrue(archive.ask == nil)
+        XCTAssertTrue(archive.speech == nil)
+        NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange, object: nil)
+        drain(0.3)
+        XCTAssertEqual(archive.readCount, 1)
+        archive.surfaceOpened()
+        wait { archive.speech != nil }
+        XCTAssertEqual(archive.readCount, 2, "reopening reloads instead of showing retained rows")
+        archive.surfaceClosed()
+    }
+
+    private final class LoadLatch: @unchecked Sendable {
+        private let lock = NSLock()
+        private var pending: [CheckedContinuation<[NotchHistoryArchiveStore.Row], Never>] = []
+        var count: Int { lock.withLock { pending.count } }
+        func load() async -> [NotchHistoryArchiveStore.Row] {
+            await withCheckedContinuation { continuation in lock.withLock { pending.append(continuation) } }
+        }
+        func release() {
+            let continuations = lock.withLock { let all = pending; pending = []; return all }
+            for continuation in continuations {
+                continuation.resume(returning: [.init(entry: RecentTranscriptionEntry(text: "Synthetic late row."), detail: nil)])
+            }
+        }
+    }
+
+    func testH2CloseDuringLoadCannotRestoreClosedRows() {
+        let latch = LoadLatch()
+        let archive = NotchHistoryArchiveStore(loadAsk: { _ in await latch.load() }, loadSpeech: { _ in await latch.load() })
+        archive.surfaceOpened()
+        wait { latch.count == 2 }
+        XCTAssertEqual(latch.count, 2)
+        archive.surfaceClosed()
+        latch.release()
+        drain(0.1)
+        XCTAssertTrue(archive.ask == nil)
+        XCTAssertTrue(archive.speech == nil)
+        archive.surfaceOpened()
+        wait { latch.count == 2 }
+        XCTAssertEqual(latch.count, 2)
+        latch.release()
+        wait { archive.speech != nil }
+        XCTAssertNotNil(archive.ask)
+        XCTAssertEqual(archive.readCount, 2)
+        archive.surfaceClosed()
+        XCTAssertTrue(archive.ask == nil)
+        XCTAssertTrue(archive.speech == nil)
+    }
+
     // MARK: Pictures (opt-in)
 
     /// Writes both History surfaces in each category, an empty category and one mid-swipe frame: the real History

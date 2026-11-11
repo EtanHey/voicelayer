@@ -29,12 +29,12 @@ struct NotchHistoryCategoryPanel: View {
 
     /// `initialScope` and `initialSwipe` (points the lists are dragged, as mid-gesture) are for shots.
     init(dictations: NotchHistoryPanel, archive: NotchHistoryArchiveStore,
-         initialScope: SettingsHistoryScope = .recording, initialSwipe: CGFloat = 0,
+         initialScope: SettingsHistoryScope? = nil, initialSwipe: CGFloat = 0,
          onOpenArchive: @escaping (SettingsHistoryDestination) -> Void = { _ in }) {
         self.dictations = dictations
         self.archive = archive
         self.onOpenArchive = onOpenArchive
-        var pager = NotchHistoryCategoryPager(count: Self.scopes.count, index: Self.scopes.firstIndex(of: initialScope) ?? 0)
+        var pager = NotchHistoryCategoryPager(count: Self.scopes.count, index: Self.scopes.firstIndex(of: initialScope ?? archive.selectedScope) ?? 0)
         if initialSwipe != 0 { pager.move(dx: initialSwipe, dy: 0) }
         _pager = State(initialValue: pager)
     }
@@ -55,6 +55,10 @@ struct NotchHistoryCategoryPanel: View {
         }
         .frame(height: dictations.listHeight)
         .onAppear { archive.surfaceOpened() }
+        .onChange(of: archive.selectedScope) { _, scope in
+            let index = Self.scopes.firstIndex(of: scope) ?? 0
+            if index != pager.index { select(index) }
+        }
         .onDisappear { archive.surfaceClosed() }
     }
 
@@ -227,6 +231,7 @@ struct NotchHistoryCategoryPanel: View {
         } else {
             withAnimation(NotchDrawerMotion.easeOut(duration)) { change(&pager) }
         }
+        archive.selectedScope = Self.scopes[pager.index]
     }
 }
 

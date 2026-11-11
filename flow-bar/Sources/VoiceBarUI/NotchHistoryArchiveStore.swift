@@ -29,6 +29,9 @@ public final class NotchHistoryArchiveStore: ObservableObject {
     public static let shared = NotchHistoryArchiveStore()
     static let limit = NotchHistoryMorph.maximumEntries
 
+    /// Session memory only: closing a surface releases its rows, not the chosen category.
+    @Published var selectedScope: SettingsHistoryScope = .recording
+
     /// Nil until the first load lands.
     @Published public private(set) var ask: [Row]?
     @Published public private(set) var speech: [Row]?
@@ -79,6 +82,8 @@ public final class NotchHistoryArchiveStore: ObservableObject {
         changes = nil
         loadTask?.cancel()
         loadTask = nil
+        ask = nil
+        speech = nil
     }
 
     private func reload(debounce: Bool) {
