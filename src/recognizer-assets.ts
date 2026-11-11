@@ -1,8 +1,8 @@
-/** File metadata only: status never imports a runtime, opens weights or uses the network. */
-import { statSync, readFileSync } from "fs";
+/** Status accessors use metadata only; launch identity explicitly hashes weights. */
+import { statSync, readFileSync, mkdirSync } from "fs";
 import { isAbsolute, join, resolve } from "path";
 import { homedir } from "os";
-import { getStateDir } from "./paths";
+import { getStateDir, safeWriteFileSync } from "./paths";
 import type { Recognizer } from "./recognizer-state";
 export const PARAKEET_FILES = ["config.json", "model.safetensors", "tokenizer.model"] as const;
 export function defaultParakeetModelPath(env: NodeJS.ProcessEnv = process.env): string {
@@ -42,4 +42,29 @@ export function readRecognizerAssets(engine: Recognizer, env: NodeJS.ProcessEnv 
   return { assets_present: paths.every(isAbsolute) && sizes.every(size => size > 0) &&
     (engine !== "parakeet" || !!python && isAbsolute(python) && fileBytes(python) > 0),
     disk_bytes: sizes.reduce((sum, size) => sum + size, 0) };
+}
+
+/** Reuse only a hash computed for this exact file generation, across daemon boots. */
+export async function whisperLaunchIdentity(path: string): Promise<string> {
+  const fingerprint = () => {
+    const s = statSync(path, { bigint: true });
+    return `${s.dev}:${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}`;
+  };
+  const before = fingerprint();
+  const { createHash } = await import("crypto");
+  const directory = join(getStateDir(), "whisper-identities");
+  const cache = join(directory, createHash("sha256").update(resolve(path)).digest("hex") + ".json");
+  try {
+    const record = JSON.parse(readFileSync(cache, "utf8"));
+    if (record.version === 1 && record.path === resolve(path) && record.fingerprint === before &&
+        typeof record.sha256 === "string" && /^[a-f0-9]{64}$/.test(record.sha256) && fingerprint() === before) return record.sha256;
+  } catch { /* Missing, malformed or stale cache requires a full identity read. */ }
+  const { hashWhisperWeights } = await import("./whisper-model-identity");
+  const sha256 = await hashWhisperWeights(path);
+  if (fingerprint() !== before) throw new Error("Whisper model changed while hashing");
+  try {
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    safeWriteFileSync(cache, JSON.stringify({ version: 1, path: resolve(path), fingerprint: before, sha256 }) + "\n");
+  } catch { console.error("[voicelayer] Could not cache Whisper model identity; next boot will hash again"); }
+  return sha256;
 }

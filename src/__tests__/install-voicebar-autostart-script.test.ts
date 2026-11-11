@@ -528,3 +528,18 @@ describe("install-voicebar-autostart.sh legacy /tmp log cleanup", () => {
     );
   });
 });
+
+test("launchd verification keeps job state when nested coalitions are active", () => {
+  const workspace = makeWorkspace({ printLoaded: 0 });
+  writeFileSync(join(workspace.stubDir, "launchctl"),
+    "#!/bin/bash\nprintf 'state = running\\npid = 42\\nresource coalition = {\\n  state = active\\n}\\n'\n",
+    { mode: 0o755 });
+  const result = spawnSync(join(workspace.stubDir, "bash"), ["-c",
+    'source "$1"; voicebar_verify_launchd "$2"', "l8",
+    join(import.meta.dir, "../../scripts/lib/voicebar-launchagent.sh"), workspace.appBundle], {
+    encoding: "utf8", env: { ...process.env, HOME: workspace.home, PATH: workspace.stubDir,
+      BASH_ENV: join(workspace.stubDir, "shell-fakes.bash"), STUB_LOG: workspace.log,
+      VOICEBAR_APP_PATH: workspace.appBundle },
+  });
+  expect(result.status).toBe(0);
+});
