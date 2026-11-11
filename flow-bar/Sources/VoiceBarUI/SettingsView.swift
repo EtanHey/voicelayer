@@ -2510,17 +2510,14 @@ public struct SettingsView: View {
                             case .loading:
                                 HStack(spacing: 8) {
                                     ProgressView().controlSize(.small)
-                                    Text("Loading…").foregroundStyle(SettingsPanePalette.helper)
+                                    SettingsRowLabel(title: "Getting dictionary ready…",
+                                                     description: "Your terms and included spellings will appear here.")
                                 }
-                                .frame(maxWidth: .infinity, minHeight: 170)
+                                .padding(.horizontal, 6).padding(.vertical, 12)
                             case .empty:
-                                VStack(spacing: 10) {
-                                    Image(systemName: "text.book.closed").font(.largeTitle).foregroundStyle(.secondary)
-                                    Text("No terms yet").font(.headline)
-                                    Text("Add a preferred spelling.")
-                                        .font(.caption).foregroundStyle(SettingsPanePalette.helper)
-                                }
-                                .frame(maxWidth: .infinity, minHeight: 170)
+                                SettingsRowLabel(title: "Your spellings belong here",
+                                                 description: "Add a preferred spelling to improve dictation.")
+                                    .padding(.horizontal, 6).padding(.vertical, 12)
                             case nil:
                                 EmptyView()
                             }
@@ -2545,7 +2542,7 @@ public struct SettingsView: View {
                         .font(Self.dictionaryGroupFont)
                         .help(includedTermsExpanded ? "Collapse included terms" : "Show included terms")
                         .padding(.top, 18)
-                        if includedHeader.showsChevron, !isSearching {
+                        if includedHeader.showsChevron, includedTermsExpanded, !isSearching {
                             includedTermsSummary(expanded: includedTermsExpanded)
                         }
                         if includedTermsExpanded || isSearching {
@@ -2639,44 +2636,16 @@ public struct SettingsView: View {
     }
 
     private func includedTermsHeaderLabel(_ header: IncludedTermsHeader) -> some View {
-        HStack {
-            Text(header.title)
-            if header.isLoading {
-                ProgressView().controlSize(.small)
-                Text("Loading…").font(.caption).foregroundStyle(SettingsPanePalette.helper)
-            }
-            Spacer()
-            Text("built in").font(.caption).foregroundStyle(SettingsPanePalette.helper)
-        }
+        Text(header.title)
     }
 
-    /// Spec: Included terms (closed) shows a sample of the daemon's own rows as chips, and why they can't be edited.
+    /// Included terms use the same counted header and rows as Your terms. No second chip layout while closed.
     private func includedTermsSummary(expanded: Bool) -> some View {
-        let sample = DictionarySearchPresentation.includedSample(
-            dictionaryDisplayIndex.sortedEntries.filter { !$0.isPersonal }.map(\.entry)
-        )
-        return VStack(alignment: .leading, spacing: 8) {
-            if !expanded, !sample.isEmpty {
-                DictionaryChipFlow(spacing: 6) {
-                    ForEach(sample, id: \.self) { term in
-                        Text(term)
-                            .font(.system(size: 11.5))
-                            .lineLimit(1)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Capsule().fill(Color.primary.opacity(0.07)))
-                    }
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Included terms include " + sample.joined(separator: ", "))
-            }
-            Text(DictionarySearchPresentation.includedExplanation)
-                .font(.system(size: 11.5))
-                .foregroundStyle(SettingsPanePalette.helper)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 8)
+        Text(DictionarySearchPresentation.includedExplanation)
+            .font(SettingsRowLabel.descriptionFont)
+            .foregroundStyle(SettingsPanePalette.helper)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 6).padding(.vertical, 8)
     }
 
     private func dictionaryNoMatches(_ query: String) -> some View {
@@ -2784,18 +2753,26 @@ public struct SettingsView: View {
     /// Group headers ("Your terms", "Included terms") in the section-header role (lane S DESIGN.md §6).
     static let dictionaryGroupFont = Font.system(size: 13, weight: .semibold)
 
-    /// The term in the row-title role, then its misheard spellings in the helper role, as one wrapping line.
+    /// Keep the canonical spelling and one variant on a single line. The count never truncates; editing and
+    /// accessibility retain every variant, including fragments, without modifying the dictionary data.
     static func dictionaryTermLine(_ entry: STTDictionaryEntry) -> some View {
-        var line = Text(entry.canonical).font(SettingsRowLabel.titleFont).foregroundColor(.primary)
-        if !entry.variants.isEmpty {
-            line = line + Text("   " + variantSummary(entry.variants).lowercasedFirst)
-                .font(SettingsRowLabel.descriptionFont)
-                .foregroundColor(SettingsPanePalette.helper)
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(entry.canonical).font(SettingsRowLabel.titleFont).foregroundStyle(.primary)
+                .lineLimit(1).truncationMode(.tail).layoutPriority(1)
+            if let first = entry.variants.first {
+                Text("also heard as " + first).font(SettingsRowLabel.descriptionFont)
+                    .foregroundStyle(SettingsPanePalette.helper).lineLimit(1).truncationMode(.tail)
+                if entry.variants.count > 1 {
+                    Text("+\(entry.variants.count - 1) more").font(SettingsRowLabel.descriptionFont)
+                        .foregroundStyle(SettingsPanePalette.helper).fixedSize()
+                }
+            }
         }
-        return line
-            .fixedSize(horizontal: false, vertical: true)
-            .accessibilityLabel(entry.variants.isEmpty ? entry.canonical
-                : "\(entry.canonical). \(variantSummary(entry.variants))")
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(entry.variants.isEmpty ? entry.canonical
+            : "\(entry.canonical). \(variantSummary(entry.variants))")
+        .help(entry.variants.isEmpty ? entry.canonical : "\(entry.canonical). \(variantSummary(entry.variants))")
     }
 
     private func dictionaryEntryHeader(
@@ -2808,24 +2785,40 @@ public struct SettingsView: View {
             .frame(minWidth: SettingsRowLabel.textMinWidth, maxWidth: .infinity, alignment: .leading)
         return SettingsRowLayout {
             label
-            // One native menu for the selected row, rather than three hidden Tab stops on every term.
-            Menu {
-                Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(entry.canonical, forType: .string) }
+            HStack(spacing: 2) {
                 if isEditable {
-                    Button("Edit…") { termSheet = DictionaryTermEdit(original: entry) }
-                    Divider()
-                    Button("Delete…", role: .destructive) { requestTermRemoval(entry.canonical, rowID: rowID) }
+                    Button { termSheet = DictionaryTermEdit(original: entry) } label: {
+                        Image(systemName: "pencil")
+                            .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(SettingsPanePalette.helper)
+                    .focusable(isSelected, interactions: .edit)
+                    .help("Edit term")
+                    .accessibilityLabel("Edit term \(entry.canonical)")
                 }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
+                // Only the selected row contributes action stops. Delete stays behind this menu and confirmation.
+                Menu {
+                    Button("Copy") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(entry.canonical, forType: .string)
+                    }
+                    if isEditable {
+                        Divider()
+                        Button("Delete…", role: .destructive) { requestTermRemoval(entry.canonical, rowID: rowID) }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .focusable(isSelected, interactions: .edit)
+                .focused($focusedTermAction, equals: rowID)
+                .accessibilityLabel("Actions for term \(entry.canonical)")
+                .help(isEditable ? "Copy or delete term" : "Copy included term")
             }
-            .menuStyle(.borderlessButton)
             .fixedSize()
-            .focusable(isSelected, interactions: .edit)
-            .focused($focusedTermAction, equals: rowID)
-            .accessibilityLabel("Actions for term \(entry.canonical)")
-            .help(isEditable ? "Copy, edit or delete term" : "Copy included term")
         }
         .frame(minHeight: DictionaryCardLayout.headerHeight)
     }

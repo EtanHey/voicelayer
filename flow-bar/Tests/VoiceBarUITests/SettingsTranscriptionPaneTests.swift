@@ -77,8 +77,7 @@ final class SettingsTranscriptionPaneTests: XCTestCase {
         let row = try XCTUnwrap(ModelsSettingsView.unloadWhenIdleRow(for: state()))
         XCTAssertEqual(row.title, "Unload when idle")
         XCTAssertFalse(row.isOn)
-        XCTAssertEqual(row.line, "Frees about 2.5 GB of memory after 5 min without dictation. "
-                       + "The next dictation loads Parakeet again, which adds a few seconds.")
+        XCTAssertEqual(row.line, "Frees ~2.5 GB after 5 min idle. Next dictation reloads Parakeet (few seconds).")
     }
 
     func testProcessingRowsSayWhatEachDoesToYourWords() {

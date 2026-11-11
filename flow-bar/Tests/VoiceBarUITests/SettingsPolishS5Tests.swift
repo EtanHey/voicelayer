@@ -61,6 +61,20 @@ final class SettingsPolishS5Tests: XCTestCase {
         _ = try Self.render(Self.drawer(.transcription, light: true), light: true, name: "transcription-drawer-light")
         _ = try Self.render(Self.pane(.transcription), width: 780, light: true, name: "transcription-window-light")
     }
+    func testDictionaryLoadingAndEmptyStatesUseCompactRows() throws {
+        for loaded in [false, true] {
+            let preview = STTVocabularyPreview(updatedAt: nil, entries: [])
+            let pane = SettingsView(hotkeyEnabled: true, missingPermissions: [], availableDevices: { [] },
+                selectedDeviceID: { nil }, modelsStatus: { .loading }, onRefreshModelsStatus: {},
+                vocabularyRevision: { 0 }, initialTab: .dictionary,
+                initialDictionaryPreview: loaded ? preview : nil)
+            let lines = try Self.ocr(Self.render(pane.notchDrawerPane(.dictionary), height: 470,
+                name: loaded ? "dictionary-empty" : "dictionary-loading"))
+            XCTAssertTrue(lines.contains { $0.contains(loaded ? "your spellings belong here" : "getting dictionary ready") })
+            XCTAssertFalse(lines.contains { $0 == "loading..." || $0 == "loading…" || $0 == "built in" })
+        }
+    }
+
     func testWindowWrapsTheEntireLongMicrophoneName() throws {
         let name = "Studio microphone with a deliberately long descriptive device name that continues through multiple lines and ends in Cedar"
         let image = try Self.render(SettingsRowLabel(title: name, description: "Connected"), width: 180, height: 240,
