@@ -59,7 +59,7 @@
     "formal/speech-queue/F5PauseFixedTranscribing.cfg": "e655bdcd646612a8a52ce7c85be05d567961dd88fc6adbf3df8bd01a4df90d8b",
     "formal/speech-queue/F5PauseReleaseDrops.cfg": "016a87aa650937902959487f810fa45c4c08ccee5d84567c2f779068629734e1",
     "formal/speech-queue/F5PauseDoubleResume.cfg": "d6a28c91556c0d88f0d557161dc1ff52dade071c8aeaf8a5fbb4af51e2875303",
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "72b1f673796430d1fc504fb8d3f75c12a7b4b482f9c9f547ac6c0e41b82ed973",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "6e27d0668bac7a92042a02c7531db9e8a7a50bf2850bdf01df287c829c1b4cc3",
     "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift": "40894bfe33de588427cd42f5a0417804079ff139489a29fd377c4ba904ba27fc",
     "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "e23414d8b9dce29b38292f2ab265a52d2a38fc1839e0fdc916c813455a453b3e",
     "flow-bar/Tests/VoiceBarTests/F5PauseConformanceTests.swift": "6d85e0a93b4adceac6173a6e23a63f994603c76d59a5cb0f49868275166b2782",
