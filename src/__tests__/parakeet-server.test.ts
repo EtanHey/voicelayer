@@ -1,5 +1,7 @@
+import { ParakeetBackend } from "../parakeet-backend";
 import { describe, test, expect, beforeAll, afterEach, spyOn } from "bun:test";
-import { mkdirSync, writeFileSync } from "fs";
+import { mkdirSync, writeFileSync, readFileSync } from "fs";
+import { createHash } from "crypto";
 import { testTmp } from "./setup/test-tmp";
 import { ParakeetServer, ParakeetServiceError, parakeetCommand } from "../parakeet-server";
 
@@ -36,7 +38,10 @@ for await (const line of rl) {
   if(p==='bad-time')out.last_token_end_s=5;
   if(p==='bad-time-type')out.last_token_end_s='invalid';
   if(p==='wrong-id')out.id++;
-  if(p==='bad-frames')out.covered_frames=2;
+  if(process.argv[2]==='one-frame-short')out.covered_frames=15999;
+  if(p==='bad-frames')out.covered_frames=-1;
+  if(p==='excess-frames')out.covered_frames=16001;
+  if(p==='fractional-frames')out.covered_frames=15999.5;
   if(p==='provider-error')out={id:r.id,ok:false,code:'RuntimeError'};
   if(p==='returned-partial')out={id:r.id,ok:false,code:'ReturnedDecodeError',status:'PARTIAL',fatal:false,attempt:{text:'returned partial words',complete:false,covered_frames:10,input_frames:16000}};
  }
@@ -49,6 +54,27 @@ for await (const line of rl) {
   }
   test("not configured never downloads or pretends available", () => { expect(parakeetCommand({})).toBeNull(); });
   test("health alone does not launch/load a model", async () => { expect(await make().health()).toBe(false); });
+  test("L11: completed coverage discrepancy survives the protocol child and keeps native words", async () => {
+    const s = make({ command: [process.execPath, fixture, "one-frame-short"] });
+    const path = testTmp("parakeet-pipes", "coverage.wav");
+    const wav = Buffer.alloc(32044); wav.write("RIFF"); wav.writeUInt32LE(32036, 4); wav.write("WAVEfmt ", 8);
+    wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(16000, 24);
+    wav.writeUInt32LE(32000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write("data", 36);
+    wav.writeUInt32LE(32000, 40); wav.writeInt16LE(1000, 44); writeFileSync(path, wav);
+    let whisperCalls = 0;
+    const backend = new ParakeetBackend({ transcribe: p => s.transcribe(p), unload: () => s.unload(),
+      env: () => ({QA_VOICE_WHISPER_LANG:"en"}),
+      speechProbe: async p => ({ status:"COMPLETE", threshold:.3, frames:16000, analyzedFrames:16000,
+        inputSha256:createHash("sha256").update(readFileSync(p)).digest("hex"), probabilities:Array(32).fill(.01) }),
+      fallbackBackend: {name:"whisper-test",isAvailable:async()=>true,transcribe:async()=>{
+        whisperCalls++; return {text:"Whisper kept the whole recording.",backend:"whisper-test",durationMs:1};
+      }} });
+    const result = await backend.transcribe(path);
+    expect(whisperCalls).toBe(0); expect(result.text).toBe("A complete response.");
+    expect(result.backend).toBe("parakeet-resident+accounting-gap-silence+kept-native");
+    expect(result.outcome).toBe("NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN");
+    expect(await s.health()).toBe(true);
+  });
   test("persistent child serves empty then success without restarting serve", async () => {
     const s = make(); await s.start(); expect(await s.health()).toBe(true);
     expect((await s.transcribe("empty")).text).toBe(""); expect((await s.transcribe("normal")).text).toBe("A complete response."); expect(await s.health()).toBe(true);
@@ -72,7 +98,7 @@ for await (const line of rl) {
     expect(await s.unloadForMemoryPressure()).toBe(false);
     await boot; expect((await dictation).complete).toBe(true); expect(loads).toBe(1);
   });
-  test.each(["crash", "partial", "wrong-id", "bad-frames", "provider-error"])("%s destroys owned service; a later request can start cleanly", async bad => {
+  test.each(["crash", "partial", "wrong-id", "bad-frames", "excess-frames", "fractional-frames", "provider-error"])("%s destroys owned service; a later request can start cleanly", async bad => {
     const s = make(); await expect(s.transcribe(bad)).rejects.toThrow(); expect(await s.health()).toBe(false);
     expect((await s.transcribe("normal")).complete).toBe(true);
   });

@@ -63,6 +63,49 @@ function intentionalSpeakInput(path: string, privateRoot: string, recordingsRoot
     m.input.bytes === input.length && m.input.sha256 === createHash("sha256").update(input).digest("hex");
 }
 
+const stageReceipt = z.object({
+  schema_version: z.literal(1), attempt_id: z.string().uuid(), created_at: z.string().datetime(),
+  audio_sha256: z.string().regex(/^[a-f0-9]{64}$/), raw_stage: z.literal("backend-return"),
+  delivery_observed: z.literal(false), complete: z.boolean(), polish_status: z.string().nullable(),
+  stages: z.object({ raw: z.string(), after_rules: z.string(), after_polish: z.string().nullable(),
+    delivered: z.string().nullable() }).strict(),
+}).strict();
+
+function intentionalStageReceipt(path: string, privateRoot: string, recordingsRoot?: string): boolean {
+  if (!recordingsRoot || ![privateRoot, recordingsRoot].every(p =>
+    isAbsolute(p) && normalize(p) === p && !p.endsWith("/")) ||
+    !recordingsRoot.startsWith(privateRoot + "/")) return false;
+  const store = join(dirname(recordingsRoot), "transcription-stages");
+  const parts = relative(store, path).split("/");
+  if (parts.length !== 3 || !/^stt-stages-[a-f0-9-]{36}\.json$/.test(parts[2]) ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[a-f0-9]{8}$/.test(parts[1]) ||
+    parts[0] !== parts[1].slice(0, 10)) return false;
+  const audio = join(recordingsRoot, parts[0], parts[1], "audio.wav");
+  // Both trees must be owned, private and free of aliases, all the way to the file.
+  for (const target of [path, audio]) {
+    let current = parse(target).root;
+    for (const part of dirname(target).slice(current.length).split("/")) {
+      current = join(current, part);
+      const s = statOrMissing(current);
+      if (!s || !s.isDirectory() || s.isSymbolicLink()) return false;
+      if ((current === privateRoot || current.startsWith(privateRoot + "/")) &&
+        (s.uid !== process.getuid?.() || (s.mode & 0o7777) !== 0o700)) return false;
+    }
+  }
+  const bytes = readPrivateFile(path), audioBytes = readPrivateFile(audio);
+  if (!bytes || !audioBytes) return false;
+  let decoded: unknown;
+  try { decoded = JSON.parse(bytes.toString("utf8")); }
+  catch (error) { if (error instanceof SyntaxError) return false; throw error; }
+  const result = stageReceipt.safeParse(decoded);
+  if (!result.success) return false;
+  const r = result.data;
+  return parts[2] === `stt-stages-${r.attempt_id}.json` &&
+    r.audio_sha256 === createHash("sha256").update(audioBytes).digest("hex") &&
+    (r.complete ? typeof r.stages.after_polish === "string" && typeof r.stages.delivered === "string"
+      : r.stages.after_polish === null && r.stages.delivered === null && r.polish_status === null);
+}
+
 export function canaryChildEnv(root: string, nonce: string): NodeJS.ProcessEnv {
   return { ...process.env, HOME: join(root, `CANARY-HOME-${nonce}`),
     PRIV11_CHILD: "1", PRIV11_NONCE: nonce, PRIV11_TEXT: `CANARY-TXT-${nonce}`,
@@ -91,10 +134,12 @@ export function diagnosticLeaks(root: string, tokens: string[], privateRoot = jo
     else if (entry.isFile()) {
       if (path.startsWith(privateRoot + "/") && privateArtifacts.has(entry.name)) continue;
       if (entry.name === "input.txt" && intentionalSpeakInput(path, privateRoot, recordingsRoot)) continue;
+      if (entry.name.startsWith("stt-stages-") && intentionalStageReceipt(path, privateRoot, recordingsRoot)) continue;
       const data = readFileSync(path); // Includes SQLite/WAL bytes; never follow symlinks.
       if (tokens.some(token => data.includes(token))) leaks.push(entry.name);
     } else if (entry.isSymbolicLink() && recordingsRoot &&
-      (path === recordingsRoot || path.startsWith(recordingsRoot + "/"))) {
+      [recordingsRoot, join(dirname(recordingsRoot), "transcription-stages")].some(store =>
+        path === store || path.startsWith(store + "/"))) {
       leaks.push(entry.name); // Unproven archive alias: report without reading its target.
     }
   }
