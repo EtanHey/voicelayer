@@ -23,6 +23,8 @@ public final class VoiceBarNotchPresentationModel {
     public private(set) var isReducedMotionEnabled = false
 
     private var hasTeleprompter = false
+    /// C7 L3 V10: a read is on screen; its canvas keeps the teleprompter height (see VoiceBarNotchPresentation).
+    private var holdsReadingCanvas = false
     private var isRecording = false
     private var hasCompactStatus = false
     private var keepsIdleExpanded = false
@@ -76,8 +78,10 @@ public final class VoiceBarNotchPresentationModel {
         visibleCoreOcclusionInset: CGFloat = 0,
         virtualNotchIdleCoreHeight: CGFloat? = nil,
         transientNoteWidth: CGFloat? = nil,
-        feedback: VoiceBarNotchFeedback? = nil
+        feedback: VoiceBarNotchFeedback? = nil,
+        holdsReadingCanvas: Bool = false
     ) {
+        self.holdsReadingCanvas = holdsReadingCanvas
         self.hasTeleprompter = hasTeleprompter
         self.isRecording = isRecording
         self.hasCompactStatus = hasCompactStatus
@@ -183,7 +187,7 @@ public final class VoiceBarNotchPresentationModel {
             visibleCoreOcclusionInset: visibleCoreOcclusionInset,
             virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
             transientNoteWidth: transientNoteWidth, feedback: feedback
-        )
+        ).holdingReadingCanvas(holdsReadingCanvas)
         guard next != presentation else { return }
 
         motionCoordinator.replaceTarget(

@@ -352,8 +352,9 @@ public enum VoiceBarPresentation {
             visibleCoreOcclusionInset: input.visibleCoreOcclusionInset,
             transientNoteWidth: input.transientNote.map(Theme.intrinsicPillStatusWidth(for:))
         )
-        return VoiceBarNotchFeedback.resolve(input: input, presentation: resolved)
-            .map { resolved.addingFeedback($0) } ?? resolved
+        return (VoiceBarNotchFeedback.resolve(input: input, presentation: resolved)
+            .map { resolved.addingFeedback($0) } ?? resolved)
+            .holdingReadingCanvas(input.mode == .speaking)
     }
 
     private static func compactStatusLeadingWingWidth(
