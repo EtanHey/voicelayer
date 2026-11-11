@@ -709,6 +709,10 @@ export interface RecordingCaptureState {
   unconfirmedDeviceLoss?: { reason: DeviceLossReason; eventOffsetMs: number };
   /** Recording pause: the take's paused spans, written to the archive as `paused_spans`. */
   pausedSpans?: RecordingPauseSpan[];
+  /** c8-M3: sox reported CoreAudio buffer overruns (audio dropped before it reached us). */
+  captureOverruns?: CaptureOverruns;
+  /** c8-M3: an overrun line read after the archive row exists re-stamps it. */
+  onCaptureOverrun?: () => void;
   /**
    * The take ended while paused. Its end is the Pause click, not the user's own end of speech, so STT, the
    * archive and recovery all keep the complete gated PCM: no trailing-silence trim and no physical-stop cut.
@@ -2112,6 +2116,53 @@ export interface RecorderStderrWatcher {
  * PIPE_BUF are atomic, so that is not a practical concern, and the next chunk
  * plus the EOF pass rescan the complete text regardless.
  */
+/** c8-M3: audio CoreAudio dropped because sox's ring buffer was full (the reader was starved). */
+export interface CaptureOverruns {
+  count: number;
+  /** Approximate offsets into the kept take (mono 16 kHz) where audio is missing; first 20. */
+  offsetsMs: number[];
+}
+const MAX_OVERRUN_OFFSETS = 20;
+const SOX_OVERRUN_LINE = /buffer overrun/iu;
+
+/**
+ * Counts sox's `coreaudio: unhandled buffer overrun. Data discarded.` lines as stderr streams in.
+ * sox prints one per CoreAudio callback that found its ring full, so the count is the number of
+ * callbacks that lost audio, not a sample count. Only complete lines count; `finish()` reads the rest.
+ */
+export function createRecorderOverrunCounter(onOverrun: () => void): { push(text: string): void; finish(): void } {
+  let pending = "";
+  const scan = (lines: string[]) => { for (const line of lines) if (SOX_OVERRUN_LINE.test(line)) onOverrun(); };
+  return {
+    push(text: string) {
+      const lines = (pending + text).split(/\r?\n/u);
+      pending = lines.pop() ?? "";
+      scan(lines);
+    },
+    finish() { if (pending) scan([pending]); pending = ""; },
+  };
+}
+
+export function noteCaptureOverrun(overruns: CaptureOverruns | undefined, offsetMs: number): CaptureOverruns {
+  const next = overruns ?? { count: 0, offsetsMs: [] };
+  next.count++;
+  if (next.offsetsMs.length < MAX_OVERRUN_OFFSETS) next.offsetsMs.push(Math.max(0, Math.round(offsetMs)));
+  return next;
+}
+
+function formatTakeOffset(ms: number): string {
+  const total = Math.floor(ms / 1000);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+/** The History line for a take with a hole in it. */
+export function captureOverrunNote(overruns: CaptureOverruns): string {
+  const first = overruns.offsetsMs[0];
+  const where = first === undefined ? "" : `, first near ${formatTakeOffset(first)}`;
+  const times = overruns.count === 1 ? "once" : `${overruns.count} times`;
+  return `Audio was dropped by the system during this take (${times}${where}). The transcript may be missing words there.`;
+}
+
 export function createRecorderStderrWatcher(
   label: string,
 ): RecorderStderrWatcher {
@@ -2891,13 +2942,27 @@ export async function recordToBuffer(
         ).getReader();
         (async () => {
           const watcher = createRecorderStderrWatcher("rec");
+          // c8-M3: reporting only. The recorder's arguments and the PCM path are unchanged.
+          const overrunDecoder = new TextDecoder();
+          const overruns = createRecorderOverrunCounter(() => {
+            const offsetMs = capturedPcmBytesSoFar / (SAMPLE_RATE * BYTES_PER_SAMPLE / 1000);
+            if (captureState) {
+              captureState.captureOverruns = noteCaptureOverrun(captureState.captureOverruns, offsetMs);
+              captureState.onCaptureOverrun?.();
+            }
+            console.error(`[voicelayer] rec: CoreAudio buffer overrun — audio dropped near ${formatTakeOffset(offsetMs)} of the take`);
+          });
           try {
             while (true) {
               const { value, done } = await stderrReader.read();
               if (done) break;
-              if (value) watcher.push(value);
+              if (value) {
+                watcher.push(value);
+                overruns.push(overrunDecoder.decode(value, { stream: true }));
+              }
             }
           } catch {}
+          overruns.finish();
           const text = watcher.finish();
           if (text) {
             console.error(`[voicelayer] rec stderr: ${text}`);
@@ -3329,7 +3394,26 @@ export async function waitForInput(
       ? { type: "error", message: micNote, recoverable: true, show_during_bar_recording: true }
       : { type: "mic_disconnected", at_ms: micDisconnect.atMs, reason: micDisconnect.reason, message: micNote });
   }
+  // c8-M3: a take with a hole is never presented as complete. Overrun lines can still be in the
+  // recorder's stderr pipe when the row is created, so a late one re-stamps the row.
+  const stampedOverrunArchives = new Set<string>();
+  const stampCaptureOverruns = (archivePath: string) => {
+    stampedOverrunArchives.add(archivePath);
+    const overruns = captureState.captureOverruns;
+    if (!overruns?.count) return;
+    updateArchivedRecordingMetadata(join(archivePath, "audio.wav"), (metadata) => {
+      metadata.capture_overruns = { count: overruns.count, approx_offsets_ms: [...overruns.offsetsMs] };
+      metadata.capture_overrun_note = captureOverrunNote(overruns);
+    });
+  };
+  captureState.onCaptureOverrun = () => {
+    for (const path of stampedOverrunArchives) {
+      stampCaptureOverruns(path);
+      broadcast({ type: "archive_metadata_updated", recording_path: join(path, "audio.wav") });
+    }
+  };
   const stampMicDisconnect = (archivePath: string) => {
+    stampCaptureOverruns(archivePath);
     if (!micDisconnect) return;
     updateArchivedRecordingMetadata(join(archivePath, "audio.wav"), (metadata) => {
       metadata.mic_disconnected_at_ms = micDisconnect.atMs;

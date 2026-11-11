@@ -214,7 +214,8 @@ async function waitUntil(
   }
 }
 
-function installFakeRecorder(chunks: Uint8Array[], keepStdoutOpen: boolean, beforeMicOpen?: () => void) {
+function installFakeRecorder(chunks: Uint8Array[], keepStdoutOpen: boolean, beforeMicOpen?: () => void,
+  stderrScript: { writes: string[]; afterMs?: number } = { writes: [] }) {
   let spawned = false;
   let stdoutController: ReadableStreamDefaultController<Uint8Array> | undefined;
   let stderrController: ReadableStreamDefaultController<Uint8Array> | undefined;
@@ -260,14 +261,22 @@ function installFakeRecorder(chunks: Uint8Array[], keepStdoutOpen: boolean, befo
       stderr: new ReadableStream<Uint8Array>({
         start(controller) {
           stderrController = controller;
-          controller.close();
+          const write = () => {
+            try {
+              for (const text of stderrScript.writes) controller.enqueue(new TextEncoder().encode(text));
+              controller.close();
+            } catch {}
+          };
+          if (stderrScript.afterMs === undefined) write();
+          else setTimeout(write, stderrScript.afterMs);
         },
       }),
       kill: () => {
         try {
           stdoutController?.close();
         } catch {}
-        try {
+        // A delayed stderr script models lines still in the pipe after the kill.
+        if (stderrScript.afterMs === undefined) try {
           stderrController?.close();
         } catch {}
       },
@@ -3563,6 +3572,42 @@ describe("input recording durability", () => {
       }
     });
   }
+
+  // c8-M3: a recorder that reports CoreAudio overruns leaves that fact on the take.
+  const OVERRUN = "rec WARN coreaudio: coreaudio: unhandled buffer overrun.  Data discarded.\n";
+  for (const timing of ["during the take", "after the row exists"] as const) {
+    it(`c8-M3 records recorder overruns in the archive (${timing}) and says audio was dropped`, async () => {
+      vadProcessSpy!.mockResolvedValue(0.95);
+      installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false, undefined, {
+        // Two overruns, the second split across two pipe writes.
+        writes: [OVERRUN, OVERRUN.slice(0, 30), OVERRUN.slice(30), "rec INFO unrelated\n"],
+        ...(timing === "after the row exists" ? { afterMs: 400 } : {}),
+      });
+      const { waitForInput } = await import("../input");
+      let archive: string | undefined;
+      await waitForInput(2_000, "standard", true, { archiveSource: "voicebar", onArchiveCreated: path => { archive = path; } });
+      const metadataPath = join(archive!, "metadata.json");
+      await waitUntil(() => JSON.parse(readFileSync(metadataPath, "utf8")).capture_overruns?.count === 2,
+        "overruns stamped on the take", 4_000);
+      const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
+      expect(metadata.capture_overruns.approx_offsets_ms).toHaveLength(2);
+      expect(metadata.capture_overrun_note).toContain("Audio was dropped by the system during this take (2 times");
+      if (timing === "after the row exists") {
+        expect(broadcasts.some(e => e.type === "archive_metadata_updated" && e.recording_path === join(archive!, "audio.wav"))).toBe(true);
+      }
+    });
+  }
+
+  it("c8-M3 a take without overruns carries no overrun note", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+    const { waitForInput } = await import("../input");
+    let archive: string | undefined;
+    await waitForInput(2_000, "standard", true, { archiveSource: "voicebar", onArchiveCreated: path => { archive = path; } });
+    const metadata = JSON.parse(readFileSync(join(archive!, "metadata.json"), "utf8"));
+    expect(metadata.capture_overruns).toBeUndefined();
+    expect(metadata.capture_overrun_note).toBeUndefined();
+  });
 
   it("finalizes the pre-STT VoiceBar archive in place without a duplicate row", async () => {
     vadProcessSpy!.mockResolvedValue(0.95);
