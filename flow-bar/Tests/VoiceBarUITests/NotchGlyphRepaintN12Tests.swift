@@ -24,7 +24,7 @@ final class NotchGlyphRepaintN12Tests: XCTestCase {
         let surface = try XCTUnwrap(IOSurface(properties: [
             .width: 28, .height: 28, .bytesPerElement: 4, .pixelFormat: kCVPixelFormatType_32BGRA,
         ]))
-        let handedContents: [(String, AnyObject)] = [("image", try Self.solidImage(side: 28)), ("surface", surface)]
+        let handedContents: [(String, AnyObject)] = [("image", try n12SolidImage(side: 28)), ("surface", surface)]
         for (kind, contents) in handedContents {
             let view = NSView(frame: CGRect(x: 0, y: 0, width: 40, height: 40))
             view.wantsLayer = true
@@ -43,6 +43,51 @@ final class NotchGlyphRepaintN12Tests: XCTestCase {
             XCTAssertTrue(kept as AnyObject === contents,
                           "[N12] the pass replaced a handed \(kind) with an empty backing store: \(kept)")
         }
+    }
+
+    /// R886: redraw ownership, not what the contents are. A layer that renders itself is re-rendered at the new
+    /// scale by the pass, even when it already holds an image; a handed image beside it is left alone.
+    func testAScaleChangeRerendersLayersThatOwnTheirDrawingAndKeepsHandedContents() throws {
+        let view = NSView(frame: CGRect(x: 0, y: 0, width: 80, height: 40))
+        view.wantsLayer = true
+        let root = try XCTUnwrap(view.layer)
+        let imageDelegate = N12ImageRenderingDelegate(), drawingDelegate = N12DrawingDelegate()
+        let delegateImage = CALayer(), delegateDrawn = CALayer(), selfRendered = N12SelfRenderingLayer()
+        let handed = CALayer()
+        delegateImage.delegate = imageDelegate
+        delegateDrawn.delegate = drawingDelegate
+        let handedImage = try n12SolidImage(side: 14)
+        handed.contents = handedImage
+        for (index, layer) in [delegateImage, delegateDrawn, selfRendered, handed].enumerated() {
+            layer.frame = CGRect(x: 4 + index * 18, y: 4, width: 14, height: 14)
+            layer.contentsScale = 1
+            root.addSublayer(layer)
+            if layer !== handed { layer.setNeedsDisplay() }
+        }
+        let window = Self.window(holding: view)
+        defer { window.contentView = nil; window.close() }
+        Self.commit()
+        func imageWidth(_ layer: CALayer) throws -> Int {
+            let contents = try XCTUnwrap(layer.contents)
+            XCTAssertEqual(CFGetTypeID(contents as CFTypeRef), CGImage.typeID, "fixture: the renderer made an image")
+            return (contents as! CGImage).width
+        }
+        XCTAssertEqual(try imageWidth(delegateImage), 14, "fixture: painted at 1x before the move")
+        XCTAssertEqual(try imageWidth(selfRendered), 14, "fixture: painted at 1x before the move")
+        XCTAssertEqual(drawingDelegate.drawnScales, [1], "fixture: drawn once at 1x before the move")
+
+        // The panel lands on a 2x screen.
+        VoiceBarBackingScaleSynchronizer.synchronize(view, to: 2)
+        Self.commit()
+
+        XCTAssertEqual(try imageWidth(delegateImage), 28,
+                       "[R886] a display delegate's image must be rendered again at 2x, not kept at 1x")
+        XCTAssertEqual(try imageWidth(selfRendered), 28,
+                       "[R886] a layer overriding display() must be rendered again at 2x, not kept at 1x")
+        XCTAssertEqual(drawingDelegate.drawnScales, [1, 2], "[R886] a draw delegate must draw again at 2x")
+        XCTAssertTrue(try XCTUnwrap(handed.contents) as AnyObject === handedImage,
+                      "[N12] contents the layer was handed must survive the same pass")
+        XCTAssertEqual(handed.contentsScale, 2, "the pass still carries the screen's scale to every layer")
     }
 
     /// SwiftUI's own image layers, in the real drawer. The warning triangle is a bitmap symbol on every macOS (the
@@ -143,13 +188,39 @@ final class NotchGlyphRepaintN12Tests: XCTestCase {
         guard let layer else { return [] }
         return (holdsImage(layer) ? [layer] : []) + (layer.sublayers ?? []).flatMap { imageLayers(in: $0) }
     }
+}
 
-    private static func solidImage(side: Int) throws -> CGImage {
-        let context = try XCTUnwrap(CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
-                                              space: CGColorSpaceCreateDeviceRGB(),
-                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+private func n12SolidImage(side: Int) throws -> CGImage {
+    let context = try XCTUnwrap(CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    context.setFillColor(NSColor.white.cgColor)
+    context.fill(CGRect(x: 0, y: 0, width: side, height: side))
+    return try XCTUnwrap(context.makeImage())
+}
+
+/// A delegate that renders its layer into an image at the layer's scale (R886: such a layer holds a `CGImage`
+/// and still owns its drawing).
+private final class N12ImageRenderingDelegate: NSObject, CALayerDelegate {
+    func display(_ layer: CALayer) {
+        layer.contents = try? n12SolidImage(side: Int(layer.bounds.width * layer.contentsScale))
+    }
+}
+
+/// A delegate that draws into the backing store Core Animation gives it.
+private final class N12DrawingDelegate: NSObject, CALayerDelegate {
+    private(set) var drawnScales: [CGFloat] = []
+
+    func draw(_ layer: CALayer, in context: CGContext) {
+        drawnScales.append(layer.contentsScale)
         context.setFillColor(NSColor.white.cgColor)
-        context.fill(CGRect(x: 0, y: 0, width: side, height: side))
-        return try XCTUnwrap(context.makeImage())
+        context.fill(layer.bounds)
+    }
+}
+
+/// A layer that renders itself into an image at its own scale.
+private final class N12SelfRenderingLayer: CALayer {
+    override func display() {
+        contents = try? n12SolidImage(side: Int(bounds.width * contentsScale))
     }
 }
