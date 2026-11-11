@@ -41,6 +41,8 @@ raise SystemExit(subprocess.call(sys.argv[2:]))
     mkdirSync(join(devHelper, ".."), { recursive: true });
     writeFileSync(devHelper, "raise SystemExit(99)\n");
     writeFileSync(join(root, "hook"), hook);
+    writeFileSync(join(root, "scripts/queue-heavy-suite.py"),
+      readFileSync(new URL("../scripts/queue-heavy-suite.py", import.meta.url)));
     writeFileSync(join(root, "scripts/guard-no-docslocal.sh"),
       'printf "guard\\n" >> "$HOOK_RECORD"\nexit "$GUARD_STATUS"\n');
     writeFileSync(join(root, "scripts/run_tests.sh"),
@@ -62,8 +64,10 @@ raise SystemExit(subprocess.call(sys.argv[2:]))
 }
 
 describe("pre-push heavy-suite opt-in", () => {
-  test("references only the pinned installed helper", () => {
-    expect(hook).toContain("${HOME:-}/" + helperPath);
+  test("uses the repo queue and only the pinned installed fleet helper", () => {
+    const queue = readFileSync(new URL("../scripts/queue-heavy-suite.py", import.meta.url), "utf8");
+    expect(hook).toContain("python3 scripts/queue-heavy-suite.py -- bash scripts/run_tests.sh");
+    expect(queue).toContain(helperPath);
     expect(hook).not.toContain("$HOME/Gits/golems/scripts/hooks/heavy-suite.py");
   });
   for (const availability of ["installed", "missing-helper", "missing-python", "unset-home"] as const) {
@@ -71,11 +75,14 @@ describe("pre-push heavy-suite opt-in", () => {
       test(`${availability}: preserves suite exit ${status} and guard order`, () => {
         const result = runHook(availability, status);
         expect(result.stderr).not.toContain("unbound variable");
-        expect(result.status).toBe(status);
-        expect(result.events).toBe(availability === "installed" ? "guard\nhelper\nsuite\n" : "guard\nsuite\n");
-        if (availability === "installed") expect(result.stderr).toBe("");
-        else expect(result.stderr).toContain("heavy-suite: helper missing; running unqueued");
-        if (status !== 0) expect(result.stdout).toContain("🛑 PUSH BLOCKED — regression harness failed.");
+        expect(result.status).toBe(["missing-python", "unset-home"].includes(availability) ? 1 : status);
+        expect(result.events).toBe(availability === "installed" ? "guard\nhelper\nsuite\n" :
+          availability === "missing-helper" ? "guard\nsuite\n" : "guard\n");
+        if (availability === "missing-helper") expect(result.stderr).toContain("using VoiceLayer serial queue");
+        else if (availability === "missing-python" || availability === "unset-home")
+          expect(result.stderr).toContain("suite queue refused");
+        else expect(result.stderr).toContain("suite queue: START");
+        if ((status !== 0 || availability === "unset-home") && availability !== "missing-python") expect(result.stdout).toContain("🛑 PUSH BLOCKED — regression harness failed.");
         else expect(result.stdout).not.toContain("PUSH BLOCKED");
       }, SUBPROCESS_TEST_TIMEOUT_MS);
     }
