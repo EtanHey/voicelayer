@@ -30,6 +30,7 @@ struct NotchHistoryExtendHandle: View {
                 ))
                 .frame(width: NotchHistoryMorph.handleWidth, height: NotchHistoryMorph.handleThickness)
                 .animation(.easeOut(duration: 0.12), value: isHovered)
+                .animation(NotchDrawerMotion.gripAnimation(showsGrip: showsGrip), value: showsGrip)
                 .frame(width: NotchHistoryMorph.handleHitWidth, height: NotchHistoryMorph.handleBandHeight)
                 .contentShape(Rectangle())
                 .onHover { hovering in

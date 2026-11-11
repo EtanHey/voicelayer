@@ -75,9 +75,9 @@ public enum NotchSettingsDrawerPresentation {
     }
 }
 
-/// One notch glyph: the band's treatment (`notchAdaptiveGlyphEdge`), so the drawer's tab and row icons take the same
-/// rendering path as the band's, which kept painting unfocused in Etan's 0510 S4 while the drawer's vanished (N3).
-/// A hypothesis, not a confirmed fix: the unfocused vanishing was never reproduced and its root cause is unknown.
+/// One notch glyph with the band's contrast edge (`notchAdaptiveGlyphEdge`). The edge is for legibility only. It
+/// never kept a glyph painted: the drawer's icons vanished (N3, N12) because the panel's backing-scale pass asked
+/// SwiftUI's symbol image layers to redraw, which empties them (`VoiceBarBackingScaleSynchronizer`, fixed there).
 struct NotchGlyph: View {
     let systemName: String
     var pointSize: CGFloat = NotchSettingsDrawerPresentation.tabGlyphSize
@@ -105,14 +105,25 @@ struct NotchSettingsDrawer: View {
     var history: () -> AnyView = { AnyView(EmptyView()) }
     let onSelectTab: (SettingsTab) -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     private var palette: VoiceBarNotchContrastPalette { .resolve(for: appearance) }
 
     var body: some View {
         VStack(spacing: 0) {
             tabBar
             // Always fills below the tabs, even for a pane that draws nothing, so the tabs never re-centre (N3).
+            // C6 L2 (S9): a tab switch crossfades its content (`NotchDrawerMotion.tabTransition`).
             Color.clear
-                .overlay(alignment: .top) { content }
+                .overlay(alignment: .top) {
+                    NotchDrawerCrossfade(
+                        key: selectedTab,
+                        animation: NotchDrawerMotion.easeOut(NotchDrawerMotion.tabInDuration),
+                        transition: NotchDrawerMotion.tabTransition(reduceMotion: reduceMotion)
+                    ) { tab in
+                        content(tab)
+                    }
+                }
                 .clipped()
         }
         .padding(.horizontal, NotchSettingsDrawerPresentation.horizontalInset)
@@ -120,8 +131,8 @@ struct NotchSettingsDrawer: View {
     }
 
     @ViewBuilder
-    private var content: some View {
-        switch selectedTab {
+    private func content(_ tab: SettingsTab) -> some View {
+        switch tab {
         case .history:
             history()
         case .general:
@@ -132,7 +143,7 @@ struct NotchSettingsDrawer: View {
                 }
             }
         case .transcription, .dictionary, .speech:
-            pane(selectedTab)
+            pane(tab)
         }
     }
 
