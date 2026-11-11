@@ -22,6 +22,12 @@ final class QueueBadgeL3Tests: XCTestCase {
                        "tabular digits: no size jump between counts")
     }
 
+    /// R892 P3: with Reduce Motion the badge only fades in and out; it never grows or shrinks.
+    func testTheBadgeArrivesWithoutScaleUnderReduceMotion() {
+        XCTAssertEqual(VoiceBarQueueCountBadge.insertionScale(reduceMotion: true), 1)
+        XCTAssertEqual(VoiceBarQueueCountBadge.insertionScale(reduceMotion: false), 0.6)
+    }
+
     func testTheBadgeSitsOnForwardsCornerWithoutMovingIt() throws {
         func forwardFrame(count: Int) throws -> (forward: CGRect, badge: CGRect?) {
             let state = VoiceState()
