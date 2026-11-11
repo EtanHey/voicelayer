@@ -3,12 +3,12 @@
   "kind": "temporal",
   "target": "SettlesAfterSilence",
   "status": "EXPECTED_FAIL",
-  "generated": 377260,
-  "distinct": 72206,
+  "generated": 440387,
+  "distinct": 82802,
   "trace": [
     "s = [ phase |-> \"opening\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 0,\n  event |-> \"init\",\n  endedBy |-> \"none\",\n  buffered |-> \"none\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 0,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
     "s = [ phase |-> \"opening\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 0,\n  event |-> \"scoped-stop\",\n  endedBy |-> \"none\",\n  buffered |-> \"stop\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 0,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
     "s = [ phase |-> \"ended\",\n  speech |-> FALSE,\n  silence |-> 0,\n  quiet |-> 0,\n  wall |-> 0,\n  event |-> \"open\",\n  endedBy |-> \"stop\",\n  buffered |-> \"stop\",\n  paused |-> FALSE,\n  grace |-> 0,\n  owed |-> 0,\n  spanOpen |-> FALSE,\n  spans |-> 0,\n  pcm |-> <<>>,\n  said |-> <<>>,\n  saved |-> <<>>,\n  text |-> <<>> ]",
-    "Finished checking temporal properties in 00s at 2026-11-11 02:33:22"
+    "Finished checking temporal properties in 00s at 2026-11-11 07:52:42"
   ]
 }

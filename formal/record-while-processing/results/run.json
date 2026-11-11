@@ -451,24 +451,24 @@
       "kind": "temporal",
       "target": "ProcessingSettles",
       "status": "EXPECTED_FAIL",
-      "generated": 202544,
-      "distinct": 9072
+      "generated": 223110,
+      "distinct": 10137
     },
     "MutNoOverlapProgress": {
       "role": "mutant",
       "kind": "temporal",
       "target": "OverlapPastes",
       "status": "EXPECTED_FAIL",
-      "generated": 152330,
-      "distinct": 7815
+      "generated": 186110,
+      "distinct": 9357
     },
     "MutNoIdle": {
       "role": "mutant",
       "kind": "temporal",
       "target": "EventuallyIdle",
       "status": "EXPECTED_FAIL",
-      "generated": 279799,
-      "distinct": 12675
+      "generated": 298030,
+      "distinct": 13271
     },
     "MutHeldDecode": {
       "role": "mutant",
@@ -491,16 +491,16 @@
       "kind": "temporal",
       "target": "OverlapPastes",
       "status": "EXPECTED_FAIL",
-      "generated": 198253,
-      "distinct": 9419
+      "generated": 217549,
+      "distinct": 10119
     },
     "MutNoDecodeFairness": {
       "role": "mutant",
       "kind": "temporal",
       "target": "EventuallyIdle",
       "status": "EXPECTED_FAIL",
-      "generated": 260428,
-      "distinct": 11409
+      "generated": 297554,
+      "distinct": 13250
     },
     "MutSpeechNoRenew": {
       "role": "mutant",
@@ -563,8 +563,8 @@
       "kind": "temporal",
       "target": "NoStaleGuard",
       "status": "EXPECTED_FAIL",
-      "generated": 228230,
-      "distinct": 10114
+      "generated": 248786,
+      "distinct": 10906
     },
     "ConcurrentGlobalCancel": {
       "role": "mutant",
