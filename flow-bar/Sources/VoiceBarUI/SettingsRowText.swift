@@ -62,6 +62,7 @@ struct SettingsRowLabel: View {
     var badge: String?
     var titleBadge: SettingsPill?
     var isSelected = false
+    var statusLineMinHeight: CGFloat? = nil
     /// Both the drawer and Settings window wrap copy fully, including long device names.
     @Environment(\.settingsRowWrapsFully) private var wrapsFully
 
@@ -81,6 +82,8 @@ struct SettingsRowLabel: View {
                         .foregroundStyle(SettingsPanePalette.helper)
                     if let badge { SettingsPill(text: badge) }
                 }
+                .frame(minHeight: statusLineMinHeight)
+                .alignmentGuide(.settingsStatusCentre) { $0[VerticalAlignment.center] }
             } else if let badge {
                 SettingsPill(text: badge)
             }
@@ -151,7 +154,16 @@ struct OptionalHelp: ViewModifier {
 ///
 /// AIDEV-NOTE: not `ViewThatFits`. That compares ideal sizes, and a wrapping Text's ideal width is its one-line
 /// length, so any long description would push the controls under the text even in a wide window.
+private enum SettingsStatusCentre: AlignmentID {
+    static func defaultValue(in context: ViewDimensions) -> CGFloat { context[VerticalAlignment.center] }
+}
+
+extension VerticalAlignment {
+    static let settingsStatusCentre = VerticalAlignment(SettingsStatusCentre.self)
+}
+
 struct SettingsRowLayout: Layout {
+    var controlsFollowStatus = false
     var spacing: CGFloat = 8
     var textMinWidth: CGFloat = SettingsRowLabel.textMinWidth
 
@@ -163,6 +175,7 @@ struct SettingsRowLayout: Layout {
         let wraps: Bool
         let textSize: CGSize
         let controlsSize: CGSize
+        let controlsY: CGFloat
         let width: CGFloat
     }
 
@@ -172,9 +185,10 @@ struct SettingsRowLayout: Layout {
         let wraps = Self.wrapsControls(width: width, controlsWidth: controls.width, spacing: spacing,
                                        textMinWidth: textMinWidth)
         let textWidth = wraps ? width : width - controls.width - spacing
-        let text = subviews[0].sizeThatFits(ProposedViewSize(width: textWidth, height: nil))
-        return Plan(wraps: wraps, textSize: CGSize(width: textWidth, height: text.height), controlsSize: controls,
-                    width: width)
+        let dimensions = subviews[0].dimensions(in: ProposedViewSize(width: textWidth, height: nil))
+        let centre = controlsFollowStatus ? dimensions[.settingsStatusCentre] : dimensions.height / 2
+        return Plan(wraps: wraps, textSize: CGSize(width: textWidth, height: dimensions.height), controlsSize: controls,
+                    controlsY: max(0, centre - controls.height / 2), width: width)
     }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
@@ -182,7 +196,7 @@ struct SettingsRowLayout: Layout {
         let plan = plan(width: proposal.width, subviews: subviews)
         let height = plan.wraps
             ? plan.textSize.height + spacing / 2 + plan.controlsSize.height
-            : max(plan.textSize.height, plan.controlsSize.height)
+            : max(plan.textSize.height, plan.controlsY + plan.controlsSize.height)
         return CGSize(width: plan.width, height: height)
     }
 
@@ -191,12 +205,12 @@ struct SettingsRowLayout: Layout {
         let plan = plan(width: bounds.width, subviews: subviews)
         subviews[0].place(at: bounds.origin, anchor: .topLeading,
                           proposal: ProposedViewSize(width: plan.textSize.width, height: nil))
-        // Beside the text, controls are centred on it (lane S DESIGN.md §3): a switch or button beside a two-line
-        // row sits in the middle of the row, not on the title's line.
+        // Microphone actions follow the measured status line (MC2 A01); other controls centre on the full text.
+        // The reserved controls have the same geometry at rest, on hover and with keyboard focus.
         let controlsOrigin = plan.wraps
             ? CGPoint(x: bounds.minX, y: bounds.minY + plan.textSize.height + spacing / 2)
             : CGPoint(x: bounds.maxX - plan.controlsSize.width,
-                      y: bounds.minY + max(0, (plan.textSize.height - plan.controlsSize.height) / 2))
+                      y: bounds.minY + plan.controlsY)
         subviews[1].place(at: controlsOrigin, anchor: .topLeading, proposal: ProposedViewSize(plan.controlsSize))
     }
 }

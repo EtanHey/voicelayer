@@ -1414,7 +1414,8 @@ public struct SettingsView: View {
         // Etan (QA 2026-11-11, shots 1-2): status and the "Used for dictation" pill share the second line, and Make
         // default is the row's only trailing control. Nothing appears under the row and hovering moves nothing.
         let content = SettingsRow(title: row.label, description: SettingsMicrophoneRowPresentation.status(row),
-                                  badge: isUsed ? SettingsMicrophoneRowPresentation.usedBadge : nil, lead: {
+                                  badge: isUsed ? SettingsMicrophoneRowPresentation.usedBadge : nil,
+                                  controlsFollowStatus: true, lead: {
             Image(systemName: "line.3.horizontal")
                 .foregroundStyle(.tertiary)
                 .opacity(row.canPrioritize ? 1 : 0)

@@ -22,9 +22,15 @@ final class SettingsPolishS5Tests: XCTestCase {
                        light: Bool = false, name: String? = nil, scrollOffset: CGFloat? = nil) throws -> NSBitmapImageRep {
         let framed = VStack(spacing: 0) {
             view.frame(width: width, height: height)
-            Text("M1 synthetic · macOS 26: native glass unavailable")
-                .font(.system(size: 10)).frame(width: width, height: 24)
+            Color.clear.frame(width: width, height: 24)
         }.background(light ? Color(white: 0.95) : Color(white: 0.16))
+            .overlay(alignment: .bottom) {
+                Text(width < 300 ? "M1 synthetic · no native glass" : "M1 synthetic · macOS 26: native glass unavailable")
+                    .font(.system(size: width < 300 ? 9 : 10))
+                    .foregroundStyle(light ? Color.black : Color.white)
+                    .frame(width: width, height: 24)
+                    .background(light ? Color(white: 0.95) : Color(white: 0.16))
+            }
             .environment(\.colorScheme, light ? .light : .dark)
         let host = NSHostingView(rootView: framed)
         let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: width, height: height + 24),
