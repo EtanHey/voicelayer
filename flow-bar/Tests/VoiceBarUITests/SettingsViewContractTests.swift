@@ -63,7 +63,7 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertFalse(source.contains("Section(\"Prompt Terms\")"))
     }
 
-    /// U3 spec (Dictionary): the header carries "Add term"; the search sits under it, both above the term rows.
+    /// U3 spec (Dictionary), lane S PR 3: the search and "Add term" share one toolbar row, both above the term rows.
     func testDictionaryHeaderAddThenSearchAppearBeforeCanonicalCards() throws {
         let source = try settingsViewSource()
         let tab = try XCTUnwrap(source.components(separatedBy: "private var dictionaryTab: some View {")
@@ -72,8 +72,8 @@ final class SettingsViewContractTests: XCTestCase {
         let searchRange = try XCTUnwrap(tab.range(of: "searchRow"))
         let cardRange = try XCTUnwrap(tab.range(of: "dictionaryEntryCard"))
 
-        XCTAssertLessThan(addRange.lowerBound, searchRange.lowerBound)
-        XCTAssertLessThan(searchRange.lowerBound, cardRange.lowerBound)
+        XCTAssertLessThan(searchRange.lowerBound, addRange.lowerBound, "search first, Add term beside it")
+        XCTAssertLessThan(addRange.lowerBound, cardRange.lowerBound)
     }
 
     func testSettingsDoesNotExposePositionControls() throws {

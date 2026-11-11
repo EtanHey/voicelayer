@@ -84,8 +84,8 @@ final class SettingsDrawerLaneSSnapshotTests: XCTestCase {
         )
     }
 
-    static func render(_ view: some View, height: CGFloat, name: String, scrollToEnd: Bool = false) throws
-        -> NSBitmapImageRep {
+    static func render(_ view: some View, height: CGFloat, name: String, scrollToEnd: Bool = false,
+                       scrollOffset: CGFloat? = nil) throws -> NSBitmapImageRep {
         let size = CGSize(width: drawerWidth, height: height)
         let framed = view.frame(width: size.width, height: size.height)
             .background(Color(white: 0.16))
@@ -101,9 +101,12 @@ final class SettingsDrawerLaneSSnapshotTests: XCTestCase {
         VLOrderTestWindow(window)
         host.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(1.2))
-        if scrollToEnd, let scroll = scrollViews(in: host).first, let document = scroll.documentView {
+        if scrollToEnd || scrollOffset != nil, let scroll = scrollViews(in: host).first,
+           let document = scroll.documentView {
             let clip = scroll.contentView
-            let y = document.isFlipped ? max(0, document.bounds.height - clip.bounds.height) : 0
+            let end = max(0, document.bounds.height - clip.bounds.height)
+            let wanted = scrollOffset.map { min($0, end) } ?? end
+            let y = document.isFlipped ? wanted : end - wanted
             clip.scroll(to: NSPoint(x: clip.bounds.minX, y: y))
             scroll.reflectScrolledClipView(clip)
             RunLoop.main.run(until: Date().addingTimeInterval(0.6))

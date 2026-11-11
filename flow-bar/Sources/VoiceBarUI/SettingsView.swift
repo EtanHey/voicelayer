@@ -2435,15 +2435,16 @@ public struct SettingsView: View {
     private var dictionaryTab: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    // The notch drawer's tab already says Dictionary, and it carries no explanatory prose (0510 N2).
-                    if notchEmbeddedTab == nil {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Dictionary").font(.title2.weight(.semibold))
-                            Text("Used on every dictation").font(.subheadline).foregroundStyle(SettingsPanePalette.helper)
-                        }
+                // The notch drawer's tab already says Dictionary, and it carries no explanatory prose (0510 N2).
+                if notchEmbeddedTab == nil {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Dictionary").font(.title2.weight(.semibold))
+                        Text("Used on every dictation").font(.subheadline).foregroundStyle(SettingsPanePalette.helper)
                     }
-                    Spacer(minLength: 12)
+                }
+                // Lane S PR 3 (Etan's video, 299.8 s "this is still ugly"): search and Add term share one toolbar row.
+                HStack(alignment: .center, spacing: 8) {
+                    searchRow
                     Button {
                         termSheet = DictionaryTermEdit()
                     } label: {
@@ -2453,7 +2454,6 @@ public struct SettingsView: View {
                     .disabled(!Self.addTermEnabled(loaded: hasLoadedDictionaryOnce))
                     .help("Add a term to your dictionary")
                 }
-                searchRow
             }
             // In the drawer the search field and lists start on the tab bar's edge, like the Form cards (lane S).
             .padding(.horizontal, notchEmbeddedTab == nil ? 22 : 0)
@@ -2478,6 +2478,7 @@ public struct SettingsView: View {
                             loaded: hasLoadedDictionaryOnce
                         )
                         SettingsDisclosureHeader(yourTermsTitle, isExpanded: $yourTermsExpanded)
+                            .font(Self.dictionaryGroupFont)
                             .help(yourTermsExpanded ? "Collapse your terms" : "Show your terms")
                         if yourTermsExpanded || isSearching {
                             switch Self.dictionaryPlaceholder(
@@ -2519,6 +2520,7 @@ public struct SettingsView: View {
                         ) {
                             includedTermsHeaderLabel(includedHeader)
                         }
+                        .font(Self.dictionaryGroupFont)
                         .help(includedTermsExpanded ? "Collapse included terms" : "Show included terms")
                         .padding(.top, 18)
                         if includedHeader.showsChevron, !isSearching {
@@ -2531,8 +2533,12 @@ public struct SettingsView: View {
                             }
                         }
                     }
-                    .padding(18)
+                    .padding(notchEmbeddedTab == nil ? EdgeInsets(top: 18, leading: 18, bottom: 18, trailing: 18)
+                             : EdgeInsets(top: NotchSettingsDrawerPresentation.scrollEdgeFade + 2, leading: 0,
+                                          bottom: 12, trailing: 0))
                 }
+                // In the drawer, rows fade out under the toolbar instead of being cut through (lane S PR 3).
+                .modifier(NotchScrollEdgeFade(isActive: notchEmbeddedTab != nil))
                 // The list takes key focus like a macOS table: arrows move the selection, Delete/Backspace removes
                 // the selected term of your own (with Undo). The search field keeps its own text editing.
                 .focusable()
@@ -2713,7 +2719,7 @@ public struct SettingsView: View {
     ) -> some View {
         let isSelected = selectedTermRowID == rowID
         return dictionaryEntryHeader(entry, rowID: rowID, isEditable: isEditable)
-            .padding(.vertical, 8)
+            .padding(.vertical, 4)
             .padding(.horizontal, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
@@ -2748,6 +2754,23 @@ public struct SettingsView: View {
         "Also heard as " + variants.joined(separator: ", ")
     }
 
+    /// Group headers ("Your terms", "Included terms") in the section-header role (lane S DESIGN.md §6).
+    static let dictionaryGroupFont = Font.system(size: 13, weight: .semibold)
+
+    /// The term in the row-title role, then its misheard spellings in the helper role, as one wrapping line.
+    static func dictionaryTermLine(_ entry: STTDictionaryEntry) -> some View {
+        var line = Text(entry.canonical).font(SettingsRowLabel.titleFont).foregroundColor(.primary)
+        if !entry.variants.isEmpty {
+            line = line + Text("   " + variantSummary(entry.variants).lowercasedFirst)
+                .font(SettingsRowLabel.descriptionFont)
+                .foregroundColor(SettingsPanePalette.helper)
+        }
+        return line
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel(entry.variants.isEmpty ? entry.canonical
+                : "\(entry.canonical). \(variantSummary(entry.variants))")
+    }
+
     private func dictionaryEntryHeader(
         _ entry: STTDictionaryEntry,
         rowID: String,
@@ -2756,12 +2779,10 @@ public struct SettingsView: View {
         let isSelected = selectedTermRowID == rowID
         // Spec: hover or selection shows the row's actions. They keep their width while hidden, so the text never
         // reflows under the pointer; VoiceOver reaches them as row actions instead.
-        let showsActions = isSelected || hoveredTermRowID == rowID
-        let label = SettingsRowLabel(
-            title: entry.canonical,
-            description: entry.variants.isEmpty ? nil : Self.variantSummary(entry.variants),
-            isSelected: isSelected
-        )
+        let showsActions = isSelected || hoveredTermRowID == rowID || settingsHoverPreview.termRowID == rowID
+        // Lane S PR 3: one line per term, its misheard spellings after it as helper text; long ones wrap, never cut.
+        let label = Self.dictionaryTermLine(entry)
+            .frame(minWidth: SettingsRowLabel.textMinWidth, maxWidth: .infinity, alignment: .leading)
         let actions = HStack(spacing: 4) {
             SettingsCopyButton(text: entry.canonical, label: "term \(entry.canonical)")
             if isEditable {
@@ -3535,4 +3556,8 @@ enum SettingsPermissionActions {
             requestMicrophone(refresh)
         }
     }
+}
+
+private extension String {
+    var lowercasedFirst: String { prefix(1).lowercased() + dropFirst() }
 }

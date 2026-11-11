@@ -25,6 +25,9 @@ public enum NotchSettingsDrawerPresentation {
     /// The grouped Form's own side inset (macOS draws its cards this far inside the scroll view). The drawer cancels
     /// it so a section card's edges are the tab bar's edges.
     public static let groupedFormInset: CGFloat = 20
+    /// Height of the fade at a pane's scrolling top edge (lane S PR 3: Etan's video showed a card's labels cut through
+    /// under the tab bar while scrolling).
+    public static let scrollEdgeFade: CGFloat = 20
     /// A grouped card's row inset; the version row uses it on both sides so its text and button line up with the
     /// rows above it.
     public static let rowLeadingPadding: CGFloat = 10
@@ -311,6 +314,7 @@ struct NotchGroupedFormGutter: ViewModifier {
         if isGroupedForm {
             content
                 .padding(.horizontal, -NotchSettingsDrawerPresentation.groupedFormInset)
+                .modifier(NotchScrollEdgeFade(isActive: true))
                 .background(NotchFormScrollerInset(trailing: NotchSettingsDrawerPresentation.groupedFormInset - 1))
         } else {
             content
@@ -375,6 +379,27 @@ struct NotchFormScrollerInset: NSViewRepresentable {
                 if let found = firstScrollView(in: subview, skipping: probe) { return found }
             }
             return nil
+        }
+    }
+}
+
+/// Fades a scrolling pane's top edge over `scrollEdgeFade` points, so content scrolled up under the tab bar (or the
+/// Dictionary toolbar) dissolves instead of being cut through mid-line. At rest the first section header sits below
+/// the fade.
+struct NotchScrollEdgeFade: ViewModifier {
+    let isActive: Bool
+
+    func body(content: Content) -> some View {
+        if isActive {
+            content.mask {
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                        .frame(height: NotchSettingsDrawerPresentation.scrollEdgeFade)
+                    Color.black
+                }
+            }
+        } else {
+            content
         }
     }
 }

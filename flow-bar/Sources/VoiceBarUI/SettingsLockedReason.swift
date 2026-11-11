@@ -149,6 +149,8 @@ extension View {
 struct SettingsHoverPreview: Equatable {
     var microphoneRow: Int?
     var lockedReasons = false
+    /// A Dictionary row whose hover actions are drawn (lane S PR 3).
+    var termRowID: String?
 }
 
 private struct SettingsHoverPreviewKey: EnvironmentKey {

@@ -66,8 +66,7 @@ final class SpeechSettingsShotsTests: XCTestCase {
         XCTAssertTrue(source.contains(".onSubmit {}"))
         XCTAssertFalse(source.contains("onChange(of: focused)"))
         XCTAssertFalse(source.contains("SpeechThresholdField"))
-        XCTAssertTrue(source.contains("Text(SpeechThresholdDraft.reportStatus)"))
-        XCTAssertTrue(source.contains("Text(SpeechThresholdDraft.captionContext)"))
+        XCTAssertTrue(source.contains("description: SpeechThresholdDraft.reportStatus"))
         XCTAssertTrue(source.contains(".help(SpeechThresholdDraft.revertHelp)"))
     }
 
