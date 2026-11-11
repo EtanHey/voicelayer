@@ -166,11 +166,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 MicrophoneDeviceManager.selectInputDevice(id: deviceID)
         }
     )
-    private lazy var responsivenessWatchdog = RuntimeResponsivenessWatchdog(loop: "main") { acknowledgement in
-        let loop = CFRunLoopGetMain()!
-        CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue) { acknowledgement.perform() }
-        CFRunLoopWakeUp(loop)
-    }
+    /// c8 X: stalls over 250 ms are logged with the phase (2 s and no phase could not explain the 2026-11-11 hang).
+    static let mainStallThreshold: TimeInterval = 0.25
+    static let mainStallProbeInterval: TimeInterval = 0.125
+    private lazy var responsivenessWatchdog: RuntimeResponsivenessWatchdog = {
+        precondition(Thread.isMainThread)
+        let mainThread = StalledThreadStack.currentThreadPort()
+        return RuntimeResponsivenessWatchdog(
+            loop: "main", threshold: Self.mainStallThreshold, context: { RuntimePhaseBoard.shared.snapshot() },
+            stack: { StalledThreadStack.describe(StalledThreadStack.addresses(of: mainThread)) }
+        ) { acknowledgement in
+            let loop = CFRunLoopGetMain()!
+            CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue) { acknowledgement.perform() }
+            CFRunLoopWakeUp(loop)
+        }
+    }()
     private var microphonePriorityTimer: Timer?
     private let pillContextMenuController = PillContextMenuController()
     private lazy var notchMorphSelection = VoiceBarNotchMorphSelection(
@@ -648,7 +658,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        responsivenessWatchdog.start()
+        notchSurface.log = { line in
+            NSLog("%@", line)
+            RuntimePhaseBoard.shared.noteSurfaceTransition(line: line)
+        }
+        responsivenessWatchdog.start(interval: Self.mainStallProbeInterval)
         signal(SIGPIPE, SIG_IGN)
         NSLog("[VoiceBar] SIGPIPE ignored process-wide")
         signal(SIGTERM, SIG_IGN)
@@ -717,6 +731,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         pressure.setEventHandler { [weak self, weak server] in
             guard let pressure = self?.memoryPressureSource else { return }
             let level = pressure.data.contains(.critical) ? "critical" : "warning"
+            RuntimePhaseBoard.shared.noteMemoryPressure(level: level)
+            NSLog("[VoiceBar] memory pressure level=%@", level)
             server?.sendCommandToOwner(command: ["cmd": "memory_pressure", "level": level])
         }
         memoryPressureSource = pressure
@@ -1953,6 +1969,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             }
         }
         synchronizeRetainedReadbackLifecycle()
+        RuntimePhaseBoard.shared.setMode(mode.rawValue)
         logDiagnostic(event: "mode_changed", details: [
             "newMode": mode.rawValue,
         ])
