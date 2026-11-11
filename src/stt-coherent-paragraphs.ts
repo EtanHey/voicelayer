@@ -38,6 +38,11 @@ const SOFT_OPENER = /^(?:now\b|so,|okay,|ok,|alright,|also\b|besides\b|plus\b|me
 const CONTINUATION_OPENER = /^(?:because\b|'?cause\b|which\b|that'?s why\b|so that\b|or\b|but\b|and\b|nor\b|than\b|whereas\b|(?:even )?though\b|although\b|for\b|like\b|including\b|except\b)/u;
 const ANAPHORA_OPENER = /^(?:it|it'?s|its|this|that|these|those|he|she|they|there)\b/u;
 
+/** A conditional clause cannot earn a paragraph break, even at an acoustic gap. */
+export function isConditionalContinuation(text: string): boolean {
+  return /^(?:if|unless|until|provided|assuming)\b/u.test(opener(text));
+}
+
 const STOPWORDS = new Set((
   "about above after again also always another anything because been before being both could does doing done each even every from have having here into just like little made make many more most much must need only other over really same should some something still such than that their them then there these they thing things think this those though through very want what when where which while will with would your yeah okay going actually maybe pretty kind sort know mean guess right well said says thats dont didnt cant wont im ive ill its theres were whats".split(" ")
 ));
@@ -134,6 +139,7 @@ function sentenceBoundaries(text: string): Boundary[] {
     if (!/[\p{L}\p{N}\p{M}'’"”)\]%]/u.test(text[at - 1] ?? "")) continue;
     if (text[at] === "." && endsWithAbbreviation(text, at)) continue;
     const next = text.slice(at + m[0].length);
+    if (isConditionalContinuation(next)) continue;
     if (!plainSentenceToken(text, at, next)) continue;
     // A lowercase opener continues the sentence (cased scripts only).
     if (/^["'“‘(\[]*\p{Ll}/u.test(next)) continue;

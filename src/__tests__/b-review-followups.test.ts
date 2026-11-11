@@ -80,7 +80,10 @@ for (const base of ["um", "uh", "er"]) for (const marker of ["…", "...", "..",
   const result = await finalizeTranscriptionResultForSurface(raw,"dictation",{
    ...process.env,QA_VOICE_CORRECTOR:undefined,QA_VOICE_STT_POLISH:"off",
   });
-  expect(result.text).toContain(fragment);
+  // Delivery retains a cut-off as an ellipsis; ASCII '-' would lose that meaning.
+  const deliveredFragment = base + (marker === "—" ? "…" : marker);
+  expect(result.text).toContain(deliveredFragment);
+  expect(result.text.toLowerCase().match(/[\p{L}\p{M}\p{N}]+/gu)).toEqual(raw.toLowerCase().match(/[\p{L}\p{M}\p{N}]+/gu));
  });
 }
 test("ordinary unmarked acoustic fillers are still removed by default", async () => {

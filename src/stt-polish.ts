@@ -7,6 +7,7 @@ import { homedir } from "os";
 import { dirname, join } from "path";
 import { NDJSONByteFramer } from "./ndjson-byte-framer";
 import { SocketOutboundQueue } from "./socket-outbound-queue";
+import { POLISH_CHUNK_CHARS, polishLongTake } from "./stt-polish-chunks";
 
 export type STTPolishMode = "off" | "shadow" | "on";
 export type STTPolishStatus =
@@ -1914,15 +1915,26 @@ function writePolishLog(
 
 export async function polishTranscriptionText(input: STTPolishInput): Promise<STTPolishResult> {
   const env = input.env ?? processingEnv();
-  if (getSTTPolishMode(env) === "off" || !input.cleanedText.trim() || getSTTPolishEndpoint(env) !== DEFAULT_POLISH_ENDPOINT) return polishTranscriptionTextReady(input);
+  // The legacy Unix transport already has its own short timeout and response contract.
+  if (getSTTPolishMode(env) === "on" && getSTTPolishEndpoint(env) && input.cleanedText.length > POLISH_CHUNK_CHARS * 2) {
+    // Bound wasted work, not input length. Every word in every remaining chunk survives.
+    const budget = Math.min(getSTTPolishTimeoutMs(env, input.cleanedText), DEFAULT_POLISH_TIMEOUT_MS);
+    return polishLongTake(input, budget, (chunk, deadline) =>
+      polishTranscriptionTextWithinBudget(chunk, performance.now(), deadline, true));
+  }
+  return polishTranscriptionTextWithinBudget(input);
+}
+
+async function polishTranscriptionTextWithinBudget(input: STTPolishInput, startedAt = performance.now(), deadlineOverride?: number, singleAttempt = false): Promise<STTPolishResult> {
+  const env = input.env ?? processingEnv();
+  if (getSTTPolishMode(env) === "off" || !input.cleanedText.trim() || getSTTPolishEndpoint(env) !== DEFAULT_POLISH_ENDPOINT) return polishTranscriptionTextReady(input, startedAt, deadlineOverride, singleAttempt);
   const { withSTTPolishServer } = await import("./stt-polish-server");
-  const startedAt = performance.now();
-  const budget = getSTTPolishTimeoutMs(env, input.rawText.length > input.cleanedText.length ? input.rawText : input.cleanedText);
+  const budget = deadlineOverride ? Math.max(1, deadlineOverride - performance.now()) : getSTTPolishTimeoutMs(env, input.rawText.length > input.cleanedText.length ? input.rawText : input.cleanedText);
   const deadline = startedAt + budget;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      withSTTPolishServer(() => polishTranscriptionTextReady(input, startedAt, deadline), { env }),
+      withSTTPolishServer(() => polishTranscriptionTextReady(input, startedAt, deadline, singleAttempt), { env }),
       new Promise<STTPolishResult>(resolve => {
         timer = setTimeout(() => {
           const mode = getSTTPolishMode(env);
@@ -1940,7 +1952,7 @@ export async function polishTranscriptionText(input: STTPolishInput): Promise<ST
   } finally { clearTimeout(timer); }
 }
 
-async function polishTranscriptionTextReady(input: STTPolishInput, startedAt = performance.now(), deadlineOverride?: number): Promise<STTPolishResult> {
+async function polishTranscriptionTextReady(input: STTPolishInput, startedAt = performance.now(), deadlineOverride?: number, singleAttempt = false): Promise<STTPolishResult> {
   const env = input.env ?? processingEnv();
   const mode = getSTTPolishMode(env);
   const surface = input.surface ?? "dictation";
@@ -2023,7 +2035,7 @@ async function polishTranscriptionTextReady(input: STTPolishInput, startedAt = p
         env,
       );
       const retryReason =
-        result.status === "applied" &&
+        singleAttempt ? null : result.status === "applied" &&
         !result.changed &&
         shouldRetryNoopPolish(input.cleanedText)
           ? "noop"
