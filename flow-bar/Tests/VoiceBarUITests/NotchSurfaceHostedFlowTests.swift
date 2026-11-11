@@ -24,15 +24,18 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
     }
 
     private final class Router: BarCommandRouting {
-        func handlePrimaryTap() {}
-        func handleCancel() {}
-        func handleStop() {}
+        var actions: [String] = []
+        var commands: [[String: Any]] = []
+        func handlePrimaryTap() { actions.append("primary") }
+        func handleCancel() { actions.append("cancel") }
+        func handleStop() { actions.append("stop") }
         func handleReplay() {}
         func handleRetranscribeHistoryEntry(recordingPath _: String) {}
     }
 
     private struct Harness {
         let state: VoiceState
+        let router: Router
         let model: VoiceBarNotchPresentationModel
         let surface: NotchSurfaceModel
         let host: PillHostingView<BarView>
@@ -72,10 +75,10 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(seconds))
     }
 
-    private func send(_ type: NSEvent.EventType, at point: NSPoint, to panel: NSWindow) throws {
+    private func send(_ type: NSEvent.EventType, at point: NSPoint, to panel: NSWindow, clickCount: Int = 1) throws {
         panel.sendEvent(try XCTUnwrap(NSEvent.mouseEvent(
             with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-            windowNumber: panel.windowNumber, context: nil, eventNumber: 1, clickCount: 1,
+            windowNumber: panel.windowNumber, context: nil, eventNumber: 1, clickCount: clickCount,
             pressure: type == .leftMouseUp ? 0 : 1
         )))
     }
@@ -131,6 +134,9 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
             RecentTranscriptionEntry(text: "Synthetic history row \(index + 1).", recordingPath: "/synthetic/\(index).wav",
                                      createdAt: Date().addingTimeInterval(Double(-60 * index)))
         }
+        let router = Router()
+        state.sendCommand = { router.commands.append($0) }
+        state.recordingTimingClock = { 100 }
         let model = VoiceBarNotchPresentationModel()
         let surface = NotchSurfaceModel()
         surface.log = { _ in }
@@ -141,7 +147,7 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
             return AnyView(EmptyView())
         })
         let host = PillHostingView(rootView: BarView(
-            state: state, commandRouter: Router(), onOpenSettings: {}, onOpenHistory: {},
+            state: state, commandRouter: router, onOpenSettings: {}, onOpenHistory: {},
             presentationModel: model, includesPanelOutsets: true,
             onOpenNotchMenu: { menuRequests.count += 1 }, surface: surface, settingsDrawer: context
         ))
@@ -162,7 +168,7 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
             geometry: launcher.presentation.geometry,
             configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 2, trailingControlCountFromCore: 2)
         ).rects.map { $0.offsetBy(dx: launcher.visibleContentRect.minX, dy: launcher.visibleContentRect.minY) }
-        return Harness(state: state, model: model, surface: surface, host: host, panel: panel, rects: rects,
+        return Harness(state: state, router: router, model: model, surface: surface, host: host, panel: panel, rects: rects,
                        paneRequests: paneRequests, menuRequests: menuRequests)
     }
 
@@ -448,15 +454,197 @@ extension NotchSurfaceHostedFlowTests {
         }
     }
 
-    /// Never Stop or Cancel: their clicks stay theirs.
-    func testC7WClicksOnTheRecordingControlsNeverOpenHistory() throws {
-        let harness = makeHarness()
-        enter(.recording, harness)
-        for index in [0, 1] {
-            try click(control(index, harness), in: harness.panel)
-            drain(0.4)
-            XCTAssertNil(harness.surface.drawer, "[C7-W] recording control \(index) keeps its own click")
+    private func recordingHarness(_ mode: String, drawerOpen: Bool = false) -> Harness {
+        let h = makeHarness()
+        h.state.handleEvent(["type": "state", "state": "recording", "mode": mode, "capture_id": 73])
+        h.state.handleEvent(["type": "audio_level", "rms": 0.0])
+        enter(.recording, h)
+        if drawerOpen {
+            h.surface.send(.openHistory)
+            drain(1)
+            resize(h)
         }
+        h.router.actions.removeAll()
+        h.router.commands.removeAll()
+        return h
+    }
+
+    /// Resolve the actual drawn control's native tooltip view, including its production inset and slot count.
+    private func drawnControl(_ tooltip: String, _ h: Harness) throws -> NSPoint {
+        func find(_ view: NSView) -> NSView? {
+            if view.toolTip == tooltip, !view.visibleRect.isEmpty { return view }
+            return view.subviews.lazy.compactMap(find).first
+        }
+        h.host.layoutSubtreeIfNeeded()
+        let view = try XCTUnwrap(find(h.host), "\(tooltip) must be drawn")
+        return center(view.convert(view.bounds, to: nil))
+    }
+
+    private func assertTakeUnchanged(_ h: Harness, mode: String, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(h.state.mode, .recording, file: file, line: line)
+        XCTAssertEqual(h.state.recordingMode, mode, file: file, line: line)
+        XCTAssertTrue(h.state.isRecordingCaptureOpen, file: file, line: line)
+        XCTAssertFalse(h.state.isRecordingPaused, file: file, line: line)
+        XCTAssertFalse(h.state.isRecordingHoldEngaged, file: file, line: line)
+        XCTAssertEqual(h.state.recordingActiveElapsedMilliseconds(), 0, file: file, line: line)
+        XCTAssertTrue(h.router.actions.isEmpty, "no recording router action", file: file, line: line)
+        XCTAssertTrue(h.router.commands.isEmpty, "no daemon intent", file: file, line: line)
+    }
+
+    func testC7WDrawnRecordingControlsDeliverExactlyTheirOwnAction() throws {
+        for mode in ["ptt", "vad"] {
+            for open in [false, true] {
+                let extra = mode == "ptt" ? "Mute microphone" : "Lock recording"
+                for label in ["Stop recording", extra, "Cancel recording"] {
+                    let h = recordingHarness(mode, drawerOpen: open)
+                    let drawer = h.surface.drawer
+                    let journalCount = h.surface.journal.count
+                    try click(drawnControl(label, h), in: h.panel)
+                    drain(0.2)
+                    XCTAssertEqual(h.surface.drawer, drawer, "\(mode) \(label), open=\(open)")
+                    XCTAssertEqual(h.surface.journal.count, journalCount, "a control must not toggle a drawer")
+                    XCTAssertEqual(h.router.actions, label == extra ? [] : [label == "Stop recording" ? "stop" : "cancel"])
+                    XCTAssertEqual(h.router.commands.count, label == extra ? 1 : 0)
+                    if label == extra {
+                        let command = try XCTUnwrap(h.router.commands.first)
+                        XCTAssertEqual(command["cmd"] as? String, mode == "ptt" ? "set_recording_pause" : "set_recording_hold")
+                        XCTAssertNotNil(command["id"] as? String)
+                        if mode == "ptt" {
+                            XCTAssertEqual(command["capture_id"] as? Int, 73)
+                            XCTAssertEqual(command["paused"] as? Bool, true)
+                        } else {
+                            XCTAssertEqual(command["engaged"] as? Bool, true)
+                        }
+                    }
+                    XCTAssertEqual(h.state.isRecordingPaused, mode == "ptt" && label == extra)
+                    XCTAssertEqual(h.state.isRecordingHoldEngaged, mode == "vad" && label == extra)
+                    XCTAssertEqual(h.state.mode, .recording)
+                    XCTAssertEqual(h.state.recordingMode, mode)
+                    XCTAssertTrue(h.state.isRecordingCaptureOpen)
+                    h.panel.orderOut(nil)
+                }
+            }
+        }
+    }
+
+    func testC7WNonControlClicksDabsAndBurstNeverMutateTheTake() throws {
+        for mode in ["ptt", "vad"] {
+            for open in [false, true] {
+                for travel: CGFloat in [0, 3, 6, 10] {
+                    let h = recordingHarness(mode, drawerOpen: open)
+                    let start = wingPoint(h)
+                    try send(.leftMouseDown, at: start, to: h.panel)
+                    if travel > 0 {
+                        try send(.leftMouseDragged, at: NSPoint(x: start.x, y: start.y - travel), to: h.panel)
+                    }
+                    try send(.leftMouseUp, at: NSPoint(x: start.x, y: start.y - travel), to: h.panel)
+                    drain(0.3)
+                    XCTAssertEqual(h.surface.drawer != nil, !open, "\(mode) \(travel) pt, open=\(open)")
+                    assertTakeUnchanged(h, mode: mode)
+                    h.panel.orderOut(nil)
+                }
+                let h = recordingHarness(mode, drawerOpen: open)
+                for index in 1 ... 5 {
+                    resize(h)
+                    let point = wingPoint(h)
+                    try send(.leftMouseDown, at: point, to: h.panel, clickCount: index == 2 ? 2 : 1)
+                    try send(.leftMouseUp, at: point, to: h.panel, clickCount: index == 2 ? 2 : 1)
+                    drain(0.06)
+                    XCTAssertEqual(h.surface.drawer != nil, open != (index % 2 == 1))
+                    assertTakeUnchanged(h, mode: mode)
+                }
+                drain(1)
+                XCTAssertEqual(h.surface.drawer != nil, !open, "the burst settles in its final state")
+                XCTAssertEqual(h.model.isHistoryPanelOpen, !open)
+                assertTakeUnchanged(h, mode: mode)
+                h.panel.orderOut(nil)
+            }
+        }
+    }
+
+    func testC7WLeftWingOffControlsDoesNotMutateTheTake() throws {
+        for mode in ["ptt", "vad"] {
+            for open in [false, true] {
+                let h = recordingHarness(mode, drawerOpen: open)
+                let g = h.model.presentation.geometry
+                let core = notchPoint(h, fromTop: 16)
+                let point = NSPoint(x: core.x - g.coreWidth / 2 - g.leadingWingWidth + 3, y: core.y)
+                try click(point, in: h.panel)
+                drain(0.3)
+                // The rounded outer edge may reject the drawer gesture, but must never reach a capture control.
+                assertTakeUnchanged(h, mode: mode)
+                h.panel.orderOut(nil)
+            }
+        }
+    }
+
+    func testC7WSampledWingFlickAndSettingsPullKeepTheirRoutes() throws {
+        for (dy, expected): (CGFloat, NotchDrawer?) in [(-30, .history(.collapsed)), (-400, .settings(.general)), (30, nil)] {
+            let h = recordingHarness("ptt")
+            try send(.leftMouseDown, at: wingPoint(h), to: h.panel)
+            for step in 1 ... 2 {
+                resize(h)
+                try send(.leftMouseDragged, at: wingPoint(h, fromTop: 16 - dy * CGFloat(step) / 2), to: h.panel)
+                drain(0.02)
+            }
+            resize(h)
+            try send(.leftMouseUp, at: wingPoint(h, fromTop: 16 - dy), to: h.panel)
+            drain(1)
+            XCTAssertEqual(h.surface.drawer, expected)
+            assertTakeUnchanged(h, mode: "ptt")
+            h.panel.orderOut(nil)
+        }
+    }
+
+    /// Optional native hosted snapshots; this M1 does not paint glass in cacheDisplay. The caption makes that
+    /// limitation explicit and records the observed surface state, rather than substituting painted glass.
+    private func terminalShot(_ name: String, _ h: Harness) throws {
+        guard let directory = ProcessInfo.processInfo.environment["VOICEBAR_W3_SHOTS"],
+              let prefix = ProcessInfo.processInfo.environment["VOICEBAR_W3_SHOT_PREFIX"] else { return }
+        let bitmap = try XCTUnwrap(h.host.bitmapImageRepForCachingDisplay(in: h.host.bounds))
+        h.host.cacheDisplay(in: h.host.bounds, to: bitmap)
+        let image = NSImage(size: NSSize(width: h.host.bounds.width, height: h.host.bounds.height + 64))
+        image.lockFocus()
+        NSColor.darkGray.setFill()
+        NSRect(origin: .zero, size: image.size).fill()
+        NSImage(cgImage: try XCTUnwrap(bitmap.cgImage), size: h.host.bounds.size)
+            .draw(in: NSRect(x: 0, y: 64, width: h.host.bounds.width, height: h.host.bounds.height))
+        let caption = "\(prefix) \(name) — M1 macOS 26.5.1: glass unavailable in cacheDisplay\nHosted synthetic events; drawer = \(String(describing: h.surface.drawer))"
+        (caption as NSString).draw(in: NSRect(x: 8, y: 4, width: image.size.width - 16, height: 56),
+                                   withAttributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.white])
+        image.unlockFocus()
+        let png = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(image.tiffRepresentation))?.representation(using: .png, properties: [:]))
+        try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(prefix)-\(name).png"))
+    }
+
+    /// The last drag sample is a dab; mouse-up moves beyond the click allowance without another drag sample.
+    func testC7WTerminalUpwardTravelIsADragNotAClick() throws {
+        let h = recordingHarness("ptt")
+        let start = wingPoint(h)
+        try send(.leftMouseDown, at: start, to: h.panel)
+        try send(.leftMouseDragged, at: NSPoint(x: start.x, y: start.y + 6), to: h.panel)
+        drain(0.05)
+        resize(h)
+        try send(.leftMouseUp, at: wingPoint(h, fromTop: 16 - 30), to: h.panel)
+        drain(1)
+        try terminalShot("terminal-upward", h)
+        XCTAssertNil(h.surface.drawer, "a terminal upward drag must not toggle closed History open")
+        XCTAssertFalse(h.model.isHistoryPanelOpen)
+        assertTakeUnchanged(h, mode: "ptt")
+    }
+
+    func testC7WTerminalTravelPastSettingsThresholdOpensSettings() throws {
+        let h = recordingHarness("vad")
+        let start = wingPoint(h)
+        try send(.leftMouseDown, at: start, to: h.panel)
+        try send(.leftMouseDragged, at: NSPoint(x: start.x, y: start.y - 6), to: h.panel)
+        drain(0.05)
+        resize(h)
+        try send(.leftMouseUp, at: wingPoint(h, fromTop: 16 + 400), to: h.panel)
+        drain(1)
+        try terminalShot("terminal-settings", h)
+        XCTAssertEqual(h.surface.drawer, .settings(.general), "terminal travel must arm Settings, not toggle History")
+        assertTakeUnchanged(h, mode: "vad")
     }
 
     /// A click on the bare notch with a drawer open only closes the drawer. It used to ask for the notch menu as

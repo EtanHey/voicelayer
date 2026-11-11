@@ -381,6 +381,7 @@ public struct BarView: View {
     @State private var historyPressIsWingClick = false
     /// The furthest this press has travelled from where it began.
     @State private var historyPressTravel: CGFloat = 0
+    @State private var historyPressLastTranslation: CGSize = .zero
     @State private var pendingHistoryReleaseVelocity: Double = 0
     @State private var pendingHistoryRowsVelocity: Double = 0
     /// Shots only: the rows the extend handle settled on, instead of the surface's detent.
@@ -806,6 +807,7 @@ public struct BarView: View {
                         && NotchHistoryPull.accepts(y: value.startLocation.y)
                     historyPressIsWingClick = !historyPressIsBare && pressIsOnRecordingWingOffControls(value.startLocation)
                     historyPressTravel = 0
+                    historyPressLastTranslation = .zero
                     guard canPullDrawer || isSettingsDrawerOpen || historyPressIsBare else { return }
                     if NotchHistoryPull.accepts(y: value.startLocation.y) {
                         drawerPullDismissalGeneration = surface.dismissalGeneration
@@ -825,15 +827,27 @@ public struct BarView: View {
                     return
                 }
                 historyPressTravel = max(historyPressTravel, abs(value.translation.width), abs(value.translation.height))
+                historyPressLastTranslation = value.translation
                 if max(abs(value.translation.width), abs(value.translation.height)) > NotchHistoryMorph.dragSlop {
                     historyPressIsBare = false
                 }
                 guard canPullDrawer || isSettingsDrawerOpen else { return }
                 followHistoryPull(y: value.location.y, time: time, openHeight: openHeight)
             }
-            .onEnded { _ in
+            .onEnded { value in
                 defer { isDismissedDrawerGesture = false }
                 guard !isDismissedDrawerGesture, !isDrawerBodyDragActive else { return }
+                // Mouse-up can carry motion without a final onChanged sample. Include it in both the click
+                // allowance and the pull (including Settings arming). Replaying an unchanged position would
+                // damp the existing flick velocity, so only follow a newly delivered terminal position.
+                let travel = max(abs(value.translation.width), abs(value.translation.height))
+                historyPressTravel = max(historyPressTravel, travel)
+                if travel > NotchHistoryMorph.dragSlop { historyPressIsBare = false }
+                if historyRowsPull.phase == .idle, value.translation != historyPressLastTranslation,
+                   canPullDrawer || isSettingsDrawerOpen {
+                    followHistoryPull(y: value.location.y, time: NotchHistoryClock.now(),
+                                      openHeight: notchPresentationOpenHistoryHeight)
+                }
                 endHistoryPull(cancelled: false)
             }
     }
