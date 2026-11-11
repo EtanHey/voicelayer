@@ -67,6 +67,8 @@ export interface EnsureSTTPolishServerOptions {
   sleep?: (ms: number) => Promise<void>;
   startupTimeoutMs?: number;
   log?: (message: string) => void;
+  /** Does this mlx_lm.server accept the prompt-cache caps? Tests inject it; default reads `--help` once per binary. */
+  probeCacheCaps?: (binary: string) => Promise<boolean>;
 }
 
 const DEFAULT_POLISH_HOST = "127.0.0.1";
@@ -74,6 +76,84 @@ import { isDefaultVoiceBarSocketPath } from "./paths";
 
 const DEFAULT_POLISH_PORT = 8080;
 const DEFAULT_STARTUP_TIMEOUT_MS = 120_000;
+
+/**
+ * c8-M2: hard cap on the polish server's prompt cache. mlx_lm.server keeps 10 KV caches with no byte
+ * limit by default; on 2026-11-11 it held 2.3 GB on a starved Mac. One polish prompt measured 0.2-0.3 GB,
+ * so 4 entries / 768 MiB keeps the warm-prompt reuse and bounds the growth (mlx_lm evicts LRU).
+ */
+export const POLISH_PROMPT_CACHE_ENTRIES = 4;
+export const POLISH_PROMPT_CACHE_BYTES = 768 * 1024 * 1024;
+const cacheCapSupport = new Map<string, Promise<boolean>>();
+
+/** Older mlx_lm builds reject unknown flags and would never start, so ask the binary first. */
+async function binarySupportsCacheCaps(binary: string): Promise<boolean> {
+  try {
+    const proc = Bun.spawn([binary, "--help"], { stdout: "pipe", stderr: "pipe", env: process.env });
+    const timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch {} }, 15_000);
+    const [out] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    clearTimeout(timer);
+    return out.includes("--prompt-cache-size") && out.includes("--prompt-cache-bytes");
+  } catch {
+    return false;
+  }
+}
+
+async function polishCacheCapArgs(binary: string, options: EnsureSTTPolishServerOptions): Promise<string[]> {
+  let support: Promise<boolean>;
+  if (options.probeCacheCaps) support = options.probeCacheCaps(binary);
+  else {
+    support = cacheCapSupport.get(binary) ?? binarySupportsCacheCaps(binary);
+    cacheCapSupport.set(binary, support);
+  }
+  return (await support)
+    ? ["--prompt-cache-size", String(POLISH_PROMPT_CACHE_ENTRIES), "--prompt-cache-bytes", String(POLISH_PROMPT_CACHE_BYTES)]
+    : [];
+}
+
+/** Last `Prompt Cache: N sequences, X GB` line the server logged; sizes only, never prompt text. */
+let lastPolishCache: { sequences: number; gb: number } | null = null;
+export function lastPolishPromptCache(): { sequences: number; gb: number } | null { return lastPolishCache; }
+function notePolishCacheLine(text: string): void {
+  const matches = [...text.matchAll(/Prompt Cache: (\d+) sequences, ([\d.]+) GB/gu)];
+  const last = matches.at(-1);
+  if (last) lastPolishCache = { sequences: Number(last[1]), gb: Number(last[2]) };
+}
+
+function processRssMb(pid: number | null | undefined): number | null {
+  if (!pid) return null;
+  try {
+    const result = Bun.spawnSync(["ps", "-o", "rss=", "-p", String(pid)], { stdout: "pipe", stderr: "pipe", env: process.env });
+    const kb = Number(result.stdout.toString().trim());
+    return Number.isFinite(kb) && kb > 0 ? Math.round(kb / 1024) : null;
+  } catch { return null; }
+}
+export { processRssMb };
+
+export type PolishPressureRelease =
+  | { released: true; cache: { sequences: number; gb: number } | null; rss_mb: number | null }
+  | { released: false; reason: "not-running" | "voice-busy" | "unload-unconfirmed" };
+
+/**
+ * c8-M2: memory pressure releases the polish server (its prompt cache and model) first. It is
+ * relaunched on the next polish (withSTTPolishServer loads on demand). Never while a voice
+ * operation runs: a pressure event is dropped then, not deferred into a dictation.
+ */
+export async function releaseSTTPolishServerForMemoryPressure(): Promise<PolishPressureRelease> {
+  const proc = polishProcess;
+  if (!proc) return { released: false, reason: "not-running" };
+  const release = reserveVoiceMaintenance(residencyBusy);
+  if (!release) return { released: false, reason: "voice-busy" };
+  try {
+    const cache = lastPolishCache;
+    const rss = processRssMb(proc.pid);
+    try { await stopSTTPolishServerAndWait(); }
+    catch { return { released: false, reason: "unload-unconfirmed" }; }
+    lastPolishCache = null;
+    publishSTTPolishServerStatus({ status: "stopped" });
+    return { released: true, cache, rss_mb: rss };
+  } finally { release(); }
+}
 
 let polishProcess: ManagedPolishProcess | null = null;
 let stoppingPolishProcess: ManagedPolishProcess | null = null;
@@ -148,6 +228,8 @@ function resetSTTPolishServerManager(retainReapedOwners: boolean): void {
 
 export function resetSTTPolishServerManagerForTests(): void {
   polishResidency.reset();
+  cacheCapSupport.clear();
+  lastPolishCache = null;
   resetSTTPolishServerManager(false);
 }
 
@@ -290,7 +372,9 @@ async function startAndWaitForPolishServer(
     DEFAULT_POLISH_HOST,
     "--port",
     String(DEFAULT_POLISH_PORT),
+    ...(await polishCacheCapArgs(binary, options)),
   ];
+  if (cancelled()) return { status: "disabled" };
   appendEvent(
     "transcription.polish_server_starting",
     {
@@ -630,6 +714,7 @@ function drainPolishServerLogs(
         if (done) break;
         const text = new TextDecoder().decode(value).trim();
         if (text) {
+          notePolishCacheLine(text);
           tail.text = `${tail.text}\n${text}`.trim().slice(-2_000);
           log(`[voicelayer-polish] ${text}`);
         }
