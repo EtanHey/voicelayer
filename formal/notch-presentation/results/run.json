@@ -31,12 +31,12 @@
     "formal/notch-presentation/MutTextWing.cfg": "8a14cd224cda080ee1841ee8391e1e9703fc61efd85dce194f4072b721cfd307",
     "formal/notch-presentation/Fixed.cfg": "87d27589a3cf2adf8e4c1e7652b70d9826bebb861b8a406e59db80e09e559029",
     "formal/notch-presentation/OldQuitCause.cfg": "6c6fc8f33a06e3fd7babba4d98b5e7cb980fd966daf42659204397f0424a80b6",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "76ecc55a1af394337d4f5962fdeaae74edfa43c5ed58d62a89b1bcf021a3c02a",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "18dbacc26157e80aca76ab4676c5fe6461da5afad099d15a3366535bf851462d",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchContract.swift": "cf46ef8c784029ee0375d550cafd712b507f264b60dc5b9f2698da5ba1a9a764",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchFeedback.swift": "192998017375294a13990c9a38cf4c35daf51d8c6255e56489591613f5028ab0",
     "flow-bar/Sources/VoiceBarUI/VoiceBarPresentation.swift": "1eb005c698d181bc5169c25c5a7272a3c94e4e1b84bc41bd8f9f6020150d6ab5",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "2a4ebd4a6b1415d6cd283fcbc562956b0e1adb08049d3c32e1079a663800cb2b",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "ef7afcf5efa3fc30cbd7c4c7af3ee85a6d845813a4d8265d197bf60f138aff74",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "0bb80fda527006911d604e65c9215c43d00ebac94d9abeab849b51f2dd5f4167",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "7e4dcf00f0a7f3f86135359c2628aa85c3ce29ba466a4ac7dd69e0e7c5bc655d",
     "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "c38b7d8b45b10a3edbbcbca5a47b39de4e89fd8118e9d2b204af80d60b4f104d",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
@@ -274,8 +274,8 @@
       "kind": "temporal",
       "target": "NoteNeverStuck",
       "status": "EXPECTED_FAIL",
-      "generated": 148491,
-      "distinct": 27024
+      "generated": 138759,
+      "distinct": 25990
     },
     "MutTypedTab": {
       "role": "mutant",
