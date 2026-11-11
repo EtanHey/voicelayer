@@ -1,47 +1,98 @@
-# L4 → L5 handoff
+# L4 → L5 handoff: control availability
 
-Contract slice only. Application conformance, native hover/AX, installed identity,
-one-microphone operation and audio retention are NOT_RUN by this slice.
+Contract only: nothing in the app calls these types yet. App conformance, native hover/AX,
+installed identity, one-microphone operation and audio retention are NOT_RUN here.
 
-Consume `VoiceControlAvailability.evaluate(_:_: )`, `VoiceControl`,
-`ControlAvailabilityFacts` and `ControlAvailability` in VoiceBarUI.
-Map each actual surface's visibility, callback, data, connection, current owner,
-pending ACK and operation-specific constraints into facts. Use `isVisible`,
-`isEnabled`, `tooltip` and `accessibilityHint` on pointer, keyboard and AX paths.
-Use native `PillControlTooltip` in the nonactivating panel. Re-evaluate at click;
-the final owner must independently validate after its final await.
+## What L5 calls
 
-`ownerReason` adds the operation's existing constraints (assets, keep-one-model,
-foreign ownership, playback generation, timing target, actual updater launcher).
-Do not use it to silently implement the model's conservative proposals.
-`explain` accepts a key/Delete/Quit explanation, not the requested media effect.
-Emergency and paired release resolve existing take identity/lock semantics;
-the pure result is not authority to cancel an unrelated take.
+```swift
+let facts = ControlAvailabilityAdapter.facts(reading)          // once per render, from VoiceState
+let a = VoiceControlAvailability.evaluate(control, facts, handlerInstalled: onAction != nil)
+// a.isVisible, a.isEnabled, a.tooltip (PillControlTooltip in the notch), a.accessibilityHint
+```
 
-Family mapping: H03/F23/C01 → archiveDrawer/archiveWindow/archiveLatest;
-G04/G17/G18 → restartListener/update/checkUpdates; G13/K05 →
-readClipboard/readSelectionKey; G07-G10 → microphoneEdit (per AX target);
-T01/T02/T14 → selectRecognizer; T03-T13 → corresponding management cases;
-S01-S05 → clone cases; S13/S14/F22 → preview/historyPlay; N15/N17 →
-previousRead/nextRead; N04/PTT pause → recordingHold/recordingPause.
-K01/K03/K07/N01 → record, resolved separately from pairedRelease.
-Dictionary included entries use dictionaryEdit readOnly; Commit requires ACK.
-Modal/IME/editor priority is an owner obligation, not inferred from visibility.
+- `ControlFacts` is the formal model's state, typed: connection, gate, capture phase
+  (`none / reservedOpening / capturing(ptt|vad) / paused / draining(successorQueued:) / askCapturing`),
+  processing (`transcription / historyRetranscription / askAnswer`), playback
+  (`none / preparing / playing / paused / readback / askSpeaking`), presentation (hidden, drawer, modal),
+  `voiceError`, `physicalGesture`, `settingsService`, and one pending per operation. Every field is a
+  required init argument; there is no default gate.
+- Surfaces never build `ControlFacts` by hand and never test `mode` themselves. Per-item data rides on the
+  control: `.retranscribe(surface, audio:)`, `.historyPlay(audio:)`, `.previousRead(available:)`,
+  `.nextRead(queued:)`, `.microphone(edit, eligible:)`, `.recognizer(action, row)`, `.clone(action, engine)`,
+  `.processingToggle(key, lockedBy:)`, `.dictionaryEdit(readOnly:)`.
+- `handlerInstalled: false` returns `.unwired` (`isContractFault`). L5 tests must assert no rendered control
+  is ever `.unwired`; it is a wiring bug, never a working-looking button.
+- `.explain` (selection key only) is an accepted intent: show/announce the reason, start no media.
+- Handlers re-evaluate at click and the final owner re-checks identity/admission after its last await.
 
-`c5-inventory.json` is regenerated with `python3 docs/control-availability/c5-inventory.py`.
-Stable cell IDs are FAMILY:PROJECTION; overlays have separate overlay:name IDs.
-Only source-revalidated historical bad cells are REMOVED or SURVIVING. Other
-historical known cells remain NOT_REPLAYED. Historical UNKNOWN stays UNKNOWN.
-C5 true recording pause makes old Z=N obsolete; its cells are newly UNKNOWN.
-This is source evidence, not a claim that a rendered control was clicked.
-Physical-key and Quit cells need intent/owner-policy refinement: 19 historical
-bad cells stay UNKNOWN_REFINEMENT, rather than counting an accepted explanation
-as a failed media effect. The other historical bad cells are 24 removed and 34
-surviving at the source layer; these counts never establish native acceptance.
+## Adapter input (`VoiceStateReading`): where each value comes from
 
-L5 must independently assert rendered enablement, local acceptance and final-owner
-acceptance for surviving cells, including sibling surfaces and pointer/AX/key.
-Imported Old/Mut cases are design witnesses, never remaining C5 defect counts.
-Proposals still needing lead resolution: clone Start/speech lock, transcription
-playback restrictions, download provisioning lock, ConfirmDelete disable and Quit
-disable. Keep Delete Explain working. No new invariant is designed in this lane.
+| Field | Source |
+|---|---|
+| `mode`, `isConnected`, `recordingMode`, `isRecordingPaused`, `isAskCapture`, `processingTakeCount`, `isHistoryRetranscriptionPending`, `supportsRecordingJobs`, `isPlaybackPreparing`, `isPlaybackPaused`, `isTeleprompterReadback`, `isHidden` | `VoiceState` public properties of the same name |
+| `hasQueuedRecording` | `VoiceState.queuedRecordingTakeID != nil` |
+| `captureAdmission` | `VoiceState.captureAdmissionPhase` (lane L4b, stacked on this branch). Opening = reserved before live PCM, even while `mode` reads idle |
+| `agentAskSession` | **No VoiceState read exists yet.** The owner lane must expose "Ask prompt speaking" / "Ask answer transcribing" before L5 wires media buttons, the selection key or Record; passing `.none` drops the Ask refusals |
+| `gate` | `ControlVoiceGate(permitsNewVoice: NativeUpdateGate.shared.permitsNewVoice())` |
+| `isHistoryPlaybackBusy` | `historyPlayback.isVoiceBusy` |
+| `drawer`, `isModalPresented` | the notch surface (drawer state) and the presenting window (sheet/alert) |
+| `hotkeyPhase` | `VoiceState.hotkeyPhase` |
+| `modelsSettings` | `ModelsSettingsState`: `.unavailable(effortDisabledReason)` when not available, `.busy(busyReason)` when busy, else `.ready` |
+| `pending` | one entry per in-flight acknowledgement: hold/pause (VoiceState's private `pendingRecordingHold`/`pendingRecordingPause`: owner lane exposes them), `update`/`updateCheck` (`VoiceBarUpdates.phase`), `clone` (clone controller in flight), `recognizerMutation` (picker transition), `processing(key)` (`processingPending[key]`), `speech(key)`/`speechPreview` (`speechPending`), `dictionaryCommit`, `shortcutCheck` |
+
+## Controls per surface
+
+| Surface | Controls |
+|---|---|
+| Notch wings / teleprompter (BarView) | `record` (start mic), `stopRecording`, `cancel`, `recordingHold`, `recordingPause`, `stopSpeaking` (beside Stop recording: separate intent, `scope:"speech"`), `pausePlayback`, `resumePlayback`, `previousRead`, `nextRead`, `replay`, `seek`, `speedChip`, `dismissTeleprompter`, `showTeleprompter`, `dismissError`, `chooseMicrophone` |
+| Notch drawer (NotchSurface, NotchSettingsDrawer, NotchHistoryPanel) | `openHistory`, `openSettings`, `closeDrawer`, `drawerTab(tab)`, `retranscribe(.drawer, audio:)`, `historyCopy`, `historyPaste`, `checkUpdates`, `update` |
+| Settings window: sidebar | `windowTab(tab)` |
+| Settings › General | `readClipboard`, `restartListener`, `checkShortcut`, `permissionFix`, `hide`, `show`, `microphone(edit, eligible:)` for Make default / drag reorder / move / visible-first |
+| Settings › Transcription | `recognizer(.select/.loadAndSelect/.load/.unload/.download/.cancelDownload/.requestDelete/.confirmDelete, row)`, `processingToggle(key, lockedBy:)` |
+| Settings › Speech | `speechSetting(key)`, `preview(profile)`, `clone(action, engine)` |
+| Settings › Dictionary | `dictionaryEdit(readOnly:)`, `dictionaryCommit` |
+| Settings › History rows | `historyPlay(audio:)`, `historyCopy`, `historyPaste`, `historyReveal`, `retranscribe(.window, audio:)`, `historyNavigate` |
+| Right-click menu / popover | `windowTab(.general)` (Settings…), `hide`, `copyLastTranscript`, `pasteLastTranscript`, `retranscribe(.latest, audio:)`, `chooseMicrophone` (Change…), `quit` |
+| Hotkey / router | `record`, `stopRecording`, `pairedRelease`, `cancel`, `readSelectionKey` (always delivered; reads or explains) |
+
+Recognizer rows: the selected row's Load is `.load`; a non-selected row's Load is `.loadAndSelect`
+(`VoiceState.manageRecognizer` turns it into a select), shown where Load shows, with Select's rules.
+
+## Rules worth knowing
+
+- Stop recording / Cancel / F5 release: enabled whenever a take is unfinished (any capture phase, queued
+  successor, transcription or History job), through closed gate, modal, hidden, pending and disconnection;
+  otherwise disabled with "No unfinished take". Stop speaking follows live speech only ("Nothing is speaking").
+- Local navigation (tabs, drawer open/close, Choose microphone, Show, Dismiss/Show teleprompter, Dismiss
+  error, version check, History copy/navigate/reveal, Copy last transcript, permission fix) is enabled
+  whenever visible. Nothing can disable it.
+- During an agent Ask (speaking, capturing or answering): Read Clipboard, Preview, History Play are refused
+  and the selection key explains, all with "Answering a question". Preview and History Play are refused
+  during playback ("Finish the current playback first").
+- A pending acknowledgement only affects its own control: a pending Lock never disables Record.
+- Cancel Download works disconnected. Processing toggles show "Set by <VAR>" when env-locked.
+
+## Deliberate differences from the model (CONFORMANCE proposals, lead-owned)
+
+Each is applied exactly in `ModelExpectation.relax` and nowhere else: transcription-only block on
+Resume/Previous/Next/Replay/Seek (any capture phase, draining included, still blocks); closed-gate Update;
+closed-gate Quit; unfinished-take lock on Download and ConfirmDelete; clone Start capture lock; clone speech
+lock. Emergency controls stay visible (disabled with the model's reason) where the model hides them.
+
+## Proof in this PR
+
+- `docs/control-availability/model/ControlAvailability.tla`: verbatim copy of model 4bf20052 (blob pinned).
+- `model-table.py` runs TLC over the model's own `Seeds` and pins the table hash in `model-table.json`.
+- `ControlAvailabilityModelOracle.swift` transliterates the TLA; `testOracleReproducesTLCTableExactly`
+  proves it equals TLC's table. `testContractMatchesModelInEveryCell` checks the contract against it in
+  every (control × phase) cell, including EnabledMeansAccepted against the model's independent guards.
+- `ControlAvailabilityContractTests` asserts DisabledHasReason, StopAlwaysReachable, HideNeverCancelsATake,
+  LocalNavigationAvailable, per-operation pending and the adapter mapping directly.
+
+## C5 inventory
+
+`c5-inventory.json` is regenerated with `python3 docs/control-availability/c5-inventory.py`. A historical bad
+cell is SURVIVING only while its family's defect line is still present at C5 (`defectAnchor`); fixing that
+line makes the generator fail and forces a relabel. Overlays without a source check are SOURCE_UNCHECKED.
+Both Python ledgers run in the Bun suite (`src/__tests__/control-availability-ledgers.test.ts`).

@@ -24,6 +24,15 @@ class C5InventoryTests(unittest.TestCase):
         self.assertEqual(sum(c["c5"] == "SURVIVING" for c in cells), 34)
         self.assertEqual(inventory.generate()["native"], "NOT_RUN")
 
+    def test_surviving_only_from_a_source_check(self):
+        result = inventory.generate()
+        for cell in result["cells"]:
+            if cell["c5"] == "SURVIVING":
+                self.assertIn("defectAnchor", cell.get("sourceLayers", {}), cell["id"])
+        for overlay in result["overlays"]:
+            if overlay["c5"] in ("SURVIVING", "REMOVED"):
+                self.assertIn("defectAnchor", overlay, overlay["id"])
+
 
 if __name__ == "__main__":
     unittest.main()

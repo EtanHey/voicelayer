@@ -1,70 +1,204 @@
 import XCTest
 @testable import VoiceBarUI
 
+/// Named properties of formal/control-availability, asserted directly over every contract cell.
 final class ControlAvailabilityContractTests: XCTestCase {
-    private var ready: ControlAvailabilityFacts {
-        var f = ControlAvailabilityFacts()
-        f.connected = true; f.callbackAvailable = true; f.capable = true
-        return f
+    private typealias A = VoiceControlAvailability
+    private let everyFacts = ControlCells.coreFacts + ControlCells.presentationFacts
+    private let everyPending: [PendingOperation] = [.recordingHold, .recordingPause, .update, .updateCheck, .clone,
+        .recognizerMutation, .speechPreview, .dictionaryCommit, .shortcutCheck]
+        + ProcessingKey.allCases.map { .processing($0) } + SpeechSettingKey.allCases.map { .speech($0) }
+
+    private func eval(_ c: VoiceControl, _ f: ControlFacts) -> ControlAvailability {
+        A.evaluate(c, f, handlerInstalled: true)
     }
 
-    func testDrainAndUnknownAdmitVoiceButHealthyPreparedAndCommittedRefuseIt() {
-        for gate in [ControlVoiceGate.open, .draining, .unknown, .prepared, .committed] {
-            var f = ready; f.gate = gate
-            XCTAssertEqual(VoiceControlAvailability.evaluate(.record, f).isEnabled, gate.permitsNewVoice)
-            XCTAssertTrue(VoiceControlAvailability.evaluate(.navigate, f).isEnabled)
-            XCTAssertTrue(VoiceControlAvailability.evaluate(.checkUpdates, f).isEnabled)
+    func testDisabledHasReason() {
+        let cells = everyFacts.map { ($0, ControlCells.coreControls + ControlCells.contractOnlyControls) }
+            + ControlCells.itemFacts.map { ($0, ControlCells.allControls) }
+        for (f, controls) in cells { for c in controls {
+            let a = eval(c, f)
+            if a.isVisible && !a.isEnabled {
+                XCTAssertFalse((a.reason ?? "").isEmpty, "\(c) @ \(f)")
+                XCTAssertEqual(a.tooltip, a.reason); XCTAssertEqual(a.accessibilityHint, a.reason)
+            }
+        } }
+    }
+
+    func testStopAlwaysReachableGivenATakeAndSplitFromStopSpeaking() {
+        for f0 in everyFacts { for pending in [Set<PendingOperation>(), Set(everyPending)] {
+            var f = f0; f.pending = pending
+            for c in [VoiceControl.stopRecording, .cancel, .pairedRelease] {
+                let a = eval(c, f)
+                XCTAssertTrue(a.isVisible, "\(c)")
+                if f.hasUnfinishedTake {
+                    XCTAssertTrue(a.isEnabled, "\(c) must stay reachable @ \(f)")
+                } else {
+                    XCTAssertEqual(a.outcome, .unavailable(A.noUnfinishedTake), "\(c) @ \(f)")
+                }
+            }
+            // Bare speech stop follows live speech, never a take (BARE-STOP scoping).
+            XCTAssertEqual(eval(.stopSpeaking, f).isEnabled, f.speech, "\(f)")
+            if !f.speech { XCTAssertEqual(eval(.stopSpeaking, f).reason, A.nothingSpeaking) }
+        } }
+    }
+
+    func testHideNeverCancelsATake() {
+        for f in everyFacts {
+            if eval(.hide, f).isEnabled { XCTAssertFalse(f.hasUnfinishedTake, "\(f)") }
+            if f.hasUnfinishedTake, eval(.hide, f).isVisible {
+                XCTAssertEqual(eval(.hide, f).reason, "Finish or cancel this take before hiding VoiceBar")
+            }
+            if f.presentation.hidden { XCTAssertTrue(eval(.show, f).isEnabled, "Show restores presentation only") }
         }
     }
 
-    func testBOverAAndDrainKeepEmergencyAndNavigationReachable() {
-        var f = ready; f.unfinished = true
-        XCTAssertTrue(VoiceControlAvailability.evaluate(.record, f).isEnabled)
-        f.draining = true
-        XCTAssertTrue(VoiceControlAvailability.evaluate(.record, f).isEnabled)
-        f.queued = true
-        XCTAssertFalse(VoiceControlAvailability.evaluate(.record, f).isEnabled)
-        f.connected = false; f.gate = .committed; f.pending = true
-        for control in [VoiceControl.stop, .cancel, .pairedRelease, .navigate, .copy] {
-            XCTAssertTrue(VoiceControlAvailability.evaluate(control, f).isEnabled, control.rawValue)
+    func testLocalNavigationAvailableWhateverTheTakeGateConnectionOrPending() {
+        let navigation = ControlCells.allControls.filter(\.isLocalNavigation)
+        XCTAssertGreaterThanOrEqual(navigation.count, 20)
+        for f0 in everyFacts {
+            var f = f0; f.pending = Set(everyPending)
+            for c in navigation {
+                let a = eval(c, f)
+                if a.isVisible { XCTAssertEqual(a.outcome, .available, "\(c) @ \(f)") }
+            }
         }
     }
 
-    func testArchivesShareOneRefusalAndHoldIsSeparateFromPause() {
-        var f = ready; f.capturing = true; f.unfinished = true
-        let results = [VoiceControl.archiveDrawer, .archiveWindow, .archiveLatest].map { VoiceControlAvailability.evaluate($0, f) }
-        XCTAssertEqual(Set(results.compactMap(\.reason)).count, 1)
-        for c in [VoiceControl.recordingHold, .recordingPause] {
-            XCTAssertTrue(VoiceControlAvailability.evaluate(c, f).isEnabled)
-            f.pending = true
-            XCTAssertEqual(VoiceControlAvailability.evaluate(c, f).reason, "Waiting for acknowledgement")
-            f.pending = false
-        }
-        XCTAssertEqual(VoiceControlAvailability.evaluate(.microphoneEdit, f).reason, "Finish recording to change microphones")
-        XCTAssertFalse(VoiceControlAvailability.evaluate(.hide, f).isEnabled)
+    func testPendingIsPerOperation() {
+        let sample = ControlCells.itemFacts.filter { $0.gate == .open && $0.pending.isEmpty }
+        for f in sample { for c in ControlCells.allControls { for op in everyPending
+            where op != c.pendingOperation {
+            var p = f; p.pending.insert(op)
+            XCTAssertEqual(eval(c, p), eval(c, f), "\(op) must not change \(c)")
+        } } }
+        let live = ControlCells.facts(.connected(canQueueRecording: true), .open, .capturing(.vad),
+                                      pending: [.recordingHold])
+        XCTAssertEqual(eval(.recordingHold, live).reason, A.waitingForAcknowledgement)
+        var idle = live; idle.capture = .none
+        XCTAssertTrue(eval(.record, idle).isEnabled, "a pending Lock acknowledgement must not disable Record")
+        XCTAssertEqual(eval(.processingToggle(.modelPolish, lockedBy: nil),
+                            ControlCells.facts(pending: [.processing(.modelPolish)])).reason, "Saving…")
+        XCTAssertTrue(eval(.processingToggle(.outroGate, lockedBy: nil),
+                           ControlCells.facts(pending: [.processing(.modelPolish)])).isEnabled)
     }
 
-    func testExplanationIsAcceptedWithoutClaimingMediaOrDeletion() {
-        var f = ready; f.gate = .prepared
-        let key = VoiceControlAvailability.evaluate(.readSelectionKey, f)
-        XCTAssertTrue(key.isEnabled); XCTAssertEqual(key.outcome, .explain("An update owns VoiceBar"))
-        XCTAssertFalse(VoiceControlAvailability.evaluate(.readClipboard, f).isEnabled)
-        f.ownerReason = "Choose another recognizer first"
-        XCTAssertEqual(VoiceControlAvailability.evaluate(.requestDelete, f).outcome, .explain(f.ownerReason!))
+    func testAgentAskRefusesMediaAndExplainsTheSelectionKey() {
+        let asks = [ControlCells.facts(.connected(canQueueRecording: true), .open, .askCapturing),
+                    ControlCells.facts(.connected(canQueueRecording: true), .open, .none, [], .askSpeaking),
+                    ControlCells.facts(.connected(canQueueRecording: true), .open, .none, .askAnswer)]
+        for f in asks {
+            for c in [VoiceControl.readClipboard, .preview(.short), .preview(.long), .historyPlay(audio: true)] {
+                XCTAssertEqual(eval(c, f).outcome, .unavailable(A.answeringQuestion), "\(c) @ \(f.capture)")
+            }
+            XCTAssertEqual(eval(.readSelectionKey, f).outcome, .explain(A.answeringQuestion))
+            XCTAssertEqual(eval(.record, f).reason, "An agent Ask owns the microphone")
+        }
     }
 
-    func testSelectedNeighborIdentityAndDataRefusalsHaveBothReasonChannels() {
-        var f = ready; f.selectedHealthy = true; f.neighborAvailable = false
-        for c in [VoiceControl.selectRecognizer, .previousRead] {
-            let a = VoiceControlAvailability.evaluate(c, f)
-            XCTAssertFalse(a.isEnabled); XCTAssertNotNil(a.reason)
-            XCTAssertEqual(a.tooltip, a.accessibilityHint)
+    func testPreviewAndHistoryPlayDisabledDuringPlayback() {
+        for b in [PlaybackPhase.preparing, .playing, .paused] {
+            let f = ControlCells.facts(.connected(canQueueRecording: true), .open, .none, [], b)
+            for c in [VoiceControl.preview(.short), .preview(.long), .historyPlay(audio: true)] {
+                XCTAssertEqual(eval(c, f).outcome, .unavailable("Finish the current playback first"), "\(c) @ \(b)")
+            }
+            XCTAssertTrue(eval(.readClipboard, f).isEnabled, "Read Clipboard replaces the current read")
         }
-        f.identityCurrent = false
-        XCTAssertFalse(VoiceControlAvailability.evaluate(.seek, f).isEnabled)
-        f.identityCurrent = true; f.dataAvailable = false
-        XCTAssertFalse(VoiceControlAvailability.evaluate(.preview, f).isEnabled)
-        f.visible = false
-        XCTAssertFalse(VoiceControlAvailability.evaluate(.preview, f).isVisible)
+    }
+
+    func testReservedOpeningBlocksPlaybackEvenWhileModeIsIdle() {
+        let reading = Self.reading(mode: .idle, admission: .opening, paused: true)
+        let f = ControlAvailabilityAdapter.facts(reading)
+        XCTAssertEqual(f.capture, .reservedOpening)
+        for c in [VoiceControl.resumePlayback, .previousRead(available: true), .replay, .seek] {
+            XCTAssertEqual(eval(c, f).reason, "Finish capture or transcription before playback", "\(c)")
+        }
+        XCTAssertTrue(eval(.pausePlayback, f).isEnabled, "Pause stays available: it makes speech safe")
+        XCTAssertFalse(eval(.hide, f).isEnabled)
+    }
+
+    func testAdapterMapsVoiceStateToPhases() {
+        typealias R = VoiceStateReading
+        XCTAssertEqual(ControlAvailabilityAdapter.facts(Self.reading(mode: .recording, admission: .capturing,
+            recordingMode: "vad")).capture, .capturing(.vad))
+        XCTAssertEqual(ControlAvailabilityAdapter.facts(Self.reading(mode: .recording, admission: .capturing,
+            recordingPaused: true)).capture, .paused)
+        XCTAssertEqual(ControlAvailabilityAdapter.facts(Self.reading(mode: .transcribing, admission: .draining,
+            queued: true)).capture, .draining(successorQueued: true))
+        XCTAssertEqual(ControlAvailabilityAdapter.facts(Self.reading(mode: .idle, admission: .opening,
+            queued: true)).capture, .draining(successorQueued: true), "a queued successor waits behind a drain")
+        XCTAssertEqual(ControlAvailabilityAdapter.facts(Self.reading(mode: .recording, admission: .opening,
+            askCapture: true)).capture, .askCapturing)
+        let ask = ControlAvailabilityAdapter.facts(Self.reading(mode: .speaking, ask: .speaking))
+        XCTAssertEqual(ask.playback, .askSpeaking); XCTAssertTrue(ask.agentAsk)
+        let answer = ControlAvailabilityAdapter.facts(Self.reading(mode: .transcribing, ask: .answering))
+        XCTAssertEqual(answer.processing, .askAnswer)
+        let older = ControlAvailabilityAdapter.facts(Self.reading(mode: .idle, processing: 2, history: true))
+        XCTAssertEqual(older.processing, [.transcription, .historyRetranscription]); XCTAssertEqual(older.capture, .none)
+        XCTAssertEqual(ControlAvailabilityAdapter.facts(Self.reading(mode: .idle, historyAudio: true)).playback, .playing)
+        XCTAssertEqual(ControlAvailabilityAdapter.facts(Self.reading(mode: .idle, readback: true)).playback, .readback)
+        XCTAssertEqual(ControlAvailabilityAdapter.facts(Self.reading(mode: .disconnected)).connection, .disconnected)
+        XCTAssertTrue(ControlAvailabilityAdapter.facts(Self.reading(mode: .idle, hotkey: .holding)).physicalGesture)
+        XCTAssertTrue(ControlAvailabilityAdapter.facts(Self.reading(mode: .error)).voiceError)
+    }
+
+    func testRecordingHoldAndPauseEnabledOnlyWhereVoiceStateAccepts() {
+        // VoiceState.setRecordingHold / setRecordingPaused: mode == .recording, matching recordingMode, no own pending.
+        for admission in VoiceStateReading.CaptureAdmission.allCases { for mode in ["vad", "ptt"] {
+            for paused in [false, true] { for pending in [false, true] {
+                var r = Self.reading(mode: admission == .idle ? .idle : .recording, admission: admission,
+                                     recordingMode: mode, recordingPaused: paused)
+                if pending { r.pending = [.recordingHold, .recordingPause] }
+                let f = ControlAvailabilityAdapter.facts(r)
+                let accepts = r.mode == .recording && !pending
+                if eval(.recordingHold, f).isEnabled { XCTAssertTrue(accepts && mode == "vad", "hold \(r)") }
+                if eval(.recordingPause, f).isEnabled { XCTAssertTrue(accepts && mode == "ptt", "pause \(r)") }
+            } }
+        } }
+    }
+
+    func testRecognizerLoadOnAnotherRowFollowsSelectRules() {
+        let other = RecognizerRow(selection: .other, assetsPresent: true, resident: false, downloading: false)
+        let selected = RecognizerRow(selection: .selectedHealthy, assetsPresent: true, resident: false, downloading: false)
+        XCTAssertTrue(eval(.recognizer(.loadAndSelect, other), ControlCells.facts()).isEnabled)
+        XCTAssertEqual(eval(.recognizer(.loadAndSelect, selected), ControlCells.facts()).reason, "Already selected and healthy")
+        XCTAssertTrue(eval(.recognizer(.load, selected), ControlCells.facts()).isEnabled)
+        XCTAssertEqual(eval(.recognizer(.select, selected), ControlCells.facts()).reason, "Already selected and healthy")
+    }
+
+    func testCancelDownloadWorksDisconnectedAndProcessingTogglesExplainLocks() {
+        let row = RecognizerRow(selection: .other, assetsPresent: false, resident: false, downloading: true)
+        XCTAssertTrue(eval(.recognizer(.cancelDownload, row), ControlCells.facts(.disconnected, .committed)).isEnabled)
+        XCTAssertEqual(eval(.processingToggle(.smartChunks, lockedBy: "VOICELAYER_STT_SMART_CHUNKS"), ControlCells.facts()).reason,
+                       "Set by VOICELAYER_STT_SMART_CHUNKS")
+        var busy = ControlCells.facts(); busy.settingsService = .busy("Voice session in progress")
+        XCTAssertEqual(eval(.processingToggle(.modelPolish, lockedBy: nil), busy).reason, "Voice session in progress")
+    }
+
+    func testUnwiredControlIsALoudFaultNotAWorkingButton() {
+        let a = A.evaluate(.record, ControlCells.facts(), handlerInstalled: false)
+        XCTAssertTrue(a.isContractFault); XCTAssertFalse(a.isEnabled); XCTAssertEqual(a.reason, ControlAvailability.unwiredReason)
+        XCTAssertFalse(A.evaluate(.show, ControlCells.facts(), handlerInstalled: false).isVisible, "hidden stays hidden")
+    }
+
+    func testGateMappingKeepsDrainingAndUnknownOpen() {
+        XCTAssertEqual(["OPEN", "DRAINING", "PREPARED", "COMMITTED", nil, "garbage"].map {
+            ControlVoiceGate(ledgerKind: $0).admitsNewVoice }, [true, true, false, false, true, true])
+        XCTAssertTrue(ControlVoiceGate(permitsNewVoice: true).admitsNewVoice)
+        XCTAssertFalse(ControlVoiceGate(permitsNewVoice: false).admitsNewVoice)
+    }
+
+    static func reading(mode: VoiceMode, admission: VoiceStateReading.CaptureAdmission = .idle,
+                        recordingMode: String? = "ptt", recordingPaused: Bool = false, askCapture: Bool = false,
+                        ask: VoiceStateReading.AgentAskSession = .none, queued: Bool = false, processing: Int = 0,
+                        history: Bool = false, paused: Bool = false, readback: Bool = false,
+                        historyAudio: Bool = false, hotkey: HotkeyPhase = .idle) -> VoiceStateReading {
+        VoiceStateReading(mode: mode, isConnected: true, gate: .open, captureAdmission: admission,
+                          recordingMode: recordingMode, isRecordingPaused: recordingPaused, isAskCapture: askCapture,
+                          agentAskSession: ask, hasQueuedRecording: queued, processingTakeCount: processing,
+                          isHistoryRetranscriptionPending: history, supportsRecordingJobs: true,
+                          isPlaybackPreparing: false, isPlaybackPaused: paused, isTeleprompterReadback: readback,
+                          isHistoryPlaybackBusy: historyAudio, isHidden: false, drawer: .none,
+                          isModalPresented: false, hotkeyPhase: hotkey, modelsSettings: .ready, pending: [])
     }
 }
