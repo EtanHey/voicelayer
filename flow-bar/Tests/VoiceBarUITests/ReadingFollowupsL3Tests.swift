@@ -3,7 +3,7 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// C7 L3 follow-ups from the Cursor pre-review (c7/cursor/C4.md): F1, F3, F4, F6, F7; and Sol R900 P2.
+/// C7 L3 follow-ups from the Cursor pre-review (c7/cursor/C4.md): F1, F3, F4, F6, F7; Sol R900 P2; Sol R902 P2/P3.
 @MainActor
 final class ReadingFollowupsL3Tests: XCTestCase {
     private var now: TimeInterval = 1_000
@@ -80,6 +80,57 @@ final class ReadingFollowupsL3Tests: XCTestCase {
         state.handleEvent(try words(from: 25))
         XCTAssertFalse(sent[(scrubAt + 1)...].contains { $0["cmd"] as? String == "speech_seek" },
                        "no word seek after the newer scrub")
+    }
+
+    /// Sol R902 P2: an expiry belongs to the click it was armed for. Click A, scrub (A retired, its expiry still
+    /// armed), click B; A's old expiry must not clear B, whose timing then lands inside B's own window.
+    func testAnOldExpiryNeverClearsANewerClickOnTheSameRead() throws {
+        var expiries: [() -> Void] = []
+        let state = try readingState(timedWords: 25)
+        state.schedulePendingSpeechSeekExpiry = { _, work in expiries.append(work) }
+        state.seekSpeechWord(utteranceID: "u-v09", wordIndex: 26)
+        now += 0.2
+        state.seek(offsetMs: 1_000)
+        now += 0.8
+        state.seekSpeechWord(utteranceID: "u-v09", wordIndex: 30)
+        XCTAssertEqual(expiries.count, 2)
+        now += 0.5
+        expiries[0]() // A's expiry, 1.5 s after A
+        XCTAssertEqual(state.pendingSpeechSeekWordIndex, 30, "A's expiry leaves B waiting")
+        now += 0.1
+        state.handleEvent(try words(from: 25))
+        XCTAssertEqual(seeks.last?["wordIndex"] as? Int, 30, "B's timing, 0.6 s after B, seeks B")
+    }
+
+    /// Sol R902 P2 across reads, and P3: a replacement read drops the old read's waiting click at once (no inherited
+    /// underline), and the old click's expiry never clears a click made on the new read.
+    func testANewReadDropsTheOldClickAndItsExpiryNeverTouchesTheNewRead() throws {
+        var expiries: [() -> Void] = []
+        let fixture = try XCTUnwrap(try JSONSerialization.jsonObject(
+            with: Data(TeleprompterSeekTargetsL3Tests.payload.utf8)) as? [String: Any])
+        let state = try readingState(timedWords: 25)
+        state.schedulePendingSpeechSeekExpiry = { _, work in expiries.append(work) }
+        state.seekSpeechWord(utteranceID: "u-v09", wordIndex: 26)
+        now += 0.2
+        state.handleEvent(["type": "state", "state": "speaking", "text": fixture["text"] as Any, "duration_ms": 39_000,
+                           "playback_id": "b", "generation": 2, "utteranceId": "u-b",
+                           "long_read": ["id": "u-b", "chunk_index": 0, "chunk_count": 1, "chunk_start_ms": 0,
+                                         "display": fixture["display"] as Any]])
+        XCTAssertNil(state.pendingSpeechSeekWordIndex, "read B never shows read A's waiting underline")
+        var b = try words(from: 0, count: 25)
+        b["utteranceId"] = "u-b"
+        state.handleEvent(b)
+        now += 0.8
+        state.seekSpeechWord(utteranceID: "u-b", wordIndex: 30)
+        now += 0.5
+        expiries[0]() // A's expiry
+        XCTAssertEqual(state.pendingSpeechSeekWordIndex, 30, "A's expiry leaves B's click waiting")
+        now += 0.1
+        var rest = try words(from: 25)
+        rest["utteranceId"] = "u-b"
+        state.handleEvent(rest)
+        XCTAssertEqual(seeks.last?["utteranceId"] as? String, "u-b")
+        XCTAssertEqual(seeks.last?["wordIndex"] as? Int, 30)
     }
 
     /// The same intent rule for every other playback navigation the reading player offers.

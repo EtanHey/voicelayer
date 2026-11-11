@@ -2756,9 +2756,9 @@ public final class VoiceState {
             let pending = PendingSpeechSeek(utteranceID: utteranceID, wordIndex: wordIndex,
                                             text: tokens.indices.contains(wordIndex) ? tokens[wordIndex] : nil,
                                             readEpoch: logicalReadEpoch, clickedAt: playbackAmplitudeClock(),
-                                            serial: (pendingSpeechSeek?.serial ?? 0) &+ 1)
+                                            serial: nextPendingSpeechSeekSerial())
             pendingSpeechSeek = pending
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.pendingSpeechSeekWindow) { [weak self] in
+            schedulePendingSpeechSeekExpiry(Self.pendingSpeechSeekWindow) { [weak self] in
                 guard let self, self.pendingSpeechSeek?.serial == pending.serial else { return }
                 self.pendingSpeechSeek = nil
             }
@@ -2772,6 +2772,11 @@ public final class VoiceState {
     /// C4 F1: how long a click on a word not yet timed may wait for its timing. Synthesis normally times the next
     /// chunk well inside this; anything later would move the voice seconds after the click, so it is dropped.
     public static let pendingSpeechSeekWindow: TimeInterval = 1.5
+
+    /// Arms a waiting click's expiry. Tests replace this to run an old expiry at a chosen moment.
+    @ObservationIgnored public var schedulePendingSpeechSeekExpiry: (TimeInterval, @escaping () -> Void) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
 
     /// The display token a click is waiting on (drawn as pending), or nil.
     public var pendingSpeechSeekWordIndex: Int? { pendingSpeechSeek?.wordIndex }
@@ -2788,10 +2793,18 @@ public final class VoiceState {
         let serial: Int
     }
     private var pendingSpeechSeek: PendingSpeechSeek?
+    /// Sol R902 P2: never reset, so each click's expiry is fenced to that click alone. A serial derived from the
+    /// pending item restarted at 1 after a retirement, letting an old expiry clear a newer click (even on a new read).
+    @ObservationIgnored private var pendingSpeechSeekSerials = 0
+    private func nextPendingSpeechSeekSerial() -> Int {
+        pendingSpeechSeekSerials &+= 1
+        return pendingSpeechSeekSerials
+    }
 
     /// Sol R900 P2: a queued word click is the user's intent only until they navigate again. Any newer explicit
     /// playback navigation (a scrub, pause/resume, a speed change, skip, previous read, stop or cancel) retires it,
-    /// so a timing that lands afterwards never drags the voice back to the old word. Another word click replaces it.
+    /// so a timing that lands afterwards never drags the voice back to the old word. Another word click replaces it,
+    /// and a new read drops it (R902 P3).
     private func supersedePendingSpeechSeek() {
         pendingSpeechSeek = nil
     }
@@ -3881,6 +3894,8 @@ public final class VoiceState {
                 if mode != .speaking || edgeUtteranceID != currentUtteranceID ||
                     (edgeUtteranceID == nil && (event["playback_id"] as? String) != currentPlayback?.id) {
                     logicalReadEpoch += 1
+                    // Sol R902 P3: a waiting click belongs to the read it was made on; the new read never shows it.
+                    supersedePendingSpeechSeek()
                 }
                 currentUtteranceID = edgeUtteranceID
                 resetAudioLevels()
