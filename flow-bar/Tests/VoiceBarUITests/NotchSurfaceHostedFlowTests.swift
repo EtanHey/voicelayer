@@ -39,7 +39,11 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
         let panel: FloatingPillPanel
         let rects: [CGRect]
         let paneRequests: PaneRequests
+        let menuRequests: MenuRequests
     }
+
+    /// How often the notch asked the app for its menu.
+    final class MenuRequests { var count = 0 }
 
     /// The requests the Settings drawer hands its panes (the microphone control's scroll target, 0510 N9 / F4).
     final class PaneRequests { var all: [SettingsTabRequest?] = [] }
@@ -131,13 +135,15 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
         let surface = NotchSurfaceModel()
         surface.log = { _ in }
         let paneRequests = PaneRequests()
+        let menuRequests = MenuRequests()
         let context = NotchSettingsDrawerContext(updates: nil, pane: { _, request in
             paneRequests.all.append(request)
             return AnyView(EmptyView())
         })
         let host = PillHostingView(rootView: BarView(
             state: state, commandRouter: Router(), onOpenSettings: {}, onOpenHistory: {},
-            presentationModel: model, includesPanelOutsets: true, surface: surface, settingsDrawer: context
+            presentationModel: model, includesPanelOutsets: true,
+            onOpenNotchMenu: { menuRequests.count += 1 }, surface: surface, settingsDrawer: context
         ))
         host.activeHitTestProvider = { _ in true }
         host.renderedSurfaceHitTestProvider = { _ in true }
@@ -157,7 +163,7 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
             configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 2, trailingControlCountFromCore: 2)
         ).rects.map { $0.offsetBy(dx: launcher.visibleContentRect.minX, dy: launcher.visibleContentRect.minY) }
         return Harness(state: state, model: model, surface: surface, host: host, panel: panel, rects: rects,
-                       paneRequests: paneRequests)
+                       paneRequests: paneRequests, menuRequests: menuRequests)
     }
 
     private func center(_ rect: CGRect) -> NSPoint { NSPoint(x: rect.midX, y: rect.midY) }
@@ -380,6 +386,95 @@ extension NotchSurfaceHostedFlowTests {
                            "[N9] \(activity): General is asked to scroll to Microphone priority")
             harness.panel.orderOut(nil)
         }
+    }
+
+    // MARK: C7-W (Etan QA 2026-11-11: "it does still miss some of my clicks if they're too fast on the notch")
+
+    /// A point on the band's right wing (the recording time and meter), `fromTop` points below the screen's top.
+    private func wingPoint(_ harness: Harness, fromTop: CGFloat = 16) -> NSPoint {
+        let point = notchPoint(harness, fromTop: fromTop)
+        let geometry = harness.model.presentation.geometry
+        return NSPoint(x: point.x + geometry.coreWidth / 2 + 40, y: point.y)
+    }
+
+    /// His fast attempts were clicks on the timer and the waveform, and nothing happened: only a pull opened History.
+    /// A click there opens History, and the same click closes it.
+    func testC7WAClickOnTheRecordingWingOpensHistoryAndClosesIt() throws {
+        let harness = makeHarness()
+        enter(.recording, harness)
+        try click(wingPoint(harness), in: harness.panel)
+        wait { harness.surface.drawer != nil }
+        XCTAssertEqual(harness.surface.drawer, .history(.collapsed), "[C7-W] a click on the recording wing opens History")
+        wait { harness.model.isHistoryPanelOpen }
+        resize(harness)
+        drain(1.0)
+        try click(wingPoint(harness), in: harness.panel)
+        wait { harness.surface.drawer == nil }
+        XCTAssertNil(harness.surface.drawer, "[C7-W] the same click closes it")
+        XCTAssertEqual(harness.menuRequests.count, 0, "a wing click never asks for the notch menu")
+    }
+
+    /// A burst of quick clicks (60 ms apart) is handled click by click: open, close, open, close, open.
+    func testC7WABurstOfFastWingClicksIsHandledClickByClick() throws {
+        let harness = makeHarness()
+        enter(.recording, harness)
+        for index in 1 ... 5 {
+            resize(harness)
+            try click(wingPoint(harness), in: harness.panel)
+            drain(0.06)
+            XCTAssertEqual(harness.surface.drawer != nil, index % 2 == 1, "[C7-W] click \(index) of the burst")
+        }
+        let toggles = harness.surface.journal.filter { entry in
+            if case .openHistory = entry.event { return true }
+            if case .dismiss(.toggle) = entry.event { return true }
+            return false
+        }
+        XCTAssertEqual(toggles.count, 5, "[C7-W] every click of the burst reached the surface")
+    }
+
+    /// A short dab (the pointer slips a few points while clicking) is still a click; a real flick stays a pull.
+    func testC7WAShortDabOnTheWingIsAClick() throws {
+        for travel: CGFloat in [3, 6, 10] {
+            let harness = makeHarness()
+            enter(.recording, harness)
+            let start = wingPoint(harness)
+            try send(.leftMouseDown, at: start, to: harness.panel)
+            try send(.leftMouseDragged, at: NSPoint(x: start.x, y: start.y - travel / 2), to: harness.panel)
+            try send(.leftMouseDragged, at: NSPoint(x: start.x, y: start.y - travel), to: harness.panel)
+            try send(.leftMouseUp, at: NSPoint(x: start.x, y: start.y - travel), to: harness.panel)
+            wait({ harness.surface.drawer != nil }, seconds: 1)
+            XCTAssertEqual(harness.surface.drawer, .history(.collapsed), "[C7-W] a \(travel) pt dab opens History")
+            harness.panel.orderOut(nil)
+        }
+    }
+
+    /// Never Stop or Cancel: their clicks stay theirs.
+    func testC7WClicksOnTheRecordingControlsNeverOpenHistory() throws {
+        let harness = makeHarness()
+        enter(.recording, harness)
+        for index in [0, 1] {
+            try click(control(index, harness), in: harness.panel)
+            drain(0.4)
+            XCTAssertNil(harness.surface.drawer, "[C7-W] recording control \(index) keeps its own click")
+        }
+    }
+
+    /// A click on the bare notch with a drawer open only closes the drawer. It used to ask for the notch menu as
+    /// well (the app then closed History and popped the menu, which the next press dismissed: V01's 75 ms menu).
+    func testC7WABareNotchClickWithADrawerOpenOnlyClosesIt() throws {
+        let harness = makeHarness()
+        try openHistory(harness)
+        XCTAssertEqual(harness.surface.drawer, .history(.collapsed))
+        try click(notchPoint(harness, fromTop: 14), in: harness.panel)
+        wait { harness.surface.drawer == nil }
+        XCTAssertNil(harness.surface.drawer, "[C7-W] the click closes the drawer")
+        drain(0.5)
+        XCTAssertEqual(harness.menuRequests.count, 0, "[C7-W] and shows no notch menu within 500 ms")
+        wait { !harness.model.isHistoryPanelOpen }
+        resize(harness)
+        try click(notchPoint(harness, fromTop: 14), in: harness.panel)
+        drain(0.2)
+        XCTAssertEqual(harness.menuRequests.count, 1, "with no drawer open the notch click still asks for the menu")
     }
 
     /// The open History panel's extend handle, in window space (its native AX adapter is a real NSView).

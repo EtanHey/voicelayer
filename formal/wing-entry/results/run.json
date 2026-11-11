@@ -10,7 +10,7 @@
     "formal/wing-entry/MutantNeverShown.cfg": "56b4efafae276e1e35853f246f6539a78eacdfcea57d106bb9603010c5b60d19",
     "formal/wing-entry/Fixed.cfg": "3a763fbb97949a53f53a61118671ffa6922d82965ab867722b1c42e918d2937c",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchMotion.swift": "2c8780574261d3b8c5333542e9f816290574363a49e9c0568c351a03211bf47f",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "b3d4d8b00ea91748478447ca0cd5235b1c154dbcb251c2d0525bd2de9727e2e7",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "0a1394b9aa200aac8647b974b5a991b797ef93c95cd5efc9a4b270ea4a4262b2",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {

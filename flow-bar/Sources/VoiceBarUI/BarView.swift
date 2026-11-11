@@ -377,6 +377,10 @@ public struct BarView: View {
     @State private var historyMorphGeneration = 0
     @State private var historyPull = NotchHistoryPull()
     @State private var historyPressIsBare = false
+    /// C7-W: the press began on the recording band's wing, off its controls; a click or short dab there toggles History.
+    @State private var historyPressIsWingClick = false
+    /// The furthest this press has travelled from where it began.
+    @State private var historyPressTravel: CGFloat = 0
     @State private var pendingHistoryReleaseVelocity: Double = 0
     @State private var pendingHistoryRowsVelocity: Double = 0
     /// Shots only: the rows the extend handle settled on, instead of the surface's detent.
@@ -786,8 +790,9 @@ public struct BarView: View {
     }
 
     /// Pull History down from the notch (or push it back up by the open panel's bottom edge). A press that never
-    /// moves `dragSlop` is a click and leaves the panel alone; a drag follows the pointer and settles with a spring
-    /// at its release speed (formal/history-pull).
+    /// moves `dragSlop` is a click; a drag follows the pointer and settles with a spring at its release speed
+    /// (formal/history-pull). A click leaves the panel alone, except (C7-W) on the recording wing, where a click or a
+    /// dab of up to `wingClickTravel` toggles the drawer, and on the bare notch, where it closes an open drawer.
     private var historyPullGesture: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.notchCanvasSpace))
             .updating($isHistoryPullGestureActive) { _, active, _ in active = true }
@@ -799,6 +804,8 @@ public struct BarView: View {
                 if case .idle = historyPull.phase, case .idle = historyRowsPull.phase {
                     historyPressIsBare = abs(value.startLocation.x - historyPanelCentreX) <= notchPresentation.geometry.coreWidth / 2
                         && NotchHistoryPull.accepts(y: value.startLocation.y)
+                    historyPressIsWingClick = !historyPressIsBare && pressIsOnRecordingWingOffControls(value.startLocation)
+                    historyPressTravel = 0
                     guard canPullDrawer || isSettingsDrawerOpen || historyPressIsBare else { return }
                     if NotchHistoryPull.accepts(y: value.startLocation.y) {
                         drawerPullDismissalGeneration = surface.dismissalGeneration
@@ -817,6 +824,7 @@ public struct BarView: View {
                     dragHistoryRows(to: value.location.y, time: time)
                     return
                 }
+                historyPressTravel = max(historyPressTravel, abs(value.translation.width), abs(value.translation.height))
                 if max(abs(value.translation.width), abs(value.translation.height)) > NotchHistoryMorph.dragSlop {
                     historyPressIsBare = false
                 }
@@ -1041,11 +1049,17 @@ public struct BarView: View {
         }
         let wasBare = historyPressIsBare
         historyPressIsBare = false
+        // C7-W (Etan, QA 2026-11-11: fast clicks on the notch "not even getting it"): a click or a short dab on the
+        // recording wing, off Stop, Mute and Cancel, toggles the drawer like the launcher's History button.
+        let isWingClick = historyPressIsWingClick && !cancelled && historyPressTravel <= NotchHistoryMorph.wingClickTravel
+        historyPressIsWingClick = false
         let opensSettings = isSettingsPullArmed && !cancelled
         isSettingsPullArmed = false
         presentationModel?.setHistoryPullActive(false)
         switch historyPull.release(progress: historyProgress, cancelled: cancelled) {
-        case let .settle(open, velocity):
+        case let .settle(settlesOpen, velocity):
+            // A dab moved the panel a few points; it still ends as a click: the other state, from where it is drawn.
+            let open = isWingClick && !opensSettings ? !isHistoryPresented : settlesOpen
             if open, opensSettings || pullOpensSettings && !isHistoryPresented {
                 // Pulled past open: Settings, at the same spot and on the same spring (History's list crossfades
                 // into the drawer, `notchLowerPanelContent`).
@@ -1064,10 +1078,46 @@ public struct BarView: View {
                 }
             }
         case .click:
-            if wasBare && !cancelled { onOpenNotchMenu() }
+            if isWingClick {
+                toggleWingDrawer()
+            } else if wasBare && !cancelled {
+                // C7-W: with a drawer open a click on the notch only closes it; the menu waits for the next click.
+                // It used to close History and then pop the menu, which the next press dismissed at once.
+                if isHistoryPresented { surface.send(.dismiss(.toggle)) } else { onOpenNotchMenu() }
+            }
         case .none:
             break
         }
+    }
+
+    /// C7-W: a wing click opens what a pull would (History, or Settings when History is empty) and closes any drawer.
+    private func toggleWingDrawer() {
+        if isHistoryPresented {
+            surface.send(.dismiss(.toggle))
+        } else if canPullHistory {
+            surface.send(.openHistory)
+        } else if pullOpensSettings, canPullDrawer {
+            surface.send(.openSettings(.general))
+        }
+    }
+
+    /// C7-W: the press is on the recording band, on a wing, and not on Stop, Mute/Lock, Cancel or the earlier take's
+    /// spinner (the controls keep their own clicks; this only keeps a near miss between them from opening History).
+    private func pressIsOnRecordingWingOffControls(_ point: CGPoint) -> Bool {
+        let presentation = notchPresentation
+        guard presentation.bandState == .recording, NotchHistoryPull.accepts(y: point.y) else { return false }
+        let geometry = presentation.geometry
+        let fromCentre = point.x - historyPanelCentreX
+        guard abs(fromCentre) > geometry.coreWidth / 2 else { return false }
+        guard fromCentre < 0 else { return true }
+        let material = VoiceBarNotchContract.material
+        let earlierTake = VoiceBarPresentation.showsEarlierTakeProcessing(for: state)
+        let slots: CGFloat = 2 + (recordingPauseControl != nil || recordingHoldControl != nil ? 1 : 0) + (earlierTake ? 1 : 0)
+        let inner = geometry.coreWidth / 2 + VoiceBarPresentation.recordingLeadingCoreInset(
+            wingWidth: geometry.leadingWingWidth, showsEarlierTakeProcessing: earlierTake)
+        let row = slots * material.compactControlSize + (slots - 1) * material.compactControlSpacing
+        let overhang = VoiceBarPillControlButton.hitOverhang
+        return !(inner - overhang ... inner + row + overhang).contains(-fromCentre)
     }
 
     /// A drawer pulls down from the launcher, from itself, and (0510 N7) while recording, transcribing or on a
