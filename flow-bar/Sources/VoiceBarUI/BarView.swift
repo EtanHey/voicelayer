@@ -360,6 +360,9 @@ public struct BarView: View {
     private let historyBridge: VoiceBarNotchHistoryBridge?
     /// Visual shots only: render one History row as hovered without a pointer.
     private var historyForcedHoverIndex: Int?
+    private var historyArchive: NotchHistoryArchiveStore = .shared
+    private var historyInitialScope: SettingsHistoryScope = .recording
+    private var historyInitialSwipe: CGFloat = 0
     /// 2.4 Lane A: the ONE notch surface (formal/notch-surface). Which drawer is open lives there, never in a flag
     /// here. The app and the UIE2E host inject theirs; a BarView without one owns a private model.
     private let injectedSurface: NotchSurfaceModel?
@@ -839,6 +842,9 @@ public struct BarView: View {
                 guard !isDismissedDrawerGesture else { return }
                 let time = NotchHistoryClock.now()
                 if !isDrawerBodyDragActive {
+                    // Lane H: a sideways drag is History's category swipe, never a drawer pull.
+                    guard abs(value.translation.width) <= abs(value.translation.height) * NotchHistoryCategoryPager.horizontalBias
+                    else { isDismissedDrawerGesture = true; return }
                     guard case .idle = historyPull.phase, case .idle = historyRowsPull.phase, isHistoryPresented,
                           (historyFrozenProgress ?? renderedHistoryProgress(at: NotchHistoryClock.now())) > 0.98
                     else { return }
@@ -2162,6 +2168,25 @@ public struct BarView: View {
 
     /// Spec §4: the History panel inside the notch's lower surface.
     private func historyPanelContent(listHeight fixedListHeight: CGFloat? = nil) -> some View {
+        // Lane H: Dictations / Ask / Speech, side to side. The category selector comes out of this same height.
+        NotchHistoryCategoryPanel(
+            dictations: historyDictationsPanel(listHeight: fixedListHeight), archive: historyArchive,
+            initialScope: historyInitialScope, initialSwipe: historyInitialSwipe
+        )
+    }
+
+    /// Visual shots and tests: the archive rows to show, the category to start on and a mid-swipe offset.
+    func historyCategories(
+        archive: NotchHistoryArchiveStore, scope: SettingsHistoryScope = .recording, swipe: CGFloat = 0
+    ) -> BarView {
+        var copy = self
+        copy.historyArchive = archive
+        copy.historyInitialScope = scope
+        copy.historyInitialSwipe = swipe
+        return copy
+    }
+
+    private func historyDictationsPanel(listHeight fixedListHeight: CGFloat?) -> NotchHistoryPanel {
         NotchHistoryPanel(
             entries: state.recentTranscriptionEntries,
             activeRetranscriptionPath: state.activeHistoryRetranscriptionPath,

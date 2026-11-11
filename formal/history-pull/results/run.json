@@ -16,7 +16,7 @@
     "formal/history-pull/MutantWholeRow.cfg": "6544ab0197d83ed41e5656ed651b684a93e1ab7a365c01e437301f1ceb7d351f",
     "formal/history-pull/MutantNoCancel.cfg": "357b152262aea12ebf2f57e912ae60887da0f0b557985172a8ef0d77b50e4314",
     "formal/history-pull/Fixed.cfg": "c6b2a0faf9545471c78f1e04cc2c7a9c126dc3397b13927903a16c43cce8b7e7",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "be8c47de788e397ee66e060d9b9edde92fbda7ca8ea52c7f688ba0dfc293f9c8",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "8f7f43a99908f35526b70523afde9e513c7bf57d8293bcd7dec801f8aad54c12",
     "flow-bar/Sources/VoiceBarUI/NotchHistoryMorph.swift": "e9145dcb0d4433f62a43f0ee63750913b7324850699984fac100c0a0c8150ecb",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
