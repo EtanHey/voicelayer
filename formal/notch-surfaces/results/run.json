@@ -14,7 +14,7 @@
     "formal/notch-surfaces/MutantPresentStale.cfg": "c4e392d37fff16d053e401fa0ffa8d0f8e2c2dd0f81a6e09f082c005f1b88c01",
     "formal/notch-surfaces/Fixed.cfg": "faa99d7f69bc7b7e700b969498156b12b15360fc558d7d78bc4565682bce8f22",
     "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "f2d094a3e219178a7499fb469bd958e2b58ae13666e1c853bffd07e9b593d795",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "7fdbbfb0892afa9bb6a6c1c1a5fe0f13e47a5dd0063b603c8de682bfdb2bcebb",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "b5adb0452736bf544800b44e7cfb249937b5bccae3e6669e5d008bda6f6bc0cd",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "71aa8297b9c50760d8c91c25d4faf502261f57d78dedcc2c8a869a643bd16e2f",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchSurfaceCoordinator.swift": "d37e537343919a323d7d06b9e00d1f777f72ef0b433376724e780f94b66719ca",
     "flow-bar/Sources/VoiceBarUI/BareNotchMenuControl.swift": "a7dc2ca4c1e4afe7b3d1477e40307a7c8c4647ef047d2604d5bc9141813432ac",
