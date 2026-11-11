@@ -28,13 +28,19 @@ struct SettingsCopyButton: View {
     var onCopy: ((String) -> Bool)? = nil
     /// Dictionary row actions reserve their space and reveal on keyboard focus as well as hover/selection.
     var rowActionsVisible: Bool? = nil
+    /// Menus show their action title; ordinary Settings copy controls remain icon-only.
+    var showsTitle = false
     @State private var copied = false
 
     var body: some View {
         if let payload = SettingsCopyPayload.nonempty(text) {
             let button = Button { copy(payload) } label: {
-                Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-                    .labelStyle(.iconOnly)
+                if showsTitle {
+                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                } else {
+                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                        .labelStyle(.iconOnly)
+                }
             }
             .buttonStyle(.borderless)
             .help(copied ? "Copied" : Self.tooltip(label))

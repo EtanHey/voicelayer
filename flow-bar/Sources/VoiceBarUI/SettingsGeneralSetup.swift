@@ -211,7 +211,7 @@ enum SettingsMicrophoneRowPresentation {
         return snapshot.nextDeviceName != nil && snapshot.nextDeviceName == row.label
     }
 
-    static let usedBadge = "Dictation mic"
+    static let usedBadge = "Used for dictation"
 
     /// Make default is offered on any connected, prioritizable mic below the top, whether or not it is the one in use.
     static func offersMakeDefault(_ row: MicrophonePriorityRow, at index: Int) -> Bool {
@@ -237,7 +237,7 @@ enum SettingsGeneralCopy {
     static let relayTitle = "F5 key helper"
     static let shortcutsHeader = "Shortcuts"
     static let singleTapTitle = "Tap F5"
-    static let readClipboardTitle = "Read clipboard"
+    static let readClipboardTitle = "Read clipboard aloud"
     static let diagnosticDescription = "Copies build + recognizer info for a bug report."
     static let microphoneNote =
         "Drag to set order. First connected mic is used."

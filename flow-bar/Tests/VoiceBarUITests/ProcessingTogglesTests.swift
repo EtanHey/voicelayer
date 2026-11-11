@@ -93,7 +93,7 @@ final class ProcessingTogglesTests: XCTestCase {
 
     /// Etan (QA 2026-11-11, shot 5, the second time he asked): the lock's reason is not in the row's text; the row
     /// paints only its explanation, and the switch shows the reason on hover. Fails on 8e1d5352, where the
-    /// description led with "Needs Whisper.".
+    /// description led with "Unavailable with Parakeet.".
     func testALockedRowPaintsOnlyItsExplanationAndTheSwitchCarriesTheReason() throws {
         let source = try String(
             contentsOf: URL(fileURLWithPath: #filePath)
@@ -110,7 +110,7 @@ final class ProcessingTogglesTests: XCTestCase {
         let state = try XCTUnwrap(PolishControlsState(healthEvent: Self.health(Self.controls())))
         let parakeet = RecognizerPickerState(selected: .parakeet, effective: .parakeet, parakeet: .loaded, whisper: .unloaded)
         let smart = try XCTUnwrap(ModelsSettingsView.processingRows(for: state, recognizer: parakeet).last)
-        XCTAssertEqual(smart.lockedReason, "Needs Whisper")
+        XCTAssertEqual(smart.lockedReason, "Unavailable with Parakeet")
         XCTAssertFalse(smart.line.contains("Parakeet"), "the reason never reaches the painted text")
     }
 

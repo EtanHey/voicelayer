@@ -7,7 +7,7 @@ final class SettingsVersionFooterTests: XCTestCase {
         let cases: [(VoiceBarVersionStatus, String, String)] = [
             (.checking, "Checking…", "Checking for updates…"),
             (.latest, "Up to date", "You are on the latest version"),
-            (.ahead(latest: "2.2.58"), "Up to date", "Newer than the latest release (2.2.58)"),
+            (.ahead(latest: "2.2.58"), "Ahead of release", "Newer than the latest release (2.2.58)"),
             (.available("2.2.60"), "Update available", "VoiceBar 2.2.60 is available"),
             (.couldNotCheck, "Check failed", "Could not check for updates"),
         ]
@@ -48,7 +48,7 @@ final class SettingsVersionFooterTests: XCTestCase {
         let installed = VoiceBarInstalledVersion(version: "2.4.0", commit: "abcdef0123")
         let describe = VoiceBarGitDescribe(releaseVersion: "2.3.0", commitsAhead: 14)
         XCTAssertEqual(SettingsVersionFooter.line(installed: installed, status: .ahead(latest: "2.3.0"), describe: describe),
-                       "VoiceBar 2.4.0 · Up to date")
+                       "VoiceBar 2.4.0 · Ahead of release")
         XCTAssertEqual(SettingsVersionFooter.line(installed: installed, status: .available("2.4.1"), describe: describe),
                        "VoiceBar 2.4.0 · Update available")
         XCTAssertEqual(SettingsVersionFooter.statusText(.latest, describe: .init(releaseVersion: "2.4.0", commitsAhead: 0)),

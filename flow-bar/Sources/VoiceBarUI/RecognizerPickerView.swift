@@ -19,7 +19,7 @@ public struct RecognizerPickerView: View {
     }
     var displayedExplanation: String? {
         if suppressDisabledExplanation, let disabled = state.disabledReason, state.explanation == disabled { return nil }
-        return state.explanation ?? (onSelect == nil ? "Switching unavailable" : nil)
+        return state.explanation ?? (onSelect == nil ? "Recognizer switching unavailable" : nil)
     }
     /// Spec 2.3 row names: Parakeet is short; Whisper keeps its model name.
     static func rowTitle(_ engine: RecognizerPickerEngine) -> String {

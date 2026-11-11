@@ -93,8 +93,10 @@ final class SettingsPolishS5Tests: XCTestCase {
                 initialDictionaryPreview: loaded ? preview : nil)
             let lines = try Self.ocr(Self.render(pane.notchDrawerPane(.dictionary), height: 470,
                 name: loaded ? "dictionary-empty" : "dictionary-loading"))
-            XCTAssertTrue(lines.contains { $0.contains(loaded ? "your spellings belong here" : "getting dictionary ready") })
-            XCTAssertFalse(lines.contains { $0 == "loading..." || $0 == "loading…" || $0 == "built in" })
+            XCTAssertTrue(lines.contains { $0.contains(loaded ? "no terms yet" : "loading") })
+            XCTAssertEqual(lines.filter { $0.contains("loading") }.count, loaded ? 0 : 1,
+                           "One known Loading state; Included terms must not duplicate it")
+            XCTAssertFalse(lines.contains { $0 == "built in" })
         }
     }
 

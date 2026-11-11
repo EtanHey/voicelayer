@@ -51,14 +51,14 @@ final class SettingsDrawerLaneSLayoutTests: XCTestCase {
         XCTAssertLessThan(abs(usedPitch - plainPitch), 3,
                           "[S1] in-use and plain rows share their two-line pitch (\(usedPitch) vs \(plainPitch))")
         let title = try Self.line(lines, containing: "macbook pro microphone")
-        let pill = try Self.line(lines, containing: "dictation mic")
+        let pill = try Self.line(lines, containing: "used for dictation")
         // OCR may read "Connected Used for dictation" as one line; either way its centre is the status line's.
         let statusLineY = title.box.maxY + 4
         XCTAssertLessThan(abs(pill.box.midY - (statusLineY + pill.box.height / 2)), 6,
                           "[S1] the pill must sit on the status line right under the name: title \(title.box), pill \(pill.box)")
     }
 
-    /// Shot 5: "Needs Whisper." led the Smart chunks description. At rest the row now paints only what it
+    /// Shot 5: "Unavailable with Parakeet." led the Smart chunks description. At rest the row now paints only what it
     /// does; the reason shows when the switch is hovered (SettingsDrawerLaneSSnapshotTests renders that state).
     func testSmartChunksNeverPaintsItsLockReasonInItsText() throws {
         let lines = try Self.paintedLines(SettingsDrawerLaneSSnapshotTests.drawer(.transcription, updates: nil), height: 1100)
@@ -125,8 +125,8 @@ final class SettingsDrawerLaneSLayoutTests: XCTestCase {
     func testTheVersionFooterStatusIsOneLineOnTheTitleEdge() async throws {
         let updates = await SettingsDrawerLaneSSnapshotTests.updates()
         let lines = try Self.paintedLines(SettingsDrawerLaneSSnapshotTests.drawer(.general, updates: updates), height: 470)
-        let status = try Self.line(lines, containing: "up to date")
-        XCTAssertFalse(lines.contains { $0.text.contains("ahead of release") || $0.text.contains("8e1d535") })
+        let status = try Self.line(lines, containing: "no newer release")
+        XCTAssertFalse(lines.contains { $0.text.contains("commits") || $0.text.contains("8e1d535") })
         let build = try Self.line(lines, containing: "2.4.0")
         XCTAssertEqual(status.box.minX, build.box.minX, accuracy: 2, "[S5] status and build line share an edge")
     }

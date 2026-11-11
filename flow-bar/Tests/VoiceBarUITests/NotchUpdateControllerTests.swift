@@ -33,7 +33,7 @@ final class NotchUpdateControllerTests: XCTestCase {
         let installed = VoiceBarInstalledVersion(version: "2.3.0", commit: "a1b2c3d4e5f6")
         let ahead = VoiceBarGitDescribe(releaseVersion: "2.2.61", commitsAhead: 14)
         XCTAssertEqual(VoiceBarBuildLine.text(installed: installed, describe: ahead, status: .ahead(latest: "2.2.61")),
-                       "2.3.0 · up to date")
+                       "2.3.0 · ahead of release 2.2.61")
         XCTAssertEqual(VoiceBarBuildLine.text(installed: installed, describe: .init(releaseVersion: "2.3.0", commitsAhead: 1),
                                               status: .latest), "2.3.0 · up to date")
         XCTAssertEqual(VoiceBarBuildLine.text(installed: installed, describe: .init(releaseVersion: "2.3.0", commitsAhead: 0),
@@ -42,7 +42,7 @@ final class NotchUpdateControllerTests: XCTestCase {
                        "2.3.0 · update available: 2.3.1", "an available update outranks local commits")
         XCTAssertEqual(VoiceBarBuildLine.text(installed: installed, describe: nil, status: nil), "2.3.0")
         XCTAssertEqual(VoiceBarBuildLine.text(installed: installed, describe: nil, status: .ahead(latest: "2.2.61")),
-                       "2.3.0 · up to date")
+                       "2.3.0 · ahead of release 2.2.61")
     }
 
     func testCheckForUpdatesFindsAnAvailableReleaseAndItsNotes() async {

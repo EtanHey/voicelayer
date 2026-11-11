@@ -48,7 +48,7 @@ public enum VoiceBarBuildLine {
         case nil: return nil
         case .checking: return "checking…"
         case .latest: return "up to date"
-        case .ahead: return "up to date"
+        case let .ahead(latest): return "ahead of release \(latest)"
         case let .available(version): return "update available: \(version)"
         case .couldNotCheck: return "could not check"
         }

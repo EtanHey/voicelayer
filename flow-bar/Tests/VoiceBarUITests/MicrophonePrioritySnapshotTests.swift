@@ -111,7 +111,7 @@ final class MicrophonePrioritySnapshotTests: XCTestCase {
         XCTAssertNil(snapshot.reorderedUIDs(moving: 1, by: 1))
     }
 
-    // MARK: - Etan's 2.2.24 review #5: "prefer top" on click, or drag to reorder, instead of up/up/up arrows
+    // MARK: - Etan's 2.2.24 review #5: "make default" on click, or drag to reorder, instead of up/up/up arrows
 
     private var threeMicsAndAHiddenAggregate: MicrophonePrioritySnapshot {
         MicrophonePrioritySnapshot(rows: [

@@ -112,7 +112,7 @@ public struct SpeechSettingsView: View {
 
     /// The split is one explicit draft control; reporting provenance stays in help, never permanent telemetry.
     private var thresholdSection: some View {
-        Section("Profiles") {
+        Section("Voice profile threshold") {
             let blocked = SpeechThresholdDraft.blockedReason(controls: controls, connected: connected, busy: busy,
                                                              pending: pending, callbackAvailable: onChange != nil)
             let canApply = thresholdDraft.canApply(controls: controls, connected: connected, busy: busy,

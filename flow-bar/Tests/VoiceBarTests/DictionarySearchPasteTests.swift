@@ -30,7 +30,7 @@ final class DictionarySearchPasteTests: XCTestCase {
         window.contentView?.layoutSubtreeIfNeeded()
         self.window = window
         let field = try XCTUnwrap(Self.textFields(in: try XCTUnwrap(window.contentView)).first {
-            $0.isEditable && ($0.placeholderString ?? $0.placeholderAttributedString?.string) == "Search dictionary"
+            $0.isEditable && ($0.placeholderString ?? $0.placeholderAttributedString?.string) == "Search terms and variants"
         }, "the Dictionary search is a real editable text field")
         XCTAssertTrue(window.makeFirstResponder(field))
         return try XCTUnwrap(window.firstResponder as? NSTextView, "focus lands in the field editor")

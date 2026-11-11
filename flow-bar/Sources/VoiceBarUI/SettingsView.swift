@@ -1323,7 +1323,7 @@ public struct SettingsView: View {
                         description: VoiceBarHotkeyContract.speakSelectionDescription) { EmptyView() }
             SettingsRow(title: SettingsGeneralCopy.readClipboardTitle,
                         description: VoiceBarHotkeyContract.readClipboardDescription) {
-                Button("Read") { onReadClipboard?() }
+                Button(VoiceBarHotkeyContract.readClipboardActionLabel) { onReadClipboard?() }
                     .accessibilityLabel(VoiceBarHotkeyContract.readClipboardActionLabel)
                     .disabled(onReadClipboard == nil)
             }
@@ -1425,7 +1425,7 @@ public struct SettingsView: View {
             // disconnected one, and promoting it keeps it first when that one reconnects.
             if SettingsMicrophoneRowPresentation.offersMakeDefault(row, at: index) {
                 // Focus reveals the same reserved control as hover; the named VoiceOver action stays below.
-                Button("Prefer top") {
+                Button("Make default") {
                     makeMicrophoneDefault(at: index)
                 }
                 .controlSize(.small)
@@ -1455,7 +1455,7 @@ public struct SettingsView: View {
         .accessibilityActions {
             if microphoneEditReason == nil {
                 if SettingsMicrophoneRowPresentation.offersMakeDefault(row, at: index) {
-                    Button("Prefer top") { makeMicrophoneDefault(at: index) }
+                    Button("Make default") { makeMicrophoneDefault(at: index) }
                 }
                 if microphoneSnapshot.reorderedVisibleUIDs(moving: index, by: -1) != nil {
                     Button("Move up") { moveMicrophone(at: index, by: -1) }
@@ -2512,12 +2512,12 @@ public struct SettingsView: View {
                             case .loading:
                                 HStack(spacing: 8) {
                                     ProgressView().controlSize(.small)
-                                    SettingsRowLabel(title: "Getting dictionary ready…",
+                                    SettingsRowLabel(title: "Loading…",
                                                      description: "Your terms and included spellings will appear here.")
                                 }
                                 .padding(.horizontal, 6).padding(.vertical, 12)
                             case .empty:
-                                SettingsRowLabel(title: "Your spellings belong here",
+                                SettingsRowLabel(title: "No terms yet",
                                                  description: "Add a preferred spelling to improve dictation.")
                                     .padding(.horizontal, 6).padding(.vertical, 12)
                             case nil:
@@ -2717,7 +2717,7 @@ public struct SettingsView: View {
                 .foregroundStyle(.secondary)
             // The search is a plain TextField: normal macOS editing, Edit menu ⌘V, and P1's paste integration reach it
             // through `focusedEditorField == .search`. No paste path of its own.
-            TextField("Search dictionary", text: $dictionarySearch)
+            TextField("Search terms and variants", text: $dictionarySearch)
                 .dictionaryTextField()
                 .focused($focusedEditorField, equals: .search)
                 .onExitCommand { dictionarySearch = "" }
@@ -2830,10 +2830,7 @@ public struct SettingsView: View {
                 }
                 // Only the selected row contributes action stops. Delete stays behind this menu and confirmation.
                 Menu {
-                    Button("Copy") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(entry.canonical, forType: .string)
-                    }
+                    SettingsCopyButton(text: entry.canonical, label: "term \(entry.canonical)", showsTitle: true)
                     if isEditable {
                         Divider()
                         Button("Delete…", role: .destructive) { requestTermRemoval(entry.canonical, rowID: rowID) }

@@ -205,7 +205,7 @@ extension VoiceBarVersionStatus {
         switch self {
         case .checking: "Checking…"
         case .latest: "Up to date"
-        case .ahead: "Up to date"
+        case .ahead: "Ahead of release"
         case .available: "Update available"
         case .couldNotCheck: "Check failed"
         }

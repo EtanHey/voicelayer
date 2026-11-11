@@ -68,7 +68,7 @@ final class MicrophoneStatusAlignmentTests: XCTestCase {
         request.recognitionLanguages = ["en-US"]
         try VNImageRequestHandler(cgImage: XCTUnwrap(painted.cgImage), options: [:]).perform([request])
         let statusInk = try XCTUnwrap(request.results?.first {
-            $0.topCandidates(1).first?.string.lowercased().contains("dictation mic") == true
+            $0.topCandidates(1).first?.string.lowercased().contains("used for dictation") == true
         }).boundingBox
         let statusCentre = (1 - statusInk.midY) * host.bounds.height
         XCTAssertEqual(action.midY, statusCentre, accuracy: 1,

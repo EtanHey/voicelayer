@@ -377,7 +377,7 @@ public struct ModelsSettingsView: View {
     /// D194-r1: smart chunks exist only on the resident Whisper server path (src/stt.ts);
     /// whisper-cli and Wispr Flow return no segments, and a server request that falls back to the CLI skips them.
     /// Etan's note #2 (2.3): smart chunks are Whisper-only, so with Parakeet the row is disabled with this tooltip.
-    static let unavailableWithParakeet = "Needs Whisper"
+    static let unavailableWithParakeet = "Unavailable with Parakeet"
 
     static let whisperServerOnly = "Whisper server only: the whisper-cli and Wispr Flow fallbacks skip it."
 
