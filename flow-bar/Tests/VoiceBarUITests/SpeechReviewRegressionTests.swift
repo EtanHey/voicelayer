@@ -104,10 +104,11 @@ final class SpeechReviewRegressionTests: XCTestCase {
         XCTAssertEqual(SpeechSettingsView.engineLabel("edge"), "Fast")
         XCTAssertEqual(SpeechSettingsView.rateLabel("+10%"), "+10% faster")
         XCTAssertEqual(SpeechSettingsView.rateLabel("+0%"), "Normal")
-        // SETUI1 round 2: beside the slider, whose caption already says "Normal", 0 reads "0%".
-        XCTAssertEqual(SpeechSettingsView.rateValueLabel("+0%"), "0%")
-        XCTAssertEqual(SpeechSettingsView.rateValueLabel("+10%"), "+10% faster")
-        XCTAssertEqual(SpeechSettingsView.rateValueLabel("-20%"), "-20% slower")
+        // Lane S PR 3: the slider's ends carry a tortoise and a hare, so the value beside it reads "Normal" at 0 and
+        // the signed percent otherwise (Etan's video, 303.8 s: a stray "0%" beside the slider).
+        XCTAssertEqual(SpeechSettingsView.rateValueLabel("+0%"), "Normal")
+        XCTAssertEqual(SpeechSettingsView.rateValueLabel("+10%"), "+10%")
+        XCTAssertEqual(SpeechSettingsView.rateValueLabel("-20%"), "-20%")
         XCTAssertTrue(SpeechSettingsView.subtitle(.long, limit: 600).contains("600"))
         XCTAssertTrue(SpeechSettingsView.lockFooter(.short, controls: controls)?.contains("applies to both profiles") == true)
         XCTAssertNil(SpeechSettingsView.cloneStatusOwner(controls: controls, pending: [:]))

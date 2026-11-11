@@ -11,11 +11,14 @@ struct SettingsRow<Lead: View, Trailing: View>: View {
     /// the row's control and the description gets the full text column.
     var titleBadge: SettingsPill?
     var isSelected = false
+    /// The text column's minimum before the controls wrap under it. A one-word title ("Rate") can give its wide
+    /// control (a slider) the room instead (lane S PR 3).
+    var textMinWidth: CGFloat = SettingsRowLabel.textMinWidth
     @ViewBuilder var lead: () -> Lead
     @ViewBuilder var trailing: () -> Trailing
 
     var body: some View {
-        SettingsRowLayout {
+        SettingsRowLayout(textMinWidth: textMinWidth) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 lead()
                 SettingsRowLabel(title: title, description: description, badge: badge, titleBadge: titleBadge,
@@ -31,9 +34,10 @@ struct SettingsRow<Lead: View, Trailing: View>: View {
 
 extension SettingsRow where Lead == EmptyView {
     init(title: String, description: String? = nil, badge: String? = nil, titleBadge: SettingsPill? = nil,
-         isSelected: Bool = false, @ViewBuilder trailing: @escaping () -> Trailing) {
+         isSelected: Bool = false, textMinWidth: CGFloat = SettingsRowLabel.textMinWidth,
+         @ViewBuilder trailing: @escaping () -> Trailing) {
         self.init(title: title, description: description, badge: badge, titleBadge: titleBadge,
-                  isSelected: isSelected, lead: { EmptyView() }, trailing: trailing)
+                  isSelected: isSelected, textMinWidth: textMinWidth, lead: { EmptyView() }, trailing: trailing)
     }
 }
 

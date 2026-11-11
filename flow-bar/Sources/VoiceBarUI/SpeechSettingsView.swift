@@ -25,19 +25,6 @@ public struct SpeechSettingsView: View {
     /// Spec V10: shown in orange under a profile that uses the cloned voice while the engine isn't running.
     static let fastVoiceFallbackLine = "Uses the fast voice while the engine is stopped."
     static let rateRange: ClosedRange<Double> = -30...50
-    static let normalRateFraction = (0 - rateRange.lowerBound) / (rateRange.upperBound - rateRange.lowerBound)
-    /// The native horizontal knob's width; its centre stops half of it in from each end. A constant on purpose:
-    /// asking AppKit for it inside `body` re-entered the SwiftUI graph update and aborted (SETUI1 round 2). The
-    /// AppKit value is pinned by SpeechSettingsRenderTests, outside any view.
-    static let sliderKnobWidth: CGFloat = 20
-
-    /// Where a caption must be centred to sit under the knob at `fraction` of the range. SETUI1: centring on
-    /// `width * fraction` put "Normal" 2.5 pt left of the knob at 300 pt, because the knob never reaches the edges.
-    static func rateCaptionX(fraction: Double, width: CGFloat, knobWidth: CGFloat) -> CGFloat {
-        guard width > knobWidth else { return width * fraction }
-        return knobWidth / 2 + (width - knobWidth) * fraction
-    }
-
     struct DisplayProfile {
         let engine: String
         let voice: String
@@ -62,85 +49,23 @@ public struct SpeechSettingsView: View {
             if let controls, connected {
                 ForEach(SpeechProfile.allCases, id: \.self) { kind in
                     if let profile = controls.profiles[kind], let display = Self.displayProfile(kind, controls: controls, pending: pending) {
+                        // Lane S PR 3 (Etan QA 2026-11-11, video 303.8 s "that's still slop UI"): both profiles share one
+                        // anatomy on the row grid. Voice row: the measurement as its one helper line, the picker and
+                        // Preview trailing (a disabled Preview says why on hover). Rate row: slider and a readable
+                        // value. Nothing inline explains a disabled control.
                         Section {
-                            field("Voice", key: "\(kind.rawValue).voice", controls: controls) {
-                                if controls.lockReason(for: "\(kind.rawValue).voice") != nil || controls.lockReason(for: "\(kind.rawValue).engine") != nil {
-                                    Text(Self.voiceLabel(display.voice)).foregroundStyle(.primary)
-                                } else {
-                                    Picker("Voice", selection: Binding(get: { "\(display.engine):\(display.voice)" }, set: { id in
-                                        if let selected = controls.availableVoices.first(where: { "\($0.engine):\($0.voice)" == id }) {
-                                            onSelectEngine?(kind, selected.engine, selected.voice)
-                                        }
-                                    })) {
-                                        Section("Fast") {
-                                            ForEach(controls.voices(for: "edge"), id: \.self) {
-                                                Text(Self.voiceLabel($0)).tag("edge:\($0)")
-                                            }
-                                        }
-                                        Section("Cloned") {
-                                            ForEach(controls.voices(for: "clone"), id: \.self) {
-                                                Text(Self.voiceLabel($0)).tag("clone:\($0)")
-                                            }
-                                        }
-                                    }.labelsHidden()
-                                }
+                            SettingsRow(title: "Voice", description: Self.latencyDisplay(profile.latencyLabel)) {
+                                voiceControl(kind, display: display, controls: controls)
+                                previewControl(kind)
                             }
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Button("Preview") { onPreview?(kind) }
-                                        .disabled(busy || !pending.isEmpty || onPreview == nil)
-                                        .accessibilityIdentifier("speech-\(kind.rawValue)-preview")
-                                    if let hint = previewHint(kind) {
-                                        Text(hint).font(.caption).foregroundStyle(.secondary)
-                                    }
-                                }
-                                Text(profile.latencyLabel).foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .help("Time from requesting speech until the audio player starts, including preparation and queue wait.")
-                                    .accessibilityIdentifier("speech-\(kind.rawValue)-latency")
+                            .accessibilityIdentifier("speech-\(kind.rawValue)-latency")
+                            .settingsLockedReasonBubble()
+                            SettingsRow(title: "Rate", textMinWidth: Self.rateTitleWidth) {
+                                rateControl(kind, profile: profile, controls: controls)
                             }
-                            field("Rate", key: "\(kind.rawValue).rate", controls: controls) {
-                                let rate = binding("\(kind.rawValue).rate", profile.rate.effective)
-                                if controls.lockReason(for: "\(kind.rawValue).rate") != nil {
-                                    Text(Self.rateLabel(rate.wrappedValue)).foregroundStyle(.primary)
-                                } else {
-                                    HStack(alignment: .top) {
-                                        Slider(value: Binding(get: { rateDraft[kind] ?? min(50, max(-30, Double(rate.wrappedValue.dropLast()) ?? 0)) },
-                                                              set: { rateDraft[kind] = $0 }),
-                                               in: Self.rateRange, step: 5, onEditingChanged: { editing in
-                                                   if !editing, let value = rateDraft.removeValue(forKey: kind) {
-                                                       rate.wrappedValue = String(format: "%+d%%", Int(value))
-                                                   }
-                                               }).accessibilityLabel("\(kind.title) rate")
-                                            // The row supplies "Rate"; omit Form's empty built-in label column.
-                                            .labelsHidden()
-                                            .overlay(alignment: .top) {
-                                                GeometryReader { geometry in
-                                                    HStack {
-                                                        Text("Slower")
-                                                        Spacer()
-                                                        Text("Faster")
-                                                    }
-                                                    Text("Normal")
-                                                        .fixedSize()
-                                                        .position(x: Self.rateCaptionX(
-                                                            fraction: Self.normalRateFraction,
-                                                            width: geometry.size.width,
-                                                            knobWidth: Self.sliderKnobWidth
-                                                        ),
-                                                                  y: geometry.size.height / 2)
-                                                }
-                                                .font(.caption2).foregroundStyle(.secondary)
-                                                .frame(height: 14)
-                                                .offset(y: 24)
-                                            }
-                                            .frame(height: 22)
-                                            .padding(.bottom, 16)
-                                        Text(Self.rateValueLabel(rateDraft[kind].map { String(format: "%+d%%", Int($0)) } ?? rate.wrappedValue))
-                                            .monospacedDigit().frame(width: 110, height: 22, alignment: .trailing)
-                                    }
-                                }
-                            }
+                            .disabled(Self.fieldDisabled("\(kind.rawValue).rate", controls: controls, pending: pending,
+                                                         callbackAvailable: onChange != nil))
+                            .accessibilityIdentifier("speech-\(kind.rawValue).rate")
                             // V10 removed the copy-a-command fallback; the engine row above starts the engine.
                             if display.cloneWarning {
                                 Label(Self.fastVoiceFallbackLine, systemImage: "exclamationmark.triangle.fill")
@@ -150,11 +75,12 @@ public struct SpeechSettingsView: View {
                                     .accessibilityIdentifier("speech-\(kind.rawValue)-fast-voice-fallback")
                             }
                         } header: {
-                            VStack(alignment: .leading, spacing: 4) {
+                            VStack(alignment: .leading, spacing: 2) {
                                 Text(kind.title)
-                                Text(SpeechThresholdDraft.captionContext).font(.caption).foregroundStyle(.secondary)
                                 Text(Self.subtitle(kind, limit: controls.shortLimit.effective))
-                                    .font(.caption).foregroundStyle(.secondary).fontWeight(.regular)
+                                    .font(.system(size: 11.5)).fontWeight(.regular)
+                                    .foregroundStyle(SettingsPanePalette.helper)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                         } footer: {
                             VStack(alignment: .leading, spacing: 4) {
@@ -184,50 +110,145 @@ public struct SpeechSettingsView: View {
         .accessibilityIdentifier("speech-settings-form")
     }
 
+    /// Compact (lane S PR 3): the reported cutoff with its caveat as one row, then the draft line with one helper line.
+    /// Why Apply is unavailable shows on hover of Apply, like a locked switch.
     private var thresholdSection: some View {
         Section("Voice profile threshold") {
-            Text(SpeechThresholdDraft.confirmedLabel(controls?.shortLimit))
+            SettingsRow(title: SpeechThresholdDraft.confirmedLabel(controls?.shortLimit),
+                        description: SpeechThresholdDraft.reportStatus) { EmptyView() }
                 .accessibilityIdentifier("speech-threshold-applied")
-            Text(SpeechThresholdDraft.reportStatus).font(.caption).foregroundStyle(.secondary)
-            HStack {
-                Text("Draft").lineLimit(1).fixedSize()
-                TextField("Characters", text: Binding(
-                    get: { thresholdDraft.displayedText(controls?.shortLimit) },
-                    set: { thresholdDraft.edit($0) }))
-                    .labelsHidden()
-                    .textFieldStyle(.roundedBorder).frame(width: 130)
-                    .multilineTextAlignment(.trailing)
-                    .onSubmit {} // Enter, like blur, never applies a draft.
-                    .accessibilityLabel("Voice profile threshold draft in characters")
-                    .accessibilityIdentifier("speech-threshold-draft")
-                Text("characters").foregroundStyle(.secondary)
-                    .lineLimit(1).fixedSize().layoutPriority(1)
-                Spacer()
-                Button("Apply") {
-                    thresholdDraft.apply(controls: controls, connected: connected, busy: busy,
-                                         pending: pending, onChange: onChange)
-                }
-                .lineLimit(1).fixedSize()
-                .disabled(!thresholdDraft.canApply(controls: controls, connected: connected, busy: busy,
-                                                  pending: pending, callbackAvailable: onChange != nil))
-                .accessibilityIdentifier("speech-threshold-apply")
-                Button("Revert") { thresholdDraft.revert() }
+            let blocked = SpeechThresholdDraft.blockedReason(controls: controls, connected: connected, busy: busy,
+                                                             pending: pending, callbackAvailable: onChange != nil)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Draft").lineLimit(1).fixedSize()
+                    TextField("Characters", text: Binding(
+                        get: { thresholdDraft.displayedText(controls?.shortLimit) },
+                        set: { thresholdDraft.edit($0) }))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder).frame(width: 90)
+                        .multilineTextAlignment(.trailing)
+                        .onSubmit {} // Enter, like blur, never applies a draft.
+                        .accessibilityLabel("Voice profile threshold draft in characters")
+                        .accessibilityIdentifier("speech-threshold-draft")
+                    Text("characters").foregroundStyle(.secondary)
+                        .lineLimit(1).fixedSize().layoutPriority(1)
+                    Spacer()
+                    let canApply = thresholdDraft.canApply(controls: controls, connected: connected, busy: busy,
+                                                           pending: pending, callbackAvailable: onChange != nil)
+                    Button("Apply") {
+                        thresholdDraft.apply(controls: controls, connected: connected, busy: busy,
+                                             pending: pending, onChange: onChange)
+                    }
                     .lineLimit(1).fixedSize()
-                    .help(SpeechThresholdDraft.revertHelp)
-                    .accessibilityLabel("Revert draft to last reported cutoff")
-                    .disabled(thresholdDraft.text == nil || controls == nil)
-                    .accessibilityIdentifier("speech-threshold-revert")
+                    .disabled(!canApply)
+                    .accessibilityIdentifier("speech-threshold-apply")
+                    .settingsLockedReason(canApply ? nil : blocked)
+                    Button("Revert") { thresholdDraft.revert() }
+                        .lineLimit(1).fixedSize()
+                        .help(SpeechThresholdDraft.revertHelp)
+                        .accessibilityLabel("Revert draft to last reported cutoff")
+                        .disabled(thresholdDraft.text == nil || controls == nil)
+                        .accessibilityIdentifier("speech-threshold-revert")
+                }
+                Text(Self.thresholdHelper(validation: thresholdDraft.validationMessage))
+                    .font(.system(size: 11.5)).foregroundStyle(SettingsPanePalette.helper)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            if let message = thresholdDraft.validationMessage {
-                Text(message).font(.caption).foregroundStyle(.secondary)
-            }
-            if let reason = SpeechThresholdDraft.blockedReason(controls: controls, connected: connected, busy: busy,
-                                                               pending: pending, callbackAvailable: onChange != nil) {
-                Text(reason).font(.caption).foregroundStyle(.secondary)
-            }
-            Text("Chooses the short or long voice profile for the next speech.")
-                .font(.caption).foregroundStyle(.secondary)
+            .settingsLockedReasonBubble()
         }
+    }
+
+    static let thresholdPurpose = "Chooses the short or long voice profile for the next speech."
+
+    /// The draft line's one helper line: what the number does, and a validation problem when there is one.
+    static func thresholdHelper(validation: String?) -> String {
+        [validation, thresholdPurpose].compactMap { $0 }.joined(separator: " ")
+    }
+
+    @ViewBuilder
+    private func voiceControl(_ kind: SpeechProfile, display: DisplayProfile, controls: SpeechControlsState) -> some View {
+        let key = "\(kind.rawValue).voice"
+        Group {
+            if controls.lockReason(for: key) != nil || controls.lockReason(for: "\(kind.rawValue).engine") != nil {
+                Text(Self.voiceLabel(display.voice)).foregroundStyle(.primary)
+            } else {
+                Picker("Voice", selection: Binding(get: { "\(display.engine):\(display.voice)" }, set: { id in
+                    if let selected = controls.availableVoices.first(where: { "\($0.engine):\($0.voice)" == id }) {
+                        onSelectEngine?(kind, selected.engine, selected.voice)
+                    }
+                })) {
+                    Section("Fast") {
+                        ForEach(controls.voices(for: "edge"), id: \.self) {
+                            Text(Self.voiceLabel($0)).tag("edge:\($0)")
+                        }
+                    }
+                    Section("Cloned") {
+                        ForEach(controls.voices(for: "clone"), id: \.self) {
+                            Text(Self.voiceLabel($0)).tag("clone:\($0)")
+                        }
+                    }
+                }
+                .labelsHidden()
+                .fixedSize()
+            }
+        }
+        .disabled(Self.fieldDisabled(key, controls: controls, pending: pending, callbackAvailable: onSelectEngine != nil))
+        .accessibilityIdentifier("speech-\(key)")
+    }
+
+    /// Preview, disabled while a voice session runs or a change is pending; the reason shows on hover of the button.
+    @ViewBuilder
+    private func previewControl(_ kind: SpeechProfile) -> some View {
+        let disabled = busy || !pending.isEmpty || onPreview == nil
+        let previewing: Bool = { if case .string(let p) = pending["preview"] { return p == kind.rawValue }; return false }()
+        HStack(spacing: 6) {
+            if previewing { ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 14, height: 14) }
+            Button("Preview") { onPreview?(kind) }
+                .disabled(disabled)
+                .accessibilityIdentifier("speech-\(kind.rawValue)-preview")
+                .settingsLockedReason(disabled && onPreview != nil
+                    ? previewHint(kind) ?? Self.pendingChangeReason : nil)
+        }
+    }
+
+    static let pendingChangeReason = "Saving your last change…"
+
+    @ViewBuilder
+    private func rateControl(_ kind: SpeechProfile, profile: SpeechControlsState.Profile,
+                             controls: SpeechControlsState) -> some View {
+        let rate = binding("\(kind.rawValue).rate", profile.rate.effective)
+        if controls.lockReason(for: "\(kind.rawValue).rate") != nil {
+            Text(Self.rateLabel(rate.wrappedValue)).foregroundStyle(.primary)
+        } else {
+            HStack(spacing: 8) {
+                Slider(value: Binding(get: { rateDraft[kind] ?? min(50, max(-30, Double(rate.wrappedValue.dropLast()) ?? 0)) },
+                                      set: { rateDraft[kind] = $0 }),
+                       in: Self.rateRange, step: 5, label: { Text("\(kind.title) rate") },
+                       minimumValueLabel: { Image(systemName: "tortoise").accessibilityLabel("Slower") },
+                       maximumValueLabel: { Image(systemName: "hare").accessibilityLabel("Faster") },
+                       onEditingChanged: { editing in
+                           if !editing, let value = rateDraft.removeValue(forKey: kind) {
+                               rate.wrappedValue = String(format: "%+d%%", Int(value))
+                           }
+                       })
+                       .labelsHidden()
+                       .foregroundStyle(.secondary)
+                       .frame(width: Self.rateSliderWidth)
+                Text(Self.rateValueLabel(rateDraft[kind].map { String(format: "%+d%%", Int($0)) } ?? rate.wrappedValue))
+                    .monospacedDigit().foregroundStyle(.primary)
+                    .frame(width: 52, alignment: .trailing)
+            }
+        }
+    }
+
+    static let rateSliderWidth: CGFloat = 170
+    /// "Rate" needs only its own width; the slider takes the rest of the row.
+    static let rateTitleWidth: CGFloat = 44
+
+    /// The measurement line as shown: a non-breaking space keeps "0.6 s" together when the line wraps.
+    static func latencyDisplay(_ label: String) -> String {
+        label.replacingOccurrences(of: #"(\d) s\b"#, with: "$1\u{00A0}s", options: .regularExpression)
     }
 
     static func engineLabel(_ engine: String) -> String { engine == "clone" ? "Cloned voice" : "Fast" }
@@ -237,9 +258,11 @@ public struct SpeechSettingsView: View {
                      "en-US-AvaNeural": "Ava (US)", "en-US-AriaNeural": "Aria (US)"]
         return names[id] ?? id.replacingOccurrences(of: "-", with: " ").replacingOccurrences(of: "_", with: " ").capitalized
     }
-    /// Beside the slider, whose caption already says "Normal" under 0: the value reads "0%" there, not "Normal" twice.
+    /// Beside the slider (lane S PR 3): "Normal" at 0, else the signed percent ("+10%", "-20%"); the tortoise and hare at
+    /// the slider's ends say which way is slower.
     static func rateValueLabel(_ rate: String) -> String {
-        Int(rate.dropLast()) == 0 ? "0%" : rateLabel(rate)
+        guard let percent = Int(rate.dropLast()) else { return rate }
+        return percent == 0 ? "Normal" : String(format: "%+d%%", percent)
     }
 
     static func rateLabel(_ rate: String) -> String {
@@ -273,15 +296,5 @@ public struct SpeechSettingsView: View {
     private func binding(_ key: String, _ current: String) -> Binding<String> {
         Binding(get: { if case .string(let s) = pending[key] { return s }; return current },
                 set: { onChange?(key, .string($0)) })
-    }
-    private func field(_ title: String, key: String, controls: SpeechControlsState, @ViewBuilder content: () -> some View) -> some View {
-        HStack(alignment: key.hasSuffix(".rate") ? .top : .center) {
-            Text(title).padding(.top, key.hasSuffix(".rate") && controls.lockReason(for: key) == nil ? 3 : 0)
-            Spacer()
-            content()
-        }
-            .disabled(Self.fieldDisabled(key, controls: controls, pending: pending,
-                                        callbackAvailable: (key.hasSuffix(".engine") || key.hasSuffix(".voice")) ? onSelectEngine != nil : onChange != nil))
-            .accessibilityIdentifier("speech-\(key)")
     }
 }

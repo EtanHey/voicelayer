@@ -86,7 +86,7 @@ struct SettingsRowLabel: View {
                 SettingsPill(text: badge)
             }
         }
-        .frame(minWidth: Self.textMinWidth, maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

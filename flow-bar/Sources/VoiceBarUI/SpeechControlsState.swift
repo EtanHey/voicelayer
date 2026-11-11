@@ -126,7 +126,6 @@ struct SpeechThresholdDraft: Equatable {
         if let limit, let text, let value = Self.value(text), value == limit.effective { self.text = nil }
     }
     static let reportStatus = "Profile descriptions and Revert use the last reported cutoff; current settings may differ."
-    static let captionContext = "Based on the last reported cutoff."
     static let revertHelp = "Restore the last reported cutoff locally without changing VoiceLayer."
     static func confirmedLabel(_ limit: SpeechSetting<Int>?) -> String {
         guard let limit else { return "No reported cutoff available; waiting for VoiceLayer." }

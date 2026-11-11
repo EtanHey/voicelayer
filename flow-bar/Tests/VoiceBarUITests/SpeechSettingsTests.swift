@@ -2,19 +2,6 @@
 import XCTest
 
 final class SpeechSettingsTests: XCTestCase {
-    func testNormalCaptionUsesZeroTickRatherThanTrackMidpoint() {
-        XCTAssertEqual(SpeechSettingsView.normalRateFraction, 0.375, accuracy: 0.0001)
-    }
-
-    /// SETUI1 (Etan, 2026-10-19: "speech rate is fine, though uncentered"): the native knob's centre travels
-    /// half a knob in from each end, so the caption follows the knob, not the raw track width.
-    func testRateCaptionSitsUnderTheKnobCentre() {
-        XCTAssertEqual(SpeechSettingsView.rateCaptionX(fraction: 0.375, width: 300, knobWidth: 20), 115, accuracy: 0.001)
-        XCTAssertEqual(SpeechSettingsView.rateCaptionX(fraction: 0, width: 300, knobWidth: 20), 10, accuracy: 0.001)
-        XCTAssertEqual(SpeechSettingsView.rateCaptionX(fraction: 1, width: 300, knobWidth: 20), 290, accuracy: 0.001)
-        XCTAssertEqual(SpeechSettingsView.rateCaptionX(fraction: 0.375, width: 0, knobWidth: 20), 0, accuracy: 0.001)
-    }
-
     static func controls(rateSource: String = "settings", rate: String = "+10%") -> [String: Any] {
         func field(_ value: Any, source: String = "default") -> [String: Any] {
             ["source": source, "raw": source == "default" ? NSNull() : value, "effective": value]
@@ -378,8 +365,6 @@ final class SpeechSettingsTests: XCTestCase {
                        "Last reported cutoff: \(cutoff) characters · Saved in settings at that report", file: file, line: line)
         XCTAssertEqual(SpeechThresholdDraft.reportStatus,
                        "Profile descriptions and Revert use the last reported cutoff; current settings may differ.", file: file, line: line)
-        XCTAssertEqual(SpeechThresholdDraft.captionContext,
-                       "Based on the last reported cutoff.", file: file, line: line)
         XCTAssertEqual(SpeechThresholdDraft.revertHelp,
                        "Restore the last reported cutoff locally without changing VoiceLayer.", file: file, line: line)
         XCTAssertNil(SpeechThresholdDraft.blockedReason(controls: state.speechControls, connected: true,

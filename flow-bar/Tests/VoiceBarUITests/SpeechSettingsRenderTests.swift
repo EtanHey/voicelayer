@@ -44,9 +44,8 @@ final class SpeechSettingsRenderTests: XCTestCase {
         XCTAssertGreaterThan(host.fittingSize.height, 0)
     }
 
-    /// The knob width is a constant in the view; AppKit is asked only here, outside any view update.
-    func testKnobWidthConstantMatchesAppKit() throws {
-        XCTAssertEqual(NSSliderCell().knobThickness, SpeechSettingsView.sliderKnobWidth)
+    /// The view never asks AppKit for slider metrics (lane S PR 3 removed the knob-centred captions that needed them).
+    func testTheViewNeverTouchesAppKitSliderCells() throws {
         let source = try String(contentsOf: URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/VoiceBarUI/SpeechSettingsView.swift"), encoding: .utf8)
