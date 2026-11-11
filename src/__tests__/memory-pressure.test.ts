@@ -75,6 +75,15 @@ describe("c8-M2 polish prompt cache has a hard cap", () => {
     expect(await releaseSTTPolishServerForMemoryPressure()).toEqual({ released: false, reason: "not-running" });
     resetSTTPolishServerManagerForTests();
   });
+
+  it("reads a Prompt Cache line split across two pipe reads", async () => {
+    resetSTTPolishServerManagerForTests();
+    const { options } = fakePolish(["INFO - Prompt Cache: 7 seq", "uences, 1.25 GB\nINFO - next\n"]);
+    await ensureSTTPolishServer({ ...options, probeCacheCaps: async () => false });
+    await Bun.sleep(5);
+    expect(await releaseSTTPolishServerForMemoryPressure()).toMatchObject({ released: true, cache: { sequences: 7, gb: 1.25 } });
+    resetSTTPolishServerManagerForTests();
+  });
 });
 
 function harness(polishRunning = true) {
@@ -125,10 +134,21 @@ describe("c8-M2 memory pressure releases the polish cache first", () => {
     expect(h.order).toEqual(["polish", "polish"]);
   });
 
-  it("with no polish server running a first warning is a no-op, not a Parakeet unload", async () => {
+  // RM-memory P2: a warning must always free something measurable when anything is loaded.
+  it("with no polish server to release, a first warning unloads Parakeet (as before this lane)", async () => {
     const h = harness(false);
-    expect(await h.respond("warning")).toMatchObject({ outcome: "noop", parakeet: "kept" });
-    expect(h.order).toEqual(["polish"]);
+    expect(await h.respond("warning")).toMatchObject({ outcome: "accept", parakeet: "unloaded" });
+    expect(h.order).toEqual(["polish", "parakeet"]);
+  });
+
+  it("every release line states the bytes it freed", async () => {
+    const h = harness(false);
+    await h.respond("warning");
+    const events = h.lines.map(line => JSON.parse(line));
+    const parakeet = events.find(e => e.step === "parakeet");
+    expect(parakeet).toMatchObject({ released: true, bytes_freed: 1400 * 1024 * 1024 });
+    const polish = events.find(e => e.step === "polish");
+    expect(polish).toMatchObject({ released: false, bytes_freed: 0 });
   });
 
   it("every release is logged with sizes and nothing else", async () => {
@@ -137,9 +157,9 @@ describe("c8-M2 memory pressure releases the polish cache first", () => {
     const events = h.lines.map(line => JSON.parse(line));
     expect(events).toEqual([
       { event: "memory_pressure_release", level: "critical", step: "polish", released: true,
-        polish_cache_sequences: 10, polish_cache_gb: 2.3, polish_rss_mb: 2900 },
+        bytes_freed: 2900 * 1024 * 1024, polish_cache_sequences: 10, polish_cache_gb: 2.3, polish_rss_mb: 2900 },
       { event: "memory_pressure_release", level: "critical", step: "parakeet", persisted: false,
-        released: true, parakeet_rss_mb: 1400 },
+        released: true, bytes_freed: 1400 * 1024 * 1024, parakeet_rss_mb: 1400 },
     ]);
   });
 });

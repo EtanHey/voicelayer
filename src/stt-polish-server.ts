@@ -113,11 +113,16 @@ async function polishCacheCapArgs(binary: string, options: EnsureSTTPolishServer
 
 /** Last `Prompt Cache: N sequences, X GB` line the server logged; sizes only, never prompt text. */
 let lastPolishCache: { sequences: number; gb: number } | null = null;
+let polishCacheLinePending = "";
 export function lastPolishPromptCache(): { sequences: number; gb: number } | null { return lastPolishCache; }
+/** Complete lines only: a `Prompt Cache` line split across two pipe reads is read whole. */
 function notePolishCacheLine(text: string): void {
-  const matches = [...text.matchAll(/Prompt Cache: (\d+) sequences, ([\d.]+) GB/gu)];
-  const last = matches.at(-1);
-  if (last) lastPolishCache = { sequences: Number(last[1]), gb: Number(last[2]) };
+  const lines = (polishCacheLinePending + text).split(/\r?\n/u);
+  polishCacheLinePending = (lines.pop() ?? "").slice(-512);
+  for (const line of lines) {
+    const match = /Prompt Cache: (\d+) sequences, ([\d.]+) GB/u.exec(line);
+    if (match) lastPolishCache = { sequences: Number(match[1]), gb: Number(match[2]) };
+  }
 }
 
 function processRssMb(pid: number | null | undefined): number | null {
@@ -230,6 +235,7 @@ export function resetSTTPolishServerManagerForTests(): void {
   polishResidency.reset();
   cacheCapSupport.clear();
   lastPolishCache = null;
+  polishCacheLinePending = "";
   resetSTTPolishServerManager(false);
 }
 
@@ -712,9 +718,10 @@ function drainPolishServerLogs(
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        const text = new TextDecoder().decode(value).trim();
+        const raw = new TextDecoder().decode(value);
+        notePolishCacheLine(raw);
+        const text = raw.trim();
         if (text) {
-          notePolishCacheLine(text);
           tail.text = `${tail.text}\n${text}`.trim().slice(-2_000);
           log(`[voicelayer-polish] ${text}`);
         }

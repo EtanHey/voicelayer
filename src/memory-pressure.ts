@@ -4,9 +4,9 @@
  *
  * 1. The polish server always goes first: its prompt cache grew to 2.3 GB on 2026-11-11 and nothing
  *    released it, while the next dictation reloaded the Parakeet model we had unloaded.
- * 2. Parakeet is unloaded only when the pressure is critical, or persists (another event within
- *    PERSIST_WINDOW_MS of the previous one).
- * Each step logs one JSON line with sizes, never transcript or prompt text.
+ * 2. Parakeet is unloaded when the polish release freed nothing, when the pressure is critical, or
+ *    when it persists (another event within PERSIST_WINDOW_MS of the previous one).
+ * Each step logs one JSON line with the bytes it freed (the released process's RSS), never text.
  */
 import { releaseSTTPolishServerForMemoryPressure, processRssMb, type PolishPressureRelease } from "./stt-polish-server";
 import { unloadParakeetForMemoryPressure } from "./recognizer-controller";
@@ -33,6 +33,8 @@ export interface MemoryPressureOutcome {
   parakeet: "unloaded" | "kept" | "skipped";
 }
 
+const MiB = 1024 * 1024;
+
 export function createMemoryPressureResponder(deps: MemoryPressureDeps) {
   let lastEventAt: number | null = null;
   const window = deps.persistWindowMs ?? PRESSURE_PERSIST_WINDOW_MS;
@@ -45,28 +47,31 @@ export function createMemoryPressureResponder(deps: MemoryPressureDeps) {
     deps.log(JSON.stringify({
       event: "memory_pressure_release", level, step: "polish",
       released: polish.released,
+      bytes_freed: polish.released && polish.rss_mb !== null ? polish.rss_mb * MiB : 0,
       ...(polish.released
         ? { polish_cache_sequences: polish.cache?.sequences ?? null, polish_cache_gb: polish.cache?.gb ?? null, polish_rss_mb: polish.rss_mb }
         : { reason: polish.reason }),
     }));
 
-    if (level !== "critical" && !persisted) {
-      deps.log(JSON.stringify({ event: "memory_pressure_release", level, step: "parakeet", released: false, reason: "first-warning" }));
-      return polish.released
-        ? { outcome: "accept", polish: "released", parakeet: "kept" }
-        : { outcome: "noop", reason: polish.reason, polish: polish.reason, parakeet: "kept" };
+    // RM-memory P2: Parakeet waits only when the polish release actually freed memory on a first
+    // warning. With nothing released, a warning unloads Parakeet exactly as the old handler did.
+    if (polish.released && level !== "critical" && !persisted) {
+      deps.log(JSON.stringify({ event: "memory_pressure_release", level, step: "parakeet", released: false,
+        bytes_freed: 0, reason: "polish-released-first" }));
+      return { outcome: "accept", polish: "released", parakeet: "kept" };
     }
 
     const rss = deps.parakeetRssMb();
     const parakeet = await deps.unloadParakeet();
+    const unloaded = parakeet.outcome === "accept";
     deps.log(JSON.stringify({
       event: "memory_pressure_release", level, step: "parakeet", persisted,
-      released: parakeet.outcome === "accept", parakeet_rss_mb: rss,
+      released: unloaded, bytes_freed: unloaded && rss !== null ? rss * MiB : 0, parakeet_rss_mb: rss,
       ...(parakeet.reason ? { reason: parakeet.reason } : {}),
     }));
-    if (polish.released || parakeet.outcome === "accept") {
+    if (polish.released || unloaded) {
       return { outcome: "accept", polish: polish.released ? "released" : polish.reason,
-        parakeet: parakeet.outcome === "accept" ? "unloaded" : "skipped" };
+        parakeet: unloaded ? "unloaded" : "skipped" };
     }
     return { outcome: parakeet.outcome, ...(parakeet.reason ? { reason: parakeet.reason } : {}),
       polish: polish.reason, parakeet: "skipped" };
@@ -76,6 +81,7 @@ export function createMemoryPressureResponder(deps: MemoryPressureDeps) {
 let responder: ReturnType<typeof createMemoryPressureResponder> | null = null;
 
 /** The daemon's single responder; its persistence clock lives for the daemon process. */
+let pressureChain: Promise<unknown> = Promise.resolve();
 export function respondToMemoryPressure(level: "warning" | "critical"): Promise<MemoryPressureOutcome> {
   responder ??= createMemoryPressureResponder({
     releasePolish: releaseSTTPolishServerForMemoryPressure,
@@ -84,8 +90,12 @@ export function respondToMemoryPressure(level: "warning" | "critical"): Promise<
     now: () => Date.now(),
     log: line => console.error(`[voicelayer] ${line}`),
   });
-  return responder(level);
+  // Overlapping events run one after another, so each sees the previous one's releases.
+  const run = responder;
+  const next = pressureChain.then(() => run(level), () => run(level));
+  pressureChain = next.catch(() => {});
+  return next;
 }
 
 /** Tests only. */
-export function resetMemoryPressureResponderForTests(): void { responder = null; }
+export function resetMemoryPressureResponderForTests(): void { responder = null; pressureChain = Promise.resolve(); }
