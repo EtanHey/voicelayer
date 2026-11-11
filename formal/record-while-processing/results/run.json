@@ -64,7 +64,7 @@
     "formal/record-while-processing/Fixed.cfg": "4933ae51c46ec4d14dc2310d2ab6ba63907bd9a81cb7a5e1eea77aba1b7b7c68",
     "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift": "40894bfe33de588427cd42f5a0417804079ff139489a29fd377c4ba904ba27fc",
     "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "e23414d8b9dce29b38292f2ab265a52d2a38fc1839e0fdc916c813455a453b3e",
-    "src/input.ts": "4fe85395a1ed1b0bb73a7bbbe4e6ee6145aa5895f1426de740842b852fd71053",
+    "src/input.ts": "bff465218c79efac112e538f42c606da2b5b79083fa118d525d54d8fd6040ba8",
     "src/socket-handlers.ts": "6c443098c3ff03a5150ab4c002e7d765e82f2174d69a3e3755c8d3cbb5a3a077",
     "src/recording-state.ts": "db2b9617e38ed6da0fea264ead439f3a4ba88619252b84ac76bbb420274b90da",
     "src/session-booking.ts": "8354241ad3c54e1b2333630c095178e2da77dce049e8ca3a44ae55c5653b5b62",
@@ -451,24 +451,24 @@
       "kind": "temporal",
       "target": "ProcessingSettles",
       "status": "EXPECTED_FAIL",
-      "generated": 223110,
-      "distinct": 10137
+      "generated": 235134,
+      "distinct": 10490
     },
     "MutNoOverlapProgress": {
       "role": "mutant",
       "kind": "temporal",
       "target": "OverlapPastes",
       "status": "EXPECTED_FAIL",
-      "generated": 186110,
-      "distinct": 9357
+      "generated": 196188,
+      "distinct": 9700
     },
     "MutNoIdle": {
       "role": "mutant",
       "kind": "temporal",
       "target": "EventuallyIdle",
       "status": "EXPECTED_FAIL",
-      "generated": 298030,
-      "distinct": 13271
+      "generated": 306788,
+      "distinct": 13521
     },
     "MutHeldDecode": {
       "role": "mutant",
@@ -491,8 +491,8 @@
       "kind": "temporal",
       "target": "OverlapPastes",
       "status": "EXPECTED_FAIL",
-      "generated": 217549,
-      "distinct": 10119
+      "generated": 219616,
+      "distinct": 10155
     },
     "MutNoDecodeFairness": {
       "role": "mutant",
@@ -563,8 +563,8 @@
       "kind": "temporal",
       "target": "NoStaleGuard",
       "status": "EXPECTED_FAIL",
-      "generated": 248786,
-      "distinct": 10906
+      "generated": 243953,
+      "distinct": 10742
     },
     "ConcurrentGlobalCancel": {
       "role": "mutant",
