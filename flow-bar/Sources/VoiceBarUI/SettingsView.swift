@@ -621,6 +621,7 @@ public struct SettingsView: View {
     @State private var shortcutCheckFeedback: (message: String, checkedAt: Date)?
     @State private var isAdvancedExpanded = false
     @State private var hoveredMicrophoneIndex: Int?
+    @Environment(\.settingsHoverPreview) private var settingsHoverPreview
     @State private var setupHighlight = SettingsArrivalHighlight()
     @FocusState private var focusedSetupFix: SettingsSetupStepID?
     @State private var microphoneSnapshot = MicrophonePrioritySnapshot.unavailable
@@ -1379,7 +1380,11 @@ public struct SettingsView: View {
     @ViewBuilder
     private func microphonePriorityRow(_ row: MicrophonePriorityRow, at index: Int, visibleCount: Int) -> some View {
         let isUsed = SettingsMicrophoneRowPresentation.isUsedForDictation(row, snapshot: microphoneSnapshot)
-        let content = SettingsRow(title: row.label, description: SettingsMicrophoneRowPresentation.status(row), lead: {
+        let isHovered = hoveredMicrophoneIndex == index || settingsHoverPreview.microphoneRow == index
+        // Etan (QA 2026-11-11, shots 1-2): status and the "Used for dictation" pill share the second line, and Make
+        // default is the row's only trailing control. Nothing appears under the row and hovering moves nothing.
+        let content = SettingsRow(title: row.label, description: SettingsMicrophoneRowPresentation.status(row),
+                                  badge: isUsed ? SettingsMicrophoneRowPresentation.usedBadge : nil, lead: {
             Image(systemName: "line.3.horizontal")
                 .foregroundStyle(.tertiary)
                 .opacity(row.canPrioritize ? 1 : 0)
@@ -1388,16 +1393,14 @@ public struct SettingsView: View {
             // Review R1 #736: the pill and Make default are independent. The mic in use can still sit below a
             // disconnected one, and promoting it keeps it first when that one reconnects.
             if SettingsMicrophoneRowPresentation.offersMakeDefault(row, at: index) {
-                // Hover reveals it; VoiceOver and the keyboard keep the named action below.
+                // Hover reveals it in space it always holds; VoiceOver and the keyboard keep the named action below.
                 Button("Make default") {
                     makeMicrophoneDefault(at: index)
                 }
                 .controlSize(.small)
                 .disabled(microphoneEditReason != nil)
-                .opacity(hoveredMicrophoneIndex == index ? 1 : 0)
-            }
-            if isUsed {
-                SettingsPill(text: "Used for dictation")
+                .opacity(isHovered ? 1 : 0)
+                .animation(.easeOut(duration: 0.12), value: isHovered)
             }
         }
         .opacity(row.isConnected ? 1 : 0.55)

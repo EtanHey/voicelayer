@@ -59,6 +59,7 @@ struct SettingsRowLabel: View {
 
     let title: String
     let description: String?
+    var badge: String?
     var isSelected = false
 
     var body: some View {
@@ -66,9 +67,14 @@ struct SettingsRowLabel: View {
             ClippingAwareText(text: title, font: Self.titleFont, lineLimit: isSelected ? nil : Self.lineLimit)
                 .foregroundStyle(.primary)
             if let description, !description.isEmpty {
-                ClippingAwareText(text: description, font: Self.descriptionFont,
-                                  lineLimit: isSelected ? nil : Self.lineLimit)
-                    .foregroundStyle(SettingsPanePalette.helper)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    ClippingAwareText(text: description, font: Self.descriptionFont,
+                                      lineLimit: isSelected ? nil : Self.lineLimit)
+                        .foregroundStyle(SettingsPanePalette.helper)
+                    if let badge { SettingsPill(text: badge) }
+                }
+            } else if let badge {
+                SettingsPill(text: badge)
             }
         }
         .frame(minWidth: Self.textMinWidth, maxWidth: .infinity, alignment: .leading)

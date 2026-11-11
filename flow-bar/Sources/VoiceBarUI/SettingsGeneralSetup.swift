@@ -211,6 +211,8 @@ enum SettingsMicrophoneRowPresentation {
         return snapshot.nextDeviceName != nil && snapshot.nextDeviceName == row.label
     }
 
+    static let usedBadge = "Used for dictation"
+
     /// Make default is offered on any connected, prioritizable mic below the top, whether or not it is the one in use.
     static func offersMakeDefault(_ row: MicrophonePriorityRow, at index: Int) -> Bool {
         row.canPrioritize && row.isConnected && index > 0

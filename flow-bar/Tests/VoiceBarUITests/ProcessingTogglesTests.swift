@@ -91,7 +91,10 @@ final class ProcessingTogglesTests: XCTestCase {
         XCTAssertFalse(rows.contains { $0.line.contains("Every dictation") })
     }
 
-    func testTheRowRendersEveryCaptionLine() throws {
+    /// Etan (QA 2026-11-11, shot 5, the second time he asked): the lock's reason is not in the row's text; the row
+    /// paints only its explanation, and the switch shows the reason on hover. Fails on 8e1d5352, where the
+    /// description led with "Unavailable with Parakeet.".
+    func testALockedRowPaintsOnlyItsExplanationAndTheSwitchCarriesTheReason() throws {
         let source = try String(
             contentsOf: URL(fileURLWithPath: #filePath)
                 .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -99,11 +102,16 @@ final class ProcessingTogglesTests: XCTestCase {
             encoding: .utf8
         )
         XCTAssertFalse(source.contains("Text(row.lockedReason ?? row.line)"))
-        XCTAssertTrue(source.contains("description: row.rowDescription"))
+        XCTAssertTrue(source.contains("SettingsRow(title: row.key.title, description: row.line)"))
+        XCTAssertTrue(source.contains(".settingsLockedReason(disabled ? row.lockedReason ?? busyReason : nil)"))
+        XCTAssertTrue(source.contains("SettingsRow(title: row.title, description: row.line)"),
+                      "Unload when idle follows the same rule")
+        XCTAssertFalse(source.contains("OptionalHelp(text: row.lockedReason)"), "no row-wide delayed system tooltip")
         let state = try XCTUnwrap(PolishControlsState(healthEvent: Self.health(Self.controls())))
         let parakeet = RecognizerPickerState(selected: .parakeet, effective: .parakeet, parakeet: .loaded, whisper: .unloaded)
         let smart = try XCTUnwrap(ModelsSettingsView.processingRows(for: state, recognizer: parakeet).last)
-        XCTAssertTrue(smart.rowDescription.hasPrefix("Unavailable with Parakeet. Splits "), "the lock leads")
+        XCTAssertEqual(smart.lockedReason, "Unavailable with Parakeet")
+        XCTAssertFalse(smart.line.contains("Parakeet"), "the reason never reaches the painted text")
     }
 
     func testPolishPreviewModeIsShownButNotAToggleState() throws {

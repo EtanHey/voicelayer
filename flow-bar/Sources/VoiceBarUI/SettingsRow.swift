@@ -5,6 +5,8 @@ import SwiftUI
 struct SettingsRow<Lead: View, Trailing: View>: View {
     let title: String
     var description: String?
+    /// A status pill that sits on the description line, after it (the mic in use: "Connected · Used for dictation").
+    var badge: String?
     var isSelected = false
     @ViewBuilder var lead: () -> Lead
     @ViewBuilder var trailing: () -> Trailing
@@ -13,7 +15,7 @@ struct SettingsRow<Lead: View, Trailing: View>: View {
         SettingsRowLayout {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 lead()
-                SettingsRowLabel(title: title, description: description, isSelected: isSelected)
+                SettingsRowLabel(title: title, description: description, badge: badge, isSelected: isSelected)
             }
             HStack(spacing: 6) { trailing() }
                 .fixedSize()
@@ -24,10 +26,10 @@ struct SettingsRow<Lead: View, Trailing: View>: View {
 }
 
 extension SettingsRow where Lead == EmptyView {
-    init(title: String, description: String? = nil, isSelected: Bool = false,
+    init(title: String, description: String? = nil, badge: String? = nil, isSelected: Bool = false,
          @ViewBuilder trailing: @escaping () -> Trailing) {
-        self.init(title: title, description: description, isSelected: isSelected, lead: { EmptyView() },
-                  trailing: trailing)
+        self.init(title: title, description: description, badge: badge, isSelected: isSelected,
+                  lead: { EmptyView() }, trailing: trailing)
     }
 }
 
