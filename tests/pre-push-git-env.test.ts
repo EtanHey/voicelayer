@@ -61,6 +61,8 @@ for (const fallback of [false, true]) {
       mkdirSync(join(lane, ".githooks"));
       writeFileSync(join(lane, ".githooks/pre-push"), hook, { mode: 0o755 });
       writeFileSync(join(lane, "scripts/guard-no-docslocal.sh"), guard);
+      writeFileSync(join(lane, "scripts/queue-heavy-suite.py"),
+        readFileSync(new URL("../scripts/queue-heavy-suite.py", import.meta.url)));
       writeFileSync(join(lane, "scripts/run_tests.sh"), `env > "$RECORD"\ngit rev-parse --absolute-git-dir > "$BEFORE_INIT"\ngit init --bare -q "$FRESH"\n`);
       // Force rev-parse discovery to fail without preventing the suite's Git calls.
       const bin = join(root, "bin");
