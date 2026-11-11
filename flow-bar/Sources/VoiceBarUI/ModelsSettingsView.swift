@@ -137,7 +137,7 @@ public struct ModelsSettingsView: View {
                     ForEach(Self.processingRows(for: controls, recognizer: recognizerState), id: \.key) { row in
                         processingToggle(row)
                     }
-                    Text("Applies next dictation.")
+                    Text("Applies to your next dictation.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     if let processingNotice {
@@ -320,13 +320,13 @@ public struct ModelsSettingsView: View {
         guard let setting = recognizer.unloadWhenIdle else { return nil }
         let engine = RecognizerPickerEngine.parakeet
         let size = recognizer.assetsPresent(for: engine) ? recognizer.diskBytes[engine].flatMap(approximateSize) : nil
-        let idle = recognizer.idleUnloadSeconds.map { "after \(RecognizerPickerState.idleText($0)) idle" }
-            ?? "while idle"
+        let idle = recognizer.idleUnloadSeconds.map { "after \(RecognizerPickerState.durationSentence($0)) without dictation" }
+            ?? "when you are not dictating"
         return UnloadWhenIdleRow(
             title: "Unload when idle",
             isOn: recognizer.unloadWhenIdlePending ?? setting.effective,
             // The load cost is not measured on this Mac yet, so the copy says "a few seconds", never a number.
-            line: "Frees \(size.map { "~\($0)" } ?? "memory") \(idle). Next dictation reloads \(engine.shortName) (few seconds).",
+            line: "Frees \(size.map { "about \($0) of memory" } ?? "memory") \(idle). The next dictation takes a few seconds longer.",
             lockedReason: setting.lockedReason,
             disabled: setting.lockedReason != nil || recognizer.unloadWhenIdlePending != nil
                 || recognizer.selected == nil || !canChange)
@@ -391,21 +391,21 @@ public struct ModelsSettingsView: View {
         return [
             ProcessingRow(
                 key: .modelPolish,
-                line: "Fixes punctuation and capitals. Never adds or drops words.",
+                line: "Fixes punctuation and capitals. Keeps your raw text if polish would change a word.",
                 experimental: false,
                 isOn: controls.modelPolish.effective == .on,
                 lockedReason: polishLock
             ),
             ProcessingRow(
                 key: .outroGate,
-                line: "Drops a fake “Thank you.” Silence only.",
+                line: "Drops a “Thank you.” the recognizer invents in silence. Words you said stay.",
                 experimental: false,
                 isOn: controls.outroGate.effective,
                 lockedReason: locked(.outroGate, controls.outroGate)
             ),
             ProcessingRow(
                 key: .smartChunks,
-                line: "Splits long Whisper takes at pauses.",
+                line: "Splits long Whisper recordings at pauses.",
                 experimental: true,
                 isOn: controls.smartChunks.effective,
                 lockedReason: recognizer.map { $0.smartChunkingApplicable ? locked(.smartChunks, controls.smartChunks) : unavailableWithParakeet } ?? locked(.smartChunks, controls.smartChunks)

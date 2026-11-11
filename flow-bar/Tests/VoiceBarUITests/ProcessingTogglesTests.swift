@@ -86,7 +86,7 @@ final class ProcessingTogglesTests: XCTestCase {
         let serverOnly = "Whisper server only: the whisper-cli and Wispr Flow fallbacks skip it."
         XCTAssertEqual(
             rows[2].line,
-            "Splits long Whisper takes at pauses."
+            "Splits long Whisper recordings at pauses."
         )
         XCTAssertFalse(rows.contains { $0.line.contains("Every dictation") })
     }

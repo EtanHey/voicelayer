@@ -14,6 +14,16 @@ final class SettingsPolishS5Tests: XCTestCase {
         if tab == .speech || tab == .dictionary { return SettingsDrawerLaneS3Tests.pane(tab) }
         return SettingsDrawerLaneSSnapshotTests.pane(tab, advanced: true)
     }
+    static func brokenGeneral() -> SettingsView {
+        SettingsView(hotkeyEnabled: false, missingPermissions: [.microphone, .accessibility, .inputMonitoring],
+            availableDevices: { [] }, selectedDeviceID: { nil }, modelsStatus: { .disconnected },
+            onRefreshModelsStatus: {}, vocabularyRevision: { 0 }, microphoneAuthorization: { .denied },
+            initialTab: .general, installedVersion: .init(version: "2.4.0", commit: nil))
+    }
+    static var brokenGeneralDrawer: some View {
+        NotchSettingsDrawer(selectedTab: .general, appearance: .dark,
+            context: .init(updates: nil, pane: { _, _ in AnyView(brokenGeneral().notchDrawerPane(.general)) }), onSelectTab: { _ in })
+    }
     static func drawer(_ tab: SettingsTab, light: Bool = false, updates: NotchUpdateController? = nil) -> some View {
         NotchSettingsDrawer(selectedTab: tab, appearance: light ? .light : .dark,
             context: .init(updates: updates, pane: { tab, _ in AnyView(pane(tab).notchDrawerPane(tab)) }), onSelectTab: { _ in })
@@ -73,6 +83,8 @@ final class SettingsPolishS5Tests: XCTestCase {
             _ = try Self.render(Self.drawer(tab, updates: tab == .general ? updates : nil), height: tab == .general ? 1500 : 1100, name: "\(tab.title.lowercased())-drawer-dark")
             _ = try Self.render(Self.pane(tab), width: 780, height: tab == .general ? 1500 : 1100, name: "\(tab.title.lowercased())-window-dark")
         }
+        _ = try Self.render(Self.brokenGeneralDrawer, height: 1500, name: "general-permissions-drawer-dark")
+        _ = try Self.render(Self.brokenGeneral(), width: 780, height: 1500, name: "general-permissions-window-dark")
         for tab in [SettingsTab.speech, .dictionary] {
             _ = try Self.render(Self.drawer(tab), height: 470, name: "\(tab.title.lowercased())-scrolled", scrollOffset: 150)
         }
@@ -128,12 +140,49 @@ final class SettingsPolishS5Tests: XCTestCase {
         let lines = try Self.ocr(Self.render(Self.drawer(.transcription)))
         XCTAssertTrue(lines.contains { $0.contains("locked") }, "A forced Off must not read as a choice: \(lines)")
     }
-    func testLongVariantsKeepOneRowAndShowAnOverflowCount() throws {
+    func testLongVariantsWrapWithoutClippingAndShowAnOverflowCount() throws {
         let entry = STTDictionaryEntry(canonical: "Kubernetes", variants: ["cooper netties", "kuber nets", "coober net ease", "kube er net is"])
         let lines = try Self.ocr(Self.render(SettingsView.dictionaryTermLine(entry), width: 280, height: 100,
                                             name: "long-variants"))
-        XCTAssertTrue(lines.contains { $0.contains("+3 more") }, "Overflow count must remain visible: \(lines)")
+        XCTAssertTrue(lines.contains { $0.contains("3 more") }, "Overflow count must remain visible: \(lines)")
+        XCTAssertTrue(lines.contains { $0.contains("nettles") || $0.contains("netties") },
+                      "The first variant must paint completely, wrapping instead of truncating: \(lines)")
     }
+    /// The actual production panes must keep full sentences. Record over-two-line cases for the lead.
+    func testFullHelperCopyWrapsInDrawerAndWindowAndReportsLongRows() throws {
+        var receipt: [[String: Any]] = []
+        var scenarios = [SettingsTab.general, .transcription, .speech, .dictionary].map {
+            ($0.title, AnyView(Self.drawer($0)), AnyView(Self.pane($0)))
+        }
+        scenarios.append(("General (permissions off)", AnyView(Self.brokenGeneralDrawer), AnyView(Self.brokenGeneral())))
+        for (pane, drawer, window) in scenarios {
+            for (surface, width) in [("drawer", CGFloat(420)), ("window", CGFloat(780))] {
+                var entries: [SettingsTextAuditEntry] = []
+                let view = surface == "drawer" ? drawer : window
+                _ = try Self.render(view.onPreferenceChange(SettingsTextAuditKey.self) { entries = $0 },
+                                    width: width, height: 1500,
+                                    name: pane == "General (permissions off)" ? "general-permissions-\(surface)-dark" : nil)
+                let helpers = entries.filter { $0.font == SettingsRowLabel.descriptionFont }
+                XCTAssertFalse(helpers.isEmpty, "The real pane must publish its helper frames")
+                for entry in helpers {
+                    let reference = NSHostingView(rootView: Text(entry.text).font(entry.font)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: entry.frame.width, alignment: .leading))
+                    let fullHeight = reference.fittingSize.height
+                    let oneLine = NSHostingView(rootView: Text("Ag").font(entry.font).fixedSize()).fittingSize.height
+                    XCTAssertEqual(entry.frame.height, fullHeight, accuracy: 1.5,
+                                   "\(surface) \(pane): all helper words must fit: \(entry.text)")
+                    XCTAssertFalse(entry.text.contains("—") || entry.text.contains("≤"), entry.text)
+                    receipt.append(["surface": surface, "pane": pane, "text": entry.text,
+                                    "width": entry.frame.width, "height": entry.frame.height,
+                                    "full_height": fullHeight, "lines": Int((fullHeight / oneLine).rounded())])
+                }
+            }
+        }
+        try JSONSerialization.data(withJSONObject: receipt, options: [.prettyPrinted, .sortedKeys]).write(to:
+            URL(fileURLWithPath: Self.output).appendingPathComponent("helper-wrap-lines.json"))
+    }
+
     func testIncludedSummaryUsesNoChipSamples() throws {
         let lines = try Self.ocr(Self.render(Self.drawer(.dictionary)))
         XCTAssertFalse(lines.contains { $0 == "github" || $0 == "json" || $0 == "npm" || $0 == "macos" },

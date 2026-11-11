@@ -320,7 +320,7 @@ final class RecognizerBindingTests: XCTestCase {
         let state = RecognizerPickerState(snapshot: try XCTUnwrap(RecognizerStatusSnapshot(payload: payload)))
         XCTAssertEqual(state.selected, .whisper)
         XCTAssertEqual(state.effective, .parakeet)
-        XCTAssertEqual(state.explanation, "Using Parakeet — Whisper failed to load")
+        XCTAssertEqual(state.explanation, "Using Parakeet because Whisper failed to load.")
         XCTAssertTrue(state.smartChunkingApplicable, "The desired-engine product rule is symmetric during recovery")
     }
 
@@ -338,7 +338,7 @@ final class RecognizerBindingTests: XCTestCase {
         let enabled = try XCTUnwrap(a.first { $0.key == .smartChunks })
         let disabled = try XCTUnwrap(b.first { $0.key == .smartChunks })
         XCTAssertNil(enabled.lockedReason); XCTAssertEqual(disabled.lockedReason, "Unavailable with Parakeet")
-        XCTAssertEqual(disabled.line, "Splits long Whisper takes at pauses.")
+        XCTAssertEqual(disabled.line, "Splits long Whisper recordings at pauses.")
         XCTAssertTrue(enabled.isOn && disabled.isOn && controls.smartChunks.effective)
         // Desired-engine UI applicability does not overwrite the saved backend value.
         let fallback = RecognizerPickerState(selected: .parakeet, effective: .whisper, parakeet: .error, whisper: .loaded)

@@ -2518,7 +2518,7 @@ public struct SettingsView: View {
                                 .padding(.horizontal, 6).padding(.vertical, 12)
                             case .empty:
                                 SettingsRowLabel(title: "No terms yet",
-                                                 description: "Add a preferred spelling to improve dictation.")
+                                                 description: "Add names, products, and other preferred spellings.")
                                     .padding(.horizontal, 6).padding(.vertical, 12)
                             case nil:
                                 EmptyView()
@@ -2779,17 +2779,17 @@ public struct SettingsView: View {
     /// Group headers ("Your terms", "Included terms") in the section-header role (lane S DESIGN.md §6).
     static let dictionaryGroupFont = Font.system(size: 13, weight: .semibold)
 
-    /// Keep the canonical spelling and one variant on a single line. The count never truncates; editing and
+    /// Keep the canonical spelling and first variant complete, wrapping at narrow widths. Editing and
     /// accessibility retain every variant, including fragments, without modifying the dictionary data.
     static func dictionaryTermLine(_ entry: STTDictionaryEntry) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(entry.canonical).font(SettingsRowLabel.titleFont).foregroundStyle(.primary)
-                .lineLimit(1).truncationMode(.tail).layoutPriority(1)
+            ClippingAwareText(text: entry.canonical, font: SettingsRowLabel.titleFont, lineLimit: nil)
+                .foregroundStyle(.primary).layoutPriority(1)
             if let first = entry.variants.first {
-                Text("also heard as " + first).font(SettingsRowLabel.descriptionFont)
-                    .foregroundStyle(SettingsPanePalette.helper).lineLimit(1).truncationMode(.tail)
+                ClippingAwareText(text: "Also heard as " + first + ".", font: SettingsRowLabel.descriptionFont, lineLimit: nil)
+                    .foregroundStyle(SettingsPanePalette.helper)
                 if entry.variants.count > 1 {
-                    Text("+\(entry.variants.count - 1) more").font(SettingsRowLabel.descriptionFont)
+                    Text("\(entry.variants.count - 1) more").font(SettingsRowLabel.descriptionFont)
                         .foregroundStyle(SettingsPanePalette.helper).fixedSize()
                 }
             }

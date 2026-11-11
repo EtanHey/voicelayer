@@ -305,13 +305,13 @@ public struct RecognizerPickerState: Equatable, Sendable {
         guard selected == engine, assetsPresent(for: engine) else { return nil }
         if engine == .parakeet, let unloadWhenIdle {
             if unloadWhenIdle.effective {
-                return idleUnloadSeconds.map { "Unloads after \(Self.idleText($0)) idle to free memory." }
-                    ?? "Unloads when idle to free memory."
+                return idleUnloadSeconds.map { "Unloads after \(Self.durationSentence($0)) without dictation to free memory." }
+                    ?? "Unloads when you are not dictating to free memory."
             }
-            return residency(for: engine) == .loaded ? "Stays loaded between takes." : nil
+            return residency(for: engine) == .loaded ? "Stays loaded between dictations." : nil
         }
         guard let idleUnloadSeconds else { return "Loads automatically when selected." }
-        return "Loads automatically when selected; unloads after \(Self.idleText(idleUnloadSeconds)) idle."
+        return "Loads automatically when selected; unloads after \(Self.durationSentence(idleUnloadSeconds)) without dictation."
     }
 
     /// Row 3 (lead 00:32Z): Sleeping on the SELECTED engine means unloaded (memory pressure, or the switch is on) and
@@ -322,6 +322,14 @@ public struct RecognizerPickerState: Equatable, Sendable {
         selected == engine && residency(for: engine) == .unloaded && assetsPresent(for: engine)
             && !(engine == .parakeet && parakeetAvailable == false)
     }
+    /// Full unit names keep helper sentences readable; compact control/status values keep their existing format.
+    static func durationSentence(_ seconds: Double) -> String {
+        let whole = Int(seconds.rounded())
+        if whole >= 3600, whole % 3600 == 0 { let value = whole / 3600; return "\(value) \(value == 1 ? "hour" : "hours")" }
+        if whole >= 60, whole % 60 == 0 { let value = whole / 60; return "\(value) \(value == 1 ? "minute" : "minutes")" }
+        return "\(whole) \(whole == 1 ? "second" : "seconds")"
+    }
+
     static func idleText(_ seconds: Double) -> String {
         let whole = Int(seconds.rounded())
         if whole >= 3600, whole % 3600 == 0 { return "\(whole / 3600) h" }
@@ -368,7 +376,7 @@ public struct RecognizerPickerState: Equatable, Sendable {
             return "Using Whisper: Parakeet failed to load"
         }
         if selected == .whisper, effective == .parakeet, fallbackReason == "whisper-startup-failed" {
-            return "Using Parakeet — Whisper failed to load"
+            return "Using Parakeet because Whisper failed to load."
         }
         if let notice = provenanceNotice { return notice }
         if let disabledReason { return disabledReason }

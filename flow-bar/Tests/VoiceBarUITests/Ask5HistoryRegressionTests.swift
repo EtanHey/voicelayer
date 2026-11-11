@@ -31,7 +31,7 @@ final class Ask5HistoryRegressionTests: XCTestCase {
         XCTAssertEqual(chunk.key.rawValue, "smart_chunks")
         XCTAssertEqual(chunk.lockedReason, "Set by VOICELAYER_STT_SMART_CHUNKS")
         // Copy is concise; backend thresholds and stop behavior remain outside this UI projection.
-        XCTAssertEqual(chunk.line, "Splits long Whisper takes at pauses.")
+        XCTAssertEqual(chunk.line, "Splits long Whisper recordings at pauses.")
     }
 
 }

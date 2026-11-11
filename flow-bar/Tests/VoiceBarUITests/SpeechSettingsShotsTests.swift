@@ -76,9 +76,9 @@ final class SpeechSettingsShotsTests: XCTestCase {
         draft.edit("20000")
         XCTAssertEqual(draft.displayedText(controls.shortLimit), "20000")
         XCTAssertEqual(SpeechSettingsView.subtitle(.short, limit: controls.shortLimit.effective),
-                       "Announcements ≤ 400 characters.")
+                       "Announcements and reads up to 400 characters.")
         XCTAssertEqual(SpeechSettingsView.subtitle(.long, limit: controls.shortLimit.effective),
-                       "speak / Option+F5 over 400 characters.")
+                       "Reads over 400 characters, such as Option+F5.")
         XCTAssertFalse(draft.canApply(controls: controls, connected: true, busy: false,
                                       pending: ["short_limit_chars": .number(20000)], callbackAvailable: true))
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()

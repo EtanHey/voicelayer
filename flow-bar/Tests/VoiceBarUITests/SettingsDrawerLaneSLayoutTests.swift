@@ -68,7 +68,7 @@ final class SettingsDrawerLaneSLayoutTests: XCTestCase {
                        "[S4] the lock reason is painted in the row: \(lines.map(\.text))")
         // Lead review (c7 07:55Z): with the Experimental badge on the title line the description uses the full text
         // column instead of wrapping beside a reserved badge.
-        XCTAssertTrue(lines.contains { $0.text.contains("splits long whisper takes at pauses") },
+        XCTAssertTrue(lines.contains { $0.text.contains("splits long whisper recordings at pauses") },
                       "[S4] the description wraps in a narrow column: \(lines.map(\.text))")
     }
 

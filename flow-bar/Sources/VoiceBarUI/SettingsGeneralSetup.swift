@@ -130,19 +130,19 @@ public struct SettingsGeneralSetup: Equatable, Sendable {
             return SettingsSetupStep(
                 id: .microphone, title: "Microphone access",
                 description: row.isGranted ? "VoiceBar can hear your microphones."
-                    : "Off — needed to hear you.",
+                    : "Off. VoiceBar needs this to hear you.",
                 isDone: row.isGranted, fix: fix)
         case .accessibility:
             return SettingsSetupStep(
                 id: .accessibility, title: "Accessibility",
                 description: row.isGranted ? "Lets VoiceBar paste what you say into other apps."
-                    : "Off — needed to paste into other apps.",
+                    : "Off. VoiceBar needs this to paste what you say into other apps.",
                 isDone: row.isGranted, fix: fix)
         case .inputMonitoring:
             return SettingsSetupStep(
                 id: .inputMonitoring, title: "Input Monitoring",
                 description: row.isGranted ? "Lets F5 and the mouse side button start dictation."
-                    : "Off — needed for F5 and mouse side buttons.",
+                    : "Off. VoiceBar needs this to hear F5 and the mouse side button.",
                 isDone: row.isGranted, fix: fix)
         }
     }
@@ -228,7 +228,7 @@ enum SettingsMicrophoneRowPresentation {
 enum SettingsGeneralCopy {
     static let dictationKeyTitle = "Dictation key"
     static let dictationKeyDescription =
-        "Hold to talk. Double-tap for hands-free (stops after 10 min silence)."
+        "Hold to talk. Double-tap to stay hands-free; it stops after 10 minutes of silence."
     static let mouseTitle = "Mouse side buttons"
     static let mouseDescription = "Forward acts like F5. Back sends Return."
     static let openAtLoginTitle = "Open at login"
@@ -238,12 +238,12 @@ enum SettingsGeneralCopy {
     static let shortcutsHeader = "Shortcuts"
     static let singleTapTitle = "Tap F5"
     static let readClipboardTitle = "Read clipboard aloud"
-    static let diagnosticDescription = "Copies build + recognizer info for a bug report."
+    static let diagnosticDescription = "Copies build and recognizer details for a bug report."
     static let microphoneNote =
-        "Drag to set order. First connected mic is used."
+        "Drag to set the order. VoiceBar uses the first connected microphone."
 
     static func relayDescription(installed: Bool, listenerActive: Bool) -> String {
         let state = installed ? "Installed." : listenerActive ? "Not installed." : "Needs setup."
-        return "Keeps F5 for dictation when macOS steals it. \(state)"
+        return "Keeps F5 for dictation when macOS claims the key. \(state)"
     }
 }

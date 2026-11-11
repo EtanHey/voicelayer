@@ -91,7 +91,7 @@ public struct SpeechSettingsView: View {
                     }
                 }
             } else {
-                Text(connected ? "Speech settings are not reported by this VoiceLayer version." : "Reconnect VoiceLayer to edit speech.")
+                Text(connected ? "Speech settings are not reported by this VoiceLayer version." : "VoiceLayer isn't connected. Speech settings appear when it reconnects.")
                     .foregroundStyle(.secondary)
             }
             if let notice, pending["preview"] == nil {
@@ -117,8 +117,8 @@ public struct SpeechSettingsView: View {
                                                              pending: pending, callbackAvailable: onChange != nil)
             let canApply = thresholdDraft.canApply(controls: controls, connected: connected, busy: busy,
                                                    pending: pending, callbackAvailable: onChange != nil)
-            let summary = controls.map { "Short ≤ \($0.shortLimit.effective) characters; Long above." }
-                ?? "Waiting for VoiceLayer."
+            let summary = controls.map { "Text up to \($0.shortLimit.effective) characters uses the short voice; longer text uses the long voice." }
+                ?? "VoiceBar is waiting for VoiceLayer to report the voice limit."
             SettingsRow(title: "Short / long split", description: thresholdDraft.validationMessage ?? summary) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Draft").font(.system(size: 10)).foregroundStyle(SettingsPanePalette.helper)
@@ -264,8 +264,8 @@ public struct SpeechSettingsView: View {
         return "\(rate) \(percent > 0 ? "faster" : "slower")"
     }
     static func subtitle(_ kind: SpeechProfile, limit: Int) -> String {
-        kind == .short ? "Announcements ≤ \(limit) characters."
-            : "speak / Option+F5 over \(limit) characters."
+        kind == .short ? "Announcements and reads up to \(limit) characters."
+            : "Reads over \(limit) characters, such as Option+F5."
     }
     static func lockFooter(_ kind: SpeechProfile, controls: SpeechControlsState) -> String? {
         guard let profile = controls.profiles[kind] else { return nil }
