@@ -12,7 +12,8 @@ import XCTest
 /// the production slot layout (`VoiceBarNotchWingSlot`) without glass, so they measure on every host; the whole
 /// BarView is measured too, but only where `cacheDisplay` paints native glass content (macOS 26.5 paints it dim, so
 /// the M1 skips that one loudly and the M4 runs it). Positions (lower row, J2) come from the drawn controls' own
-/// tooltip views, which need no pixels.
+/// tooltip views, which need no pixels. Their hosting window and SwiftUI display scale must also be pinned to 2x:
+/// a 1x window rounds those frames before a 2x bitmap is requested. These reference checks do not certify 1x layout.
 @MainActor
 final class WingLayoutX4Tests: XCTestCase {
     private final class Router: BarCommandRouting {
@@ -24,6 +25,15 @@ final class WingLayoutX4Tests: XCTestCase {
     }
 
     private static let scale: CGFloat = 2
+
+    // Match the bitmap's reference scale before SwiftUI lays out NSViewRepresentable tooltip frames.
+    private final class ReferencePanel: NSPanel {
+        override var backingScaleFactor: CGFloat { WingLayoutX4Tests.scale }
+    }
+
+    private final class ReferenceWindow: NSWindow {
+        override var backingScaleFactor: CGFloat { WingLayoutX4Tests.scale }
+    }
     /// The M4's measured hardware-notch occlusion (the glass hides the right wing's first 8.5 pt).
     private static let insets: [CGFloat] = [0, 8.5]
     private static let microphone = "QA microphone"
@@ -92,14 +102,15 @@ final class WingLayoutX4Tests: XCTestCase {
         let host = NSHostingView(rootView: AnyView(view
             .frame(width: size.width, height: size.height, alignment: .top)
             .environment(\.colorScheme, .dark)
+            .environment(\.displayScale, Self.scale)
             .environment(\.visualRenderTime, 0)
             .transaction { $0.animation = nil; $0.disablesAnimations = true }))
         host.frame = NSRect(origin: .zero, size: size)
         host.appearance = NSAppearance(named: .darkAqua)
         let window: NSWindow = panel
-            ? NSPanel(contentRect: host.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered,
+            ? ReferencePanel(contentRect: host.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered,
                       defer: false)
-            : NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+            : ReferenceWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.appearance = host.appearance
         window.contentView = host
@@ -110,6 +121,9 @@ final class WingLayoutX4Tests: XCTestCase {
         // Wing content fades in after a short delay; let it land.
         RunLoop.main.run(until: Date().addingTimeInterval(0.6))
         host.layoutSubtreeIfNeeded()
+        XCTAssertEqual(window.backingScaleFactor, Self.scale, "layout and raster use the same reference scale")
+        XCTAssertEqual(host.convertToBacking(CGSize(width: 1, height: 1)).width, Self.scale,
+                       "the hosting view converts points at the pinned backing scale")
         return host
     }
 
