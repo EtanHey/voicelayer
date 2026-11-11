@@ -62,18 +62,23 @@ struct SettingsRowLabel: View {
     var badge: String?
     var titleBadge: SettingsPill?
     var isSelected = false
+    /// The notch drawer wraps row copy in full (lead review, c7 07:55Z: "no truncated copy anywhere"); the window
+    /// keeps the V12 two-line limit with a tooltip for the rest.
+    @Environment(\.settingsRowWrapsFully) private var wrapsFully
+
+    private var limit: Int? { isSelected || wrapsFully ? nil : Self.lineLimit }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                ClippingAwareText(text: title, font: Self.titleFont, lineLimit: isSelected ? nil : Self.lineLimit)
+                ClippingAwareText(text: title, font: Self.titleFont, lineLimit: limit)
                     .foregroundStyle(.primary)
                 if let titleBadge { titleBadge }
             }
             if let description, !description.isEmpty {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     ClippingAwareText(text: description, font: Self.descriptionFont,
-                                      lineLimit: isSelected ? nil : Self.lineLimit)
+                                      lineLimit: limit)
                         .foregroundStyle(SettingsPanePalette.helper)
                     if let badge { SettingsPill(text: badge) }
                 }
@@ -194,5 +199,17 @@ struct SettingsRowLayout: Layout {
             : CGPoint(x: bounds.maxX - plan.controlsSize.width,
                       y: bounds.minY + max(0, (plan.textSize.height - plan.controlsSize.height) / 2))
         subviews[1].place(at: controlsOrigin, anchor: .topLeading, proposal: ProposedViewSize(plan.controlsSize))
+    }
+}
+
+private struct SettingsRowWrapsFullyKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Set by the notch drawer: row titles and descriptions wrap to as many lines as they need.
+    var settingsRowWrapsFully: Bool {
+        get { self[SettingsRowWrapsFullyKey.self] }
+        set { self[SettingsRowWrapsFullyKey.self] = newValue }
     }
 }

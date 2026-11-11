@@ -123,4 +123,17 @@ final class SettingsDrawerLaneSLayoutTests: XCTestCase {
         let build = try Self.line(lines, containing: "ahead of release")
         XCTAssertEqual(status.box.minX, build.box.minX, accuracy: 2, "[S5] status and build line share an edge")
     }
+
+    /// Lead review (c7 07:55Z): "no truncated copy anywhere". In the drawer, row copy wraps in full; on 8e1d5352
+    /// Read Clipboard, Unload when idle and Start with VoiceBar ended in an ellipsis at 420 pt.
+    func testNoRowCopyIsTruncatedInTheDrawer() async throws {
+        let updates = await SettingsDrawerLaneSSnapshotTests.updates()
+        for tab in [SettingsTab.general, .transcription, .speech] {
+            let lines = try Self.paintedLines(SettingsDrawerLaneSSnapshotTests.drawer(tab, advanced: true,
+                                                                                      updates: tab == .general ? updates : nil),
+                                              height: 1500)
+            let cut = lines.filter { $0.text.hasSuffix("…") || $0.text.hasSuffix("...") }
+            XCTAssertTrue(cut.isEmpty, "[S2] \(tab.title) truncates: \(cut.map(\.text))")
+        }
+    }
 }

@@ -943,6 +943,7 @@ public struct SettingsView: View {
             // drawer widens a Form pane by that inset, so its cards line up with the tab bar's edges (lane S
             // DESIGN.md §1), and moves the overlay scroller back inside the visible pane.
             .modifier(NotchGroupedFormGutter(isGroupedForm: tab.notchUsesGroupedForm))
+            .environment(\.settingsRowWrapsFully, true)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .modifier(
                 SettingsVocabularyRevisionObserver(

@@ -84,7 +84,8 @@ final class SettingsDrawerLaneSSnapshotTests: XCTestCase {
         )
     }
 
-    static func render(_ view: some View, height: CGFloat, name: String) throws -> NSBitmapImageRep {
+    static func render(_ view: some View, height: CGFloat, name: String, scrollToEnd: Bool = false) throws
+        -> NSBitmapImageRep {
         let size = CGSize(width: drawerWidth, height: height)
         let framed = view.frame(width: size.width, height: size.height)
             .background(Color(white: 0.16))
@@ -100,6 +101,13 @@ final class SettingsDrawerLaneSSnapshotTests: XCTestCase {
         VLOrderTestWindow(window)
         host.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(1.2))
+        if scrollToEnd, let scroll = scrollViews(in: host).first, let document = scroll.documentView {
+            let clip = scroll.contentView
+            let y = document.isFlipped ? max(0, document.bounds.height - clip.bounds.height) : 0
+            clip.scroll(to: NSPoint(x: clip.bounds.minX, y: y))
+            scroll.reflectScrolledClipView(clip)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+        }
         let bitmap = try EtanQA0510Tests.fixedScaleBitmap(host)
         if let dir = ProcessInfo.processInfo.environment["VOICEBAR_LANE_S_PNG_DIR"], !dir.isEmpty {
             let url = URL(fileURLWithPath: dir).appendingPathComponent("\(name).png")
@@ -113,6 +121,11 @@ final class SettingsDrawerLaneSSnapshotTests: XCTestCase {
         _ = try Self.render(Self.drawer(.general, updates: updates), height: 470, name: "mic-rows")
         _ = try Self.render(Self.drawer(.general, advanced: true, updates: updates), height: 1500, name: "general")
         _ = try Self.render(Self.drawer(.transcription, updates: nil), height: 1100, name: "transcription")
+        // The drawer at its real height (default rows), scrolled to the end: the gap under the last card is the
+        // Form's own bottom margin, not the empty band the tall 1500 pt render shows (lead review, c7 07:55Z).
+        _ = try Self.render(Self.drawer(.general, advanced: true, updates: updates),
+                            height: NotchSettingsDrawerPresentation.lowerSurfaceHeight, name: "general-real-height-end",
+                            scrollToEnd: true)
         _ = try Self.render(Self.drawer(.speech, updates: nil), height: 700, name: "speech")
         _ = try Self.render(Self.drawer(.dictionary, updates: nil), height: 700, name: "dictionary")
         _ = try Self.render(Self.drawer(.general, updates: updates)
