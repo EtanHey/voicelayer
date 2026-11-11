@@ -25,6 +25,8 @@ public struct TeleprompterAView: View {
     public var allowsBrowsing = true
     /// R893 P2: the read this text belongs to; a new read follows its own voice even when its text is identical.
     public var readIdentity: String?
+    /// C4 F1/F3: the display token a click is waiting on (not timed yet); drawn underlined until it seeks or drops.
+    public var pendingSeekToken: Int?
 
     /// T1/T2/T3/T6 (Etan QA 2026-11-09): the footer row is gone. Back/Forward and the speed sit beside Pause in the
     /// leading wing, the height handle sits under the eye row (`TeleprompterAHeightHandle`), and "Reading" is removed.
@@ -34,7 +36,7 @@ public struct TeleprompterAView: View {
                 playbackElapsedMilliseconds: @escaping () -> Int,
                 onSpeechSeek: ((String, Int) -> Void)? = nil, onSeek: ((Int) -> Void)? = nil,
                 onTextLinesChange: ((Int) -> Void)? = nil, narrationOrigin: String? = nil,
-                allowsBrowsing: Bool = true, readIdentity: String? = nil) {
+                allowsBrowsing: Bool = true, readIdentity: String? = nil, pendingSeekToken: Int? = nil) {
         self.text = text
         self.wordBoundaries = wordBoundaries
         self.displayBlocks = displayBlocks
@@ -51,6 +53,7 @@ public struct TeleprompterAView: View {
         self.narrationOrigin = narrationOrigin
         self.allowsBrowsing = allowsBrowsing
         self.readIdentity = readIdentity
+        self.pendingSeekToken = pendingSeekToken
     }
 
     @State private var cache = TeleprompterAModelCache()
@@ -147,12 +150,13 @@ public struct TeleprompterAView: View {
                     if let separator = layout.separator { Text(separator).accessibilityHidden(true) }
                     // Lane B: a word is drawn whole. Fixed size means SwiftUI can never compress it to "Cod…"; a word
                     // wider than the column alone scales down on its own line instead of being cut.
+                    let pending = pendingSeekToken != nil && model.wordTokens[word] == pendingSeekToken
                     Button { seek(target) } label: {
                         if model.shrinks[word] {
-                            Text(layout.displayText).lineLimit(1).minimumScaleFactor(0.4)
+                            Text(layout.displayText).underline(pending).lineLimit(1).minimumScaleFactor(0.4)
                                 .frame(maxWidth: model.column - TeleprompterA.wrapSlack, alignment: .leading)
                         } else {
-                            Text(layout.displayText).fixedSize()
+                            Text(layout.displayText).underline(pending).fixedSize()
                         }
                     }
                         .buttonStyle(.plain)

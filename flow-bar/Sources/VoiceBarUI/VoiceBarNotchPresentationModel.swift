@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import Observation
 
 public enum VoiceBarRetainedReadbackPolicy {
@@ -24,7 +25,16 @@ public final class VoiceBarNotchPresentationModel {
 
     private var hasTeleprompter = false
     /// C7 L3 V10: a read is on screen; its canvas keeps the teleprompter height (see VoiceBarNotchPresentation).
+    /// C4 F4: after the read leaves the screen the hold lasts `readingCanvasReleaseDelay` more, so the shell's collapse
+    /// to idle (Stop, Close read, dismissing a finished read) is never cut by the canvas shrinking under it.
     private var holdsReadingCanvas = false
+    @ObservationIgnored private var readingCanvasReleaseSerial = 0
+    /// The shell's collapse settles inside this (the 310/31/0.72 spring takes ~0.3 s, plus the content exit).
+    public static let readingCanvasReleaseDelay: TimeInterval = 0.6
+    /// Tests replace this to run the release deterministically.
+    @ObservationIgnored public var scheduleReadingCanvasRelease: (TimeInterval, @escaping () -> Void) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
     private var isRecording = false
     private var hasCompactStatus = false
     private var keepsIdleExpanded = false
@@ -81,7 +91,18 @@ public final class VoiceBarNotchPresentationModel {
         feedback: VoiceBarNotchFeedback? = nil,
         holdsReadingCanvas: Bool = false
     ) {
-        self.holdsReadingCanvas = holdsReadingCanvas
+        if holdsReadingCanvas {
+            readingCanvasReleaseSerial &+= 1
+            self.holdsReadingCanvas = true
+        } else if self.holdsReadingCanvas {
+            readingCanvasReleaseSerial &+= 1
+            let serial = readingCanvasReleaseSerial
+            scheduleReadingCanvasRelease(Self.readingCanvasReleaseDelay) { [weak self] in
+                guard let self, self.readingCanvasReleaseSerial == serial else { return }
+                self.holdsReadingCanvas = false
+                self.resolvePresentation()
+            }
+        }
         self.hasTeleprompter = hasTeleprompter
         self.isRecording = isRecording
         self.hasCompactStatus = hasCompactStatus

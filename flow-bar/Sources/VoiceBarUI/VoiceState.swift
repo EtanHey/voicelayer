@@ -2745,18 +2745,32 @@ public final class VoiceState {
     public func seekSpeechWord(utteranceID: String, wordIndex: Int) {
         guard mode == .speaking, !isPlaybackPaused, speechWords?.utteranceID == utteranceID, wordIndex >= 0 else { return }
         // C7 L3 V09: a long read is timed chunk by chunk as it synthesizes, and the daemon refuses a word it has not
-        // timed yet. A click on such a word of the read on screen waits for its timing, then seeks once.
-        if let table = speechWords, table.hasTimings, !table.isTimed(wordIndex) {
+        // timed yet. A click on such a word of the read on screen (C4 F3: also before the first chunk) waits for its
+        // timing. C4 F1: it waits only `pendingSpeechSeekWindow`; a timing that arrives later never moves the voice.
+        if let table = speechWords, !table.isTimed(wordIndex) {
             let tokens = teleprompterText.map(TeleprompterContentModel.displayTokens) ?? []
-            pendingSpeechSeek = PendingSpeechSeek(utteranceID: utteranceID, wordIndex: wordIndex,
-                                                  text: tokens.indices.contains(wordIndex) ? tokens[wordIndex] : nil,
-                                                  readEpoch: logicalReadEpoch)
+            let pending = PendingSpeechSeek(utteranceID: utteranceID, wordIndex: wordIndex,
+                                            text: tokens.indices.contains(wordIndex) ? tokens[wordIndex] : nil,
+                                            readEpoch: logicalReadEpoch, clickedAt: playbackAmplitudeClock(),
+                                            serial: (pendingSpeechSeek?.serial ?? 0) &+ 1)
+            pendingSpeechSeek = pending
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.pendingSpeechSeekWindow) { [weak self] in
+                guard let self, self.pendingSpeechSeek?.serial == pending.serial else { return }
+                self.pendingSpeechSeek = nil
+            }
             return
         }
         pendingSpeechSeek = nil
         sendCommand?(["cmd": "speech_seek", "utteranceId": utteranceID, "wordIndex": wordIndex,
                       "id": UUID().uuidString])
     }
+
+    /// C4 F1: how long a click on a word not yet timed may wait for its timing. Synthesis normally times the next
+    /// chunk well inside this; anything later would move the voice seconds after the click, so it is dropped.
+    public static let pendingSpeechSeekWindow: TimeInterval = 1.5
+
+    /// The display token a click is waiting on (drawn as pending), or nil.
+    public var pendingSpeechSeekWordIndex: Int? { pendingSpeechSeek?.wordIndex }
 
     /// C7 L3 V09: a click on a word of the read on screen that the daemon has not timed yet.
     private struct PendingSpeechSeek {
@@ -2765,13 +2779,18 @@ public final class VoiceState {
         /// The display token clicked; the timing that arrives must be for this same word.
         let text: String?
         let readEpoch: Int
+        /// `playbackAmplitudeClock` at the click.
+        let clickedAt: TimeInterval
+        let serial: Int
     }
     private var pendingSpeechSeek: PendingSpeechSeek?
 
-    /// Sends a pending click once its word is timed: same read, still playing, same word. Anything else drops it.
+    /// Sends a pending click once its word is timed: same read, still playing, same word, inside the window.
+    /// Anything else drops it.
     private func firePendingSpeechSeekIfTimed() {
         guard let pending = pendingSpeechSeek else { return }
         guard pending.readEpoch == logicalReadEpoch, mode == .speaking, !isPlaybackPaused,
+              playbackAmplitudeClock() - pending.clickedAt <= Self.pendingSpeechSeekWindow,
               let table = speechWords, table.utteranceID == pending.utteranceID else {
             pendingSpeechSeek = nil
             return
@@ -3834,7 +3853,10 @@ public final class VoiceState {
                     && edgeUtteranceID == currentUtteranceID && playbackStartedAt != nil && !isPlaybackPreparing
                 // Only a daemon that reports its player's position also marks its re-anchors; an older one's seek
                 // edges carry no `reanchor`, so the guard never refuses them.
+                // C4 F7: an edge at another speed is never stale: keeping the old clock would run the highlight at the
+                // old rate over audio at the new one, landing clicks and the highlight on neighbouring words.
                 let keepsClock = continuesRead && daemonReportsPosition && event["reanchor"] == nil
+                    && Self.playbackRate(event["playback_rate"]) == playbackRate
                     && ((event["playback_offset_ms"] as? NSNumber)?.intValue).map { $0 < shownPosition - 300 } == true
                 if keepsClock { logDiagnostic("stale_speaking_edge_clock_kept", details: ["shown_ms": String(shownPosition)]) }
                 let keptClock = keepsClock ? (startedAt: playbackStartedAt, start: playbackChunkStartMilliseconds,
