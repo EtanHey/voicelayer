@@ -221,9 +221,9 @@ final class WingLayoutX4Tests: XCTestCase {
         return Painted(bitmap: bitmap)
     }
 
-    private func recordingRow() -> some View {
+    private func recordingRow(elapsedMilliseconds: Int = 2_000) -> some View {
         VoiceBarRecordingTrailingRow {
-            VoiceBarRecordingTimeRegion(elapsedMilliseconds: { 2_000 }, isCaptureOpen: true, microphoneName: nil,
+            VoiceBarRecordingTimeRegion(elapsedMilliseconds: { elapsedMilliseconds }, isCaptureOpen: true, microphoneName: nil,
                                         color: .white)
         } meter: {
             VoiceBarNotchWaveform(mode: .recording, isListening: false, isCaptureLive: true,
@@ -267,8 +267,10 @@ final class WingLayoutX4Tests: XCTestCase {
             for (label, painted, width) in rows {
                 let n = try rowNumbers(painted, wingWidth: width, inset: inset, label: label)
                 print("[X4] \(label): \(n)")
-                XCTAssertGreaterThanOrEqual(n.gap, 5, "[X4-1] \(label): the digits and bars have a clear gap")
-                XCTAssertLessThanOrEqual(n.gap, 7, "[X4-1] \(label): the same 6 pt gap Etan accepted (J1)")
+                // C7-W: the recording row's gap is wider (Etan, 2026-11-11); reading keeps the 6 pt of J1.
+                let gap: ClosedRange<CGFloat> = label.hasPrefix("recording") ? 9 ... 10.5 : 5 ... 7
+                XCTAssertGreaterThanOrEqual(n.gap, gap.lowerBound, "[X4-1] \(label): the digits and bars have a clear gap")
+                XCTAssertLessThanOrEqual(n.gap, gap.upperBound, "[X4-1] \(label): no wider than its gap")
                 XCTAssertEqual(n.barsY, n.digitsY, accuracy: 0.5, "[X4-3] \(label): the meter sits on the time's centre")
                 XCTAssertEqual(n.barsY, VoiceBarNotchContract.topHeight / 2, accuracy: 0.5,
                                "[X4-3] \(label): the meter sits on the row's centre")
@@ -308,9 +310,15 @@ final class WingLayoutX4Tests: XCTestCase {
             ]
             for (label, painted, width) in rows {
                 let n = try rowNumbers(painted, wingWidth: width, inset: inset, label: label)
-                // The time region is trailing-aligned, so its digits' side bearing adds up to ~2.5 pt on the core side.
-                XCTAssertEqual(n.coreSide, n.outerSide, accuracy: 3,
-                               "[X4-2] \(label): the row is centred in the visible wing (\(n))")
+                if label.hasPrefix("recording") {
+                    // C7-W: the recording row ends at the left wing's outer inset instead of being centred.
+                    XCTAssertEqual(n.outerSide, VoiceBarNotchContract.material.compactContentInset, accuracy: 0.5,
+                                   "[C7-W] \(label): the meter ends at Stop's inset (\(n))")
+                } else {
+                    // The time region is trailing-aligned, so its digits' side bearing adds up to ~2.5 pt on the core side.
+                    XCTAssertEqual(n.coreSide, n.outerSide, accuracy: 3,
+                                   "[X4-2] \(label): the row is centred in the visible wing (\(n))")
+                }
                 XCTAssertGreaterThanOrEqual(n.coreSide, 8, "[X4-2] \(label): 8 pt clear of the physical notch")
             }
         }
@@ -365,6 +373,204 @@ final class WingLayoutX4Tests: XCTestCase {
             let open = try timeX("drawer open", history: true) { $0.presentingHistoryForTesting() }
             for (label, x) in [("hover", hover), ("press", press), ("pull", pull), ("open", open)] {
                 XCTAssertEqual(x, rest, accuracy: 0.25, "[X4 J2] inset \(inset): the time moved on \(label)")
+            }
+        }
+    }
+
+    // MARK: C7-W (Etan QA 2026-11-11). The band's two ends, the gap and the centre
+
+    /// Everything the recording band's layout needs, from the drawn controls' own views (no pixels).
+    private struct Band {
+        var left: CGFloat, right: CGFloat, stop: CGRect, cancel: CGRect, time: CGRect, meterMaxX: CGFloat
+        var leadingInset: CGFloat { stop.minX - left }
+        var trailingInset: CGFloat { right - meterMaxX }
+    }
+
+    private func band(_ fixture: Fixture, inset: CGFloat, drawerOpen: Bool = false) throws -> Band {
+        let state = state(fixture)
+        state.recentTranscriptionEntries = [RecentTranscriptionEntry(text: "An earlier take for the drawer.",
+                                                                     recordingPath: nil)]
+        let resolved = presentation(fixture, inset: inset)
+        let model = VoiceBarNotchPresentationModel()
+        model.updateOperationalEnvelope(
+            hasTeleprompter: false, isRecording: true, hasCompactStatus: false,
+            recordingLeadingWingWidth: resolved.geometry.leadingWingWidth,
+            recordingTrailingWingWidth: resolved.geometry.trailingWingWidth,
+            visibleCoreOcclusionInset: inset)
+        if drawerOpen { model.setHistoryPanelOpen(true) }
+        let host = mountBar(state, model: model) { drawerOpen ? $0.presentingHistoryForTesting() : $0 }
+        let g = resolved.geometry
+        let stop = try XCTUnwrap(tooltipFrame("Stop recording", in: host), "\(fixture): Stop is drawn")
+        let cancel = try XCTUnwrap(tooltipFrame("Cancel recording", in: host), "\(fixture): Cancel is drawn")
+        let time = try XCTUnwrap(tooltipFrame(Self.microphone, in: host), "\(fixture): the time is drawn")
+        return Band(left: 270 - g.coreWidth / 2 - g.leadingWingWidth, right: 270 + g.coreWidth / 2 + g.trailingWingWidth,
+                    stop: stop, cancel: cancel, time: time,
+                    meterMaxX: time.maxX + VoiceBarRecordingWingLabel.recordingMeterGap + WaveformLayout.viewportWidth)
+    }
+
+    /// Item 1: "way too much space on the right of it". The meter ends as far from the band's right edge as Stop
+    /// starts from its left edge. Candidate 6 drew 15 pt and 8 pt on the M4.
+    func testC7WMeterEndsAtStopsInsetFromTheBandEdge() throws {
+        for inset in Self.insets {
+            for fixture in [Fixture.recordingPTT, .recordingVAD] {
+                let b = try band(fixture, inset: inset)
+                print("[C7-W ends] \(fixture.rawValue) inset=\(inset): Stop from left=\(b.leadingInset) " +
+                      "meter from right=\(b.trailingInset) wing=\(b.stop.minX - b.left + 270 - b.stop.minX)")
+                XCTAssertEqual(b.leadingInset, b.trailingInset, accuracy: 0.5,
+                               "[C7-W-1] \(fixture.rawValue) inset \(inset): equal insets at the band's two ends")
+                XCTAssertEqual(b.trailingInset, VoiceBarNotchContract.material.compactContentInset, accuracy: 0.5)
+                XCTAssertGreaterThanOrEqual(b.time.minX - 270 - presentation(fixture, inset: inset).geometry.coreWidth / 2
+                    - inset, VoiceBarNotchContract.physicalNotchClearance - 0.01, "8 pt clear of the physical notch")
+            }
+        }
+    }
+
+    /// Item 2: "when it's open, there's more gutters on the side". The controls never move when a drawer opens (J2),
+    /// so the open band's gutters are the closed insets plus the drawer's extra width, the same on both sides.
+    func testC7WOpenDrawerKeepsTheControlsStillAndItsGuttersEqual() throws {
+        for inset in Self.insets {
+            let closed = try band(.recordingPTT, inset: inset)
+            let open = try band(.recordingPTT, inset: inset, drawerOpen: true)
+            let body = NotchHistoryMorph.bodyWidth / 2
+            let leftGutter = open.stop.minX - (270 - body), rightGutter = 270 + body - open.meterMaxX
+            print("[C7-W open] inset=\(inset): closed L/R=\(closed.leadingInset)/\(closed.trailingInset) " +
+                  "open gutters L/R=\(leftGutter)/\(rightGutter)")
+            XCTAssertEqual(open.stop.minX, closed.stop.minX, accuracy: 0.25, "Stop holds still")
+            XCTAssertEqual(open.time.minX, closed.time.minX, accuracy: 0.25, "the time holds still")
+            XCTAssertEqual(leftGutter, rightGutter, accuracy: 0.5, "[C7-W-2] inset \(inset): equal gutters when open")
+        }
+    }
+
+    /// Item 1: the time never moves the meter, and its own right edge never moves, whatever the digits.
+    func testC7WTimeDoesNotJitterAcrossDigitCounts() throws {
+        for inset in Self.insets {
+            let width = presentation(.recordingPTT, inset: inset).geometry.trailingWingWidth
+            var edges: [(String, CGFloat, CGFloat, CGFloat)] = []
+            for (name, ms) in [("0:18", 18_000), ("1:31", 91_000), ("9:59", 599_000), ("12:05", 725_000),
+                               ("1:02:03", 3_723_000)] {
+                let p = try paintRightWing(recordingRow(elapsedMilliseconds: ms), band: .recording, inset: inset,
+                                           width: width, name: "c7w-\(name.replacingOccurrences(of: ":", with: "-"))-\(inset)")
+                let firstBar = try XCTUnwrap(p.ink(x: 0 ..< p.width, y: 0 ..< p.height, Self.bar)).first
+                let text = try XCTUnwrap(p.ink(x: 0 ..< firstBar, y: 0 ..< p.height, Self.digit), "\(name) paints")
+                edges.append((name, CGFloat(text.first) / Self.scale, CGFloat(text.last + 1) / Self.scale,
+                              CGFloat(firstBar) / Self.scale))
+            }
+            print("[C7-W jitter] inset=\(inset): " + edges.map { "\($0.0) text=\($0.1)...\($0.2) meter=\($0.3)" }
+                .joined(separator: "; "))
+            for edge in edges {
+                XCTAssertEqual(edge.3, edges[0].3, "\(edge.0): the meter never moves")
+                // Ink, not advance: a final "1" paints 1.5 pt short of its monospaced cell.
+                XCTAssertEqual(edge.2, edges[0].2, accuracy: 1.5, "\(edge.0): the time's right edge holds")
+                XCTAssertGreaterThanOrEqual(edge.3 - edge.2, 9, "\(edge.0): a clear gap before the meter")
+                XCTAssertGreaterThanOrEqual(edge.1 - inset, 8, "\(edge.0): 8 pt clear of the physical notch")
+            }
+        }
+        // Monospaced digits: every m:ss time is one width, and every form the label takes fits its fixed region.
+        let advance = { (text: String) in (text as NSString).size(withAttributes: [.font: VoiceBarRecordingWingLabel.timeFont]).width }
+        XCTAssertEqual(advance("0:18"), advance("1:31"))
+        XCTAssertEqual(advance("0:18"), advance("9:59"))
+        for ms in [18_000, 91_000, 599_000, 725_000, 3_723_000] {
+            XCTAssertLessThanOrEqual(advance(VoiceBarReadingTimeLabel.text(elapsedMilliseconds: ms)),
+                                     VoiceBarRecordingWingLabel.width, "\(ms) ms fits the fixed region")
+        }
+    }
+
+    /// Item 3: the time and the meter sit on the band's centre line, and on the controls' centre line.
+    func testC7WTimeAndControlsShareTheBandCentre() throws {
+        for drawerOpen in [false, true] {
+            let b = try band(.recordingPTT, inset: 8.5, drawerOpen: drawerOpen)
+            print("[C7-W centre] open=\(drawerOpen): stop.midY=\(b.stop.midY) cancel.midY=\(b.cancel.midY) time.midY=\(b.time.midY)")
+            XCTAssertEqual(b.time.midY, b.stop.midY, accuracy: 0.5, "[C7-W-3] the time is level with Stop")
+            XCTAssertEqual(b.cancel.midY, b.stop.midY, accuracy: 0.25)
+        }
+    }
+
+    /// The hit rects are where the controls are drawn (Stop is the outermost).
+    func testC7WHitRectsCoverTheDrawnControls() throws {
+        for inset in Self.insets {
+            for fixture in [Fixture.recordingPTT, .recordingVAD] {
+                let b = try band(fixture, inset: inset)
+                let g = presentation(fixture, inset: inset).geometry
+                let canvas = VoiceBarNotchGeometry(coreWidth: g.coreWidth, topHeight: g.topHeight,
+                                                   leadingWingWidth: g.leadingWingWidth, trailingWingWidth: g.trailingWingWidth,
+                                                   bodyLeadingExtent: 0, bodyTrailingExtent: 0, lowerSurfaceHeight: 0)
+                let region = VoiceBarNotchHitRegion(geometry: canvas, configuration: .init(
+                    leadingControlCount: 3,
+                    leadingCoreInset: VoiceBarPresentation.recordingLeadingCoreInset(
+                        wingWidth: g.leadingWingWidth, showsEarlierTakeProcessing: false)))
+                let originX = b.left // the geometry's x = 0 on the 540 pt canvas
+                let xs = region.rects.map { $0.minX + originX }.sorted()
+                XCTAssertEqual(xs.first ?? -1, b.stop.minX, accuracy: 0.5, "\(fixture.rawValue) \(inset): Stop's hit rect")
+                // Cancel is the innermost control on a PTT take; a VAD take has Lock inside it.
+                XCTAssertTrue(xs.contains { abs($0 - b.cancel.minX) <= 0.5 }, "\(fixture.rawValue) \(inset): Cancel's hit rect")
+            }
+        }
+    }
+
+    /// Before/after pictures of the recording band (closed, and over an open drawer) at three elapsed times, on the
+    /// M4's notch geometry. This host cannot paint the notch glass (macOS 26.5 `cacheDisplay` leaves glass content
+    /// empty), so each picture is a COMPOSITE: the production time/meter row and the production control buttons,
+    /// drawn on a flat fill at the positions the real BarView reports for them. Written only when
+    /// `VOICEBAR_C7W_SHOTS` names a directory; uses nothing newer than candidate 6, so the same test draws "before".
+    func testC7WShots() throws {
+        guard let directory = ProcessInfo.processInfo.environment["VOICEBAR_C7W_SHOTS"] else {
+            throw XCTSkip("set VOICEBAR_C7W_SHOTS to write the band pictures")
+        }
+        let inset: CGFloat = 8.5
+        let g = presentation(.recordingPTT, inset: inset).geometry
+        let size = VoiceBarNotchContract.material.compactControlSize
+        for (name, ms) in [("0-18", 18_000), ("1-31", 91_000), ("1-02-03", 3_723_000)] {
+            for drawerOpen in [false, true] {
+                // Where the real BarView puts the controls and the time.
+                let state = state(.recordingPTT)
+                state.recentTranscriptionEntries = [RecentTranscriptionEntry(text: "An earlier take.", recordingPath: nil)]
+                let model = VoiceBarNotchPresentationModel()
+                model.updateOperationalEnvelope(
+                    hasTeleprompter: false, isRecording: true, hasCompactStatus: false,
+                    recordingLeadingWingWidth: g.leadingWingWidth, recordingTrailingWingWidth: g.trailingWingWidth,
+                    visibleCoreOcclusionInset: inset)
+                if drawerOpen { model.setHistoryPanelOpen(true) }
+                let host = mountBar(state, model: model) { drawerOpen ? $0.presentingHistoryForTesting() : $0 }
+                let controls = try ["Stop recording", "Mute microphone", "Cancel recording"].map {
+                    try XCTUnwrap(tooltipFrame($0, in: host), "\($0) is drawn").minX
+                }
+                let timeMinX = try XCTUnwrap(tooltipFrame(Self.microphone, in: host)).minX
+                let half = drawerOpen ? NotchHistoryMorph.bodyWidth / 2 : g.coreWidth / 2 + g.trailingWingWidth
+                let fill = Color(red: 22.0 / 255, green: 22.0 / 255, blue: 24.0 / 255)
+                let bandHeight = VoiceBarNotchContract.topHeight
+                let icons = ["stop.fill", "mic.fill", "xmark"]
+                let picture = ZStack(alignment: .topLeading) {
+                    Color(red: 0.55, green: 0.6, blue: 0.68)
+                    UnevenRoundedRectangle(bottomLeadingRadius: 15, bottomTrailingRadius: 15)
+                        .fill(fill)
+                        .frame(width: 2 * half, height: drawerOpen ? bandHeight + 70 : bandHeight)
+                        .offset(x: 270 - half)
+                    // The physical notch: the drawn core less the points the glass hides on each side.
+                    UnevenRoundedRectangle(bottomLeadingRadius: 7, bottomTrailingRadius: 7)
+                        .fill(Color.black)
+                        .frame(width: g.coreWidth + 2 * inset, height: bandHeight)
+                        .offset(x: 270 - g.coreWidth / 2 - inset)
+                    ForEach(0 ..< 3, id: \.self) { index in
+                        VoiceBarPillControlButton(icon: icons[index], optics: .resolve(for: icons[index]),
+                                                  foreground: .white, halo: .clear, isSelected: false,
+                                                  isDestructive: index == 0, accessibilityLabel: icons[index],
+                                                  accessibilityHint: "", action: {})
+                            .frame(width: size, height: bandHeight)
+                            .offset(x: controls[index])
+                    }
+                    recordingRow(elapsedMilliseconds: ms)
+                        .frame(height: bandHeight)
+                        .offset(x: timeMinX)
+                    Text("composite: production views at BarView's measured positions; this Mac cannot paint the notch glass")
+                        .font(.system(size: 8)).foregroundStyle(.black)
+                        .offset(x: 6, y: drawerOpen ? bandHeight + 76 : bandHeight + 6)
+                }
+                let shot = mount(picture, size: CGSize(width: 540, height: drawerOpen ? bandHeight + 92 : bandHeight + 22),
+                                 panel: false)
+                let bitmap = try EtanQA0510Tests.fixedScaleBitmap(shot, scale: 3)
+                try bitmap.representation(using: .png, properties: [:])?.write(
+                    to: URL(fileURLWithPath: directory)
+                        .appendingPathComponent("band-\(drawerOpen ? "open" : "closed")-\(name).png"))
             }
         }
     }

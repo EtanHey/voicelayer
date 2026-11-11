@@ -14,7 +14,9 @@ final class RecordingEarlierTakeSpinnerTests: XCTestCase {
     func testTheLeftWingGainsOneOuterSlotForTheSpinner() {
         let slot = VoiceBarNotchContract.material.compactControlSpacing + VoiceBarNotchContract.material.compactControlSize
         XCTAssertEqual(resolve(earlier: false).geometry.leadingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth, accuracy: 0.001)
-        XCTAssertEqual(resolve(earlier: true).geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth + slot, accuracy: 0.001)
+        // C7-W: Stop + Cancel + spinner (99.5 pt) is narrower than the time/meter wing (102 pt), which then sets both.
+        XCTAssertEqual(resolve(earlier: true).geometry.leadingWingWidth,
+                       max(VoiceBarNotchContract.fixedWingWidth + slot, VoiceBarNotchContract.recordingTrailingWingWidth), accuracy: 0.001)
         let both = resolve(earlier: true, hold: true).geometry
         XCTAssertEqual(both.leadingWingWidth, VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl + slot, accuracy: 0.001)
         XCTAssertLessThanOrEqual(both.leadingWingWidth, 132)
