@@ -527,6 +527,32 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         XCTAssertEqual(pager.index,2)
     }
 
+    func testR901TabIntoSelectorOwnsArrowKeysWithoutAPointerClick() throws {
+        let harness=makeHarness()
+        open(harness,.openHistory)
+        func selectorHost(_ view:NSView)->NSView? {
+            if view.identifier?.rawValue == "history-selector-keyboard-host" { return view }
+            return view.subviews.lazy.compactMap(selectorHost).first
+        }
+        let selector=try XCTUnwrap(selectorHost(harness.host),"the selector has its own keyboard focus subtree")
+        let previous=OtherFocus(frame:NSRect(x:0,y:0,width:8,height:8))
+        harness.host.addSubview(previous)
+        defer { previous.removeFromSuperview() }
+        previous.nextKeyView=selector
+        XCTAssertTrue(harness.panel.makeFirstResponder(previous))
+        harness.panel.selectNextKeyView(nil)
+        let responder=try XCTUnwrap(harness.panel.firstResponder as? NSView)
+        XCTAssertTrue(responder === selector || responder.isDescendant(of:selector),"Tab enters the selector")
+        let monitor=try XCTUnwrap(swipeMonitor(harness.host))
+        let right=try XCTUnwrap(NSEvent.keyEvent(with:.keyDown,location:.zero,modifierFlags:[],timestamp:0,
+            windowNumber:harness.panel.windowNumber,context:nil,characters:"",charactersIgnoringModifiers:"",isARepeat:false,keyCode:124))
+        XCTAssertTrue(monitor.routeKey(right,isKeyWindow:true),"selector keyboard focus owns Right without any click")
+        drain(0.3)
+        XCTAssertEqual(shown(harness),[.ask])
+        XCTAssertTrue(harness.panel.makeFirstResponder(previous))
+        XCTAssertFalse(monitor.routeKey(right,isKeyWindow:true),"unrelated keyboard focus keeps its arrows")
+    }
+
     // MARK: Pictures (opt-in)
 
     /// Writes both History surfaces in each category, an empty category and one mid-swipe frame: the real History

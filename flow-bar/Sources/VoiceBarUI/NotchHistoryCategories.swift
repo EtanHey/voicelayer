@@ -18,6 +18,7 @@ struct NotchHistoryCategoryPanel: View {
     var onOpenArchive: (SettingsHistoryDestination) -> Void = { _ in }
 
     @State private var pager: NotchHistoryCategoryPager
+    @State private var selectorFocus = NotchHistorySelectorFocus()
     @State private var swipeCancellation = NotchHistorySwipeCancellation()
     @State private var swipeEndedAt: TimeInterval = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -57,7 +58,7 @@ struct NotchHistoryCategoryPanel: View {
                 onMove: { dx, dy in follow { $0.move(dx: dx, dy: dy) } },
                 onEnd: { finish(width: width, flick: nil) },
                 onStep: { select(pager.index + $0) },
-                cancellation: swipeCancellation
+                cancellation: swipeCancellation, selectorFocus: selectorFocus
             ))
         }
         .frame(height: dictations.listHeight)
@@ -74,7 +75,7 @@ struct NotchHistoryCategoryPanel: View {
     private func selector(width: CGFloat) -> some View {
         let segment = width / CGFloat(Self.scopes.count)
         let position = reduceMotion ? CGFloat(pager.index) : pager.position(width: width)
-        return ZStack(alignment: .leading) {
+        let content = ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(palette.primary.color.opacity(0.14))
                 .frame(width: segment)
@@ -101,6 +102,8 @@ struct NotchHistoryCategoryPanel: View {
         .frame(width: width, height: NotchHistoryPresentation.categorySelectorHeight, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(NotchHistoryPresentation.categorySelectorLabel)
+        return NotchHistorySelectorHost(content: AnyView(content), focus: selectorFocus)
+            .frame(width: width, height: NotchHistoryPresentation.categorySelectorHeight)
     }
 
     // MARK: Lists
@@ -251,8 +254,8 @@ final class NotchHistorySwipeCancellation {
 /// vertical gesture, the event goes on to the list untouched; once it is a sideways swipe the list never sees it
 /// (nor its momentum). A plain mouse wheel has no gesture phases and is left alone.
 ///
-/// Left and Right require this list/selector's AppKit first-responder target. Clicking outside the History
-/// region releases it, so arrows never leak from a Settings tab or a text editor. SwiftUI `.focusable()` is
+/// Left and Right require the list's AppKit first-responder target or the selector's own hosting subtree
+/// (including Tab-focused SwiftUI buttons). Outside focus never leaks arrows from Settings or text editors. SwiftUI `.focusable()` is
 /// deliberately avoided: it aborted the old hosted panel on close.
 struct NotchHistorySwipeMonitor: NSViewRepresentable {
     let onBegin: () -> Void
@@ -262,6 +265,7 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
     let onStep: (Int) -> Void
     /// A reference fence: a selector/key change invalidates pending events immediately, before view updates.
     var cancellation: NotchHistorySwipeCancellation? = nil
+    var selectorFocus: NotchHistorySelectorFocus? = nil
 
     func makeNSView(context: Context) -> Probe { Probe() }
 
@@ -342,7 +346,8 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
 
         /// `handleKey` with the key-window fact spelled out (an offscreen test panel cannot become key).
         func routeKey(_ event: NSEvent, isKeyWindow: Bool) -> Bool {
-            guard let window, event.window === window, isKeyWindow, window.firstResponder === self,
+            guard let window, event.window === window, isKeyWindow,
+                  window.firstResponder === self || handlers?.selectorFocus?.owns(window.firstResponder) == true,
                   event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
                   let handlers else { return false }
             switch event.keyCode {
