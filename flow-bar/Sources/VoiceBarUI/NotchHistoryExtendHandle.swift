@@ -8,12 +8,14 @@ import SwiftUI
 /// NotchHistoryClock's monotonic base (the gesture's own timestamp); `onDragEnd` fires
 /// exactly once per drag, `true` when the system cancelled it (no `onEnded`) or the handle unmounted.
 ///
-/// The Settings drawer has the same grip at its bottom edge (`rows` nil): there it only pushes the drawer closed
-/// (Etan, QA 0510 N4), and VoiceOver reads it as the drawer's grip with no row steps.
+/// The Settings drawer has the same grip at its bottom edge (`rows` nil): it pushes the drawer closed (Etan, QA 0510
+/// N4) and, C6 L2c (N16), drags it taller or shorter. VoiceOver reads it as the drawer's grip with one-row steps.
 struct NotchHistoryExtendHandle: View {
     let palette: VoiceBarNotchContrastPalette
     /// History's rows and their one-row VoiceOver steps; nil for the Settings drawer's grip.
     var rows: (current: Int, maximum: Int, onAdjust: (Int) -> Void)?
+    /// The Settings drawer's rows and their one-row VoiceOver steps (N16).
+    var settingsRows: (current: Int, onAdjust: (Int) -> Void)?
     /// 0510 N6: while a pull is armed for Settings its hint takes the grip's band, so the grip is not drawn.
     var showsGrip = true
     var onDrag: ((CGFloat, TimeInterval) -> Void)?
@@ -52,6 +54,17 @@ struct NotchHistoryExtendHandle: View {
                     .frame(width: NotchHistoryMorph.handleHitWidth, height: NotchHistoryMorph.handleBandHeight)
                     .accessibilityElement()
                     .accessibilityLabel(NotchHistoryPresentation.drawerGripLabel)
+                    .accessibilityValue(settingsRows.map {
+                        NotchSettingsDrawerPresentation.gripAccessibilityValue(rows: $0.current)
+                    } ?? "")
+                    .accessibilityAdjustableAction { direction in
+                        guard let settingsRows else { return }
+                        switch direction {
+                        case .increment: settingsRows.onAdjust(1)
+                        case .decrement: settingsRows.onAdjust(-1)
+                        @unknown default: break
+                        }
+                    }
                     .accessibilityIdentifier("notch-drawer-grip")
                     .allowsHitTesting(false)
             }
