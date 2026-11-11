@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { existsSync } from "fs";
 import { join } from "path";
 import { privateCorpusPaths } from "./setup/private-specimens";
+import { expectTailKept } from "./setup/private-text-oracle";
 
 // c8 T1: a 31.7 s press-stopped take whose last words fell in a 3.7 s final
 // window that the real decoder heard as nothing. Read-only; real model only.
@@ -26,9 +27,8 @@ test.skipIf(!audio)("real Parakeet keeps the last words of a take stopped mid-sp
   expect(reply.ok).toBe(true);
   expect(reply.complete).toBe(true);
   expect(reply.covered_frames).toBe(reply.input_frames);
-  const text: string = reply.text;
-  // Candidate source ended "...this is" with nothing after it.
-  expect(text.trim()).toMatch(/confusing\.?$/i);
-  expect(text.match(/confusing/gi)?.length).toBe(1);
-  expect(text.match(/\bthis is\b/gi)?.length).toBe(1);
+  expect(typeof reply.text).toBe("string");
+  // Candidate source ended "...this is" with nothing after it. Booleans and
+  // counts only: a failure must never print the private transcript.
+  expectTailKept(reply.text);
 }, 180_000);
