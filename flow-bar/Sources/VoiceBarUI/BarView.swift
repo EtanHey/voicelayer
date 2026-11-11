@@ -1790,13 +1790,16 @@ public struct BarView: View {
         }
         .frame(maxWidth: .infinity)
         .overlay(alignment: .leading) {
-            // T8: "Word timing unavailable" sits at the row's leading edge, clear of the centred group, so it adds no
-            // height between the scrubber and this row.
-            if state.showsTeleprompterScrubber, let notice = TeleprompterPlaybackScrubBar(state: state).timingNotice {
+            // T8: the scrubber's notice sits at the row's leading edge, clear of the centred group, so it adds no
+            // height between the scrubber and this row. R883: paused, it is the pause reason ("Paused. Press Play to
+            // seek"), drawn because the frozen slider is disabled and `.help` never shows in this panel; otherwise
+            // "Word timing unavailable". Its native tooltip repeats it in full should the line ever truncate.
+            if state.showsTeleprompterScrubber, let notice = TeleprompterPlaybackScrubBar(state: state).notice {
                 Text(notice)
                     .font(.system(size: 10))
                     .foregroundStyle(notchPalette.tertiary.color)
                     .lineLimit(1)
+                    .background(PillControlTooltip(text: notice))
                     .allowsHitTesting(false)
             }
         }

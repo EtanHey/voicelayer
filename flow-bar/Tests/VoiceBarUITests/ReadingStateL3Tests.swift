@@ -56,19 +56,51 @@ final class ReadingStateL3Tests: XCTestCase {
         XCTAssertFalse(tooltips.contains("Close read"))
     }
 
+    /// R883: the X is clicked for real (mouse down/up at its drawn centre) and reaches Stop's route. Like the eye-row
+    /// Stop's own first-click test (WingsU2HostTests), it is clicked in a plain borderless window, which never becomes
+    /// key, so key status cannot mask the dispatch.
     func testPausedXEndsTheReadThroughStop() throws {
         let state = speakingState()
         state.handleEvent(pausedEvent())
         let router = BarViewClickabilityTests.SpyCommandRouter()
-        let host = mount(state, router: router)
+        let bar = NSHostingView(rootView: BarView(state: state, commandRouter: router, onOpenSettings: {}, onOpenHistory: {}))
+        bar.frame = NSRect(x: 0, y: 0, width: 700, height: 360)
+        let window = NSWindow(contentRect: bar.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = bar
+        window.setFrameOrigin(NSPoint(x: -100_000, y: -100_000))
+        window.orderBack(nil)
+        plainWindows.append(window)
+        let close = try drawnView(in: bar, tooltip: "Close read")
+        XCTAssertEqual(router.stopCount, 0)
+        click(bar, at: close.convert(NSPoint(x: close.bounds.midX, y: close.bounds.midY), to: nil))
+        XCTAssertEqual(router.stopCount, 1, "Close read is Stop's route: a user Stop retains no readback")
+        XCTAssertFalse(state.mode == .idle && state.isTeleprompterReadback, "no finished readback is left behind by the X")
+    }
+
+    /// R883 P2: the paused scrubber's reason is drawn in the notch, without hover (the frozen slider is disabled and a
+    /// SwiftUI `.help` never shows in the non-activating panel).
+    func testPausedReasonIsDrawnInTheNotch() throws {
+        let state = speakingState()
+        state.handleEvent(pausedEvent())
+        let host = mount(state)
         defer { host.window?.close() }
-        let ready = expectation(for: NSPredicate { [self] _, _ in
+        let notice = try drawnView(in: host, tooltip: TeleprompterPlaybackScrubBar.pausedReason)
+        XCTAssertFalse(notice.visibleRect.isEmpty, "the pause reason is on screen")
+        let eye = try drawnView(in: host, tooltip: "Hide teleprompter")
+        XCTAssertEqual(notice.convert(notice.bounds, to: nil).midY, eye.convert(eye.bounds, to: nil).midY, accuracy: 2,
+                       "drawn in the eye row, where the timing notice sits")
+        // Playing again, the pause reason leaves.
+        state.handleEvent(["type": "state", "state": "speaking", "text": "One two three four five six",
+                           "duration_ms": 6000, "playback_id": "l3-read", "generation": 3, "playback_offset_ms": 2500])
+        state.handleEvent(["type": "playback_state", "state": "resumed", "playback_id": "l3-read", "generation": 3,
+                           "offset_ms": 2500, "chunk_offset_ms": 2500])
+        XCTAssertFalse(state.isPlaybackPaused)
+        let gone = expectation(for: NSPredicate { [self] _, _ in
             host.layoutSubtreeIfNeeded()
-            return descendants(host).contains { $0.toolTip == "Close read" }
+            return !descendants(host).contains { $0.toolTip == TeleprompterPlaybackScrubBar.pausedReason }
         }, evaluatedWith: nil)
-        wait(for: [ready], timeout: 3)
-        XCTAssertEqual(VoiceBarPresentation.readingTerminalControl(for: .paused).action, .stopSpeech,
-                       "Close read is Stop's route: a user Stop retains no readback, so one click closes")
+        wait(for: [gone], timeout: 3)
     }
 
     // MARK: - State naming and controls (new API)
@@ -121,7 +153,8 @@ final class ReadingStateL3Tests: XCTestCase {
         state.handleEvent(pausedEvent())
         let control = TeleprompterPlaybackScrubBar(state: state).control
         XCTAssertFalse(control.allowsSeeking, "the paused-slider gate (9084abdc) is preserved")
-        XCTAssertEqual(control.helpText, "Paused. Press Play to seek")
+        XCTAssertEqual(control.helpText, TeleprompterPlaybackScrubBar.pausedReason)
+        XCTAssertEqual(TeleprompterPlaybackScrubBar(state: state).notice, TeleprompterPlaybackScrubBar.pausedReason)
         XCTAssertEqual(TeleprompterPlaybackScrubBar.disabledReason(isPaused: false), nil)
     }
 
@@ -164,9 +197,22 @@ final class ReadingStateL3Tests: XCTestCase {
             state: state, commandRouter: router, onOpenSettings: {}, onOpenHistory: {})))
         host.frame = NSRect(x: 0, y: 0, width: 700, height: 360)
         let panel = FloatingPillPanel(content: host)
+        panel.isReleasedWhenClosed = false
         panel.setFrameOrigin(NSPoint(x: -100_000, y: -100_000))
         panel.orderBack(nil)
+        panels.append(panel) // the test owns its panels; closing never frees one still in use
         return host
+    }
+
+    private var panels: [FloatingPillPanel] = []
+    private var plainWindows: [NSWindow] = []
+
+    override func tearDown() {
+        panels.forEach { $0.close() }
+        plainWindows.forEach { $0.close() }
+        panels = []
+        plainWindows = []
+        super.tearDown()
     }
 
     /// The native tooltips the mounted notch registered (every icon control registers its own).
@@ -181,6 +227,30 @@ final class ReadingStateL3Tests: XCTestCase {
         }, evaluatedWith: nil)
         _ = XCTWaiter().wait(for: [ready], timeout: 3)
         return seen
+    }
+
+    private func drawnView(in host: NSView, tooltip: String) throws -> NSView {
+        var found: NSView?
+        let ready = expectation(for: NSPredicate { [self] _, _ in
+            host.layoutSubtreeIfNeeded()
+            found = descendants(host).first { $0.toolTip == tooltip && !$0.visibleRect.isEmpty }
+            return found != nil
+        }, evaluatedWith: nil)
+        _ = XCTWaiter().wait(for: [ready], timeout: 3)
+        return try XCTUnwrap(found, "nothing drawn with tooltip \(tooltip): \(Set(descendants(host).compactMap(\.toolTip)).sorted())")
+    }
+
+    /// The same synthetic first click BarViewClickabilityTests sends.
+    private func click(_ host: NSView, at point: NSPoint) {
+        guard let window = host.window else { return XCTFail("no window") }
+        XCTAssertNotNil(host.hitTest(host.convert(point, from: nil)), "a hit-test target at the X")
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            guard let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                                                 timestamp: ProcessInfo.processInfo.systemUptime,
+                                                 windowNumber: window.windowNumber, context: nil, eventNumber: 1,
+                                                 clickCount: 1, pressure: 0) else { return XCTFail("no event") }
+            window.sendEvent(event)
+        }
     }
 
     private func descendants(_ view: NSView) -> [NSView] {
