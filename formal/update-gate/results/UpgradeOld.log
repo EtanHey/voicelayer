@@ -11,6 +11,6 @@
     "/\\ phase = \"postflight\"\n/\\ available = FALSE\n/\\ scenario = \"oldUpdater\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"ABSENT\"\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = FALSE\n/\\ mutex = FALSE",
     "/\\ phase = \"dedupe\"\n/\\ available = FALSE\n/\\ scenario = \"oldUpdater\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"ABSENT\"\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = FALSE\n/\\ mutex = FALSE",
     "/\\ phase = \"done\"\n/\\ available = FALSE\n/\\ scenario = \"oldUpdater\"\n/\\ creation = [ absent |-> FALSE,\n  stopped |-> FALSE,\n  clean |-> FALSE,\n  held |-> FALSE,\n  generation |-> 0 ]\n/\\ gate = \"ABSENT\"\n/\\ created = FALSE\n/\\ participants = FALSE\n/\\ evidence = FALSE\n/\\ mutex = FALSE",
-    "Finished checking temporal properties in 00s at 2026-11-11 03:00:21"
+    "Finished checking temporal properties in 00s at 2026-11-11 00:46:57"
   ]
 }
