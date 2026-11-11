@@ -136,6 +136,10 @@ struct NotchDrawerSwapFrame: Equatable, Sendable {
 @MainActor
 enum NotchDrawerSwapProbe {
     static var observer: ((NotchDrawerSwapFrame) -> Void)?
+    /// Every transaction a swap side is updated in: its phase, and whether that update carries an animation. This is
+    /// the deterministic half of the motion tests: it does not depend on a display link ticking the animation, so it
+    /// holds on a headless CI runner where no interpolated frame is ever drawn.
+    static var transactionObserver: ((NotchDrawerSwapPhase, Animation?) -> Void)?
 }
 #endif
 
@@ -172,6 +176,13 @@ struct NotchDrawerSwap: ViewModifier, Animatable {
             // animated, so it is `.leaving` from the removal's first frame, through a reversal that re-inserts it.
             .allowsHitTesting(phase != .leaving)
             .onChange(of: opacity, initial: true) { _, _ in report() }
+            #if DEBUG
+            .transaction { transaction in
+                let animation = transaction.disablesAnimations ? nil : transaction.animation
+                let phase = phase
+                MainActor.assumeIsolated { NotchDrawerSwapProbe.transactionObserver?(phase, animation) }
+            }
+            #endif
     }
 
     private func report() {

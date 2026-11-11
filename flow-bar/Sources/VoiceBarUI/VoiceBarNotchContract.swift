@@ -176,14 +176,18 @@ public struct VoiceBarNotchMaterialContract: Equatable {
         ].contains(state)
         // 2.3 N1 (Etan, real M4): the recording time starts 8 pt past the PHYSICAL notch, which hides the wing's first
         // `visibleCoreOcclusionInset` points on a hardware notch (0 on a flat display).
-        let hiddenByGlass = side == .trailing && state == .recording ? max(0, visibleCoreOcclusionInset) : 0
+        let isRecordingTrailing = side == .trailing && state == .recording
+        let hiddenByGlass = isRecordingTrailing ? max(0, visibleCoreOcclusionInset) : 0
+        // C7-W (Etan, QA 2026-11-11): the recording row ends `compactContentInset` from the wing's outer edge, the
+        // inset Stop keeps from the left edge, and is pinned there; spare width faces the notch.
         return VoiceBarNotchWingContentLayout(
             side: side,
             coreInset: isFixedTrailing
                 ? hiddenByGlass + VoiceBarNotchContract.fixedWingContentInset
                 : VoiceBarNotchContract.compactCoreContentInset,
-            outerInset: isFixedTrailing ? VoiceBarNotchContract.fixedWingContentInset : compactContentInset,
-            alignment: .center
+            outerInset: isFixedTrailing && !isRecordingTrailing
+                ? VoiceBarNotchContract.fixedWingContentInset : compactContentInset,
+            alignment: isRecordingTrailing ? .outer : .center
         )
     }
 
@@ -224,6 +228,8 @@ public enum VoiceBarNotchWingContentAlignment: Equatable {
     case core
     case center
     case screenLeading
+    /// Against the wing's outer edge.
+    case outer
 }
 
 public struct VoiceBarNotchWingContentLayout: Equatable {
@@ -563,10 +569,11 @@ public enum VoiceBarNotchContract {
 
     public static let recordingLeadingWingWidth = fixedWingWidth
 
-    /// QA 0449: the whole time/meter row is centred, with no spare outer region. Physical-notch clearance stays.
+    /// The time/meter row with its insets: 8 pt clear of the physical notch, and (C7-W) the left wing's own outer
+    /// inset past the meter, so the band's two ends match.
     public static func recordingTrailingWingWidth(visibleCoreOcclusionInset: CGFloat) -> CGFloat {
-        max(0, visibleCoreOcclusionInset) + 2 * fixedWingContentInset + VoiceBarRecordingWingLabel.width +
-            VoiceBarRecordingWingLabel.recordingTimeGap + WaveformLayout.viewportWidth
+        max(0, visibleCoreOcclusionInset) + fixedWingContentInset + VoiceBarRecordingWingLabel.width +
+            VoiceBarRecordingWingLabel.recordingMeterGap + WaveformLayout.viewportWidth + material.compactContentInset
     }
 
     /// The flat-display (no hidden notch) recording right wing.

@@ -18,14 +18,15 @@ final class MicrophonePrioritySettingsTests: XCTestCase {
         XCTAssertTrue(section.contains("Image(systemName: \"line.3.horizontal\")"))
     }
 
-    /// U3a (SPEC 2.3 General): the microphone the next dictation uses carries "Used for dictation" instead of the
-    /// button; which row that is, is pinned in SettingsGeneralSetupTests.
+    /// U3a (SPEC 2.3 General): the microphone the next dictation uses carries "Used for dictation"; which row that
+    /// is, is pinned in SettingsGeneralSetupTests. Etan (QA 2026-11-11): the pill sits on the status line as the
+    /// row's badge, and Make default stays independent of it (the painted layout is in SettingsDrawerLaneSLayoutTests).
     func testTheUsedMicrophoneIsMarkedInsteadOfOfferingTheButton() throws {
         let section = try prioritySection()
 
-        XCTAssertTrue(section.contains("if isUsed {"))
+        XCTAssertTrue(section.contains("badge: isUsed ? SettingsMicrophoneRowPresentation.usedBadge : nil"))
+        XCTAssertEqual(SettingsMicrophoneRowPresentation.usedBadge, "Used for dictation")
         XCTAssertFalse(section.contains("} else if row.canPrioritize"), "the pill never replaces Make default")
-        XCTAssertTrue(section.contains("SettingsPill(text: \"Used for dictation\")"))
         XCTAssertFalse(section.contains("Text(\"Default\")"))
     }
 

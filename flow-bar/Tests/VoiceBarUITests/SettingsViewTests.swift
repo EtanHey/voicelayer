@@ -76,15 +76,18 @@ final class SettingsViewTests: XCTestCase {
         )
     }
 
-    /// U3 spec: a term's misheard spellings are its row description ("Also heard as …"), only when it has some,
-    /// wrapping to two lines (V12 row anatomy) instead of a one-line clip.
+    /// U3 spec, lane S PR 3: a term's misheard spellings ("Also heard as …") follow it on the same line as helper
+    /// text, only when it has some, and wrap rather than clip (Etan's video, 299.8 s: tall two-line rows).
     func testVariantSummaryIsTheRowDescriptionOnlyWhenThereAreVariants() throws {
         let source = try settingsViewSource()
         let header = try XCTUnwrap(source.functionBody(named: "dictionaryEntryHeader"))
+        let line = try XCTUnwrap(source.components(separatedBy: "static func dictionaryTermLine(").dropFirst().first?
+            .components(separatedBy: "\n    }\n").first)
 
-        XCTAssertTrue(header.contains("entry.variants.isEmpty ? nil : Self.variantSummary(entry.variants)"))
-        XCTAssertTrue(header.contains("SettingsRowLabel("))
-        XCTAssertFalse(header.contains(".lineLimit(1)"))
+        XCTAssertTrue(header.contains("Self.dictionaryTermLine(entry)"))
+        XCTAssertTrue(line.contains("if !entry.variants.isEmpty"))
+        XCTAssertTrue(line.contains("variantSummary(entry.variants)"))
+        XCTAssertFalse(line.contains(".lineLimit(1)"))
         XCTAssertEqual(
             SettingsView.variantSummary(["voice lair", "voice layer"]),
             "Also heard as voice lair, voice layer"

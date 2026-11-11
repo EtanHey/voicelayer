@@ -38,6 +38,7 @@
 - Speech: Short/Long voice profiles, long-text threshold, clone status, preview, and locked-control explanations.
 - Sidebar status footer: a static accessible button opening General for permissions and setup.
 - History: Recording | Ask, with per-row Play / Copy / Paste / Re-transcribe / Finder.
+- Notch History categories (lane H, 2026-11-11): the History drawer under the band and the Settings drawer's History tab show Dictations / Ask / Speech (`NotchHistoryCategoryPanel`). A three-segment selector tops the list; a two-finger swipe or sideways drag slides the lists with the finger (`NotchHistoryCategoryPager` picks the gesture's axis once, so a vertical scroll never switches), and Left/Right step while the notch panel is key. Ask and Speech rows come from `NotchHistoryArchiveStore`, which uses the Settings loaders (`SettingsAskHistoryArchive.loadPage`, `SettingsSpeechHistoryArchive.load`, 20 rows) and reads only while a History surface is open. The selector takes its 26 pt from the list; the drawer's height is unchanged.
 - History refresh: known Dictation/Ask archive events update that row while Settings has an open archive index;
   after Settings closes, these events do no archive disk reads. Speech intentionally does not reload on these
   events: the old incidental "refresh Speech on the next dictation" behavior is removed. Speech still loads on

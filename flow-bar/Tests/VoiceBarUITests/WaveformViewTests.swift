@@ -92,7 +92,8 @@ final class WaveformViewTests: XCTestCase {
             from: VoiceBarNotchOperationalInput(mode: .recording, statusText: "Recording")
         ).geometry
         let slot = VoiceBarNotchContract.material.wingContentLayout(for: .trailing, state: .recording)
-        XCTAssertEqual(slot.coreInset, slot.outerInset, "the meter stays centred in the wing")
+        XCTAssertEqual(slot.outerInset, VoiceBarNotchContract.material.compactContentInset,
+                       "C7-W: the meter ends at the left wing's outer inset")
         XCTAssertLessThanOrEqual(WaveformLayout.viewportWidth,
                                  recordingWing.trailingWingWidth - slot.coreInset - slot.outerInset)
         XCTAssertLessThanOrEqual(WaveformLayout.viewportHeight, recordingWing.topHeight)

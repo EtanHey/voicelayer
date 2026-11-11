@@ -59,10 +59,11 @@ final class WingsU2Tests: XCTestCase {
     func testRecordingKeepsTheFixedLeftWingAndARightWingThatHugsItsPayload() {
         let recording = resolve(.recording)
         XCTAssertEqual(recording.visualState, .recording)
-        XCTAssertEqual(recording.geometry.leadingWingWidth, 92, accuracy: 0.001)
+        // C7-W: 8 + 26 (time) + 8 (gap) + 46 (meter) + 14 (the left wing's outer inset).
+        XCTAssertEqual(recording.geometry.leadingWingWidth, 102, accuracy: 0.001)
         XCTAssertEqual(recording.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth,
                        accuracy: 0.001)
-        XCTAssertEqual(VoiceBarNotchContract.recordingTrailingWingWidth, 92, accuracy: 0.001)
+        XCTAssertEqual(VoiceBarNotchContract.recordingTrailingWingWidth, 102, accuracy: 0.001)
     }
 
     /// T1/T5/T6/T7 (Etan QA 2026-11-09): reading puts speed, Back, Pause and Forward in the left wing, and lays the
@@ -85,13 +86,14 @@ final class WingsU2Tests: XCTestCase {
     /// Deviation (mock silent): an Ask recording's lock is a third control, and a queued read's Next + "+N" are
     /// extra slots. They keep today's wider left wing instead of losing the control.
     func testOnlyControlsTheMockDoesNotDrawWidenTheLeftWing() {
-        XCTAssertEqual(resolve(.recording, showsRecordingHold: true).geometry.leadingWingWidth,
-                       VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl, accuracy: 0.001)
+        // C7-W: the time/meter wing (102 pt) already holds the third control (99.5 pt), so it sets both wings.
+        let held = max(VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl,
+                       VoiceBarNotchContract.recordingTrailingWingWidth)
+        XCTAssertEqual(resolve(.recording, showsRecordingHold: true).geometry.leadingWingWidth, held, accuracy: 0.001)
         XCTAssertGreaterThan(resolve(.speaking, isTeleprompterDismissed: true, readQueueLeadingSlotCount: 3)
             .geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth)
-        XCTAssertEqual(resolve(.recording, showsRecordingHold: true).geometry.trailingWingWidth,
-                       VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl, accuracy: 0.001,
-                       "the hold control grows both recording wings symmetrically")
+        XCTAssertEqual(resolve(.recording, showsRecordingHold: true).geometry.trailingWingWidth, held, accuracy: 0.001,
+                       "the recording wings stay symmetric with the hold control")
     }
 
     func testTheReadingTimeAndStopFillTheFixedRightWingExactly() {

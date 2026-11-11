@@ -141,7 +141,7 @@ final class NotchShellCentredTests: XCTestCase {
         let rowMaxX: CGFloat = switch slot.alignment {
         case .center: rowWidth <= lane.width ? lane.maxX : lane.midX + rowWidth / 2
         case .core: lane.maxX
-        case .screenLeading: lane.minX + rowWidth
+        case .screenLeading, .outer: lane.minX + rowWidth
         }
         return rowMaxX - material.compactControlSize / 2 - presentation.geometry.coreOriginX
     }
