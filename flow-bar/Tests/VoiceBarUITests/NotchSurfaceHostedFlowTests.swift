@@ -443,3 +443,83 @@ extension NotchSurfaceHostedFlowTests {
         XCTAssertEqual(NotchHistoryPresentation.rowAccessibilityIdentifier(index: 19), "history-row-20")
     }
 }
+
+// MARK: - C6 L2c (N16): the Settings drawer grows downwards and keeps its height
+
+extension NotchSurfaceHostedFlowTests {
+    /// Opens Settings over History with the gear and returns its grip's centre at eight rows, in window space (History's
+    /// handle, found by its accessibility element, moved down by the two rows Settings adds; as in N4 above).
+    private func openSettingsFromHistory(_ harness: Harness) throws -> NSPoint {
+        try openHistory(harness)
+        var grip = try historyHandle(harness)
+        try click(control(3, harness), in: harness.panel)
+        wait { harness.surface.drawer == .settings(.general) }
+        resize(harness)
+        drain(1.0)
+        grip.y -= NotchHistoryMorph.lowerSurfaceHeight(rows: 8) - NotchHistoryMorph.lowerSurfaceHeight(rows: 6)
+        return grip
+    }
+
+    /// The grip's centre at `rows`, from its centre at eight rows (window space is unflipped: down is negative).
+    private func grip(_ atEight: NSPoint, rows: Int) -> NSPoint {
+        NSPoint(x: atEight.x, y: atEight.y - CGFloat(rows - 8) * NotchHistoryMorph.rowHeight)
+    }
+
+    /// Etan (N16, 12:40 X1-45): "this should be expandable and it currently is not expandable downwards." The grip
+    /// drags the drawer taller one row per 46 pt, stops at the window's eleven rows, and the hit region follows.
+    /// The window never resizes. Written against API that exists on the base, so it runs RED there (the grip only
+    /// pushed the drawer closed, so a downward drag left it at eight rows).
+    func testN16TheSettingsGripDragsTheDrawerTallerWithoutResizingTheWindow() throws {
+        let harness = makeHarness()
+        let eight = try openSettingsFromHistory(harness)
+        XCTAssertEqual(harness.model.historyRows, 8, "Settings opens at expanded History's eight rows")
+        let window = harness.panel.frame.size
+        let panelSize = layout(harness.model).panelSize
+
+        try drag(from: grip(eight, rows: 8), dy: -2 * NotchHistoryMorph.rowHeight, in: harness.panel)
+        wait { harness.model.historyRows == 10 }
+        XCTAssertEqual(harness.model.historyRows, 10, "[N16] two rows down: ten rows")
+        XCTAssertEqual(harness.surface.drawer, .settings(.general), "a downward drag never closes or swaps the drawer")
+
+        // Past the ceiling the grip stretches and settles back on it.
+        try drag(from: grip(eight, rows: 10), dy: -4 * NotchHistoryMorph.rowHeight, in: harness.panel)
+        wait { harness.model.historyRows == 11 }
+        XCTAssertEqual(harness.model.historyRows, 11, "[N16] the drawer stops at eleven rows")
+
+        XCTAssertEqual(layout(harness.model).panelSize, panelSize, "the window holds every Settings height")
+        XCTAssertEqual(harness.panel.frame.size, window)
+        let drawn = layout(harness.model)
+        let lastRow = grip(eight, rows: 11)
+        XCTAssertTrue(drawn.containsVisibleSurface(NSPoint(x: lastRow.x, y: lastRow.y)),
+                      "[N16] the hit region covers the drawer down to its grip")
+    }
+
+    /// The height it was let go at is remembered: closing and reopening, and a short push up shrinks it. Pushed
+    /// above eight rows it still closes the drawer (0510 N4).
+    func testN16TheSettingsDrawerReopensAtTheHeightItWasLeftAt() throws {
+        let harness = makeHarness()
+        let eight = try openSettingsFromHistory(harness)
+        try drag(from: grip(eight, rows: 8), dy: -3 * NotchHistoryMorph.rowHeight, in: harness.panel)
+        wait { harness.surface.settingsRows == 11 }
+        XCTAssertEqual(harness.surface.settingsRows, 11)
+
+        try click(control(3, harness), in: harness.panel) // the gear closes it
+        wait { harness.surface.drawer == nil }
+        wait { !harness.model.isHistoryPanelOpen }
+        harness.surface.send(.openSettings(.general))
+        wait { harness.model.historyRows == 11 }
+        XCTAssertEqual(harness.model.historyRows, 11, "[N16] it reopens at the height it was left at")
+        resize(harness)
+        drain(1.0)
+
+        try drag(from: grip(eight, rows: 11), dy: 2 * NotchHistoryMorph.rowHeight, in: harness.panel)
+        wait { harness.surface.settingsRows == 9 }
+        XCTAssertEqual(harness.surface.settingsRows, 9, "a short push up makes it shorter")
+        XCTAssertEqual(harness.surface.drawer, .settings(.general))
+
+        try drag(from: grip(eight, rows: 9), dy: 4 * NotchHistoryMorph.rowHeight, in: harness.panel)
+        wait { harness.surface.drawer == nil }
+        XCTAssertNil(harness.surface.drawer, "pushed above eight rows the grip still closes the drawer")
+        XCTAssertEqual(harness.surface.settingsRows, 9, "closing keeps the remembered height")
+    }
+}

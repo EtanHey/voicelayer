@@ -15,9 +15,13 @@ import XCTest
 final class NotchThresholdMotionTests: XCTestCase {
     private var windows: [NSWindow] = []
     private var restoreAccessibility: (() -> Void)?
+    private var restoreReduceMotion: (() -> Void)?
 
     override func setUp() {
         super.setUp()
+        // These tests prove the full-motion crossfade, so they pin Reduce Motion OFF in this process (#860's hosted
+        // runner has it ON, and SwiftUI then never runs a custom transition; see ReduceMotionOverride).
+        restoreReduceMotion = ReduceMotionOverride.pin(false)
         MainActor.assumeIsolated {
             // Offscreen SwiftUI builds its accessibility tree only for an AX client; this enables it in this test
             // process only (TeleprompterAWholeWordsTests' pattern). No AX client, setting or live app is touched.
@@ -45,6 +49,8 @@ final class NotchThresholdMotionTests: XCTestCase {
             }
             windows.removeAll()
         }
+        restoreReduceMotion?()
+        restoreReduceMotion = nil
         super.tearDown()
     }
 
@@ -321,6 +327,25 @@ final class NotchThresholdMotionTests: XCTestCase {
         try requireDrawnAnimationFrames()
         XCTAssertFalse(harness.frames.midway(.leaving).isEmpty, "the History tab list fades out instead of vanishing")
         XCTAssertFalse(harness.frames.midway(.resting).isEmpty, "General fades in")
+    }
+
+    /// Reduce Motion ON, as on #860's hosted runner. SwiftUI on macOS 26 then never runs the drawer's custom
+    /// transition (the swap modifier is never evaluated), so the switch lands in one update. This pins what must
+    /// still hold there: the switch lands, the old list is gone and the new pane is shown. (A Reduce Motion
+    /// opacity-only crossfade would need the swap driven without a transition; tracked in the C6 L2c report.)
+    func testUnderReduceMotionATabSwitchStillLands() throws {
+        restoreReduceMotion?()
+        restoreReduceMotion = ReduceMotionOverride.pin(true)
+        let harness = makeHarness()
+        openDrawer(harness, .openSettings(.history))
+        XCTAssertTrue(visible(harness).contains(firstRow), "the History tab shows History's list")
+        let general = try XCTUnwrap(point(labelled: SettingsTab.general.title, harness), "the General tab")
+        try send(.leftMouseDown, at: general, to: harness.panel)
+        try send(.leftMouseUp, at: general, to: harness.panel)
+        drain(0.6)
+        XCTAssertEqual(harness.surface.drawer, .settings(.general), "the click selected General")
+        XCTAssertTrue(visible(harness).contains("pane-general"))
+        XCTAssertFalse(visible(harness).contains(firstRow))
     }
 
     /// N17: the grip hands off to "Release for Settings" and back as one crossfade, never a one-frame swap.
