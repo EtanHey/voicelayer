@@ -93,7 +93,7 @@ struct NotchHistoryCategoryPanel: View {
                     .background(PillControlTooltip(text: NotchHistoryPresentation.categoryTooltip(scope)))
                     .accessibilityIdentifier(NotchHistoryPresentation.categoryIdentifier(scope))
                     .accessibilityLabel(scope.title)
-                    .accessibilityAddTraits(index == pager.index ? .isSelected : [])
+                    .accessibilityAddTraits(isCurrent ? .isSelected : [])
                 }
             }
         }

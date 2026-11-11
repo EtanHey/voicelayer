@@ -180,7 +180,7 @@ struct NotchHistoryPanel: View {
         .accessibilityIdentifier(NotchHistoryPresentation.rowAccessibilityIdentifier(index: index))
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel(
-            [NotchHistoryPresentation.firstWords(entry.text), header(entry, index: index)]
+            [scope == .recording ? nil : scope.title, NotchHistoryPresentation.firstWords(entry.text), header(entry, index: index)]
                 .compactMap { $0 }
                 .joined(separator: ", ")
         )
@@ -194,7 +194,9 @@ struct NotchHistoryPanel: View {
                 }
             }
         }
-        .accessibilityHint(retranscriptionAvailability().reason ?? NotchHistoryPresentation.openHint)
+        .accessibilityHint(scope == .recording
+            ? retranscriptionAvailability().reason ?? NotchHistoryPresentation.openHint(for: scope)
+            : NotchHistoryPresentation.openHint(for: scope))
     }
 
     private func open(_ entry: RecentTranscriptionEntry, index: Int) {
@@ -212,7 +214,7 @@ struct NotchHistoryPanel: View {
             Text(state.title)
                 .font(.system(size: NotchHistoryPresentation.rowTextFontSize))
                 .foregroundStyle(palette.secondary.color)
-            Text(state.detail)
+            Text(state.detail.isEmpty ? " " : state.detail)
                 .font(.system(size: NotchHistoryPresentation.rowMetaFontSize))
                 .foregroundStyle(palette.tertiary.color)
         }
@@ -222,7 +224,7 @@ struct NotchHistoryPanel: View {
         .padding(.trailing, NotchHistoryPresentation.rowTrailingPadding)
         .frame(height: NotchHistoryMorph.rowHeight)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(state.title). \(state.detail)")
+        .accessibilityLabel([state.title, state.detail].filter { !$0.isEmpty }.joined(separator: ". "))
         .accessibilityIdentifier(NotchHistoryPresentation.emptyRowIdentifier)
     }
 

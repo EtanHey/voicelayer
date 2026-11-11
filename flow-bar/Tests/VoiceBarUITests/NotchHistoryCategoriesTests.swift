@@ -400,6 +400,25 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         field.removeFromSuperview()
     }
 
+    func testH2AccessibilityUsesAskAndSpeechNounsOnBothSurfaces() throws {
+        for surface in [NotchSurfaceEvent.openHistory, .openSettings(.history)] {
+            let harness = makeHarness()
+            open(harness, surface)
+            wait { harness.archive.speech != nil }
+            for scope in [SettingsHistoryScope.ask, .speech] {
+                try swipe(harness, dx: -160)
+                let row = try XCTUnwrap(tree(harness).first { $0.id == "history-row-1" })
+                XCTAssertTrue(row.hint.localizedCaseInsensitiveContains(scope.rawValue), "hint identifies its category")
+                XCTAssertFalse(row.hint.localizedCaseInsensitiveContains("recording"), "Ask/Speech must not claim to be recordings")
+                XCTAssertTrue(row.label.hasPrefix(scope.title + ", "), "row label identifies its category")
+            }
+        }
+    }
+
+    func testH2LoadingStateDoesNotHaveBlankAccessibilityDetail() {
+        XCTAssertTrue(NotchHistoryPresentation.emptyState(for: .ask, isLoaded: false).detail.isEmpty)
+    }
+
     // MARK: Pictures (opt-in)
 
     /// Writes both History surfaces in each category, an empty category and one mid-swipe frame: the real History
@@ -636,7 +655,7 @@ final class NotchHistoryCategoriesTests: XCTestCase {
     }
 
     /// Every accessibility element under the host, as (identifier, label, frame).
-    private func elements(_ root: Any, depth: Int = 0) -> [(id: String, label: String, frame: NSRect)] {
+    private func elements(_ root: Any, depth: Int = 0) -> [(id: String, label: String, frame: NSRect, hint: String)] {
         guard depth < 40, let object = root as? NSObject,
               object.responds(to: NSSelectorFromString("accessibilityRole")) else { return [] }
         // KVC on a key an element does not implement raises; ask first.
@@ -646,7 +665,8 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         var found = [(
             id: read("accessibilityIdentifier") as? String ?? "",
             label: read("accessibilityLabel") as? String ?? "",
-            frame: (read("accessibilityFrame") as? NSValue)?.rectValue ?? .zero
+            frame: (read("accessibilityFrame") as? NSValue)?.rectValue ?? .zero,
+            hint: read("accessibilityHelp") as? String ?? ""
         )]
         for child in read("accessibilityChildren") as? [Any] ?? [] {
             found += elements(child, depth: depth + 1)
@@ -654,7 +674,7 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         return found
     }
 
-    private func tree(_ harness: Harness) -> [(id: String, label: String, frame: NSRect)] {
+    private func tree(_ harness: Harness) -> [(id: String, label: String, frame: NSRect, hint: String)] {
         harness.host.layoutSubtreeIfNeeded()
         return elements(harness.host)
     }
@@ -669,7 +689,7 @@ final class NotchHistoryCategoriesTests: XCTestCase {
     /// The categories whose rows are exposed: exactly the one on screen.
     private func shown(_ harness: Harness) -> Set<SettingsHistoryScope> {
         let all = labels(harness)
-        return Set(SettingsHistoryScope.allCases.filter { scope in all.contains { $0.hasPrefix(Self.marker[scope]!) } })
+        return Set(SettingsHistoryScope.allCases.filter { scope in all.contains { $0.contains(Self.marker[scope]!) } })
     }
 
     /// A window point inside the list on screen (the middle of its second row, or of the empty row).
