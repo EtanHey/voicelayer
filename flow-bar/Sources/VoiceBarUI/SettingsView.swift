@@ -577,6 +577,9 @@ public struct SettingsView: View {
     @State private var speechEntries: [SettingsSpeechHistoryEntry] = []
     @State private var selectedSpeechID: String?
     @State private var selectedAskID: String?
+    @State private var pendingAskScrollID: String?
+    @State private var pendingSpeechScrollID: String?
+    @Environment(\.settingsHistoryDestinationObserver) private var destinationObserver
     @State private var speechReload = SettingsSpeechHistoryReloadRequest()
     @State private var selectedHistoryScope: SettingsHistoryScope
     @State private var askHistoryDayGroups: [SettingsAskHistoryDayGroup]
@@ -904,8 +907,13 @@ public struct SettingsView: View {
             _selectedHistoryScope = State(initialValue: destination.scope)
             switch destination.scope {
             case .recording: historyMemory.request(destination.entryID)
-            case .ask: _selectedAskID = State(initialValue: destination.entryID)
-            case .speech: _selectedSpeechID = State(initialValue: destination.entryID)
+            case .ask:
+                _selectedAskID = State(initialValue: destination.entryID)
+                _pendingAskScrollID = State(initialValue: destination.entryID)
+                _askHistorySearch = State(initialValue: "")
+            case .speech:
+                _selectedSpeechID = State(initialValue: destination.entryID)
+                _pendingSpeechScrollID = State(initialValue: destination.entryID)
             }
         }
         _historyMemory = State(initialValue: historyMemory)
@@ -1022,7 +1030,10 @@ public struct SettingsView: View {
                 case .ask:
                     askHistorySearch = ""
                     selectedAskID = destination.entryID
-                case .speech: selectedSpeechID = destination.entryID
+                    pendingAskScrollID = destination.entryID
+                case .speech:
+                    selectedSpeechID = destination.entryID
+                    pendingSpeechScrollID = destination.entryID
                 }
             }
         }
@@ -1623,6 +1634,8 @@ public struct SettingsView: View {
         }
         .onAppear { mountedHistoryScopes.insert(selectedHistoryScope) }
         .onChange(of: selectedHistoryScope) { _, scope in
+            if scope != .ask { selectedAskID = nil; pendingAskScrollID = nil }
+            if scope != .speech { pendingSpeechScrollID = nil }
             historyPlayback.stop()
             // A scope that stayed mounted kept its own `.onReceive(voiceBarHistoryArchiveDidChange)` and search
             // reloads while hidden, so its list is current: showing it again needs no reload (lane E). A scope
@@ -1696,6 +1709,7 @@ public struct SettingsView: View {
                                     Text(entry.audioPath == nil ? "Audio unavailable" : "Some audio unavailable").font(.caption).foregroundStyle(.secondary)
                                 }
                                 Button(selectedSpeechID == entry.id ? "Hide details" : "Details") {
+                                    pendingSpeechScrollID = nil
                                     selectedSpeechID = selectedSpeechID == entry.id ? nil : entry.id
                                 }.buttonStyle(.plain).font(.caption).foregroundStyle(Color.accentColor)
                                 if selectedSpeechID == entry.id {
@@ -1722,11 +1736,9 @@ public struct SettingsView: View {
                 }
             }
         }
-        .onChange(of: selectedSpeechID) { _, id in if let id { proxy.scrollTo(id, anchor: .top) } }
-        .onChange(of: speechEntries) { _, _ in
-            if let selectedSpeechID { proxy.scrollTo(selectedSpeechID, anchor: .top) }
-        }
-        .onAppear { if let selectedSpeechID { proxy.scrollTo(selectedSpeechID, anchor: .top) } }
+        .onChange(of: pendingSpeechScrollID) { _, _ in scrollToPendingSpeech(using: proxy) }
+        .onChange(of: speechEntries) { _, _ in scrollToPendingSpeech(using: proxy) }
+        .onAppear { scrollToPendingSpeech(using: proxy) }
         .task(id: speechReload.taskID) {
             let invocation = speechLoading.begin()
             defer { speechLoading.finish(invocation) }
@@ -1742,6 +1754,25 @@ public struct SettingsView: View {
             speechReload.archiveChanged()
         }
         }
+    }
+
+    private func scrollToPendingSpeech(using proxy: ScrollViewProxy) {
+        guard let id = pendingSpeechScrollID, speechEntries.contains(where: { $0.id == id }) else { return }
+        pendingSpeechScrollID = nil
+        proxy.scrollTo(id, anchor: .top)
+        destinationObserver?(.speech, id)
+    }
+
+    private func scrollToPendingAsk(using proxy: ScrollViewProxy) {
+        guard let id = pendingAskScrollID,
+              askHistoryDayGroups.contains(where: { $0.entries.contains(where: { $0.id == id }) }) else { return }
+        pendingAskScrollID = nil
+        proxy.scrollTo(id, anchor: .top)
+        destinationObserver?(.ask, id)
+    }
+
+    private func clearAskDestination(selecting id: String) {
+        if id != selectedAskID { selectedAskID = nil; pendingAskScrollID = nil }
     }
 
     private func speechTextDetail(_ title: String, text: String) -> some View {
@@ -1973,6 +2004,8 @@ public struct SettingsView: View {
                                             .id(entry.id)
                                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(
                                                 entry.id == selectedAskID ? Color.accentColor : .clear, lineWidth: 2))
+                                            .simultaneousGesture(TapGesture().onEnded { clearAskDestination(selecting: entry.id) })
+                                            .accessibilityAction { clearAskDestination(selecting: entry.id) }
                                             .accessibilityIdentifier("history-ask-\(entry.id)")
                                             .accessibilityAddTraits(entry.id == selectedAskID ? .isSelected : [])
                                     }
@@ -2011,12 +2044,10 @@ public struct SettingsView: View {
                     }
                 }
             }
-            .onChange(of: selectedAskID) { _, id in if let id { proxy.scrollTo(id, anchor: .top) } }
-            .onChange(of: askHistoryDayGroups) { _, _ in
-                if let selectedAskID { proxy.scrollTo(selectedAskID, anchor: .top) }
-            }
+            .onChange(of: pendingAskScrollID) { _, _ in scrollToPendingAsk(using: proxy) }
+            .onChange(of: askHistoryDayGroups) { _, _ in scrollToPendingAsk(using: proxy) }
             .onAppear {
-                if let selectedAskID { proxy.scrollTo(selectedAskID, anchor: .top) }
+                scrollToPendingAsk(using: proxy)
                 if askHistoryDayGroups.isEmpty || SettingsHistorySearch(askHistorySearch).isActive,
                    !isAskHistoryLoading {
                     requestAskHistoryReload(scrollProxy: proxy, animated: false)
