@@ -269,6 +269,16 @@ public struct VoiceBarNotchPresentation: Equatable {
     /// Etan, QA 0510 R3: a drawer (History or Settings) hangs below whatever band the notch's activity has: the
     /// launcher's, the recording wings, or a compact status (transcribing, Typed). Non-nil only for `.history`.
     public private(set) var drawerBand: VoiceBarNotchVisualState? = nil
+    /// C7 L3 V10: a read is on screen (playing or paused, shown or hidden). Its canvas keeps the teleprompter's
+    /// eight lines in the compact state too (`VoiceBarNotchMorphCanvasLayout`), so Hide, Show and Pause never
+    /// shrink the canvas or the window under a shell that is still collapsing.
+    public private(set) var holdsReadingCanvas = false
+
+    public func holdingReadingCanvas(_ holds: Bool) -> Self {
+        var copy = self
+        copy.holdsReadingCanvas = holds
+        return copy
+    }
 
     /// What the 32 pt band shows: the visual state, or under a drawer the activity's own band.
     public var bandState: VoiceBarNotchVisualState { drawerBand ?? visualState }
@@ -301,7 +311,8 @@ public struct VoiceBarNotchPresentation: Equatable {
         return VoiceBarNotchPresentation(visualState: visualState, geometry: grown,
             visibleCoreOcclusionInset: visibleCoreOcclusionInset, virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
             contentRoles: contentRoles, accessibilityLabel: accessibilityLabel,
-            transientNoteWidth: transientNoteWidth, feedback: feedback, drawerBand: drawerBand)
+            transientNoteWidth: transientNoteWidth, feedback: feedback, drawerBand: drawerBand,
+            holdsReadingCanvas: holdsReadingCanvas)
     }
 
     /// Where the transient note draws: the band directly under the top row, across the lower body. Any
@@ -330,7 +341,8 @@ public struct VoiceBarNotchPresentation: Equatable {
             virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
             contentRoles: contentRoles,
             accessibilityLabel: accessibilityLabel,
-            transientNoteWidth: transientNoteWidth, feedback: feedback, drawerBand: drawerBand
+            transientNoteWidth: transientNoteWidth, feedback: feedback, drawerBand: drawerBand,
+            holdsReadingCanvas: holdsReadingCanvas
         )
     }
 

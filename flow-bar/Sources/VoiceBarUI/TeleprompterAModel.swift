@@ -254,10 +254,21 @@ public struct SpeechWordTable: Equatable {
         return found
     }
 
-    /// A click seeks only the same text at the same index; anything else is not ours to name.
+    /// A click seeks only the same text at the same index; anything else is not ours to name. C7 L3 V09: a word the
+    /// daemon has not timed yet (its chunk is still synthesizing) is still this read's word, so it is a target; the
+    /// seek waits for its timing and checks the same text then (`VoiceState.seekSpeechWord`).
     public func seekIndex(token: Int, text: String) -> Int? {
-        words.indices.contains(token) && words[token]?.text == text ? token : nil
+        guard token >= 0 else { return nil }
+        // An empty table is the placeholder before any timing (or an older daemon): no word is ours to name yet.
+        guard isTimed(token) else { return hasTimings ? token : nil }
+        return words[token]?.text == text ? token : nil
     }
+
+    /// The daemon has sent this word's timing.
+    public func isTimed(_ token: Int) -> Bool { words.indices.contains(token) && words[token] != nil }
+
+    /// The daemon has started timing this read (at least its first chunk).
+    public var hasTimings: Bool { words.contains { $0 != nil } }
 }
 
 /// Words, formatting and wrapped lines for one text at one column width; a clock tick reuses it.

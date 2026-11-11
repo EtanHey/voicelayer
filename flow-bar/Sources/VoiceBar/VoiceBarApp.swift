@@ -2386,7 +2386,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             visibleCoreOcclusionInset: visibleCoreOcclusionInset,
             virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
             transientNoteWidth: resolved.transientNoteWidth,
-            feedback: resolved.feedback
+            feedback: resolved.feedback,
+            holdsReadingCanvas: resolved.holdsReadingCanvas
         )
         model.setHovered(voiceState.isHovering)
     }

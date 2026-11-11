@@ -2744,7 +2744,42 @@ public final class VoiceState {
     /// Playback-only: a word click names the utterance it was drawn from, never the latest one.
     public func seekSpeechWord(utteranceID: String, wordIndex: Int) {
         guard mode == .speaking, !isPlaybackPaused, speechWords?.utteranceID == utteranceID, wordIndex >= 0 else { return }
+        // C7 L3 V09: a long read is timed chunk by chunk as it synthesizes, and the daemon refuses a word it has not
+        // timed yet. A click on such a word of the read on screen waits for its timing, then seeks once.
+        if let table = speechWords, table.hasTimings, !table.isTimed(wordIndex) {
+            let tokens = teleprompterText.map(TeleprompterContentModel.displayTokens) ?? []
+            pendingSpeechSeek = PendingSpeechSeek(utteranceID: utteranceID, wordIndex: wordIndex,
+                                                  text: tokens.indices.contains(wordIndex) ? tokens[wordIndex] : nil,
+                                                  readEpoch: logicalReadEpoch)
+            return
+        }
+        pendingSpeechSeek = nil
         sendCommand?(["cmd": "speech_seek", "utteranceId": utteranceID, "wordIndex": wordIndex,
+                      "id": UUID().uuidString])
+    }
+
+    /// C7 L3 V09: a click on a word of the read on screen that the daemon has not timed yet.
+    private struct PendingSpeechSeek {
+        let utteranceID: String
+        let wordIndex: Int
+        /// The display token clicked; the timing that arrives must be for this same word.
+        let text: String?
+        let readEpoch: Int
+    }
+    private var pendingSpeechSeek: PendingSpeechSeek?
+
+    /// Sends a pending click once its word is timed: same read, still playing, same word. Anything else drops it.
+    private func firePendingSpeechSeekIfTimed() {
+        guard let pending = pendingSpeechSeek else { return }
+        guard pending.readEpoch == logicalReadEpoch, mode == .speaking, !isPlaybackPaused,
+              let table = speechWords, table.utteranceID == pending.utteranceID else {
+            pendingSpeechSeek = nil
+            return
+        }
+        guard table.isTimed(pending.wordIndex) else { return }
+        pendingSpeechSeek = nil
+        guard pending.text == nil || table.words[pending.wordIndex]?.text == pending.text else { return }
+        sendCommand?(["cmd": "speech_seek", "utteranceId": pending.utteranceID, "wordIndex": pending.wordIndex,
                       "id": UUID().uuidString])
     }
 
@@ -4179,6 +4214,7 @@ public final class VoiceState {
 
         case "speech_words":
             if var table = speechWords, table.apply(event) { speechWords = table }
+            firePendingSpeechSeekIfTimed()
 
         case "subtitle":
             // Old daemons' missing/mistyped words are a no-op. Indexed payloads
