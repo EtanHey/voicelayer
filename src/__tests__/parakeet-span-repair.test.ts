@@ -33,7 +33,7 @@ function fixture() {
   return { path, native, speech, tokens };
 }
 
-async function repair(candidate: string, mode: "speech" | "silence" | "untimed" | "error" | "whole" | "multi" | "mismatch" | "cleanup" | "identity" | "tail" | "zero" | "bad-timing" | "out-of-range" | "invalid-tokens" = "speech") {
+async function repair(candidate: string, mode: "speech" | "silence" | "untimed" | "error" | "whole" | "multi" | "mismatch" | "cleanup" | "identity" | "tail" | "zero" | "bad-timing" | "out-of-range" | "invalid-tokens" = "speech", accountingGap = false) {
   const f = fixture(), clips: Buffer[] = [], retained: ParakeetFallbackAttempt[] = [];
   if (mode === "silence") f.speech.probabilities.fill(.01);
   if (mode === "untimed") f.native.raw_token_times = f.tokens.map(({ start, end }) => ({ start, end }));
@@ -54,6 +54,7 @@ async function repair(candidate: string, mode: "speech" | "silence" | "untimed" 
       raw_token_times: f.tokens.slice(0, -6), last_token_end_s: 115.5 };
     for (let i = Math.ceil(125 / .032); i * .032 < 127; i++) f.speech.probabilities[i] = .9;
   }
+  if (accountingGap) f.native.covered_frames--;
   let parakeetCalls = 0, whisperCalls = 0;
   const logs = spyOn(console, "error").mockImplementation(() => {});
   try {
@@ -87,6 +88,14 @@ test("an uncovered internal span re-decodes only with Parakeet and preserves eve
   expect(r.logs.some(l => l.includes('"reason":"uncovered-internal"') && l.includes('"uncovered_spans_s"'))).toBe(true);
   expect(r.retained.some(a => a.repairParakeet?.text === "before this recovered clause after this")).toBe(true);
   expect(r.retained.some(a => a.deliveryText === r.result.text)).toBe(true);
+});
+
+test.each(["speech", "tail"] as const)("L11 R2: one-frame silent gap still runs normal %s span repair", async mode => {
+  const r = await repair(mode === "tail" ? "another boundary recovered final clause" : "before this recovered clause after this", mode, true);
+  expect(r.clips).toHaveLength(1);
+  expect(r.parakeetCalls).toBe(2); expect(r.whisperCalls).toBe(0);
+  expect(r.result.text).toContain(mode === "tail" ? "recovered final clause" : "recovered clause");
+  expect(r.result.backend).toBe(`parakeet-resident+uncovered-${mode === "tail" ? "tail" : "internal"}+span-repair`);
 });
 
 test.each(["silence", "untimed", "error", "mismatch"] as const)("%s keeps every native character when repair cannot qualify", async mode => {

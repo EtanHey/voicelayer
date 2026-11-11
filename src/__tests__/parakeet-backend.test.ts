@@ -31,10 +31,10 @@ describe("opt-in resident Parakeet router", () => {
   let oldBackend: string | undefined;
   beforeEach(() => { mkdirSync(testTmp("parakeet"), { recursive: true }); writeFileSync(path, wav()); oldBackend = process.env.QA_VOICE_STT_BACKEND; resetBackendCache(); });
   afterEach(() => { if (oldBackend === undefined) delete process.env.QA_VOICE_STT_BACKEND; else process.env.QA_VOICE_STT_BACKEND = oldBackend; resetBackendCache(); });
-  function setup(result = response()) {
+  function setup(result = response(), speechProbe = async (p: string) => speech(p)) {
     const calls: string[] = [];
     const fallback: STTBackend = { name: "whisper-test", isAvailable: async () => true, transcribe: async p => { calls.push("W"); expect(readFileSync(p)).toEqual(readFileSync(path)); return { text: "Whisper kept the whole recording.", backend: "whisper-test", durationMs: 3 }; } };
-    const backend = new ParakeetBackend({ fallbackBackend: fallback, speechProbe: async p => speech(p), transcribe: async p => { calls.push("P"); expect(readFileSync(p)).toEqual(readFileSync(path)); return result; }, unload: async () => { calls.push("unload"); }, env: () => ({ QA_VOICE_WHISPER_LANG: "en" }) });
+    const backend = new ParakeetBackend({ fallbackBackend: fallback, speechProbe, transcribe: async p => { calls.push("P"); expect(readFileSync(p)).toEqual(readFileSync(path)); return result; }, unload: async () => { calls.push("unload"); }, env: () => ({ QA_VOICE_WHISPER_LANG: "en" }) });
     return { backend, calls, fallback };
   }
   test("backend choice is explicit and returns the selected P backend", async () => {
@@ -72,8 +72,48 @@ describe("opt-in resident Parakeet router", () => {
   test.each(["", "   "])("empty returned text with verified speech falls back on the original audio", async text => {
     const { backend, calls } = setup(response(text)); expect((await backend.transcribe(path)).backend).toContain("fallback-empty-response"); expect(calls).toEqual(["P", "unload", "W"]);
   });
-  test("frame loss cannot pass as a completed response", async () => {
-    const { backend } = setup({ ...response(), covered_frames: 15999 }); expect((await backend.transcribe(path)).backend).toContain("fallback-incomplete-response");
+  test.each([
+    { ...response(), complete: false },
+    { ...response(), attemptEvidence: { decodeCoverage: "PARTIAL" } },
+    { ...response(), attemptEvidence: { tail: "KNOWN_MISSING" } },
+  ] as ParakeetResponse[])("explicit provider incompleteness still permits failure fallback", async native => {
+    const { backend, calls } = setup(native);
+    expect((await backend.transcribe(path)).backend).toContain("fallback-incomplete-response");
+    expect(calls).toEqual(["P", "unload", "W"]);
+  });
+  test("L11 R2: one-frame gap with verified silence keeps native words after probing", async () => {
+    const native = { ...response(), covered_frames: 15999 };
+    let probes = 0;
+    const { backend, calls } = setup(native, async p => {
+      probes++;
+      return { ...speech(p), probabilities: Array(32).fill(.01), speechFrames: 0, maxProbability: .01 };
+    });
+    const result = await backend.transcribe(path);
+    expect(result.text).toBe(native.text);
+    expect(probes).toBe(1);
+    expect(result.backend).toBe("parakeet-resident+accounting-gap-silence+kept-native");
+    expect(result.outcome).toBe("NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN");
+    expect(calls).toEqual(["P"]);
+  });
+  test.each([0, 8000, 15998])("L11 R2: covered_frames=%i is a true incomplete failure on full audio", async covered_frames => {
+    const { backend, calls } = setup({ ...response(), covered_frames });
+    const result = await backend.transcribe(path);
+    expect(result.backend).toContain("fallback-incomplete-response");
+    expect(result.text).toBe("Whisper kept the whole recording.");
+    expect(calls).toEqual(["P", "unload", "W"]);
+  });
+  test("L11 R2: speech in the one-frame gap cannot silently lose words", async () => {
+    const { backend, calls } = setup({ ...response(), covered_frames: 15999 }, async p => {
+      const probabilities = Array(32).fill(.01); probabilities[31] = .9;
+      return { ...speech(p), probabilities };
+    });
+    expect((await backend.transcribe(path)).backend).toContain("fallback-accounting-gap-speech");
+    expect(calls).toEqual(["P", "unload", "W"]);
+  });
+  test("L11 R2: missing per-window evidence cannot verify silence in the gap", async () => {
+    const { backend, calls } = setup({ ...response(), covered_frames: 15999 });
+    expect((await backend.transcribe(path)).backend).toContain("fallback-accounting-gap-unverified");
+    expect(calls).toEqual(["P", "unload", "W"]);
   });
   test("Hebrew script in a complete output does not silently switch engines", async () => {
     const { backend, calls } = setup(response("שלום עולם")); const result = await backend.transcribe(path);
