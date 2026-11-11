@@ -49,12 +49,10 @@ public struct SpeechSettingsView: View {
             if let controls, connected {
                 ForEach(SpeechProfile.allCases, id: \.self) { kind in
                     if let profile = controls.profiles[kind], let display = Self.displayProfile(kind, controls: controls, pending: pending) {
-                        // Lane S PR 3 (Etan QA 2026-11-11, video 303.8 s "that's still slop UI"): both profiles share one
-                        // anatomy on the row grid. Voice row: the measurement as its one helper line, the picker and
-                        // Preview trailing (a disabled Preview says why on hover). Rate row: slider and a readable
-                        // value. Nothing inline explains a disabled control.
+                        // Both profiles use the row grid. Latency remains available in help; locked controls
+                        // show their state at rest and their reason on hover or keyboard focus.
                         Section {
-                            SettingsRow(title: "Voice", description: Self.latencyDisplay(profile.latencyLabel)) {
+                            SettingsRow(title: "Voice", description: display.engine == "clone" ? "Cloned voice" : "Fast voice") {
                                 voiceControl(kind, display: display, controls: controls)
                                 previewControl(kind)
                             }
@@ -111,51 +109,45 @@ public struct SpeechSettingsView: View {
         .accessibilityIdentifier("speech-settings-form")
     }
 
-    /// Compact (lane S PR 3): the reported cutoff with its caveat as one row, then the draft line with one helper line.
-    /// Why Apply is unavailable shows on hover of Apply, like a locked switch.
+    /// The split is one explicit draft control; reporting provenance stays in help, never permanent telemetry.
     private var thresholdSection: some View {
-        Section("Voice profile threshold") {
-            SettingsRow(title: SpeechThresholdDraft.confirmedLabel(controls?.shortLimit),
-                        description: SpeechThresholdDraft.reportStatus) { EmptyView() }
-                .accessibilityIdentifier("speech-threshold-applied")
+        Section("Profiles") {
             let blocked = SpeechThresholdDraft.blockedReason(controls: controls, connected: connected, busy: busy,
                                                              pending: pending, callbackAvailable: onChange != nil)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Draft").lineLimit(1).fixedSize()
+            let canApply = thresholdDraft.canApply(controls: controls, connected: connected, busy: busy,
+                                                   pending: pending, callbackAvailable: onChange != nil)
+            let summary = controls.map { "Short ≤ \($0.shortLimit.effective) characters; Long above." }
+                ?? "Waiting for VoiceLayer."
+            SettingsRow(title: "Short / long split", description: thresholdDraft.validationMessage ?? summary) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Draft").font(.system(size: 10)).foregroundStyle(SettingsPanePalette.helper)
                     TextField("Characters", text: Binding(
                         get: { thresholdDraft.displayedText(controls?.shortLimit) },
                         set: { thresholdDraft.edit($0) }))
                         .labelsHidden()
-                        .textFieldStyle(.roundedBorder).frame(width: 90)
+                        .textFieldStyle(.roundedBorder).frame(width: 58)
                         .multilineTextAlignment(.trailing)
                         .onSubmit {} // Enter, like blur, never applies a draft.
                         .accessibilityLabel("Voice profile threshold draft in characters")
                         .accessibilityIdentifier("speech-threshold-draft")
-                    Text("characters").foregroundStyle(.secondary)
-                        .lineLimit(1).fixedSize().layoutPriority(1)
-                    Spacer()
-                    let canApply = thresholdDraft.canApply(controls: controls, connected: connected, busy: busy,
-                                                           pending: pending, callbackAvailable: onChange != nil)
-                    Button("Apply") {
-                        thresholdDraft.apply(controls: controls, connected: connected, busy: busy,
-                                             pending: pending, onChange: onChange)
-                    }
-                    .lineLimit(1).fixedSize()
-                    .disabled(!canApply)
-                    .accessibilityIdentifier("speech-threshold-apply")
-                    .settingsLockedReason(canApply ? nil : blocked)
-                    Button("Revert") { thresholdDraft.revert() }
-                        .lineLimit(1).fixedSize()
-                        .help(SpeechThresholdDraft.revertHelp)
-                        .accessibilityLabel("Revert draft to last reported cutoff")
-                        .disabled(thresholdDraft.text == nil || controls == nil)
-                        .accessibilityIdentifier("speech-threshold-revert")
                 }
-                Text(Self.thresholdHelper(validation: thresholdDraft.validationMessage))
-                    .font(.system(size: 11.5)).foregroundStyle(SettingsPanePalette.helper)
-                    .fixedSize(horizontal: false, vertical: true)
+                Button("Apply") {
+                    thresholdDraft.apply(controls: controls, connected: connected, busy: busy,
+                                         pending: pending, onChange: onChange)
+                }
+                .controlSize(.small).fixedSize()
+                .disabled(!canApply)
+                .accessibilityIdentifier("speech-threshold-apply")
+                .settingsLockedReason(canApply ? nil : blocked, stateLabel: nil)
+                Button("Revert") { thresholdDraft.revert() }
+                    .controlSize(.small).fixedSize()
+                    .help(SpeechThresholdDraft.revertHelp + " " + SpeechThresholdDraft.reportStatus)
+                    .accessibilityLabel("Revert draft to last reported cutoff")
+                    .disabled(thresholdDraft.text == nil || controls == nil)
+                    .accessibilityIdentifier("speech-threshold-revert")
             }
+            .help(SpeechThresholdDraft.confirmedLabel(controls?.shortLimit))
+            .accessibilityIdentifier("speech-threshold-applied")
             .settingsLockedReasonBubble()
         }
     }
@@ -209,7 +201,7 @@ public struct SpeechSettingsView: View {
                 .disabled(disabled)
                 .accessibilityIdentifier("speech-\(kind.rawValue)-preview")
                 .settingsLockedReason(disabled && onPreview != nil
-                    ? previewHint(kind) ?? Self.pendingChangeReason : nil)
+                    ? previewHint(kind) ?? Self.pendingChangeReason : nil, stateLabel: nil)
         }
     }
 

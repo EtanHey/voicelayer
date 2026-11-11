@@ -53,7 +53,7 @@ struct CloneEngineSection: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("speech-clone-engine")
 
-            startWithVoiceBarRow(shown)
+            if shown.startWithVoiceBar != nil { startWithVoiceBarRow(shown) }
         } header: {
             Text("Voice engine")
         }

@@ -155,25 +155,27 @@ public struct RecognizerPickerView: View {
         SettingsRowLayout {
             Button { state.select(engine, send: onSelect) } label: {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Image(systemName: Self.selectionSymbol(isSelected: state.selected == engine))
+                    Image(systemName: onSelect != nil && !state.isSelectionDisabled
+                        ? Self.selectionSymbol(isSelected: state.selected == engine)
+                        : state.selected == engine ? "checkmark" : "lock.fill")
                         .font(.system(size: 14))
                         .foregroundStyle(state.selected == engine ? Color.accentColor : Color.secondary)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             ClippingAwareText(text: Self.rowTitle(engine), font: SettingsRowLabel.titleFont,
-                                              lineLimit: SettingsRowLabel.lineLimit)
+                                              lineLimit: nil)
                             if engine == .parakeet {
                                 SettingsPill(text: "Recommended", tint: .green)
                                     .accessibilityIdentifier("recognizer-recommended")
                             }
                         }
                         ClippingAwareText(text: Self.blurb(engine) + " " + Self.subtitle(state, engine),
-                                          font: SettingsRowLabel.descriptionFont, lineLimit: SettingsRowLabel.lineLimit)
+                                          font: SettingsRowLabel.descriptionFont, lineLimit: nil)
                             .foregroundStyle(SettingsPanePalette.helper)
                         if let line = state.autoLoadLine(for: engine) {
                             ClippingAwareText(text: line, font: SettingsRowLabel.descriptionFont,
-                                              lineLimit: SettingsRowLabel.lineLimit)
+                                              lineLimit: nil)
                                 .foregroundStyle(SettingsPanePalette.helper)
                                 .accessibilityIdentifier("recognizer-autoload-\(engine.rawValue)")
                         }

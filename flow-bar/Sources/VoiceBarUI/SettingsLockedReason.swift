@@ -30,12 +30,32 @@ enum SettingsLockedReasonMotion {
 /// On the disabled switch. A nil reason leaves the switch untouched (no hover catcher over a live control).
 struct SettingsLockedReasonSource: ViewModifier {
     let reason: String?
+    var stateLabel: String? = "Locked"
+    @FocusState private var isFocused: Bool
     @Environment(\.settingsHoverPreview) private var hoverPreview
     @State private var isHovered = false
     @State private var showTask: Task<Void, Never>?
 
     func body(content: Content) -> some View {
-        content
+        Group {
+            if reason != nil {
+                HStack(spacing: 5) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "lock.fill")
+                        if let stateLabel { Text(stateLabel) }
+                    }
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(SettingsPanePalette.helper)
+                    .fixedSize()
+                    .accessibilityHidden(true)
+                    content
+                }
+                .focusable(true, interactions: .edit)
+                .focused($isFocused)
+            } else {
+                content
+            }
+        }
             .overlay {
                 if reason != nil {
                     Color.clear
@@ -45,7 +65,7 @@ struct SettingsLockedReasonSource: ViewModifier {
                 }
             }
             .anchorPreference(key: SettingsLockedReasonKey.self, value: .bounds) { anchor in
-                reason.map { SettingsLockedReasonPreference(reason: $0, bounds: anchor, isShown: isHovered || hoverPreview.lockedReasons) }
+                reason.map { SettingsLockedReasonPreference(reason: $0, bounds: anchor, isShown: isHovered || isFocused || hoverPreview.lockedReasons) }
             }
             .modifier(OptionalAccessibilityHint(text: reason))
             .onChange(of: reason) { _, new in if new == nil { hover(false) } }
@@ -134,8 +154,8 @@ struct OptionalAccessibilityHint: ViewModifier {
 
 extension View {
     /// The switch side: `reason` non-nil means the switch is locked and hovering it shows why.
-    func settingsLockedReason(_ reason: String?) -> some View {
-        modifier(SettingsLockedReasonSource(reason: reason))
+    func settingsLockedReason(_ reason: String?, stateLabel: String? = "Locked") -> some View {
+        modifier(SettingsLockedReasonSource(reason: reason, stateLabel: stateLabel))
     }
 
     /// The row side: put this after the row's dimming so the bubble is not dimmed with it.
