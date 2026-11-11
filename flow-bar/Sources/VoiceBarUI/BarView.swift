@@ -1325,17 +1325,8 @@ public struct BarView: View {
                 }
                 .disabled(!forward.isEnabled)
                 .opacity(forward.isEnabled ? 1 : VoiceBarPresentation.disabledTransportOpacity)
-                .overlay(alignment: .topTrailing) {
-                    // X1-30: a real badge centred on Forward's corner (`VoiceBarQueueCountBadge`).
-                    if let count = forward.countLabel {
-                        VoiceBarQueueCountBadgeView(label: count)
-                            .alignmentGuide(.trailing) { $0[HorizontalAlignment.center] - VoiceBarQueueCountBadge.centreOffset.width }
-                            .alignmentGuide(.top) { $0[VerticalAlignment.center] - VoiceBarQueueCountBadge.centreOffset.height }
-                            .allowsHitTesting(false)
-                            .accessibilityLabel(forward.countAccessibilityLabel ?? "")
-                            .transition(.scale(scale: 0.6).combined(with: .opacity))
-                    }
-                }
+                // X1-30: the queued count, clear of Forward's glyph (`VoiceBarQueueCountBadge`).
+                .queueCountBadge(forward.countLabel, accessibilityLabel: forward.countAccessibilityLabel)
             }
         }
         .fixedSize()
