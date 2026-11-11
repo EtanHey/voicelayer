@@ -54,8 +54,8 @@ final class NotchPullHitGateTests: XCTestCase {
             let old = layout(rows: from), new = layout(rows: to)
             var gate = VoiceBarPanelHitGate(layout: old)
             XCTAssertTrue(gate.settles(into: new))
-            gate.update(to: new, now: 0,
-                        drawnLowerSurfaceHeight: NotchHistoryMorph.lowerSurfaceHeight(rows: CGFloat(to)))
+            gate.update(to: new, now: 0, drawnReport: NotchDrawnDrawerReport(
+                lowerSurfaceHeight: NotchHistoryMorph.lowerSurfaceHeight(rows: CGFloat(to)), rows: to))
             XCTAssertTrue(gate.containsVisibleSurface(grip(new), now: 0.01), "\(from)->\(to): the grip is live")
             XCTAssertFalse(gate.containsVisibleSurface(grip(old), now: 0.01) && from > to,
                            "\(from)->\(to): a shrunk drawer stops claiming its old grip at once")
@@ -76,7 +76,7 @@ final class NotchPullHitGateTests: XCTestCase {
         for (name, from, to, drawn) in cases {
             let old = layout(rows: from), new = layout(rows: to)
             var gate = VoiceBarPanelHitGate(layout: old)
-            gate.update(to: new, now: 0, drawnLowerSurfaceHeight: drawn)
+            gate.update(to: new, now: 0, drawnReport: NotchDrawnDrawerReport(lowerSurfaceHeight: drawn, rows: to))
             let rest = new.presentation.geometry.lowerSurfaceHeight
             let frames = stride(from: 0.0, through: 1.0, by: 0.1).map {
                 new.withDrawnLowerSurface(drawn + (rest - drawn) * CGFloat($0))
@@ -98,7 +98,8 @@ final class NotchPullHitGateTests: XCTestCase {
         // The pull past open covered the Settings drawer down to its grip's top.
         let old = layout(rows: 6), new = layout(rows: 8)
         var gate = VoiceBarPanelHitGate(layout: old)
-        gate.update(to: new, now: 0, drawnLowerSurfaceHeight: NotchHistoryMorph.lowerSurfaceHeight(rows: 6) * 1.3)
+        gate.update(to: new, now: 0, drawnReport: NotchDrawnDrawerReport(
+            lowerSurfaceHeight: NotchHistoryMorph.lowerSurfaceHeight(rows: 6) * 1.3, rows: 8))
         XCTAssertTrue(gate.containsVisibleSurface(CGPoint(x: grip(new).x, y: grip(new).y + 8), now: 0.01))
     }
 
@@ -108,13 +109,13 @@ final class NotchPullHitGateTests: XCTestCase {
         var now: TimeInterval = 10
         model.drawnHistoryClock = { now }
         XCTAssertNil(model.takeDrawnHistoryLowerSurface())
-        model.noteDrawnHistoryLowerSurface(400)
-        XCTAssertEqual(model.takeDrawnHistoryLowerSurface(), 400)
+        model.noteDrawnHistoryLowerSurface(400, resizingTo: 8)
+        XCTAssertEqual(model.takeDrawnHistoryLowerSurface(), NotchDrawnDrawerReport(lowerSurfaceHeight: 400, rows: 8))
         XCTAssertNil(model.takeDrawnHistoryLowerSurface(), "taken once")
-        model.noteDrawnHistoryLowerSurface(400)
+        model.noteDrawnHistoryLowerSurface(400, resizingTo: 8)
         now += VoiceBarPanelHitGate.settleDuration
         XCTAssertNil(model.takeDrawnHistoryLowerSurface(), "a stale height never applies to a later change")
-        model.noteDrawnHistoryLowerSurface(.nan)
+        model.noteDrawnHistoryLowerSurface(.nan, resizingTo: 8)
         XCTAssertNil(model.takeDrawnHistoryLowerSurface())
     }
 
@@ -124,5 +125,45 @@ final class NotchPullHitGateTests: XCTestCase {
         var gate = VoiceBarPanelHitGate(layout: plain)
         gate.update(to: noted, now: 0)
         XCTAssertEqual(gate.settlingFrom, [plain])
+    }
+
+    // MARK: R891: a report applies only to the resize it was made for
+
+    /// A still-fresh report never applies to an unrelated same-size change (a note on the resting drawer): the gate
+    /// keeps the actual previous layout and the report is discarded.
+    func testR891AReportNeverAppliesToAnUnrelatedChange() {
+        let model = VoiceBarNotchPresentationModel()
+        model.drawnHistoryClock = { 0 }
+        let resting = layout(rows: 11), noted = layout(rows: 11, note: "Busy. Selection not read")
+        model.noteDrawnHistoryLowerSurface(NotchHistoryMorph.lowerSurfaceHeight(rows: 11.4), resizingTo: 11)
+        var gate = VoiceBarPanelHitGate(layout: resting)
+        gate.update(to: noted, now: 0, takingDrawnReportFrom: model)
+        XCTAssertEqual(gate.settlingFrom, [resting], "the note settles from the drawer as it rests")
+        XCTAssertNil(model.takeDrawnHistoryLowerSurface(), "and the stale report is gone")
+    }
+
+    /// A row change whose own layout never reached the gate (a note arrived in the same update, so the gate first
+    /// sees rows AND a note): the report does not match that combined change, so it is discarded and the gate keeps
+    /// the conservative intersection; a later pure resize does not pick it up either.
+    func testR891AReportWhoseResizeNeverReachedTheGateIsDiscarded() {
+        let model = VoiceBarNotchPresentationModel()
+        model.drawnHistoryClock = { 0 }
+        let eight = layout(rows: 8), tenNoted = layout(rows: 10, note: "Busy. Selection not read")
+        model.noteDrawnHistoryLowerSurface(NotchHistoryMorph.lowerSurfaceHeight(rows: 10), resizingTo: 10)
+        var gate = VoiceBarPanelHitGate(layout: eight)
+        gate.update(to: tenNoted, now: 0, takingDrawnReportFrom: model)
+        XCTAssertEqual(gate.settlingFrom, [eight], "a combined change keeps the conservative intersection")
+        XCTAssertNil(model.takeDrawnHistoryLowerSurface(), "the report is discarded, not kept for later")
+        // Still applies to its own resize when that is what arrives.
+        model.noteDrawnHistoryLowerSurface(NotchHistoryMorph.lowerSurfaceHeight(rows: 10), resizingTo: 10)
+        var direct = VoiceBarPanelHitGate(layout: eight)
+        direct.update(to: layout(rows: 10), now: 0, takingDrawnReportFrom: model)
+        XCTAssertEqual(direct.settlingFrom.count, 1)
+        XCTAssertNotEqual(direct.settlingFrom, [eight], "its own resize settles from the drawn shell")
+        // A report for other rows never applies to this resize.
+        model.noteDrawnHistoryLowerSurface(NotchHistoryMorph.lowerSurfaceHeight(rows: 9), resizingTo: 9)
+        var other = VoiceBarPanelHitGate(layout: eight)
+        other.update(to: layout(rows: 10), now: 0, takingDrawnReportFrom: model)
+        XCTAssertEqual(other.settlingFrom, [eight])
     }
 }

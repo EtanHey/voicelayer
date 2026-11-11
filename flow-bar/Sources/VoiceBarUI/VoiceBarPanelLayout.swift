@@ -212,6 +212,18 @@ public struct VoiceBarPanelLayout: Equatable {
 /// if both the previous and the destination layouts contain it. Every interpolated frame covers that overlap,
 /// so a claimed point is always drawn. A size change moves the window itself, so it applies the destination as
 /// before.
+/// C6 L2c (Q-F48, R891): a drawer height a pointer drew, bound to the resize it was drawn for (the rows the drawer
+/// resizes to).
+public struct NotchDrawnDrawerReport: Equatable, Sendable {
+    public let lowerSurfaceHeight: CGFloat
+    public let rows: Int
+
+    public init(lowerSurfaceHeight: CGFloat, rows: Int) {
+        self.lowerSurfaceHeight = lowerSurfaceHeight
+        self.rows = rows
+    }
+}
+
 public struct VoiceBarPanelHitGate: Equatable {
     /// Hard retention deadline, anchored to the first change and never extended by reversals.
     public static let settleDuration: TimeInterval = 0.5
@@ -231,26 +243,53 @@ public struct VoiceBarPanelHitGate: Equatable {
         next != layout && next.presentation.geometry != layout.presentation.geometry && next.panelSize == layout.panelSize
     }
 
-    /// Returns true when the layout changed, so the caller can refresh the window's event gate.
-    ///
-    /// C6 L2c (Q-F48): `drawnLowerSurfaceHeight` is the drawer height a pointer has ALREADY drawn when this change
-    /// arrives: a released grip or handle, or a pull released past open into Settings. The shell is not animating
-    /// from the previous layout then; it is on screen where the pointer left it and moves from there to `next`, so
-    /// the gate settles from that drawn shell instead. Without it, every row the drag had drawn below the old
-    /// layout passed clicks through to the app behind for 500 ms (a quick second pull "reached the background").
+    /// R891: whether `next` is exactly the drawer resize `report` was made for: the same drawer surface (History's
+    /// visual state, the same band, wings, body extents and note band), only the lower surface changed, and it changed
+    /// to the reported rows.
+    public func isDrawerResize(into next: VoiceBarPanelLayout, reportedAs report: NotchDrawnDrawerReport) -> Bool {
+        let from = layout.presentation, to = next.presentation
+        guard settles(into: next), from.visualState == .history, to.visualState == .history,
+              from.feedbackHeight == to.feedbackHeight, from.feedback == to.feedback else { return false }
+        let a = from.geometry, b = to.geometry
+        guard a.coreWidth == b.coreWidth, a.topHeight == b.topHeight,
+              a.leadingWingWidth == b.leadingWingWidth, a.trailingWingWidth == b.trailingWingWidth,
+              a.bodyLeadingExtent == b.bodyLeadingExtent, a.bodyTrailingExtent == b.bodyTrailingExtent,
+              a.lowerSurfaceHeight != b.lowerSurfaceHeight else { return false }
+        return abs(b.lowerSurfaceHeight - (NotchHistoryMorph.lowerSurfaceHeight(rows: CGFloat(report.rows))
+            + to.feedbackHeight)) < 0.5
+    }
+
+    /// The app's update: a drawn-drawer report is taken (and so discarded) at the next change the gate settles into,
+    /// and applied only when that change is the resize it was made for.
     @discardableResult
     public mutating func update(
-        to next: VoiceBarPanelLayout, now: TimeInterval, drawnLowerSurfaceHeight: CGFloat? = nil
+        to next: VoiceBarPanelLayout, now: TimeInterval, takingDrawnReportFrom model: VoiceBarNotchPresentationModel
+    ) -> Bool {
+        let report = settles(into: next) ? model.takeDrawnHistoryLowerSurface() : nil
+        return update(to: next, now: now, drawnReport: report)
+    }
+
+    /// Returns true when the layout changed, so the caller can refresh the window's event gate.
+    ///
+    /// C6 L2c (Q-F48): `drawnReport` is the drawer a pointer has ALREADY drawn when this change arrives: a released
+    /// grip or handle, or a pull released past open into Settings, that resizes the drawer. The shell is not
+    /// animating from the previous layout then; it is on screen where the pointer left it and moves from there to
+    /// `next`, so the gate settles from that drawn shell instead. Without it, every row the drag had drawn below the
+    /// old layout passed clicks through to the app behind for 500 ms. R891: it applies only when `next` is exactly
+    /// the resize the report was made for; for any other change the gate keeps the conservative intersection.
+    @discardableResult
+    public mutating func update(
+        to next: VoiceBarPanelLayout, now: TimeInterval, drawnReport: NotchDrawnDrawerReport? = nil
     ) -> Bool {
         let expired = !settlingFrom.isEmpty && now >= settlesAt
         if expired { settlingFrom.removeAll() }
         guard next != layout else { return expired }
         if next.presentation.geometry == layout.presentation.geometry {
             // Only the interaction configuration changed; nothing is animating.
-        } else if next.panelSize == layout.panelSize, let drawnLowerSurfaceHeight {
+        } else if let drawnReport, isDrawerResize(into: next, reportedAs: drawnReport) {
             // The pointer drew this shell; it supersedes whatever the gate was settling from.
             settlesAt = now + Self.settleDuration
-            settlingFrom = [next.withDrawnLowerSurface(drawnLowerSurfaceHeight)]
+            settlingFrom = [next.withDrawnLowerSurface(drawnReport.lowerSurfaceHeight)]
         } else if next.panelSize == layout.panelSize {
             if settlingFrom.isEmpty { settlesAt = now + Self.settleDuration }
             if !settlingFrom.contains(layout) {

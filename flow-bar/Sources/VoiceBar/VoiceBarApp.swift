@@ -2691,9 +2691,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             panelHitGate = gate
             return gate
         }
-        // C6 L2c (Q-F48): a drawer height the pointer already drew is where a same-size change settles from.
-        let drawn = gate.settles(into: layout) ? notchPresentationModel.takeDrawnHistoryLowerSurface() : nil
-        if gate.update(to: layout, now: now, drawnLowerSurfaceHeight: drawn) {
+        // C6 L2c (Q-F48, R891): a drawer resize the pointer already drew settles from the drawn shell.
+        if gate.update(to: layout, now: now, takingDrawnReportFrom: notchPresentationModel) {
             panelHitGate = gate
             if gate.isSettling(now: now) {
                 panelHitGateSettleGeneration &+= 1

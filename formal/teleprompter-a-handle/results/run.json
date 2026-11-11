@@ -12,10 +12,10 @@
     "formal/teleprompter-a-handle/SharedHoldMutant.cfg": "0df4e5079fac548275daac98617538f9af9918c8d48e1c3a5e217fa231d7a608",
     "formal/teleprompter-a-handle/Fixed.cfg": "345e0359af8c9fd7590f585ac5d34a10b4756e97913448c95d52afee7dbf2f2e",
     "flow-bar/Sources/VoiceBarUI/TeleprompterAView.swift": "fa63b8ebc8c110393b382037c544959e260e4a0f81b99b6b1341237707600f2c",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "f1c140bdec4b13c6f716d1eb8868fe683cd97afd57c225da47586bd1d9a70698",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "0bdb86fb74ad5712f70350eca4693103a401d6bf2b7118bb67ac0ca4c1401eaa",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "f6cf2eddf21bf6b4b66d36e83fa08f417829f3d7337b2d7d3e61148d00c88ea1",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "7951156081d24b00be86c58bd453d8d1aa6c1580128510f2ebc1679d9f15f56c",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchMorphPrototype.swift": "04c646c9f9cf9e2ee47079a733d65ec4ba8a35ebaadc11f3a2a86f763a7ce39a",
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "7f291aff2f3f6505d3a72d3e8dc544aea2adaf3d82d564ac7660461319a1a000",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "4a8b475cd467d145db5266272f54cf796a514ca9cf51b45d65482ed799dc46bd",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
