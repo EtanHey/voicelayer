@@ -5,6 +5,7 @@ import { existsSync } from "fs";
 import { appendFile, mkdir } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
+import { isProseOne } from "./rules-engine";
 import { NDJSONByteFramer } from "./ndjson-byte-framer";
 import { SocketOutboundQueue } from "./socket-outbound-queue";
 
@@ -1278,20 +1279,23 @@ function compactContentSequence(text: string): string {
     .replace(/[^\p{L}\p{N}]/gu, "");
 }
 
-function conservedContentTokens(text: string): string[] {
+function conservedContentTokens(text: string, protectProseOne = false): string[] {
   // Do not use compactContentSequence: erasing word boundaries would equate
   // "the rapist" with "therapist". contentTokens also equates "a" with "an"
   // and zero with "no". Only numeric spelling and known code joins belong here.
   const tokens = normalizeSpokenNumberPairs(text.normalize("NFKC"))
-    .match(/[\p{L}\p{N}'’]+(?:\.{3})?/gu)
-    ?.map((token) => {
+    .match(/[\p{L}\p{N}'’]+(?:\.{3})?|[,.!?;:]/gu)
+    ?.map((token, index, words) => {
+      if (/^[,.!?;:]$/u.test(token)) return null;
       const lower = token.toLowerCase().replace(/['’]/gu, "");
       const cutoff = lower.endsWith("...");
       const base = cutoff ? lower.slice(0, -3) : lower;
       // Bind the cutoff to this occurrence in the ordered stream; a later
       // identical word cannot pay for moving a fragment marker forward.
-      return String(NUMBER_WORD_VALUES[base] ?? base) + (cutoff ? "..." : "");
-    }) ?? [];
+      const value = protectProseOne && base === "one" && isProseOne(words, index)
+        ? "lexical:one" : NUMBER_WORD_VALUES[base] ?? base;
+      return String(value) + (cutoff ? "..." : "");
+    }).filter((token): token is string => token !== null) ?? [];
   const conserved: string[] = [];
   for (let start = 0; start < tokens.length; start++) {
     let token = tokens[start];
@@ -1499,6 +1503,11 @@ function validatePolishCandidate(
   )) {
     return POLISH_REJECTION_REASONS.CHANGED_LEXICAL_CONTENT;
   }
+
+  const protectedOnes = conservedContentTokens(cleanedText, true);
+  if (protectedOnes.some(token => token.startsWith("lexical:one")) && !sameTokenSequence(
+    protectedOnes, conservedContentTokens(contentCandidate, true),
+  )) return POLISH_REJECTION_REASONS.CHANGED_LEXICAL_CONTENT;
 
   return null;
 }
