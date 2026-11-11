@@ -1,6 +1,20 @@
 import { afterEach, expect, test, spyOn } from "bun:test";
 import { applyRules } from "../rules-engine";
 import { finalizeTranscriptionResultForSurface } from "../input";
+import layoutCorpus from "./fixtures/layout-intent-corpus.json";
+
+for (const { input, old } of [...layoutCorpus.commands, ...layoutCorpus.percent]) {
+  test(`matches OLD command/quantity bytes: ${input}`, () => expect(applyRules(input)).toBe(old));
+}
+for (const { input, old } of layoutCorpus.legacyCommands) {
+  test(`keeps OLD's non-command interpretation: ${input}`, () => {
+    expect(old).not.toContain("\n");
+    expect(applyRules(input)).toContain("new line");
+  });
+}
+for (const { input, expected } of layoutCorpus.nouns) {
+  test(`keeps the layout noun words: ${input}`, () => expect(applyRules(input)).toBe(expected));
+}
 
 // Synthetic text only. The regression is loss of the noun, not its punctuation.
 export const nounRegressions = [
@@ -77,6 +91,7 @@ for (const surface of ["dictation", "voice_ask"] as const) {
     ["this one works", "This 1 works.", "rejected", "This one works."],
     ["pick one or two apples", "Pick 1 or 2 apples.", "applied", "Pick 1 or 2 apples."],
     ["this one has two files", "This one has 2 files.", "applied", "This one has 2 files."],
+    ["that one percent", "That 1%.", "applied", "That 1%."],
     ["the sample has an extra new line?", "The sample has an extra new line?", "applied", "The sample has an extra new line?"],
   ]) {
     test(`${surface} preserves consistent polish: ${raw}`, async () => {

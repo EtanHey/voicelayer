@@ -754,18 +754,22 @@ function markNounArticleBefore(
  * must be left verbatim.
  */
 function isLayoutNoun(text: string, start: number, end: number, decoderPunctuation = false): boolean {
+  const quote = /(["'“‘])[ \t]*$/u.exec(text.slice(0, start))?.[1];
+  if (quote && text.slice(end).trimStart().startsWith(({ '"': '"', "'": "'", "“": "”", "‘": "’" } as Record<string, string>)[quote])) return true;
   const clause = text.slice(0, start).replace(/\.{2,}|…/gu, " ")
     .split(/[.!?;\n\uE000\uE001\uE200\uE201]/u).at(-1)!;
   const words = clause.replace(/[\s,]+$/u, "")
     .toLowerCase().match(/[\p{L}\p{N}'’]+/gu)?.slice(-4) ?? [];
   const before = words.at(-1) ?? "";
+  if (/(?:['’]s|s['’])$/u.test(before)) return true;
   if (/^(?:trailing|leading|empty|blank|extra|additional|unwanted|unexpected|missing|duplicate|accidental)$/u.test(before)) return true;
   if (/^(?:add|insert|remove|delete|strip|trim|replace|contains?|shows?|has|have|had|is|was|it's|it’s|there's|there’s)$/u.test(before)) return true;
-  // A short descriptive phrase after an article/determiner is noun evidence.
-  // Prepositions/connectives block it: "add this to new line dot env" is a command.
+  // A determiner names the layout noun directly, or describes it after a
+  // copula/possession cue. "call the doctor new line" ends a command clause.
   for (let i = 0; i < words.length; i++) {
     const description = words.slice(i + 1);
     if (/^(?:a|an|the|this|that|my|your|our|their|some|any|every|no)$/u.test(words[i]) &&
+        (description.length === 0 || /^(?:is|was|are|were|be|been|has|have|had|it's|it’s|there's|there’s|got|with|without|reports|shows|contains)$/u.test(words[i - 1] ?? "")) &&
         (description.length <= 1 || (description.length === 2 && /^(?:very|quite|really|rather|slightly)$/u.test(description[0]))) &&
         description.every(word => !/^(?:to|from|and|or|but|then|in|on|at|with|for|of|into|over|under|before|after)$/u.test(word))) return true;
   }
@@ -1179,6 +1183,9 @@ export function isProseOne(words: string[], index: number): boolean {
   const before = /[,.!?;:]$/u.test(words[index - 1] ?? "") ? "" : bare(words[index - 1]);
   const after = bare(words[index + 1]);
   const numeric = (value: string) => NUMBER_WORDS.has(value) || /^\d+(?:\.\d+)?$/u.test(value);
+  // Preserve OLD's article-one exception too; its legacy "The one%" is outside
+  // this pronoun fix. Demonstratives before a percent quantity remain numeric.
+  if (after === "percent" || after === "%" || (after === "per" && bare(words[index + 2]) === "cent")) return before === "the";
   if (NUMBER_WORDS.has(after) || isTensThenUnit(before, "one")) return false;
   if (/^(?:number|step|version|tier|level|line|row|column|page|chapter|section|item|option|port|code|route)$/u.test(before)) return false;
   if (/^(?:or|and|to|through|in|plus|minus|by|times)$/u.test(after) && numeric(bare(words[index + 2]))) return false;
