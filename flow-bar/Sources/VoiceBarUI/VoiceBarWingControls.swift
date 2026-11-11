@@ -67,23 +67,22 @@ struct VoiceBarSetupAttentionDot: View {
 /// properly" / "when there is 1 in the queue, it is actually rounded"). The queued count on Forward's corner as a
 /// real badge: a true circle for 1-9, an evenly rounded pill beyond, a fixed height whatever the digits, and a ring of
 /// the notch's own fill. It never changes layout or hit rects.
-/// M4 defect (lead, 2026-11-11: "the queue badge sits ON the Forward glyph"): it is a superscript above Forward's
-/// top-trailing corner, its fill and ring wholly above the glyph's ink, so the glyph reads in full at any count. Its
-/// centre is fixed, so a wider count grows sideways in the clear band above the ink, never down onto it, and the
-/// widest drawn count ("10") overhangs Forward's trailing edge by at most the 5 pt the hardware notch leaves visible.
+/// M4 defects (lead, 2026-11-11): on the glyph it hid Forward; lifted above it, the screen's top edge (the wing's row
+/// starts at y 0) shaved its rounding. The 32 pt top row has 6 pt above Forward's ink but 11.75 pt below it, so the
+/// count hangs at Forward's bottom-trailing corner: below the ink (0.75 pt clear), 1.75 pt inside the row's bottom,
+/// and centred 3 pt inside Forward's trailing edge so "10" overhangs by at most the 5 pt the hardware notch leaves
+/// visible. Clear of the glyph, it needs no cut-out ring.
 public enum VoiceBarQueueCountBadge {
-    public static let height: CGFloat = 9.5
-    public static let fontSize: CGFloat = 7.5
-    public static let horizontalPadding: CGFloat = 1.75
-    public static let ringWidth: CGFloat = 1
-    /// The badge centre from the control's top-trailing corner: 2.25 pt inside the trailing edge, lifted 1 pt above the
-    /// 20 pt plate (the glyph's ink starts 5.25 pt below it), so the ring ends 0.5 pt above the ink.
-    public static let centreOffset = CGSize(width: -2.25, height: -1)
+    public static let height: CGFloat = 9
+    public static let fontSize: CGFloat = 7
+    public static let horizontalPadding: CGFloat = 1.5
+    /// The badge centre from the control's bottom-trailing corner (the 20 pt plate, centred in the 32 pt row).
+    public static let centreOffset = CGSize(width: -3, height: -0.25)
 
-    /// How far to move a badge pinned top-trailing to the control so its centre lands on `centreOffset`.
+    /// How far to move a badge pinned bottom-trailing to the control so its centre lands on `centreOffset`.
     public static func placement(for label: String) -> CGSize {
         let size = size(for: label)
-        return CGSize(width: centreOffset.width + size.width / 2, height: centreOffset.height - size.height / 2)
+        return CGSize(width: centreOffset.width + size.width / 2, height: centreOffset.height + size.height / 2)
     }
     public static let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
 
@@ -107,14 +106,14 @@ extension View {
     /// The queued count on a 20 pt transport control (Forward). BarView and the glyph-clearance pixel test share this
     /// placement, so the test measures what the notch draws.
     func queueCountBadge(_ label: String?, accessibilityLabel: String?) -> some View {
-        overlay(alignment: .topTrailing) {
+        overlay(alignment: .bottomTrailing) {
             if let label {
                 let placement = VoiceBarQueueCountBadge.placement(for: label)
                 VoiceBarQueueCountBadgeView(label: label)
                     .offset(x: placement.width, y: placement.height)
                     .allowsHitTesting(false)
                     .accessibilityLabel(accessibilityLabel ?? "")
-                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+                    .transition(.scale(scale: 0.6, anchor: .topLeading).combined(with: .opacity))
             }
         }
     }
@@ -122,7 +121,6 @@ extension View {
 
 struct VoiceBarQueueCountBadgeView: View {
     let label: String
-    @Environment(\.voiceBarNotchAppearance) private var appearance
 
     var body: some View {
         let size = VoiceBarQueueCountBadge.size(for: label)
@@ -134,19 +132,9 @@ struct VoiceBarQueueCountBadgeView: View {
             .foregroundStyle(Color.white)
             .frame(width: size.width, height: size.height)
             .background(Capsule().fill(Theme.speakingColor))
-            .overlay {
-                Capsule().strokeBorder(ringColor, lineWidth: VoiceBarQueueCountBadge.ringWidth)
-                    .padding(-VoiceBarQueueCountBadge.ringWidth)
-            }
             .contentTransition(.numericText())
     }
 
-    /// The notch's own fill, as on the setup-attention dot.
-    private var ringColor: Color {
-        appearance == .light
-            ? Color(red: 0.92, green: 0.92, blue: 0.94)
-            : Color(red: 22.0 / 255, green: 22.0 / 255, blue: 24.0 / 255)
-    }
 }
 
 /// 2.3 U2: the reading-aloud time in the right wing (`.time` in the mocks: 12 pt tabular digits, the secondary
