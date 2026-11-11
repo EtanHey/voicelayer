@@ -766,7 +766,8 @@ final class BarViewClickabilityTests: XCTestCase {
     func testQueuedSpeechUsesOnlyASmallBadgeOnForward() throws {
         let source = try barViewSource()
 
-        XCTAssertTrue(source.contains("if let count = forward.countLabel"))
+        // L3 M4 defect fix: the badge is drawn by the shared, glyph-clear placement (QueueBadgeL3Tests pixel test).
+        XCTAssertTrue(source.contains(".queueCountBadge(forward.countLabel"))
         XCTAssertFalse(source.contains("private var queueVisualization"))
     }
 

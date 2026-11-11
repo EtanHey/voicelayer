@@ -1425,20 +1425,8 @@ public struct BarView: View {
                 }
                 .disabled(!forward.isEnabled)
                 .opacity(forward.isEnabled ? 1 : VoiceBarPresentation.disabledTransportOpacity)
-                .overlay(alignment: .topTrailing) {
-                    if let count = forward.countLabel {
-                        Text(count)
-                            .font(.system(size: 8, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                            .fixedSize()
-                            .foregroundStyle(notchPrimaryLabelColor)
-                            .padding(.horizontal, 2.5)
-                            .background(Capsule().fill(Theme.speakingColor.opacity(0.85)))
-                            .offset(x: 5, y: -4)
-                            .allowsHitTesting(false)
-                            .accessibilityLabel(forward.countAccessibilityLabel ?? "")
-                    }
-                }
+                // X1-30: the queued count, clear of Forward's glyph (`VoiceBarQueueCountBadge`).
+                .queueCountBadge(forward.countLabel, accessibilityLabel: forward.countAccessibilityLabel)
             }
         }
         .fixedSize()
@@ -1853,7 +1841,9 @@ public struct BarView: View {
                     onSpeechSeek: { state.seekSpeechWord(utteranceID: $0, wordIndex: $1) },
                     onSeek: state.seek,
                     onTextLinesChange: { state.reportTeleprompterTextLines($0) },
-                    narrationOrigin: state.narrationOrigin
+                    narrationOrigin: state.narrationOrigin,
+                    allowsBrowsing: !state.isTeleprompterDismissed,
+                    readIdentity: state.teleprompterReadIdentity
                 )
                 .transition(TeleprompterPreparingHandoff.transition)
             } else if preparingHandoff.showsText(isPreparing: state.isPreparingSpeech) {

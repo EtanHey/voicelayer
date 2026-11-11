@@ -61,7 +61,7 @@
     "formal/speech-queue/F5PauseDoubleResume.cfg": "d6a28c91556c0d88f0d557161dc1ff52dade071c8aeaf8a5fbb4af51e2875303",
     "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "3d766425004fcd370b03a6c7bfad7075af66daa58b6e138f8e1543001e20f168",
     "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift": "40894bfe33de588427cd42f5a0417804079ff139489a29fd377c4ba904ba27fc",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "3a6be142701d447bf0e906d87fa7496af6000f31a40550622ad05d5ce46c3e93",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "a887934394560e518732ac2c217e2ce40f8b67796c7d5893f4c13e8376a8c46a",
     "flow-bar/Tests/VoiceBarTests/F5PauseConformanceTests.swift": "6d85e0a93b4adceac6173a6e23a63f994603c76d59a5cb0f49868275166b2782",
     "flow-bar/Tests/VoiceBarTests/F5ResumeIdentityTests.swift": "cf8800989d3d7a5bead74c26271bf21d13cb7bee9a375e4e8dd778321675a825",
     "flow-bar/Tests/VoiceBarUITests/PlaybackPauseTests.swift": "d4b44f5bab65c6bf1e3772bb619d9bef7b90081fe82f8f435d9281c36394c62c",

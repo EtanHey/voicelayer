@@ -781,6 +781,13 @@ public final class VoiceState {
         mode == .speaking && parkedRead != nil
     }
 
+    /// C7 L3 (R893 P2): which read is on screen, for presentation state that belongs to one read (teleprompter
+    /// browsing). A long read keeps its id across chunks; otherwise the logical read epoch, which pause and resume
+    /// keep and a new utterance advances, even when the new read's text is identical.
+    public var teleprompterReadIdentity: String {
+        playbackLongReadID.map { "long:\($0)" } ?? "read:\(logicalReadEpoch)"
+    }
+
     /// 2.4 Lane A (QA row 4): a read the user paused is parked while a dictation's own feedback ("Typed") holds the
     /// notch; it comes back the moment that feedback clears (`restoreParkedReadIfSettled`). For that moment the
     /// wing keeps the paused read's layout (Play, Next, +N) instead of reshuffling to the idle queue layout.
