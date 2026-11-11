@@ -26,13 +26,14 @@ struct SettingsCopyButton: View {
     let text: String?
     let label: String
     var onCopy: ((String) -> Bool)? = nil
-    /// Dictionary row actions reserve their space and reveal on keyboard focus as well as hover/selection.
-    var rowActionsVisible: Bool? = nil
     @State private var copied = false
 
     var body: some View {
         if let payload = SettingsCopyPayload.nonempty(text) {
-            let button = Button { copy(payload) } label: {
+            Button {
+                copied = onCopy?(payload) ?? SettingsCopyPayload.write(payload)
+                if copied { AccessibilityNotification.Announcement("Copied \(label)").post() }
+            } label: {
                 Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
                     .labelStyle(.iconOnly)
             }
@@ -45,17 +46,7 @@ struct SettingsCopyButton: View {
                 try? await Task.sleep(for: .seconds(2))
                 if !Task.isCancelled { copied = false }
             }
-            if let rowActionsVisible {
-                button.modifier(SettingsRowActionReveal(visible: rowActionsVisible) { copy(payload) })
-            } else {
-                button
-            }
         }
-    }
-
-    private func copy(_ payload: String) {
-        copied = onCopy?(payload) ?? SettingsCopyPayload.write(payload)
-        if copied { AccessibilityNotification.Announcement("Copied \(label)").post() }
     }
 }
 
