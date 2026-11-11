@@ -187,9 +187,12 @@ struct SettingsRowLayout: Layout {
         let plan = plan(width: bounds.width, subviews: subviews)
         subviews[0].place(at: bounds.origin, anchor: .topLeading,
                           proposal: ProposedViewSize(width: plan.textSize.width, height: nil))
+        // Beside the text, controls are centred on it (lane S DESIGN.md §3): a switch or button beside a two-line
+        // row sits in the middle of the row, not on the title's line.
         let controlsOrigin = plan.wraps
             ? CGPoint(x: bounds.minX, y: bounds.minY + plan.textSize.height + spacing / 2)
-            : CGPoint(x: bounds.maxX - plan.controlsSize.width, y: bounds.minY)
+            : CGPoint(x: bounds.maxX - plan.controlsSize.width,
+                      y: bounds.minY + max(0, (plan.textSize.height - plan.controlsSize.height) / 2))
         subviews[1].place(at: controlsOrigin, anchor: .topLeading, proposal: ProposedViewSize(plan.controlsSize))
     }
 }

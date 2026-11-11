@@ -235,6 +235,10 @@ enum SettingsGeneralCopy {
     static let hideTitle = "Hide the notch"
     static let hideDescription = "VoiceBar keeps working. Click its Dock icon to bring the notch back."
     static let relayTitle = "F5 key helper"
+    static let shortcutsHeader = "Shortcuts"
+    static let singleTapTitle = "Tap F5"
+    static let readClipboardTitle = "Read clipboard aloud"
+    static let diagnosticDescription = "Copies the build and recognizer facts for a bug report."
     static let microphoneNote =
         "Drag to reorder. VoiceBar uses the first connected microphone. Disconnected ones keep their place."
 

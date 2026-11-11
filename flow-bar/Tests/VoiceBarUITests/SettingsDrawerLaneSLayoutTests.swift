@@ -64,4 +64,63 @@ final class SettingsDrawerLaneSLayoutTests: XCTestCase {
         XCTAssertTrue(lines.contains { $0.text.contains("splits long whisper recordings at pauses") },
                       "[S4] the description wraps in a narrow column: \(lines.map(\.text))")
     }
+
+    /// The first x (pt) on a pixel row where the drawer's paint differs from its backdrop.
+    static func firstPaintedX(_ bitmap: NSBitmapImageRep, atY y: CGFloat) -> CGFloat? {
+        let scale = CGFloat(bitmap.pixelsWide) / SettingsDrawerLaneSSnapshotTests.drawerWidth
+        let row = Int(y * scale)
+        guard let backdrop = bitmap.colorAt(x: 1, y: row) else { return nil }
+        for x in 2 ..< bitmap.pixelsWide {
+            guard let color = bitmap.colorAt(x: x, y: row) else { continue }
+            if abs(color.redComponent - backdrop.redComponent) > 0.015 { return CGFloat(x) / scale }
+        }
+        return nil
+    }
+
+    /// Item 3 ("the gutters on the sides are still huge"): a section card's left edge is the tab bar's left edge
+    /// (8 pt), in every grouped-Form tab. On 8e1d5352 the cards started 28 pt in.
+    func testSectionCardsLineUpWithTheTabBarEdges() async throws {
+        let updates = await SettingsDrawerLaneSSnapshotTests.updates()
+        for tab in [SettingsTab.general, .transcription] {
+            let view = SettingsDrawerLaneSSnapshotTests.drawer(tab, updates: tab == .general ? updates : nil)
+            let bitmap = try SettingsDrawerLaneSSnapshotTests.render(view, height: 470, name: "gutter-scratch")
+            let lines = try Self.paintedLines(view, height: 470)
+            let anchor = try Self.line(lines, containing: tab == .general ? "wireless mic" : "parakeet")
+            let cardEdge = try XCTUnwrap(Self.firstPaintedX(bitmap, atY: anchor.box.midY))
+            // The tab bar spans the drawer minus its inset; its selected-tab fill starts there (General shows it).
+            let tabEdge = NotchSettingsDrawerPresentation.horizontalInset
+            if tab == .general {
+                XCTAssertEqual(try XCTUnwrap(Self.firstPaintedX(bitmap, atY: 20)), tabEdge, accuracy: 1,
+                               "fixture: the selected General tab's fill marks the tab bar's left edge")
+            }
+            XCTAssertEqual(cardEdge, tabEdge, accuracy: 1.5,
+                           "[S3] \(tab.title): card starts at \(cardEdge) pt, the tab bar at \(tabEdge) pt")
+        }
+    }
+
+    /// Item 2 (shot 3, "still very jumbled"): each shortcut's description starts on its title's left edge, under it,
+    /// not right-aligned beside it; the shortcuts are their own section, not a bare "Gestures" line in Advanced.
+    func testGeneralShortcutsUseOneLeftAlignedRowAnatomy() async throws {
+        let updates = await SettingsDrawerLaneSSnapshotTests.updates()
+        let lines = try Self.paintedLines(SettingsDrawerLaneSSnapshotTests.drawer(.general, advanced: true, updates: updates),
+                                          height: 1500)
+        XCTAssertFalse(lines.contains { $0.text == "gestures" }, "[S2] the bare Gestures line is gone")
+        _ = try Self.line(lines, containing: "shortcuts")
+        let title = try Self.line(lines, containing: "shift+f5")
+        let description = try Self.line(lines, containing: "re-paste last transcript")
+        XCTAssertEqual(description.box.minX, title.box.minX, accuracy: 2,
+                       "[S2] description starts under its title: \(description.box) vs \(title.box)")
+        XCTAssertGreaterThan(description.box.minY, title.box.minY, "[S2] and below it")
+    }
+
+    /// Item 5 (footer "cramped"): the update status runs on one line under the build line, from the same left edge
+    /// as "VoiceBar", instead of two short lines squeezed beside Check for updates.
+    func testTheVersionFooterStatusIsOneLineOnTheTitleEdge() async throws {
+        let updates = await SettingsDrawerLaneSSnapshotTests.updates()
+        let lines = try Self.paintedLines(SettingsDrawerLaneSSnapshotTests.drawer(.general, updates: updates), height: 470)
+        let status = try Self.line(lines, containing: "no newer release")
+        XCTAssertTrue(status.text.contains("past 2.2.61"), "[S5] the status wraps: \(lines.map(\.text))")
+        let build = try Self.line(lines, containing: "ahead of release")
+        XCTAssertEqual(status.box.minX, build.box.minX, accuracy: 2, "[S5] status and build line share an edge")
+    }
 }

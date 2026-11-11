@@ -113,6 +113,8 @@ final class SettingsDrawerLaneSSnapshotTests: XCTestCase {
         _ = try Self.render(Self.drawer(.general, updates: updates), height: 470, name: "mic-rows")
         _ = try Self.render(Self.drawer(.general, advanced: true, updates: updates), height: 1500, name: "general")
         _ = try Self.render(Self.drawer(.transcription, updates: nil), height: 1100, name: "transcription")
+        _ = try Self.render(Self.drawer(.speech, updates: nil), height: 700, name: "speech")
+        _ = try Self.render(Self.drawer(.dictionary, updates: nil), height: 700, name: "dictionary")
         _ = try Self.render(Self.drawer(.general, updates: updates)
             .environment(\.settingsHoverPreview, SettingsHoverPreview(microphoneRow: 1)), height: 470, name: "mic-rows-hover")
         _ = try Self.render(Self.drawer(.transcription, updates: nil)
@@ -120,7 +122,7 @@ final class SettingsDrawerLaneSSnapshotTests: XCTestCase {
             name: "transcription-hover")
     }
 
-    /// Shots 1-2, hover: Make default appears on the name's line, in space the row always held, so nothing moves.
+    /// Shots 1-2, hover: Make default appears in the row's trailing column, in space the row always held, so nothing moves.
     func testHoverRevealsMakeDefaultOnTheNameLineAndMovesNothing() async throws {
         let updates = await Self.updates()
         let rest = try SettingsDrawerLaneSLayoutTests.paintedLines(Self.drawer(.general, updates: updates), height: 470)
@@ -134,7 +136,9 @@ final class SettingsDrawerLaneSSnapshotTests: XCTestCase {
             XCTAssertEqual(before.minY, after.minY, accuracy: 1.5, "[S1] '\(text)' moved on hover")
         }
         let title = try SettingsDrawerLaneSLayoutTests.line(hover, containing: "macbook pro microphone").box
-        XCTAssertEqual(button.box.midY, title.midY, accuracy: 6, "[S1] Make default sits on the name's line")
+        let status = try SettingsDrawerLaneSLayoutTests.line(hover, containing: "used for dictation").box
+        XCTAssertGreaterThan(button.box.maxY, title.minY, "[S1] Make default is on the row, not under it")
+        XCTAssertLessThan(button.box.minY, status.maxY, "[S1] Make default is on the row, not under it")
         XCTAssertGreaterThan(button.box.minX, title.maxX, "[S1] and to its right, in the trailing column")
     }
 
