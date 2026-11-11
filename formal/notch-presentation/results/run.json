@@ -274,8 +274,8 @@
       "kind": "temporal",
       "target": "NoteNeverStuck",
       "status": "EXPECTED_FAIL",
-      "generated": 149564,
-      "distinct": 27140
+      "generated": 147228,
+      "distinct": 26892
     },
     "MutTypedTab": {
       "role": "mutant",
