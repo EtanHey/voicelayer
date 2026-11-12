@@ -58,6 +58,95 @@ final class RuntimeResponsivenessTests: XCTestCase {
         watchdog.stop()
     }
 
+    /// c8 X (2026-11-11 hang): the app's own threshold must report a main stall well under the old 2 s line,
+    /// with the phase, so the next occurrence names what the app was doing.
+    func testAppThresholdReportsAHalfSecondMainStallWithItsPhase() {
+        XCTAssertTrue(Thread.isMainThread)
+        XCTAssertLessThanOrEqual(AppDelegate.mainStallThreshold, 0.25)
+        XCTAssertLessThanOrEqual(AppDelegate.mainStallProbeInterval, AppDelegate.mainStallThreshold / 2)
+        let board = RuntimePhaseBoard(uptime: { 1_000 }, thermal: { .fair })
+        board.setMode("transcribing")
+        board.noteSurfaceTransition(line: "[VoiceBar] notch surface closed -> settings(general) (open settings general)")
+        let lock = NSLock()
+        var receipts: [String] = []
+        let recovered = expectation(description: "main recovered")
+        let loop = CFRunLoopGetMain()!
+        let watchdog = RuntimeResponsivenessWatchdog(
+            loop: "main", threshold: AppDelegate.mainStallThreshold, context: { board.snapshot() },
+            enqueue: { ack in
+                CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue) { ack.perform() }
+                CFRunLoopWakeUp(loop)
+            }, sink: { line in
+                lock.lock(); receipts.append(line); lock.unlock()
+                if line.contains("state=recovered") { recovered.fulfill() }
+            })
+        watchdog.start(interval: AppDelegate.mainStallProbeInterval)
+        // Let one probe round-trip, then hold the main thread the way a slow layout pass does.
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        Thread.sleep(forTimeInterval: 0.6)
+        wait(for: [recovered], timeout: 3)
+        watchdog.stop()
+        lock.lock(); let lines = receipts; lock.unlock()
+        XCTAssertEqual(lines.filter { $0.contains("state=stalled") }.count, 1, "\(lines)")
+        for line in lines {
+            XCTAssertTrue(line.hasSuffix(" phase=transcribing/settings(general) mem_pressure=none thermal=fair"), line)
+        }
+        let elapsed = lines.last.flatMap { line -> Int? in
+            line.split(separator: " ").first { $0.hasPrefix("elapsed_ms=") }.flatMap { Int($0.dropFirst(11)) }
+        }
+        XCTAssertGreaterThanOrEqual(elapsed ?? 0, 250)
+        XCTAssertLessThan(elapsed ?? .max, 2_000, "a stall the old 2 s threshold never reported")
+    }
+
+    @inline(never) private func c8xHoldMainThread(seconds: TimeInterval) { Thread.sleep(forTimeInterval: seconds) }
+
+    /// A stall past `stackAfter` logs the stuck thread's stack once: where it was, as function names.
+    func testLongMainStallLogsItsStackOnce() {
+        XCTAssertTrue(Thread.isMainThread)
+        let mainThread = StalledThreadStack.currentThreadPort()
+        XCTAssertEqual(StalledThreadStack.addresses(of: mainThread), [], "a thread never suspends itself")
+        let lock = NSLock()
+        var receipts: [String] = []
+        let recovered = expectation(description: "main recovered")
+        let loop = CFRunLoopGetMain()!
+        let watchdog = RuntimeResponsivenessWatchdog(
+            loop: "main", threshold: 0.05, stackAfter: 0.2,
+            stack: { StalledThreadStack.describe(StalledThreadStack.addresses(of: mainThread)) },
+            enqueue: { ack in
+                CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue) { ack.perform() }
+                CFRunLoopWakeUp(loop)
+            }, sink: { line in
+                lock.lock(); receipts.append(line); lock.unlock()
+                if line.contains("state=recovered") { recovered.fulfill() }
+            })
+        watchdog.start(interval: 0.02)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        c8xHoldMainThread(seconds: 0.8)
+        wait(for: [recovered], timeout: 3)
+        watchdog.stop()
+        lock.lock(); let lines = receipts; lock.unlock()
+        let stacks = lines.filter { $0.contains("state=stack") }
+        XCTAssertEqual(stacks.count, 1, "\(lines)")
+        let frames = stacks.first?.components(separatedBy: "frames=").last?.components(separatedBy: " < ") ?? []
+        XCTAssertGreaterThanOrEqual(frames.count, 4, "\(frames)")
+        XCTAssertTrue(frames.contains { $0.contains("c8xHoldMainThread") }, "the stack names the function that held the loop: \(frames)")
+        XCTAssertEqual(lines.map { $0.contains("state=stalled") ? "stalled" : $0.contains("state=stack") ? "stack" : "recovered" },
+                       ["stalled", "stack", "recovered"])
+    }
+
+    func testPhaseBoardHoldsStateNamesOnlyAndAgesMemoryPressure() {
+        var now: TimeInterval = 50
+        let board = RuntimePhaseBoard(uptime: { now }, thermal: { .nominal })
+        XCTAssertEqual(board.snapshot(), "phase=idle/closed mem_pressure=none thermal=nominal")
+        board.noteMemoryPressure(level: "warning")
+        now = 233
+        board.setMode("some words a person said, at length, that must never reach a log line")
+        board.noteSurfaceTransition(line: "no arrow here")
+        let line = board.snapshot()
+        XCTAssertEqual(line, "phase=somewordsapersonsaidatlengththatmustneve/closed mem_pressure=warning@183s thermal=nominal")
+        XCTAssertEqual(line.split(separator: " ").count, 3, "every field is one token")
+    }
+
     func testStoppedWatchdogIgnoresLateAcknowledgement() {
         let queued = expectation(description: "probe queued")
         let lock = NSLock()
