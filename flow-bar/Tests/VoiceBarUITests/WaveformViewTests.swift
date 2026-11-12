@@ -791,7 +791,10 @@ final class WaveformViewTests: XCTestCase {
             height: WaveformLayout.viewportHeight
         )
         let makeRootView = { (sample: Int) in
+            // Full motion, whatever the host says: the hosted runner has Reduce Motion ON, where the ripple
+            // deliberately holds a still arch, and this census measures the moving ripple (PR #905).
             waveform
+                .environment(\.voiceBarReduceMotionOverride, false)
                 .frame(width: size.width, height: size.height)
                 .background(Color(red: 0.08, green: 0.08, blue: 0.10))
                 .id(sample)
