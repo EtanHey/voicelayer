@@ -77,6 +77,35 @@ final class SettingsRS5BuildTests: XCTestCase {
         }
     }
 
+    func testRestoredStartupSentenceWrapsFullyInDrawerAndWindow() throws {
+        let engine = CloneEngineControlViewModel(snapshot: .init(state: .running,
+            since: "2026-11-12T00:00:00Z", reason: nil, pid: 42, startWithVoiceBar: true),
+            send: { _ in XCTFail("A copy render must not send an engine command"); return false })
+        let pane = SettingsView(hotkeyEnabled: true, missingPermissions: [], availableDevices: { [] },
+            selectedDeviceID: { nil }, modelsStatus: { .loading }, onRefreshModelsStatus: {},
+            cloneEngineControl: engine, vocabularyRevision: { 0 }, initialTab: .speech, installedVersion: installed)
+        var measurements: [[String: Any]] = []
+        for (surface, width) in [("drawer", CGFloat(420)), ("window", CGFloat(780))] {
+            var entries: [SettingsTextAuditEntry] = []
+            let view = surface == "drawer" ? AnyView(pane.notchDrawerPane(.speech)) : AnyView(pane)
+            let bitmap = try SettingsPolishS5Tests.render(view.onPreferenceChange(SettingsTextAuditKey.self) { entries = $0 },
+                width: width, height: 650, name: "speech-startup-\(surface)-dark")
+            let text = try SettingsPolishS5Tests.ocr(bitmap).joined(separator: " ")
+            XCTAssertTrue(text.contains("starts when voicebar opens and restarts by itself if it stops."), text)
+            XCTAssertTrue(text.contains("a change here applies the next time voicebar opens."), text)
+            let helper = try XCTUnwrap(entries.first { $0.text == CloneEngineSection.startWithVoiceBarDescription })
+            let reference = NSHostingView(rootView: Text(helper.text).font(helper.font)
+                .fixedSize(horizontal: false, vertical: true).frame(width: helper.frame.width, alignment: .leading))
+            let full = reference.fittingSize.height
+            let one = NSHostingView(rootView: Text("Ag").font(helper.font).fixedSize()).fittingSize.height
+            XCTAssertEqual(helper.frame.height, full, accuracy: 1.5, "The startup facts must all fit")
+            measurements.append(["surface": surface, "text": helper.text, "width": helper.frame.width,
+                "height": helper.frame.height, "full_height": full, "lines": Int((full / one).rounded())])
+        }
+        try JSONSerialization.data(withJSONObject: measurements, options: [.prettyPrinted, .sortedKeys]).write(to:
+            URL(fileURLWithPath: SettingsPolishS5Tests.output).appendingPathComponent("rs5-startup-wrap-lines.json"))
+    }
+
     private struct NativeVersionRow: NSViewRepresentable {
         let view: NSView
         func makeNSView(context: Context) -> NSView { view }
