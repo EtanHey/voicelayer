@@ -77,7 +77,8 @@ public struct VoiceBarNotchMorphCanvasLayout: Equatable, Sendable {
     public static func resolve(
         for presentation: VoiceBarNotchPresentation
     ) -> VoiceBarNotchMorphCanvasLayout {
-        guard presentation.visualState != .idle else {
+        // C4 F4: an idle shell still collapsing from a read keeps the read's canvas until the hold releases.
+        guard presentation.visualState != .idle || presentation.holdsReadingCanvas else {
             return VoiceBarNotchMorphCanvasLayout(
                 canvasGeometry: presentation.geometry,
                 contentOffsetX: 0
@@ -142,7 +143,7 @@ extension VoiceBarNotchMorphCanvasLayout {
         // still collapsing from the teleprompter, cutting the glass flat: a blank blur rectangle with square
         // lower corners.
         if presentation.visualState == .teleprompter
-            || presentation.visualState == .compactStatus && presentation.holdsReadingCanvas {
+            || presentation.visualState != .history && presentation.holdsReadingCanvas {
             return VoiceBarNotchContract.teleprompterLowerSurfaceHeight(lines: TeleprompterA.lineRange.upperBound)
         }
         guard presentation.visualState == .history else {

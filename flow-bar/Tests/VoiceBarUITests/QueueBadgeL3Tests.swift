@@ -22,10 +22,25 @@ final class QueueBadgeL3Tests: XCTestCase {
                        "tabular digits: no size jump between counts")
     }
 
-    /// R892 P3: with Reduce Motion the badge only fades in and out; it never grows or shrinks.
-    func testTheBadgeArrivesWithoutScaleUnderReduceMotion() {
-        XCTAssertEqual(VoiceBarQueueCountBadge.insertionScale(reduceMotion: true), 1)
-        XCTAssertEqual(VoiceBarQueueCountBadge.insertionScale(reduceMotion: false), 0.6)
+    /// R892-r2 P3: the mounted modifier, under Reduce Motion, picks the fade-only transition (and the scale one
+    /// without it). This drives the real environment path, not a helper the modifier might not call.
+    func testTheMountedBadgeFadesOnlyUnderReduceMotion() throws {
+        func chosen(reduceMotion: Bool) throws -> VoiceBarQueueCountBadge.TransitionKind {
+            VoiceBarQueueCountBadge.recordedTransitionKinds = []
+            let view = Color.clear.frame(width: 20, height: 20)
+                .queueCountBadge("1", accessibilityLabel: "1 queued")
+                .environment(\.voiceBarReduceMotionOverride, reduceMotion)
+            let host = NSHostingView(rootView: view)
+            host.frame = NSRect(x: 0, y: 0, width: 60, height: 60)
+            let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            defer { window.close() }
+            host.layoutSubtreeIfNeeded()
+            return try XCTUnwrap(VoiceBarQueueCountBadge.recordedTransitionKinds.last, "the modifier rendered")
+        }
+        XCTAssertEqual(try chosen(reduceMotion: true), .fade, "Reduce Motion: the badge only fades")
+        XCTAssertEqual(try chosen(reduceMotion: false), .scaleAndFade)
     }
 
     func testTheBadgeSitsOnForwardsCornerWithoutMovingIt() throws {

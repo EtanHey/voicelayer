@@ -1868,7 +1868,8 @@ public struct BarView: View {
                     onTextLinesChange: { state.reportTeleprompterTextLines($0) },
                     narrationOrigin: state.narrationOrigin,
                     allowsBrowsing: !state.isTeleprompterDismissed,
-                    readIdentity: state.teleprompterReadIdentity
+                    readIdentity: state.teleprompterReadIdentity,
+                    pendingSeekToken: state.pendingSpeechSeekWordIndex
                 )
                 .transition(TeleprompterPreparingHandoff.transition)
             } else if preparingHandoff.showsText(isPreparing: state.isPreparingSpeech) {
