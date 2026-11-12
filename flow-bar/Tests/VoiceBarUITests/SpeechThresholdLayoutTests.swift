@@ -43,11 +43,12 @@ final class SpeechThresholdLayoutTests: XCTestCase {
                 return (text, observation.boundingBox)
             }
             let draft = try XCTUnwrap(lines.first { $0.0.contains("Draft") }, "\(lines)")
-            // Approved threshold anatomy: Draft is above the number; the full unit belongs in the helper.
-            let summary = try XCTUnwrap(lines.first {
-                $0.0.contains("400 characters") && $0.0.contains("short voice")
-            }, "Full threshold meaning and unit must remain visible: \(lines)")
-            XCTAssertNotNil(lines.first { $0.0.contains("the long voice.") }, "Full summary must wrap without clipping")
+            // The candidate title, purpose and reporting caveat remain visible beside the controls.
+            let summary = try XCTUnwrap(lines.first { $0.0.contains("Chooses the short or long") }, "\(lines)")
+            let text = lines.map(\.0).joined(separator: " ")
+            XCTAssertTrue(text.contains("Last reported cutoff: 400 characters"), text)
+            XCTAssertTrue(text.contains("for the next speech."), text)
+            XCTAssertTrue(text.contains("Profile descriptions and Revert use the last reported cutoff"), text)
             let apply = try XCTUnwrap(lines.first { $0.0 == "Apply" }, "\(lines)")
             let revert = try XCTUnwrap(lines.first { $0.0 == "Revert" }, "\(lines)")
             let number = try XCTUnwrap(lines.first { $0.0 == "400" }, "Number field missing: \(lines)")

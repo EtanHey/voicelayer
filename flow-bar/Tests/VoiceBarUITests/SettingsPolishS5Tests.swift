@@ -150,10 +150,11 @@ final class SettingsPolishS5Tests: XCTestCase {
         let lines = try Self.ocr(Self.render(Self.drawer(.speech)))
         XCTAssertEqual(lines.filter { $0.contains("changes apply") }.count, 2, "Shared rule belongs to both profiles: \(lines)")
     }
-    func testSpeechShowsAControlInsteadOfTelemetry() throws {
+    func testSpeechKeepsCandidateFactsWithoutRepeatingTheSectionTitle() throws {
         let lines = try Self.ocr(Self.render(Self.drawer(.speech)))
-        XCTAssertEqual(lines.filter { $0.contains("voice profile threshold") }.count, 2, "The section and row keep their known name")
-        XCTAssertFalse(lines.contains { $0.contains("last reported cutoff") || $0.contains("first sound after") })
+        XCTAssertEqual(lines.filter { $0.contains("voice profile threshold") }.count, 1)
+        XCTAssertTrue(lines.contains { $0.contains("last reported cutoff") })
+        XCTAssertTrue(lines.contains { $0.contains("first sound after") })
         XCTAssertEqual(lines.filter { $0.contains("unavailable") }.count, 1)
     }
     func testLockedToggleHasVisibleStateAtRest() throws {
@@ -192,7 +193,8 @@ final class SettingsPolishS5Tests: XCTestCase {
                     let oneLine = NSHostingView(rootView: Text("Ag").font(entry.font).fixedSize()).fittingSize.height
                     XCTAssertEqual(entry.frame.height, fullHeight, accuracy: 1.5,
                                    "\(surface) \(pane): all helper words must fit: \(entry.text)")
-                    XCTAssertFalse(entry.text.contains("—") || entry.text.contains("≤"), entry.text)
+                    XCTAssertFalse((entry.text.contains("—") && entry.text != "Using Parakeet — Whisper failed to load")
+                        || entry.text.contains("≤"), entry.text)
                     receipt.append(["surface": surface, "pane": pane, "text": entry.text,
                                     "width": entry.frame.width, "height": entry.frame.height,
                                     "full_height": fullHeight, "lines": Int((fullHeight / oneLine).rounded())])

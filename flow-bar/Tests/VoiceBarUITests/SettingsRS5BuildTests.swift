@@ -12,7 +12,7 @@ final class SettingsRS5BuildTests: XCTestCase {
         XCTAssertEqual(release?.isTaggedRelease, true)
         XCTAssertEqual(VoiceBarBuildLine.displayText(installed: installed, describe: release, status: .latest), "2.4.0")
         XCTAssertEqual(SettingsVersionFooter.identity(installed: installed, describe: release), "VoiceBar 2.4.0")
-        XCTAssertNil(VoiceBarBuildLine.menuStatus(installed: installed, describe: release, status: .latest))
+        XCTAssertEqual(VoiceBarBuildLine.menuStatus(installed: installed, describe: release, status: .latest), "up to date")
         for text in ["v2.4.0-dirty", "v2.4.0-0-gabcdef0", "v2.4.0-1-gabcdef0", "unknown"] {
             let describe = VoiceBarGitDescribe.parse(text)
             XCTAssertNotEqual(describe?.isTaggedRelease, true, text)

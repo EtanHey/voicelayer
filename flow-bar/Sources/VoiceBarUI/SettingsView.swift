@@ -2512,8 +2512,7 @@ public struct SettingsView: View {
                             case .loading:
                                 HStack(spacing: 8) {
                                     ProgressView().controlSize(.small)
-                                    SettingsRowLabel(title: "Loading…",
-                                                     description: "Your terms and included spellings will appear here.")
+                                    SettingsRowLabel(title: "Loading…", description: nil)
                                 }
                                 .padding(.horizontal, 6).padding(.vertical, 12)
                             case .empty:
@@ -2797,7 +2796,7 @@ public struct SettingsView: View {
             ClippingAwareText(text: entry.canonical, font: SettingsRowLabel.titleFont, lineLimit: nil)
                 .foregroundStyle(.primary).layoutPriority(1)
             if let first = entry.variants.first {
-                ClippingAwareText(text: "Also heard as " + first + ".", font: SettingsRowLabel.descriptionFont, lineLimit: nil)
+                ClippingAwareText(text: variantSummary([first]).lowercasedFirst, font: SettingsRowLabel.descriptionFont, lineLimit: nil)
                     .foregroundStyle(SettingsPanePalette.helper)
                 if entry.variants.count > 1 {
                     Text("\(entry.variants.count - 1) more").font(SettingsRowLabel.descriptionFont)
@@ -2807,8 +2806,8 @@ public struct SettingsView: View {
         }
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(entry.variants.isEmpty ? entry.canonical
-            : "\(entry.canonical). \(variantSummary(entry.variants))")
+        .accessibilityLabel(entry.canonical)
+        .accessibilityHint(entry.variants.isEmpty ? "" : variantSummary(entry.variants))
         .help(entry.variants.isEmpty ? entry.canonical : "\(entry.canonical). \(variantSummary(entry.variants))")
     }
 
