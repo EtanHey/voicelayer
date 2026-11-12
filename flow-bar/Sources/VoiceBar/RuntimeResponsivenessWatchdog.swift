@@ -179,10 +179,13 @@ final class RuntimeResponsivenessWatchdog {
                 let elapsed = now - pending
                 // Recovery can beat the timer after an actual stall.
                 self.noteStall(elapsed: elapsed, now: now)
-                if self.logged { self.receipt("recovered", elapsed: elapsed) }
+                // Clear the flag BEFORE the "recovered" line goes out: a reader woken by that line (the log
+                // rotator, the test) must already see no stall outstanding. The old order raced under load.
+                let wasLogged = self.logged
                 self.pendingAcknowledgement = nil
                 self.pending = nil
                 self.setOutstanding(false)
+                if wasLogged { self.receipt("recovered", elapsed: elapsed) }
                 self.noted = false
                 self.logged = false
                 self.stackReported = false
