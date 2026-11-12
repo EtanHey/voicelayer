@@ -44,7 +44,6 @@ final class WingsU2Tests: XCTestCase {
         let states: [(String, VoiceBarNotchPresentation, VoiceBarNotchVisualState)] = [
             ("idle launcher", resolve(.idle, hovered: true), .hoverLauncher),
             ("history", resolve(.idle, hovered: true, historyOpen: true), .history),
-            ("transcribing", resolve(.transcribing), .compactStatus),
         ]
         for (name, presentation, visualState) in states {
             XCTAssertEqual(presentation.visualState, visualState, name)
@@ -53,6 +52,17 @@ final class WingsU2Tests: XCTestCase {
             XCTAssertEqual(presentation.geometry.topWidth, VoiceBarNotchContract.coreWidth + 2 * fixed,
                            accuracy: 0.001, "\(name): the outline never moves")
         }
+    }
+
+    /// c9-P (Etan, 2026-11-12): transcribing left the mock's fixed wings. Its meter stays and ripples, so the band keeps
+    /// the plain recording band's wings and the outline does not move between recording and transcribing.
+    func testTranscribingKeepsTheRecordingBandsWings() {
+        let transcribing = resolve(.transcribing)
+        let recording = resolve(.recording)
+        XCTAssertEqual(transcribing.visualState, .compactStatus)
+        XCTAssertEqual(transcribing.geometry.leadingWingWidth, recording.geometry.leadingWingWidth, accuracy: 0.001)
+        XCTAssertEqual(transcribing.geometry.trailingWingWidth, recording.geometry.trailingWingWidth, accuracy: 0.001)
+        XCTAssertEqual(transcribing.geometry.topWidth, recording.geometry.topWidth, accuracy: 0.001)
     }
 
     /// F2 centres the time/meter row and balances Stop + Cancel with symmetric recording wings.

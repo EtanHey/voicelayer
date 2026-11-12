@@ -207,9 +207,11 @@ final class NotchShellCentredTests: XCTestCase {
                 contentWidth: CGFloat(controlCount) * VoiceBarNotchContract.material.compactControlSize
                     + CGFloat(controlCount - 1) * VoiceBarNotchContract.material.compactControlSpacing
             )
+            // c9-P: transcribing keeps the recording band's wings (its meter keeps its frame).
             XCTAssertEqual(
                 presentation.geometry.leadingWingWidth,
-                name.hasPrefix("recording") ? max(VoiceBarNotchContract.recordingTrailingWingWidth, fit)
+                name.hasPrefix("recording") || name == "transcribing"
+                    ? max(VoiceBarNotchContract.recordingTrailingWingWidth, fit)
                     : name == "transcript shown" ? fit : max(VoiceBarNotchContract.fixedWingWidth, fit),
                 "\(name): the leading wing is not the fixed wing for its \(controlCount) control(s)"
             )

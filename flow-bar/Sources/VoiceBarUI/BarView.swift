@@ -1362,6 +1362,8 @@ public struct BarView: View {
                     transcriptionSpinner
                     microphonePickerButton
                 }
+                // c9-P: the wing keeps the recording band's width; the pair stays on its core-anchored hit slots.
+                .frame(maxWidth: .infinity, alignment: .trailing)
             } else if let playbackPauseControl {
                 readingTransportControls(playbackPauseControl)
             } else if notchPresentation.bandState == .compactStatus,
@@ -1503,35 +1505,63 @@ public struct BarView: View {
 
     @ViewBuilder
     private var notchTrailingContent: some View {
+        // c9-P: recording and transcribing share ONE meter row (outside the switch, so it keeps its identity): when the
+        // take stops, the red meter hands over to the blue ripple on the same bars instead of leaving the slot.
+        if showsRecordingMeterRow {
+            recordingMeterRow
+        } else {
+            notchTrailingStatusContent
+        }
+    }
+
+    /// c9-P: the band shows the recording time/meter row while recording and, with the meter rippling, while the take
+    /// transcribes (a drawer above either keeps it: `bandState`).
+    private var showsRecordingMeterRow: Bool {
         switch notchPresentation.bandState {
-        case .idle:
+        case .recording: true
+        case .compactStatus: state.mode == .transcribing
+        case .idle, .hoverLauncher, .history, .teleprompter: false
+        }
+    }
+
+    /// QA 0449: the time/meter group is centred in equal wings, with a clear gap and no blank outer region.
+    /// Capture-open still owns the timer; the capturing microphone remains its tooltip and VoiceOver value.
+    /// c9-P (Etan, 2026-11-12: "the red waveform would just become the rippling one when it's transcribing"): while
+    /// transcribing the time leaves (no words added), the meter ripples in the processing blue in the same frame.
+    private var recordingMeterRow: some View {
+        let isRecording = notchPresentation.bandState == .recording
+        let isPaused = isRecording && state.isRecordingPaused
+        let padding = isRecording ? (leading: 0, trailing: 0) : VoiceBarPresentation.transcribingMeterRowPadding(
+            visibleCoreOcclusionInset: notchPresentation.visibleCoreOcclusionInset)
+        return VoiceBarRecordingTrailingRow {
+            VoiceBarRecordingTimeRegion(
+                elapsedMilliseconds: { state.recordingElapsedMilliseconds() },
+                isCaptureOpen: isRecording && state.isRecordingCaptureOpen,
+                microphoneName: isRecording ? state.recordingMicrophoneName : nil,
+                color: notchPrimaryLabelColor
+            )
+        } meter: {
+            notchWaveform(isPaused: isPaused)
+                .accessibilityElement()
+                .accessibilityLabel(isPaused ? "Recording paused"
+                    : isRecording ? "Input level" : "Transcription progress")
+                // VoiceOver reads the same frozen time the wing shows.
+                .accessibilityValue(isPaused
+                    ? VoiceBarReadingTimeLabel.text(elapsedMilliseconds: state.recordingElapsedMilliseconds()) : "")
+        }
+        .padding(.leading, padding.leading)
+        .padding(.trailing, padding.trailing)
+    }
+
+    @ViewBuilder
+    private var notchTrailingStatusContent: some View {
+        switch notchPresentation.bandState {
+        case .idle, .recording:
             EmptyView()
         case .hoverLauncher, .history:
             HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
                 historyButton
                 settingsButton
-            }
-        case .recording:
-            // QA 0449: the time/meter group is centred in equal wings, with a clear gap and no blank outer region.
-            // Capture-open still owns the timer; the capturing microphone remains its tooltip and VoiceOver value.
-            VoiceBarRecordingTrailingRow {
-                VoiceBarRecordingTimeRegion(
-                    elapsedMilliseconds: { state.recordingElapsedMilliseconds() },
-                    isCaptureOpen: state.isRecordingCaptureOpen,
-                    microphoneName: state.recordingMicrophoneName,
-                    color: notchPrimaryLabelColor
-                )
-            } meter: {
-                if state.isRecordingPaused {
-                    notchWaveform(isPaused: true)
-                        .accessibilityElement()
-                        .accessibilityLabel("Recording paused")
-                        // VoiceOver reads the same frozen time the wing shows.
-                        .accessibilityValue(VoiceBarReadingTimeLabel.text(
-                            elapsedMilliseconds: state.recordingElapsedMilliseconds()))
-                } else {
-                    notchWaveform
-                }
             }
         case .compactStatus, .teleprompter:
             if state.mode == .speaking {
@@ -1547,12 +1577,11 @@ public struct BarView: View {
     @ViewBuilder
     private var notchCompactStatusContent: some View {
         switch state.mode {
-        case .transcribing:
-            // 2.3 U2: no "Transcribing" label and no third control; History and Settings stay usable.
-            HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
-                historyButton
-                settingsButton
-            }
+        case .transcribing, .recording:
+            // c9-P: a transcribing take's right wing is the meter row (`recordingMeterRow`), never reached here.
+            // History and Settings return with the launcher once the take is done; until then the drawer pull
+            // reaches them, exactly as while recording (0510 N7).
+            EmptyView()
         case .speaking:
             notchSpeakingTrailingContent
         case .error:
@@ -1577,8 +1606,6 @@ public struct BarView: View {
                 ? .infinity : nil, alignment: .leading)
         case .disconnected:
             statusLabel
-        case .recording:
-            EmptyView()
         }
     }
 
@@ -1651,7 +1678,8 @@ public struct BarView: View {
             playbackLevel: { state.playbackAudioLevel() },
             isPlaybackEnded: state.isTeleprompterReadback || state.isPlaybackPaused || isPaused
         )
-        .help("Input level")
+        // c9-P: the transcribing ripple is not an input level, so it names none.
+        .help(state.mode == .transcribing ? "" : "Input level")
         .accessibilityLabel("Input level")
     }
 
