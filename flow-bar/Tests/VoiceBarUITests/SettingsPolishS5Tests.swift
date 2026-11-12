@@ -8,7 +8,14 @@ import XCTest
 /// Synthetic, production-view renders. No resident app, microphone, permissions or native-glass proof.
 @MainActor
 final class SettingsPolishS5Tests: XCTestCase {
-    static let output = "/Users/happycampr/Gits/voicelayer/docs.local/2.4-lanes/c7/S5"
+    /// Pictures and receipts go to `S5_OUTPUT` when set, else a per-run temp directory. Never a host-specific path:
+    /// candidate 8 failed on the M4 because this was an absolute path on the M1.
+    static let output: String = {
+        let path = ProcessInfo.processInfo.environment["S5_OUTPUT"]
+            ?? NSTemporaryDirectory() + "voicebar-s5-\(ProcessInfo.processInfo.processIdentifier)"
+        try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        return path
+    }()
     static var phase: String { ProcessInfo.processInfo.environment["S5_PHASE"] ?? "after" }
     static func pane(_ tab: SettingsTab) -> SettingsView {
         if tab == .speech || tab == .dictionary { return SettingsDrawerLaneS3Tests.pane(tab) }
