@@ -98,13 +98,15 @@ describe("c8-M2 polish prompt cache has a hard cap", () => {
   it("enforces the byte budget itself: restarts the server once its physical footprint grows past it", async () => {
     resetSTTPolishServerManagerForTests();
     const polish = await import("../stt-polish-server");
-    const samples = [2400, 2900, 2400 + 769];
-    polish.setPolishRssProbeForTests?.(async () => samples.shift() ?? null);
+    let footprint = 2400; // the settled model-only baseline at launch
+    polish.setPolishRssProbeForTests?.(async () => footprint);
     try {
       const { options } = fakePolish();
       await ensureSTTPolishServer({ ...options, probeCacheCaps: async () => true });
       expect(await polish.checkPolishMemoryAfterRequest?.()).toMatchObject({ action: "none", reason: "within-budget", baseline_rss_mb: 2400 });
+      footprint = 2900;
       expect(await polish.checkPolishMemoryAfterRequest?.()).toMatchObject({ action: "none", reason: "within-budget" });
+      footprint = 2400 + 769;
       // Over budget: the restart is owed (it runs when the voice path is idle; the lifecycle test covers that).
       expect(await polish.checkPolishMemoryAfterRequest?.()).toMatchObject({ action: "owed", baseline_rss_mb: 2400, rss_mb: 3169 });
       expect(["owed", "restarting", "ok"]).toContain(polish.polishBudgetState());

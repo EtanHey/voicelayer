@@ -211,28 +211,60 @@ async function runOwedPolishRestart(): Promise<void> {
   let finish!: () => void;
   const done = new Promise<void>(resolve => { finish = resolve; });
   budget = { state: "restarting", done };
+  const generationBefore = polishGeneration;
+  let next: BudgetState = { state: "ok" };
   try {
     try { await stopSTTPolishServerAndWait(); }
     catch {
       console.error('[voicelayer] {"event":"polish_cache_restart","outcome":"unload-unconfirmed"}');
-      budget = { state: "owed", pid: owed.pid, rssMb: owed.rssMb, baselineMb: owed.baselineMb };
-      armBudgetTimer();
+      next = { state: "owed", pid: owed.pid, rssMb: owed.rssMb, baselineMb: owed.baselineMb };
       return;
-    }
+    } finally { release(); }
     polishBaseline = null;
     lastPolishCache = null;
     publishSTTPolishServerStatus({ status: "stopped" });
     console.error(`[voicelayer] ${JSON.stringify({ event: "polish_cache_restart", outcome: "stopped",
       rss_mb: owed.rssMb, baseline_rss_mb: owed.baselineMb, bytes_freed: owed.rssMb * 1024 * 1024 })}`);
-  } finally { release(); }
-  try {
-    const status = await ensureSTTPolishServer(lastEnsureOptions);
-    console.error(`[voicelayer] ${JSON.stringify({ event: "polish_cache_restart", outcome: "relaunched", status: status.status })}`);
-  } catch {
-    console.error('[voicelayer] {"event":"polish_cache_restart","outcome":"relaunch-failed"}');
+    // RM-memory-r3 R3-2: our stop bumps the generation once. Any other stop (polish turned Off, shutdown)
+    // or a current setting of Off supersedes this restart: the server stays down.
+    if (polishGeneration !== generationBefore + 1 || !polishEnabledProbe()) {
+      console.error('[voicelayer] {"event":"polish_cache_restart","outcome":"relaunch-abandoned"}');
+      return;
+    }
+    try {
+      const status = await ensureSTTPolishServer(lastEnsureOptions);
+      console.error(`[voicelayer] ${JSON.stringify({ event: "polish_cache_restart", outcome: "relaunched", status: status.status })}`);
+    } catch {
+      console.error('[voicelayer] {"event":"polish_cache_restart","outcome":"relaunch-failed"}');
+    }
   } finally {
-    if (budget.state === "restarting" && budget.done === done) budget = { state: "ok" };
+    // RM-memory-r3 R3-3: every exit settles the promise waiters hold, then re-arms an owed restart if any.
+    if (budget.state === "restarting" && budget.done === done) budget = next;
     finish();
+    if (budget.state === "owed") armBudgetTimer();
+  }
+}
+
+/** Current settings, read fresh (never the saved launch snapshot). Tests replace it. */
+let polishEnabledProbe: () => boolean = () => getSTTPolishMode(processingEnv()) !== "off";
+export function setPolishEnabledProbeForTests(probe: (() => boolean) | null): void {
+  polishEnabledProbe = probe ?? (() => getSTTPolishMode(processingEnv()) !== "off");
+}
+
+/**
+ * RM-memory-r3 R3-1: the baseline is the model-only footprint, measured after ready and before any request is
+ * admitted. The server answers health while its generation thread is still loading the model (measured on the
+ * M1: 1048 MiB at ready, 2434 MiB one second later, 2485 MiB after a 1-token request), so we sample until two
+ * readings agree within 32 MiB (at most ~10 s). Without a probe the post-use minimum stays the fallback.
+ */
+async function settlePolishBaseline(proc: ManagedPolishProcess, options: EnsureSTTPolishServerOptions): Promise<void> {
+  let previous: number | null = null;
+  for (let i = 0; i < 40; i++) {
+    const sample = await polishRssProbe(proc.pid);
+    if (sample === null || polishProcess !== proc) return;
+    if (previous !== null && Math.abs(sample - previous) <= 32) { polishBaseline = { pid: proc.pid, rssMb: sample }; return; }
+    previous = sample;
+    await (options.sleep ?? Bun.sleep)(250);
   }
 }
 
@@ -607,6 +639,7 @@ async function startAndWaitForPolishServer(
         },
         { topic: "voice.transcription" },
       );
+      await settlePolishBaseline(proc, options);
       return { status: "ready", pid: proc.pid };
     }
     await Promise.race([(options.sleep ?? Bun.sleep)(500), proc.exited ?? new Promise<never>(() => {})]);
