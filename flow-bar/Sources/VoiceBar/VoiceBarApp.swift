@@ -153,7 +153,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     private let defaults = VoiceBarDefaults.make()
     private lazy var microphonePriority = MicrophoneDevicePriority(defaults: defaults)
-    private lazy var microphonePriorityApply = MicrophonePriorityApplyCoordinator(
+    /// Not private: a test holds this dependency to read the phase board mid-transition.
+    lazy var microphonePriorityApply = MicrophonePriorityApplyCoordinator(
         resolveDeviceID: { [weak self] in
             guard let self else { return nil }
             return microphonePriority.resolveDeviceID(
@@ -166,21 +167,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 MicrophoneDeviceManager.selectInputDevice(id: deviceID)
         }
     )
-    /// c8 X: stalls over 250 ms are logged with the phase (2 s and no phase could not explain the 2026-11-11 hang).
-    static let mainStallThreshold: TimeInterval = 0.25
-    static let mainStallProbeInterval: TimeInterval = 0.125
+    /// c8 X: stalls over 500 ms are logged with the phase (2 s and no phase could not explain the 2026-11-11
+    /// hang). 4 probes a second with 100 ms of leeway; at most one pair per 10 s in an unchanged phase.
+    static let mainStallThreshold: TimeInterval = 0.5
+    static let mainStallProbeInterval: TimeInterval = 0.25
+    static let mainStallProbeLeeway: TimeInterval = 0.1
+    static let mainStallQuietPeriod: TimeInterval = 10
     private lazy var responsivenessWatchdog: RuntimeResponsivenessWatchdog = {
         precondition(Thread.isMainThread)
         let mainThread = StalledThreadStack.currentThreadPort()
+        let defaults = defaults
         return RuntimeResponsivenessWatchdog(
-            loop: "main", threshold: Self.mainStallThreshold, context: { RuntimePhaseBoard.shared.snapshot() },
-            stack: { StalledThreadStack.describe(StalledThreadStack.addresses(of: mainThread)) }
+            loop: "main", threshold: Self.mainStallThreshold,
+            context: { RuntimePhaseBoard.shared.snapshot() },
+            phaseKey: { RuntimePhaseBoard.shared.phaseKey() },
+            quietPeriod: Self.mainStallQuietPeriod,
+            // Off unless `voicebar.diagnostics.stallStacks` is set (StalledThreadStack.enabledDefaultsKey).
+            stack: { StalledThreadStack.frames(of: mainThread, defaults: defaults) }
         ) { acknowledgement in
             let loop = CFRunLoopGetMain()!
             CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue) { acknowledgement.perform() }
             CFRunLoopWakeUp(loop)
         }
     }()
+    /// c8 X: caps voicebar-err.log (10 MB, 5 files). Only while idle, and only the file stderr appends to.
+    private let errorLogRotator = ErrorLogRotator(isIdle: { RuntimePhaseBoard.shared.isIdle })
     private var microphonePriorityTimer: Timer?
     private let pillContextMenuController = PillContextMenuController()
     private lazy var notchMorphSelection = VoiceBarNotchMorphSelection(
@@ -662,7 +673,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             NSLog("%@", line)
             RuntimePhaseBoard.shared.noteSurfaceTransition(line: line)
         }
-        responsivenessWatchdog.start(interval: Self.mainStallProbeInterval)
+        responsivenessWatchdog.start(interval: Self.mainStallProbeInterval, leeway: Self.mainStallProbeLeeway)
+        errorLogRotator.start()
         signal(SIGPIPE, SIG_IGN)
         NSLog("[VoiceBar] SIGPIPE ignored process-wide")
         signal(SIGTERM, SIG_IGN)
@@ -991,6 +1003,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     private func performTerminationCleanup() {
         responsivenessWatchdog.stop()
+        errorLogRotator.stop()
         stopPermissionHealth()
         memoryPressureSource?.cancel()
         memoryPressureSource = nil
@@ -1834,6 +1847,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         refreshPermissionHealth(.listenerChanged, force: true)
     }
 
+    func handleVoiceModeChangeForTesting(_ mode: VoiceMode) { handleVoiceModeChange(mode) }
+
     func configureHotkeyCallbacksForTesting() {
         configureHotkeyCallbacks()
     }
@@ -1910,6 +1925,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private func handleVoiceModeChange(_ mode: VoiceMode) {
         previousVoiceMode = currentVoiceMode
         currentVoiceMode = mode
+        // First, before anything that can block: a stall inside this transition must name the new mode.
+        RuntimePhaseBoard.shared.setMode(mode.rawValue)
         microphonePriorityApply.modeDidChange(
             mode,
             captureLive: voiceState.captureLive || voiceState.isRecordingHandoffPending
@@ -1969,7 +1986,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             }
         }
         synchronizeRetainedReadbackLifecycle()
-        RuntimePhaseBoard.shared.setMode(mode.rawValue)
         logDiagnostic(event: "mode_changed", details: [
             "newMode": mode.rawValue,
         ])

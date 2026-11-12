@@ -1,66 +1,78 @@
 import Darwin
 import Foundation
+import StallSampler
 
-/// The call stack of another thread in this process, as function names. Used once per long stall so the log
-/// says where the loop was stuck. Reads return addresses only: never arguments, locals, text, keys or audio.
+/// The call stack of another thread in this process, as function names. Off unless
+/// `voicebar.diagnostics.stallStacks` is set. Reads return addresses only: never arguments, locals, text,
+/// keys or audio.
 enum StalledThreadStack {
+    /// `defaults write com.voicelayer.voicebar voicebar.diagnostics.stallStacks -bool YES`
+    static let enabledDefaultsKey = "voicebar.diagnostics.stallStacks"
+
+    struct Sample: Equatable {
+        var addresses: [UInt]
+        /// `thread_resume` failed: the sampled thread may still be stopped. The caller logs it.
+        var resumeFailure: kern_return_t?
+    }
+
+    struct Location: Equatable {
+        var image: String?
+        var imageBase: UInt?
+        var symbol: String?
+        var symbolBase: UInt?
+    }
+
     /// Call on the thread to be watched; the port stays valid for the life of that thread.
     static func currentThreadPort() -> thread_act_t { pthread_mach_thread_np(pthread_self()) }
 
-    /// Return addresses, innermost first. The thread is suspended only for the frame walk, which neither
-    /// allocates nor locks (the suspended thread may hold the allocator's lock).
-    static func addresses(of thread: thread_act_t, maxFrames: Int = 40) -> [UInt] {
-        #if arch(arm64)
-        guard thread != pthread_mach_thread_np(pthread_self()), maxFrames > 0 else { return [] }
-        var frames = [UInt](repeating: 0, count: maxFrames)
-        var count = 0
-        frames.withUnsafeMutableBufferPointer { buffer in
-            guard thread_suspend(thread) == KERN_SUCCESS else { return }
-            defer { thread_resume(thread) }
-            var state = arm_thread_state64_t()
-            var size = mach_msg_type_number_t(MemoryLayout<arm_thread_state64_t>.size / MemoryLayout<natural_t>.size)
-            let read = withUnsafeMutablePointer(to: &state) {
-                $0.withMemoryRebound(to: natural_t.self, capacity: Int(size)) {
-                    thread_get_state(thread, ARM_THREAD_STATE64, $0, &size)
-                }
-            }
-            guard read == KERN_SUCCESS else { return }
-            buffer[0] = strip(UInt(state.__pc)); count = 1
-            var frame = UInt(state.__fp)
-            while count < buffer.count, frame != 0, frame & 0xF == 0 {
-                // [frame] = caller's frame pointer, [frame + 8] = return address. vm_read_overwrite fails
-                // instead of faulting when a frame pointer is garbage.
-                var pair: (UInt, UInt) = (0, 0)
-                var got: vm_size_t = 0
-                let status = withUnsafeMutablePointer(to: &pair) {
-                    vm_read_overwrite(mach_task_self_, vm_address_t(frame), vm_size_t(MemoryLayout<(UInt, UInt)>.size),
-                                      vm_address_t(UInt(bitPattern: $0)), &got)
-                }
-                guard status == KERN_SUCCESS, got == MemoryLayout<(UInt, UInt)>.size else { break }
-                let returnAddress = strip(pair.1)
-                guard returnAddress != 0 else { break }
-                buffer[count] = returnAddress; count += 1
-                guard pair.0 > frame else { break } // Stacks grow down: a caller's frame is always higher.
-                frame = pair.0
-            }
-        }
-        return Array(frames.prefix(count))
-        #else
-        return []
-        #endif
+    /// Return addresses, innermost first. The buffer is allocated before the thread stops and the stop,
+    /// walk and resume all happen inside one C function (`VoiceBarStallSample`).
+    static func sample(_ thread: thread_act_t, maxFrames: Int = 40) -> Sample {
+        guard maxFrames > 0 else { return Sample(addresses: [], resumeFailure: nil) }
+        let buffer = UnsafeMutablePointer<UInt>.allocate(capacity: maxFrames)
+        defer { buffer.deallocate() }
+        var resumed: kern_return_t = KERN_SUCCESS
+        let count = VoiceBarStallSample(thread, buffer, maxFrames, &resumed)
+        return Sample(addresses: Array(UnsafeBufferPointer(start: buffer, count: min(count, maxFrames))),
+                      resumeFailure: resumed == KERN_SUCCESS ? nil : resumed)
     }
 
-    /// `image:symbol+offset`, innermost first. Symbols are left mangled: demangling is the reader's job.
-    static func describe(_ addresses: [UInt]) -> [String] {
+    /// `image:symbol+offset`, or `image+0x<image-relative address>` when the frame has no symbol, so it can
+    /// still be symbolicated against that build. Image paths are reduced to their basename.
+    static func describe(_ addresses: [UInt], lookup: (UInt) -> Location? = dynamicLocation) -> [String] {
         addresses.map { address in
-            var info = Dl_info()
-            guard dladdr(UnsafeRawPointer(bitPattern: address), &info) != 0 else { return String(address, radix: 16) }
-            let image = info.dli_fname.map { URL(fileURLWithPath: String(cString: $0)).lastPathComponent } ?? "?"
-            guard let name = info.dli_sname, let base = info.dli_saddr else { return image }
-            return "\(image):\(String(cString: name))+\(address - UInt(bitPattern: base))"
+            guard let location = lookup(address), let image = location.image else {
+                return "0x" + String(address, radix: 16)
+            }
+            if let symbol = location.symbol, let base = location.symbolBase, address >= base {
+                return "\(image):\(symbol)+\(address - base)"
+            }
+            if let base = location.imageBase, address >= base {
+                return "\(image)+0x" + String(address - base, radix: 16)
+            }
+            return "\(image)@0x" + String(address, radix: 16)
         }
     }
 
-    /// Pointer-authentication bits live above the 47-bit user address space.
-    private static func strip(_ address: UInt) -> UInt { address & 0x0000_7FFF_FFFF_FFFF }
+    static func dynamicLocation(_ address: UInt) -> Location? {
+        var info = Dl_info()
+        guard dladdr(UnsafeRawPointer(bitPattern: address), &info) != 0 else { return nil }
+        return Location(
+            image: info.dli_fname.map { URL(fileURLWithPath: String(cString: $0)).lastPathComponent },
+            imageBase: info.dli_fbase.map { UInt(bitPattern: $0) },
+            symbol: info.dli_sname.map { String(cString: $0) },
+            symbolBase: info.dli_saddr.map { UInt(bitPattern: $0) })
+    }
+
+    /// The watchdog's stack source: nothing unless the diagnostics key is on, read at each capture so it can
+    /// be switched without a relaunch.
+    static func frames(of thread: thread_act_t, defaults: UserDefaults,
+                       log: (String) -> Void = { NSLog("%@", $0) }) -> [String] {
+        guard defaults.bool(forKey: enabledDefaultsKey) else { return [] }
+        let sample = sample(thread)
+        if let failure = sample.resumeFailure {
+            log("[VoiceBar][responsiveness] stack_sampler thread_resume failed kr=\(failure)")
+        }
+        return describe(sample.addresses)
+    }
 }

@@ -1,5 +1,17 @@
+import AppKit
 import XCTest
+import os
+import StallSampler
 @testable import VoiceBar
+import VoiceBarUI
+
+/// A flag two threads share in the stress test.
+private final class ManagedAtomicFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+    var isSet: Bool { lock.lock(); defer { lock.unlock() }; return value }
+    func set() { lock.lock(); value = true; lock.unlock() }
+}
 
 final class RuntimeResponsivenessTests: XCTestCase {
     func testBlockedLoopHasOneProbeAndBoundedReceiptsThenDispatchResumes() {
@@ -58,12 +70,13 @@ final class RuntimeResponsivenessTests: XCTestCase {
         watchdog.stop()
     }
 
-    /// c8 X (2026-11-11 hang): the app's own threshold must report a main stall well under the old 2 s line,
+    /// c8 X (2026-11-11 hang): the app's own settings must report a main stall well under the old 2 s line,
     /// with the phase, so the next occurrence names what the app was doing.
-    func testAppThresholdReportsAHalfSecondMainStallWithItsPhase() {
+    func testAppThresholdReportsASubSecondMainStallWithItsPhase() {
         XCTAssertTrue(Thread.isMainThread)
-        XCTAssertLessThanOrEqual(AppDelegate.mainStallThreshold, 0.25)
+        XCTAssertLessThanOrEqual(AppDelegate.mainStallThreshold, 0.5)
         XCTAssertLessThanOrEqual(AppDelegate.mainStallProbeInterval, AppDelegate.mainStallThreshold / 2)
+        XCTAssertGreaterThanOrEqual(AppDelegate.mainStallProbeInterval, 0.25, "no more than 4 wakeups a second")
         let board = RuntimePhaseBoard(uptime: { 1_000 }, thermal: { .fair })
         board.setMode("transcribing")
         board.noteSurfaceTransition(line: "[VoiceBar] notch surface closed -> settings(general) (open settings general)")
@@ -73,6 +86,7 @@ final class RuntimeResponsivenessTests: XCTestCase {
         let loop = CFRunLoopGetMain()!
         let watchdog = RuntimeResponsivenessWatchdog(
             loop: "main", threshold: AppDelegate.mainStallThreshold, context: { board.snapshot() },
+            phaseKey: { board.phaseKey() }, quietPeriod: AppDelegate.mainStallQuietPeriod,
             enqueue: { ack in
                 CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue) { ack.perform() }
                 CFRunLoopWakeUp(loop)
@@ -80,10 +94,10 @@ final class RuntimeResponsivenessTests: XCTestCase {
                 lock.lock(); receipts.append(line); lock.unlock()
                 if line.contains("state=recovered") { recovered.fulfill() }
             })
-        watchdog.start(interval: AppDelegate.mainStallProbeInterval)
+        watchdog.start(interval: AppDelegate.mainStallProbeInterval, leeway: AppDelegate.mainStallProbeLeeway)
         // Let one probe round-trip, then hold the main thread the way a slow layout pass does.
-        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
-        Thread.sleep(forTimeInterval: 0.6)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        Thread.sleep(forTimeInterval: 1.2)
         wait(for: [recovered], timeout: 3)
         watchdog.stop()
         lock.lock(); let lines = receipts; lock.unlock()
@@ -94,8 +108,78 @@ final class RuntimeResponsivenessTests: XCTestCase {
         let elapsed = lines.last.flatMap { line -> Int? in
             line.split(separator: " ").first { $0.hasPrefix("elapsed_ms=") }.flatMap { Int($0.dropFirst(11)) }
         }
-        XCTAssertGreaterThanOrEqual(elapsed ?? 0, 250)
+        XCTAssertGreaterThanOrEqual(elapsed ?? 0, 500)
         XCTAssertLessThan(elapsed ?? .max, 2_000, "a stall the old 2 s threshold never reported")
+    }
+
+    /// Review P2: the board is published at the START of a mode transition. Hold the transition's first real
+    /// dependency (the microphone-priority apply) and read the board from another thread while it is held.
+    func testModeTransitionPublishesItsPhaseBeforeItsFirstBlockingDependency() {
+        XCTAssertTrue(Thread.isMainThread)
+        _ = NSApplication.shared // the transition's diagnostics read NSApp
+        let delegate = AppDelegate()
+        let held = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        var entered = false
+        delegate.microphonePriorityApply = MicrophonePriorityApplyCoordinator(
+            resolveDeviceID: {
+                guard entered else { return nil } // The arming call below must not block.
+                held.signal(); release.wait(); return nil
+            },
+            applyDeviceID: { _ in true })
+        delegate.microphonePriorityApply.requestApply(mode: .recording, captureLive: true) // pending, nothing resolved
+        RuntimePhaseBoard.shared.setMode("recording")
+        defer { RuntimePhaseBoard.shared.setMode("idle") }
+        entered = true
+        var seen: String?
+        let reader = Thread {
+            XCTAssertEqual(held.wait(timeout: .now() + 5), .success, "the transition never reached its dependency")
+            seen = RuntimePhaseBoard.shared.phaseKey()
+            release.signal()
+        }
+        reader.start()
+        delegate.handleVoiceModeChangeForTesting(.idle) // blocks in resolveDeviceID until the reader has looked
+        XCTAssertEqual(seen?.split(separator: "/").first.map(String.init), "idle",
+                       "a stall inside the transition would have been logged with the previous mode")
+    }
+
+    /// One stalled/recovered pair per quiet period in an unchanged phase; the next logged stall says how many
+    /// were skipped; a new phase and a long stall are always logged.
+    func testRepeatedHitchesInOnePhaseAreCountedNotLogged() {
+        let blocked = DispatchQueue(label: "watchdog.test.ratelimit")
+        let lock = NSLock()
+        var receipts: [String] = []
+        var phase = "recording/closed"
+        let watchdog = RuntimeResponsivenessWatchdog(
+            loop: "fixture", threshold: 0.03,
+            phaseKey: { lock.lock(); defer { lock.unlock() }; return phase },
+            quietPeriod: 30, alwaysReportAfter: 0.6,
+            enqueue: { ack in blocked.async(execute: ack) },
+            sink: { line in lock.lock(); receipts.append(line); lock.unlock() })
+        watchdog.start(interval: 0.01)
+        func hitch(_ seconds: TimeInterval) {
+            let done = DispatchSemaphore(value: 0)
+            blocked.async { Thread.sleep(forTimeInterval: seconds); done.signal() }
+            done.wait()
+            Thread.sleep(forTimeInterval: 0.08) // let the acknowledgement land
+        }
+        func lines() -> [String] { lock.lock(); defer { lock.unlock() }; return receipts }
+        hitch(0.15)
+        XCTAssertEqual(lines().count, 2, "first hitch is logged: \(lines())")
+        hitch(0.15); hitch(0.15); hitch(0.15)
+        XCTAssertEqual(lines().count, 2, "same phase inside the quiet period: counted, not logged")
+        lock.lock(); phase = "transcribing/closed"; lock.unlock()
+        hitch(0.15)
+        XCTAssertEqual(lines().count, 4, "a new phase is logged at once")
+        XCTAssertTrue(lines()[2].hasSuffix(" suppressed=3"), lines()[2])
+        hitch(0.15)
+        XCTAssertEqual(lines().count, 4)
+        hitch(0.9)
+        watchdog.stop()
+        let all = lines()
+        XCTAssertEqual(all.count, 6, "a stall past alwaysReportAfter is never hidden: \(all)")
+        XCTAssertTrue(all[4].contains("state=stalled") && all[4].hasSuffix(" suppressed=1"), all[4])
+        XCTAssertTrue(all[5].contains("state=recovered"))
     }
 
     @inline(never) private func c8xHoldMainThread(seconds: TimeInterval) { Thread.sleep(forTimeInterval: seconds) }
@@ -104,14 +188,15 @@ final class RuntimeResponsivenessTests: XCTestCase {
     func testLongMainStallLogsItsStackOnce() {
         XCTAssertTrue(Thread.isMainThread)
         let mainThread = StalledThreadStack.currentThreadPort()
-        XCTAssertEqual(StalledThreadStack.addresses(of: mainThread), [], "a thread never suspends itself")
+        XCTAssertEqual(StalledThreadStack.sample(mainThread), .init(addresses: [], resumeFailure: nil),
+                       "a thread never suspends itself")
         let lock = NSLock()
         var receipts: [String] = []
         let recovered = expectation(description: "main recovered")
         let loop = CFRunLoopGetMain()!
         let watchdog = RuntimeResponsivenessWatchdog(
             loop: "main", threshold: 0.05, stackAfter: 0.2,
-            stack: { StalledThreadStack.describe(StalledThreadStack.addresses(of: mainThread)) },
+            stack: { StalledThreadStack.describe(StalledThreadStack.sample(mainThread).addresses) },
             enqueue: { ack in
                 CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue) { ack.perform() }
                 CFRunLoopWakeUp(loop)
@@ -132,6 +217,120 @@ final class RuntimeResponsivenessTests: XCTestCase {
         XCTAssertTrue(frames.contains { $0.contains("c8xHoldMainThread") }, "the stack names the function that held the loop: \(frames)")
         XCTAssertEqual(lines.map { $0.contains("state=stalled") ? "stalled" : $0.contains("state=stack") ? "stack" : "recovered" },
                        ["stalled", "stack", "recovered"])
+    }
+
+    /// Stack capture is off unless the diagnostics key is set, and a failed resume is logged.
+    func testStackCaptureIsOffUntilTheDiagnosticsKeyIsSet() throws {
+        let suite = "vl-ui-stall-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let ready = DispatchSemaphore(value: 0), done = DispatchSemaphore(value: 0)
+        var port: thread_act_t = 0
+        let parked = Thread { port = StalledThreadStack.currentThreadPort(); ready.signal(); done.wait() }
+        parked.start(); ready.wait()
+        defer { done.signal() }
+        XCTAssertEqual(StalledThreadStack.frames(of: port, defaults: defaults), [], "off by default")
+        defaults.set(true, forKey: StalledThreadStack.enabledDefaultsKey)
+        XCTAssertEqual(StalledThreadStack.enabledDefaultsKey, "voicebar.diagnostics.stallStacks")
+        XCTAssertGreaterThanOrEqual(StalledThreadStack.frames(of: port, defaults: defaults).count, 2)
+        var logged: [String] = []
+        XCTAssertEqual(StalledThreadStack.frames(of: mach_port_t(MACH_PORT_NULL), defaults: defaults) { logged.append($0) }, [])
+        XCTAssertEqual(logged, [], "a thread that was never suspended has no resume to fail")
+    }
+
+    /// Review P3: a frame with no symbol keeps an address that can be symbolicated against that build.
+    func testFrameWithoutASymbolKeepsItsImageRelativeAddress() {
+        let table: [UInt: StalledThreadStack.Location] = [
+            0x1_0000_4a2c: .init(image: "VoiceBar", imageBase: 0x1_0000_0000, symbol: nil, symbolBase: nil),
+            0x1_0000_5000: .init(image: "VoiceBar", imageBase: 0x1_0000_0000, symbol: "$s8VoiceBar3fooyyF", symbolBase: 0x1_0000_4ff0),
+            0x2_0000_0010: .init(image: "AppKit", imageBase: nil, symbol: nil, symbolBase: nil),
+        ]
+        XCTAssertEqual(StalledThreadStack.describe([0x1_0000_4a2c, 0x1_0000_5000, 0x2_0000_0010, 0xdead], lookup: { table[$0] }),
+                       ["VoiceBar+0x4a2c", "VoiceBar:$s8VoiceBar3fooyyF+16", "AppKit@0x200000010", "0xdead"])
+        // The real lookup: an address inside this test binary resolves to a basename, never a path.
+        let real = StalledThreadStack.describe([UInt(bitPattern: dlsym(UnsafeMutableRawPointer(bitPattern: -2), "malloc"))])
+        XCTAssertEqual(real.count, 1)
+        XCTAssertFalse(real[0].contains("/"), real[0])
+        XCTAssertTrue(real[0].contains("malloc"), real[0])
+    }
+
+    /// Lead ruling 2c: 2,000 captures of a thread that is hammering malloc/free and locks must never
+    /// deadlock. The sampled thread holds the allocator's lock for much of its life; anything that allocated
+    /// or locked while it is stopped would hang here, and the deadline below turns that into a failure.
+    func testTwoThousandCapturesOfAnAllocatingThreadNeverDeadlock() {
+        let ready = DispatchSemaphore(value: 0)
+        let stop = ManagedAtomicFlag()
+        var port: thread_act_t = 0
+        let shared = DispatchQueue(label: "vl.stall.stress.shared")
+        var unfair = os_unfair_lock()
+        let hammer = Thread {
+            port = StalledThreadStack.currentThreadPort()
+            ready.signal()
+            var bag: [UnsafeMutableRawPointer] = []
+            var n = 0
+            while !stop.isSet {
+                n &+= 1
+                bag.append(malloc(16 + (n % 2048))!)
+                if bag.count > 64 { for pointer in bag { free(pointer) }; bag.removeAll(keepingCapacity: n % 3 == 0) }
+                os_unfair_lock_lock(&unfair); os_unfair_lock_unlock(&unfair)
+                shared.sync { _ = String(repeating: "x", count: n % 97).count }
+                _ = NSString(format: "%d", n)
+            }
+            for pointer in bag { free(pointer) }
+        }
+        hammer.start(); ready.wait()
+        let finished = DispatchSemaphore(value: 0)
+        var captures = 0, nonEmpty = 0, resumeFailures = 0
+        let sampler = Thread {
+            for _ in 0..<2_000 {
+                // The sampler allocates and takes the same locks between captures, as the watchdog does.
+                let sample = StalledThreadStack.sample(port)
+                captures += 1
+                if !sample.addresses.isEmpty { nonEmpty += 1 }
+                if sample.resumeFailure != nil { resumeFailures += 1 }
+                shared.sync { _ = StalledThreadStack.describe(Array(sample.addresses.prefix(2))) }
+            }
+            finished.signal()
+        }
+        sampler.start()
+        let outcome = finished.wait(timeout: .now() + 120)
+        stop.set()
+        XCTAssertEqual(outcome, .success, "deadlock: \(captures) of 2000 captures returned")
+        XCTAssertEqual(captures, 2_000)
+        XCTAssertEqual(resumeFailures, 0)
+        XCTAssertGreaterThan(nonEmpty, 1_900, "captures really stopped and walked the thread")
+    }
+
+    /// Lead ruling 3: idle cost of the main-loop probe. Opt-in (4 minutes):
+    /// `VOICEBAR_MEASURE_WATCHDOG_CPU=1 swift test --filter testMeasureIdleWatchdogCPU`.
+    func testMeasureIdleWatchdogCPU() throws {
+        guard ProcessInfo.processInfo.environment["VOICEBAR_MEASURE_WATCHDOG_CPU"] == "1" else {
+            throw XCTSkip("opt-in measurement")
+        }
+        func cpuSeconds() -> Double {
+            var usage = rusage(); getrusage(RUSAGE_SELF, &usage)
+            return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec)
+                + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1e6
+        }
+        let loop = CFRunLoopGetMain()!
+        let window: TimeInterval = 60
+        for (name, interval, leeway) in [("none", 0.0, 0.0), ("candidate 500ms/100ms", 0.5, 0.1),
+                                         ("round1 125ms/31ms", 0.125, 0.031), ("round2 250ms/100ms", 0.25, 0.1)] {
+            var watchdog: RuntimeResponsivenessWatchdog?
+            if interval > 0 {
+                watchdog = RuntimeResponsivenessWatchdog(loop: "main", threshold: 0.5, enqueue: { ack in
+                    CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue) { ack.perform() }
+                    CFRunLoopWakeUp(loop)
+                }, sink: { _ in })
+                watchdog?.start(interval: interval, leeway: leeway)
+            }
+            let before = cpuSeconds()
+            RunLoop.main.run(until: Date().addingTimeInterval(window))
+            let used = cpuSeconds() - before
+            watchdog?.stop()
+            print(String(format: "WATCHDOG_CPU config=%@ window_s=%.0f cpu_ms=%.1f cpu_percent=%.4f",
+                         name, window, used * 1000, used / window * 100))
+        }
     }
 
     func testPhaseBoardHoldsStateNamesOnlyAndAgesMemoryPressure() {
