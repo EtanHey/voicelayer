@@ -368,8 +368,8 @@ public enum VoiceBarPresentation {
                 ? VoiceBarNotchContract.fixedWingWidth
                 : playbackLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
         case .transcribing:
-            // 2.3 U2: the spinner sits where Stop was, in the same fixed wing.
-            VoiceBarNotchContract.fixedWingWidth
+            // c9-P: both wings keep the recording band's width (they are equal about the notch, as recording's).
+            transcribingWingWidth(visibleCoreOcclusionInset: input.visibleCoreOcclusionInset)
         case .recording, .error, .disconnected:
             VoiceBarNotchContract.compactIndicatorLaneWidth
         }
@@ -529,8 +529,9 @@ public enum VoiceBarPresentation {
             // T5/T7: reading is laid out like recording (time, meter, and Stop in the outer region while collapsed).
             return readingTrailingWingWidth(visibleCoreOcclusionInset: input.visibleCoreOcclusionInset)
         case .transcribing:
-            // 2.3 U2: History + Settings while transcribing.
-            return VoiceBarNotchContract.fixedWingWidth
+            // c9-P (Etan, 2026-11-12): the recording meter stays in its slot and ripples while transcribing, so the
+            // band keeps the recording wings it had and the meter keeps its frame.
+            return transcribingWingWidth(visibleCoreOcclusionInset: input.visibleCoreOcclusionInset)
         case .error:
             return insets + Theme.intrinsicPillStatusWidth(for: input.statusText) +
                 3 + material.compactControlSize +
@@ -547,6 +548,27 @@ public enum VoiceBarPresentation {
         case .recording:
             return nil
         }
+    }
+
+    /// c9-P: both transcribing wings, at least the plain recording band's (Stop · ✕ on the left, time and meter on
+    /// the right). A wider recording band (an earlier take's spinner) is held by the presentation model through the
+    /// hand-over (`holdsRecordingWings`, round 2 F1); the meter row is pinned to the outer edge as while recording.
+    public static func transcribingWingWidth(visibleCoreOcclusionInset: CGFloat) -> CGFloat {
+        recordingWingWidth(showsThirdControl: false, showsEarlierTakeProcessing: false,
+                           visibleCoreOcclusionInset: visibleCoreOcclusionInset)
+    }
+
+    /// c9-P: the padding that puts the recording time/meter row on its recording frame inside a compact-status
+    /// trailing wing. The two wings are the same width; only their content insets differ (recording pins the row
+    /// to the outer edge past the hidden notch points, a compact status centres it between 8 pt insets).
+    public static func transcribingMeterRowPadding(visibleCoreOcclusionInset: CGFloat)
+        -> (leading: CGFloat, trailing: CGFloat) {
+        let material = VoiceBarNotchContract.material
+        let recording = material.wingContentLayout(for: .trailing, state: .recording,
+                                                   visibleCoreOcclusionInset: visibleCoreOcclusionInset)
+        let compact = material.wingContentLayout(for: .trailing, state: .compactStatus,
+                                                 visibleCoreOcclusionInset: visibleCoreOcclusionInset)
+        return (recording.coreInset - compact.coreInset, recording.outerInset - compact.outerInset)
     }
 
     /// Both recording wings (they are equal about the notch): the wider of the controls' wing and the time/meter's.

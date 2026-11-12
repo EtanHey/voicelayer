@@ -399,9 +399,17 @@ public struct VoiceBarRecordingTimeRegion: View {
                 }
             }
             .frame(width: VoiceBarRecordingWingLabel.clockWidth(for: time), alignment: .trailing)
+            // c9-P round 2 (F4): the shown clock's text, so a transcribing take keeps its width class.
+            .preference(key: VoiceBarRecordingClockTextKey.self, value: time)
         }
         .background(PillControlTooltip(text: microphoneName))
     }
+}
+
+/// c9-P round 2 (F4): the text the recording clock last showed (nil where no clock is mounted).
+struct VoiceBarRecordingClockTextKey: PreferenceKey {
+    static let defaultValue: String? = nil
+    static func reduce(value: inout String?, nextValue: () -> String?) { value = nextValue() ?? value }
 }
 
 /// T5/T7 (Etan QA 2026-11-09: "consistent with the same waveform and time stuff that we have when recording"): the

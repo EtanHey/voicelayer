@@ -518,7 +518,7 @@
       "WingsU2HostTests/testIdleLauncherIsMicAndChevronLeftHistoryAndSettingsRight",
       "WingsU2HostTests/testSetupErrorBadgesTheGearAndItOpensTheSetupSpot",
       "WingsU2HostTests/testRecordingIsStopPauseAndCancelLeftLevelBarsRight",
-      "WingsU2HostTests/testTranscribingKeepsHistoryAndSettingsLiveWithoutAThirdControl",
+      "WingsU2HostTests/testTranscribingKeepsTheRecordingWingsWithTheMeterRightAndOnlyTheMicrophoneLive",
       "WingsU2HostTests/testReadingAloudCollapsedIsPauseLeftShowAndStopRight",
       "WingsU2HostTests/testReadingAloudPausedIsPlayLeftTimeAndStopRight",
       "WingsU2HostTests/testReadingAloudWithTheTeleprompterShowsTheTimeAndTheStopInTheEyeRow",

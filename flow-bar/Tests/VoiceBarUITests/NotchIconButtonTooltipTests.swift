@@ -162,8 +162,12 @@ final class NotchIconButtonTooltipTests: XCTestCase {
     func testTranscribingAndErrorButtons() throws {
         let transcribing = state { $0.handleEvent(["type": "state", "state": "transcribing"]) }
         assertEveryControlHasATooltip("transcribing", try mount(bar(transcribing)),
-                                     // 2.3 U2: no third control while transcribing; History and Settings stay live.
-                                     expecting: ["History", "Settings"])
+                                     // c9-P: the right wing is the rippling meter (no controls); the microphone
+                                     // control stays on the left (0510 N9).
+                                     expecting: ["Choose microphone"])
+        let transcribingTips = try mount(bar(transcribing)).tooltips.map(\.text)
+        XCTAssertFalse(transcribingTips.contains("History"), "c9-P: History leaves the meter's slot while transcribing")
+        XCTAssertFalse(transcribingTips.contains("Settings"), "c9-P: Settings leaves the meter's slot while transcribing")
         let error = state { $0.handleEvent(["type": "error", "message": "Synthetic diagnostic for the tooltip test."]) }
         assertEveryControlHasATooltip("error", try mount(bar(error)),
                                      expecting: ["Synthetic diagnostic for the tooltip test.", "Dismiss error",

@@ -115,7 +115,8 @@ final class RecordingWingLabelTests: XCTestCase {
                 : VoiceBarNotchContract.recordingLeadingWingWidth))
             XCTAssertLessThanOrEqual(geometry.trailingWingWidth, VoiceBarNotchContract.morphCanvasWingCapacity)
         }
-        XCTAssertEqual(resolve(.transcribing).geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth)
+        // c9-P: transcribing keeps the recording row's wing (its meter ripples in place).
+        XCTAssertEqual(resolve(.transcribing).geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth)
         XCTAssertEqual(VoiceBarPresentation.readingTrailingWingWidth(visibleCoreOcclusionInset: 0),
                        VoiceBarPresentation.readingTransportWingWidth, "X4: reading mirrors the transport wing")
     }
@@ -126,8 +127,9 @@ final class RecordingWingLabelTests: XCTestCase {
         let source = try String(contentsOf: url, encoding: .utf8)
         let trailing = try XCTUnwrap(source.components(separatedBy: "private var notchTrailingContent").dropFirst().first)
             .components(separatedBy: "private var notchCompactStatusContent")[0]
-        let recording = try XCTUnwrap(trailing.components(separatedBy: "case .recording:").dropFirst().first)
-            .components(separatedBy: "case .compactStatus")[0]
+        // c9-P: recording and transcribing share one meter row.
+        let recording = try XCTUnwrap(trailing.components(separatedBy: "private var recordingMeterRow").dropFirst().first)
+            .components(separatedBy: "private var notchTrailingStatusContent")[0]
         XCTAssertTrue(recording.contains("VoiceBarRecordingTrailingRow {"), "0510 N10: one row lays out time, meter, outer")
         let time = try XCTUnwrap(recording.range(of: "VoiceBarRecordingTimeRegion(")).lowerBound
         let meter = try XCTUnwrap(recording.range(of: "notchWaveform")).lowerBound
