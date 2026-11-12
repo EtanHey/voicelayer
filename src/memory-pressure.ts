@@ -8,7 +8,7 @@
  *    when it persists (another event within PERSIST_WINDOW_MS of the previous one).
  * Each step logs one JSON line with the bytes it freed (the released process's RSS), never text.
  */
-import { releaseSTTPolishServerForMemoryPressure, processRssMb, type PolishPressureRelease } from "./stt-polish-server";
+import { releaseSTTPolishServerForMemoryPressure, processFootprintMb, type PolishPressureRelease } from "./stt-polish-server";
 import { unloadParakeetForMemoryPressure } from "./recognizer-controller";
 import { parakeetServer } from "./parakeet-server";
 
@@ -86,7 +86,7 @@ export function respondToMemoryPressure(level: "warning" | "critical"): Promise<
   responder ??= createMemoryPressureResponder({
     releasePolish: releaseSTTPolishServerForMemoryPressure,
     unloadParakeet: unloadParakeetForMemoryPressure,
-    parakeetRssMb: () => processRssMb(parakeetServer.pid),
+    parakeetRssMb: () => processFootprintMb(parakeetServer.pid),
     now: () => Date.now(),
     log: line => console.error(`[voicelayer] ${line}`),
   });

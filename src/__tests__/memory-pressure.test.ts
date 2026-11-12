@@ -84,6 +84,34 @@ describe("c8-M2 polish prompt cache has a hard cap", () => {
     expect(await releaseSTTPolishServerForMemoryPressure()).toMatchObject({ released: true, cache: { sequences: 7, gb: 1.25 } });
     resetSTTPolishServerManagerForTests();
   });
+
+  // RM-memory P1: the installed mlx_lm ignores --prompt-cache-bytes on our seeded (sequential) path.
+  it("launches with ONE cached sequence, the only cap the server enforces on our path", async () => {
+    resetSTTPolishServerManagerForTests();
+    const { options, spawnCalls } = fakePolish();
+    await ensureSTTPolishServer({ ...options, probeCacheCaps: async () => true });
+    const args = spawnCalls[0];
+    expect(args[args.indexOf("--prompt-cache-size") + 1]).toBe("1");
+    resetSTTPolishServerManagerForTests();
+  });
+
+  it("enforces the byte budget itself: restarts the server once its physical footprint grows past it", async () => {
+    resetSTTPolishServerManagerForTests();
+    const polish = await import("../stt-polish-server");
+    const samples = [2400, 2900, 2400 + 769];
+    polish.setPolishRssProbeForTests?.(async () => samples.shift() ?? null);
+    try {
+      const { options } = fakePolish();
+      await ensureSTTPolishServer({ ...options, probeCacheCaps: async () => true });
+      expect(await polish.checkPolishMemoryAfterRequest?.()).toMatchObject({ action: "none", reason: "baseline" });
+      expect(await polish.checkPolishMemoryAfterRequest?.()).toMatchObject({ action: "none", reason: "within-budget" });
+      expect(await polish.checkPolishMemoryAfterRequest?.()).toMatchObject({ action: "reset", baseline_rss_mb: 2400, rss_mb: 3169 });
+      expect(await releaseSTTPolishServerForMemoryPressure()).toEqual({ released: false, reason: "not-running" });
+    } finally {
+      polish.setPolishRssProbeForTests?.(null);
+      resetSTTPolishServerManagerForTests();
+    }
+  });
 });
 
 function harness(polishRunning = true) {
