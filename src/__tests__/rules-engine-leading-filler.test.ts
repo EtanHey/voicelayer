@@ -14,6 +14,12 @@ describe("a removed filler takes only its own punctuation with it", () => {
     // Cut-offs keep the fragment (raw accurate): an ellipsis or dash after the sound is not a filler's comma.
     ["Uh... I'm a little confused.", "Uh... I'm a little confused."],
     ["Uh— wait", "Uh— wait"],
+    // RF review F1: a decimal point or a domain dot is not the filler's punctuation.
+    ["Um.5 liters", ".5 liters"],
+    ["uh.25 is the probability", ".25 is the probability"],
+    // RF review F2: a protected word ends the run; the filler before it still takes its comma.
+    ["Um, ER is what I meant.", "ER is what I meant."],
+    ["uh, UM is the abbreviation.", "UM is the abbreviation."],
     // Words are never eaten.
     ["I went to the ER, it was fine.", "I went to the ER, it was fine."],
     ["Umbrella, yes.", "Umbrella, yes."],
