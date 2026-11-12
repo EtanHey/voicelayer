@@ -69,14 +69,20 @@ final class SettingsRS5Round2Tests: XCTestCase {
                     NotchSettingsVersionRow(updates: controller, appearance: .dark).frame(width: 420)
                 }.padding(12), width: 620, height: 330, name: "r2-version-\(build)-\(name)")
                 let lines = try SettingsPolishS5Tests.ocr(bitmap)
+                // The hosted runner's text recognition reads "i" as "l" in this face ("update avallable", PR #904),
+                // so both sides are compared with l and i folded together. Wording is still checked letter for letter otherwise.
+                func fold(_ text: String) -> String { text.replacingOccurrences(of: "l", with: "i") }
+                func count(_ needles: String...) -> Int {
+                    lines.filter { line in needles.contains { fold(line).contains(fold($0)) } }.count
+                }
                 let matched: Int
                 switch status {
-                case .latest: matched = lines.filter { $0.contains("up to date") }.count
-                case .available: matched = lines.filter { $0.contains("update available") }.count
-                case .checking: matched = lines.filter { $0.contains("checking") }.count
-                case .couldNotCheck: matched = lines.filter { $0.contains("check failed") || $0.contains("could not check") }.count
-                case .ahead: matched = lines.filter { $0.contains("ahead of release") }.count
-                    XCTAssertTrue(lines.joined(separator: " ").contains("this build is past 2.3.9."), "The candidate helper stays verbatim on releases too")
+                case .latest: matched = count("up to date")
+                case .available: matched = count("update available")
+                case .checking: matched = count("checking")
+                case .couldNotCheck: matched = count("check failed", "could not check")
+                case .ahead: matched = count("ahead of release")
+                    XCTAssertTrue(fold(lines.joined(separator: " ")).contains(fold("this build is past 2.3.9.")), "The candidate helper stays verbatim on releases too")
                 }
                 let expected = switch name {
                 case "checking": 3
