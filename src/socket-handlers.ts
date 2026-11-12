@@ -6,7 +6,8 @@ import { downloadRecognizer, cancelRecognizerDownload } from "./recognizer-downl
 import { deleteRecognizer } from "./recognizer-management";
 import { VoiceAdmissionCancelledError, cancelPendingVoiceAdmissions, withFreshDeferredVoiceAdmission, captureVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
 import { residencyBusy } from "./model-residency-busy";
-import { setRecognizerResidency, selectRecognizer, unloadParakeetForMemoryPressure } from "./recognizer-controller";
+import { setRecognizerResidency, selectRecognizer } from "./recognizer-controller";
+import { respondToMemoryPressure } from "./memory-pressure";
 import { setModelUnloadWhenIdle } from "./model-residency";
 import { parakeetServer } from "./parakeet-server";
 import { readRecognizerStatus, publishRecognizerStatus, onRecognizerStatusChange, beginRecognizerMaintenance, finishRecognizerTransition } from "./recognizer-state";
@@ -742,7 +743,8 @@ function handleSocketCommandAdmitted(
     case "set_recognizer_residency":
       return setRecognizerResidency(command.engine, command.action).then(result => ({ ...buildAck(command, result.outcome, result.reason), recognizer_status: result.recognizer_status }));
     case "memory_pressure":
-      return unloadParakeetForMemoryPressure().then(result => ({ ...buildAck(command, result.outcome, "reason" in result ? result.reason : undefined), recognizer_status: readRecognizerStatus() }));
+      // c8-M2: polish server first; Parakeet only when critical or persisting (src/memory-pressure.ts).
+      return respondToMemoryPressure(command.level).then(result => ({ ...buildAck(command, result.outcome, result.reason), recognizer_status: readRecognizerStatus() }));
     case "set_model_unload_when_idle": {
       try {
         setModelUnloadWhenIdle(command.value);
