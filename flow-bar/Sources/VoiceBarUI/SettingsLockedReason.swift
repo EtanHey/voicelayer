@@ -10,6 +10,7 @@ struct SettingsLockedReasonPreference {
     let bounds: Anchor<CGRect>
     let isShown: Bool
     var lift: CGFloat = SettingsLockedReasonMotion.lift
+    var rowBounds: Anchor<CGRect>? = nil
 }
 
 struct SettingsLockedReasonKey: PreferenceKey {
@@ -98,9 +99,10 @@ struct SettingsLockedReasonBubbleHost: ViewModifier {
                 ForEach(Array(preference.enumerated()), id: \.offset) { _, preference in
                   if preference.isShown {
                     let rect = proxy[preference.bounds]
+                    let top = preference.rowBounds.map { proxy[$0].minY } ?? rect.minY
                     SettingsReasonBubble(text: preference.reason)
                         .frame(width: rect.maxX, alignment: .trailing)
-                        .offset(y: rect.minY - SettingsReasonBubble.height - preference.lift)
+                        .offset(y: min(rect.minY, top) - SettingsReasonBubble.height - preference.lift)
                         .transition(reduceMotion ? .opacity
                             : .opacity.combined(with: .scale(scale: 0.97, anchor: .bottomTrailing)))
                         .allowsHitTesting(false)
@@ -161,6 +163,13 @@ extension View {
     func settingsLockedReason(_ reason: String?, stateLabel: String? = "Locked",
                               lift: CGFloat = SettingsLockedReasonMotion.lift) -> some View {
         modifier(SettingsLockedReasonSource(reason: reason, stateLabel: stateLabel, lift: lift))
+    }
+
+    /// A tall row must clear its complete title and helper, while keeping the control's horizontal anchor.
+    func settingsLockedReasonAboveRow() -> some View {
+        transformAnchorPreference(key: SettingsLockedReasonKey.self, value: .bounds) { preferences, row in
+            for index in preferences.indices { preferences[index].rowBounds = row }
+        }
     }
 
     /// The row side: put this after the row's dimming so the bubble is not dimmed with it.

@@ -86,9 +86,9 @@ final class RecognizerRowsTests: XCTestCase {
 
     func testSelectedRowExplainsAutoLoadInOneLine() {
         let s = state()
-        XCTAssertEqual(s.autoLoadLine(for: .parakeet), "Loads automatically when selected; unloads after 10 minutes without dictation.")
+        XCTAssertEqual(s.autoLoadLine(for: .parakeet), "Loads automatically when selected; unloads after 10 min idle.")
         XCTAssertNil(s.autoLoadLine(for: .whisper))
-        XCTAssertEqual(state(idle: 90).autoLoadLine(for: .parakeet), "Loads automatically when selected; unloads after 90 seconds without dictation.")
+        XCTAssertEqual(state(idle: 90).autoLoadLine(for: .parakeet), "Loads automatically when selected; unloads after 90 s idle.")
     }
 
     // MARK: S4 a download owns only its engine

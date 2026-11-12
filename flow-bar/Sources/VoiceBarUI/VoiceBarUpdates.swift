@@ -81,7 +81,7 @@ public enum VoiceBarBuildLine {
     /// The pill supplies the version separately; candidate metadata uses the same restored formatter.
     public static func menuStatus(installed: VoiceBarInstalledVersion, describe: VoiceBarGitDescribe?,
                                   status: VoiceBarVersionStatus) -> String? {
-        guard describe?.isTaggedRelease != true else { return nil }
+        guard describe?.isTaggedRelease != true else { return self.status(status, describe: nil) ?? status.menuMessage }
         return [installed.shortCommit, self.status(status, describe: describe) ?? status.menuMessage]
             .compactMap { $0 }.joined(separator: " · ")
     }

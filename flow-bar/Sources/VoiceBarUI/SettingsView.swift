@@ -121,6 +121,8 @@ struct SettingsHistoryMediaPart: Equatable {
     var processingLabel: String?
     /// MICDROP2: "Mic disconnected at 0:42" when the input device was lost mid-recording.
     var micDisconnectLabel: String?
+    /// c8-M3: the system dropped audio during this take, so the transcript may be missing words.
+    var audioLossLabel: String? = nil
     var playbackQueue: [URL] = []
 
     var label: String? {
@@ -286,7 +288,8 @@ struct SettingsHistoryRowModel: Equatable {
                     spokenDurationLabel: hasSpokenLength ? durationLabels.transcribed : nil,
                     processingLabel: processingLabel(entry.processingDurationMs),
                     micDisconnectLabel: [entry.micDisconnectNote, entry.deliveryNote].compactMap { $0 }.joined(separator: " · ").settingsArchiveNilIfEmpty
-                        ?? entry.micDisconnectedAtMs.map(MicDisconnectFeedback.historyNote(atMs:))
+                        ?? entry.micDisconnectedAtMs.map(MicDisconnectFeedback.historyNote(atMs:)),
+                    audioLossLabel: entry.captureOverrunNote
                 ),
             ]
         )
@@ -557,6 +560,10 @@ public struct SettingsView: View {
     @State private var selectedTab: SettingsTab
     @State private var hotkeyListenerRestartLine: HotkeyListenerRestartLine?
     @State private var permissionsRefreshTick = 0
+    /// C9-N item 3: where "Change…" lands Microphone priority's title (below the drawer's top fade).
+    @State private var microphonePriorityLanding = SettingsScrollLanding()
+    /// C9-N round 2 (F2): the top inset the drawer's General form needs for that landing to clear the fade.
+    @State private var drawerLandingInset: CGFloat = 0
     @State private var localVoiceBarHidden: Bool
     @State private var historyDayGroups: [SettingsHistoryDayGroup]
     @State private var historyLoadedEntryCount: Int
@@ -1132,6 +1139,7 @@ public struct SettingsView: View {
     private var generalTab: some View {
         ScrollViewReader { proxy in
             generalForm
+                .contentMargins(.top, drawerLandingInset, for: .scrollContent)
                 .onAppear { scrollToRequestedFocus(proxy, animated: false) }
                 .onChange(of: tabRequest) { _, _ in scrollToRequestedFocus(proxy, animated: true) }
         }
@@ -1142,12 +1150,33 @@ public struct SettingsView: View {
         guard let focus = tabRequest?.focus, tabRequest?.tab == .general else { return }
         DispatchQueue.main.async {
             if focus == .permissions, generalSetup.firstBroken != nil { return arriveAtSetup(proxy) }
+            if focus == .microphonePriority { return landAtMicrophonePriority(proxy, animated: animated) }
             if animated {
                 withAnimation { proxy.scrollTo(focus, anchor: .top) }
             } else {
                 proxy.scrollTo(focus, anchor: .top)
             }
         }
+    }
+
+    /// C9-N item 3: the title lands fully below the top fade. An already laid-out title is scrolled to in one
+    /// move; otherwise `scrollTo` brings it into view first and the landing corrects it on the next turn.
+    private func landAtMicrophonePriority(_ proxy: ScrollViewProxy, animated: Bool) {
+        let inDrawer = notchEmbeddedTab != nil
+        let lead = SettingsScrollLanding.lead(inDrawer: inDrawer)
+        let landing = microphonePriorityLanding
+        func land(animated: Bool) -> SettingsScrollLanding.Outcome {
+            let outcome = landing.land(lead: lead, fromScrollViewTop: inDrawer, animated: animated)
+            // Round 2 (F2): a first section cannot scroll down to the lead; the drawer's form gets the shortfall as
+            // top inset, then the title lands again on the next turn, once that inset is laid out.
+            guard inDrawer, case let .short(missing) = outcome else { return outcome }
+            drawerLandingInset += missing
+            DispatchQueue.main.async { _ = landing.land(lead: lead, fromScrollViewTop: true, animated: false) }
+            return outcome
+        }
+        if land(animated: animated && !reduceMotion) != .notLaidOut { return }
+        proxy.scrollTo(SettingsFocus.microphonePriority, anchor: .top)
+        DispatchQueue.main.async { _ = land(animated: false) }
     }
 
     private var generalSetup: SettingsGeneralSetup {
@@ -1442,6 +1471,7 @@ public struct SettingsView: View {
         } header: {
             Text("Microphone priority")
                 .id(SettingsFocus.microphonePriority)
+                .background(SettingsScrollLandingProbe(landing: microphonePriorityLanding))
         }
     }
 
@@ -2335,7 +2365,7 @@ public struct SettingsView: View {
         let micDisconnectLabel = part.micDisconnectLabel
 
         if audioLabel != nil || heardLabel != nil || spokenLabel != nil || processingLabel != nil
-            || micDisconnectLabel != nil
+            || micDisconnectLabel != nil || part.audioLossLabel != nil
         {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 12) { historyStatLabels(part) }
@@ -2381,6 +2411,13 @@ public struct SettingsView: View {
                 .foregroundStyle(.orange)
                 .help("The microphone signal was lost here; the whole recording is kept, and only the audio before it was transcribed")
                 .accessibilityLabel(micDisconnectLabel)
+        }
+        if let audioLossLabel = part.audioLossLabel {
+            Label(audioLossLabel, systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
+                .help("macOS discarded microphone audio before VoiceBar received it, so words from those moments are not in this transcript or the saved audio")
+                .accessibilityLabel(audioLossLabel)
+                .accessibilityIdentifier("history-audio-loss")
         }
     }
 
@@ -2586,8 +2623,7 @@ public struct SettingsView: View {
                             case .loading:
                                 HStack(spacing: 8) {
                                     ProgressView().controlSize(.small)
-                                    SettingsRowLabel(title: "Loading…",
-                                                     description: "Your terms and included spellings will appear here.")
+                                    SettingsRowLabel(title: "Loading…", description: nil)
                                 }
                                 .padding(.horizontal, 6).padding(.vertical, 12)
                             case .empty:
@@ -2871,7 +2907,7 @@ public struct SettingsView: View {
             ClippingAwareText(text: entry.canonical, font: SettingsRowLabel.titleFont, lineLimit: nil)
                 .foregroundStyle(.primary).layoutPriority(1)
             if let first = entry.variants.first {
-                ClippingAwareText(text: "Also heard as " + first + ".", font: SettingsRowLabel.descriptionFont, lineLimit: nil)
+                ClippingAwareText(text: variantSummary([first]).lowercasedFirst, font: SettingsRowLabel.descriptionFont, lineLimit: nil)
                     .foregroundStyle(SettingsPanePalette.helper)
                 if entry.variants.count > 1 {
                     Text("\(entry.variants.count - 1) more").font(SettingsRowLabel.descriptionFont)
@@ -2881,8 +2917,8 @@ public struct SettingsView: View {
         }
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(entry.variants.isEmpty ? entry.canonical
-            : "\(entry.canonical). \(variantSummary(entry.variants))")
+        .accessibilityLabel(entry.canonical)
+        .accessibilityHint(entry.variants.isEmpty ? "" : variantSummary(entry.variants))
         .help(entry.variants.isEmpty ? entry.canonical : "\(entry.canonical). \(variantSummary(entry.variants))")
     }
 

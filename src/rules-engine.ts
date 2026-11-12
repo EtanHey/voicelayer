@@ -197,8 +197,22 @@ function removeFillers(text: string, aggressive: boolean): string {
   const patterns = aggressive
     ? [...DISFLUENCY_PATTERNS, ...AGGRESSIVE_FILLER_PATTERNS]
     : DISFLUENCY_PATTERNS;
+  // A filler that opens the take takes its own comma or full stop with it; otherwise
+  // "Um, I'm confused" is delivered as ", I'm confused" (Etan, take 2026-11-12T10-24-45-799Z). Only the
+  // punctuation attached to the removed filler goes: never a word, and never an ellipsis or dash (a cut-off).
+  // "ER" and other all-capital spellings are words (the emergency room), never a hesitation: they stay.
+  const isAcronym = (match: string) => /\b(?:UM|UH|ER)\b/.test(match);
+  // Only at the very start: after a sentence the existing period-comma collapse already decides the join.
+  // One token at a time, so a protected word ("ER") ends the run without keeping an earlier filler's comma;
+  // a comma or full stop goes only when whitespace or the end follows it, never a decimal point or ".com".
+  // A comma always belongs to the filler (also unspaced: "Um,uh, hello"); a full stop only before whitespace,
+  // the end, or another filler.
+  const opening = /^\s*(um|uh|er)\b(?:,|\.(?=\s|$|(?:um|uh|er)\b))?(?![.…\p{Pd}])\s*/iu;
+  for (let match = opening.exec(result); match && !isAcronym(match[1]!); match = opening.exec(result)) {
+    result = result.slice(match[0].length);
+  }
   for (const pattern of patterns) {
-    result = result.replace(pattern, " ");
+    result = result.replace(pattern, match => (isAcronym(match) ? match : " "));
   }
   return result.replace(/  +/g, " ").trim();
 }
