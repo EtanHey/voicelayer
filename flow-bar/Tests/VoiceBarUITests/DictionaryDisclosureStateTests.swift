@@ -50,7 +50,11 @@ final class DictionaryDisclosureStateTests: XCTestCase {
             let titleX = word.minX * 420
             let titleY = (1 - word.midY) * 494
             let scale = CGFloat(bitmap.pixelsWide) / 420
-            let x0 = max(0, Int((titleX - 22) * scale)), x1 = Int((titleX - 4) * scale)
+            // Sample the chevron's fixed lane (the pane's leading 18 pt), not a window derived from the OCR
+            // sub-range box: on the M4 that box started left of the real title in "Included terms (1 of 1)"
+            // and clipped the chevron to 7x9 px, failing the search case although the picture was right.
+            XCTAssertGreaterThan(titleX, 12, "The title must start right of the chevron lane")
+            let x0 = 0, x1 = Int(18 * scale)
             let y0 = Int((titleY - 8) * scale), y1 = Int((titleY + 8) * scale)
             let backdrop = try XCTUnwrap(bitmap.colorAt(x: x0, y: y0))
             var ink: [CGPoint] = []
