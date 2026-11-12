@@ -11,7 +11,7 @@
     "formal/idle-wings/Fixed.cfg": "3b502f7dd707b735a8838b2e942ecb303227c20edbf12c11063070aeae375996",
     "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "58f90e0459215e2a128ff849611a20795c5b34c172ffa850f50d1ba6bc72736c",
     "flow-bar/Sources/VoiceBarUI/FloatingPanel.swift": "3f0d78d16b5bb804820f0a8a120d98afd52c8762b7254835e0c5f3e42aa365db",
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "ee398349cad60c66e34a454becbc019038f677f279ab72a7ab1343451c9fe0f4",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "24b4a3443c9392dfacdeaed7bf5ccef7359fc655a53f4df4dbd3c0237a9bb5d4",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
