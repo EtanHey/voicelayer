@@ -85,33 +85,33 @@ public struct WaveformEnvelopeFollower {
 
 /// c9-P: how far the meter has handed over from its live drive (the red level meter) to the processing ripple.
 /// The bars stay one view: their heights and colour blend over `duration`, so nothing leaves or re-enters the slot.
-/// The first sample lands at its target, so a meter that first appears transcribing shows the ripple at once.
+/// The hand-over only runs forward. A meter that first appears transcribing shows the ripple at once, and any frame
+/// that is not processing (live, booting, a new take) is the live meter at once, so the ripple never drives a
+/// recording (c9-P round 2, F2). The hand-over's clock starts at the first frame after the switch, never at the
+/// frame before it, so a paused or unsampled meter still gets the whole hand-over (F3).
 public struct WaveformProcessingHandover {
     public static let duration = 0.45
-    private var target: Bool?
-    private var linearProgress = 0.0
-    private var lastSampleTime: Double?
+    private var isProcessing: Bool?
+    /// The first frame drawn processing after a live one; nil once there is nothing left to hand over.
+    private var edgeTime: Double?
 
     public init() {}
 
     /// The eased progress (0 = live drive, 1 = processing ripple) at `time`.
     @discardableResult
-    public mutating func progress(isProcessing: Bool, at time: Double) -> Double {
-        let goal = isProcessing ? 1.0 : 0.0
-        guard target != nil, let lastSampleTime, time.isFinite else {
-            target = isProcessing
-            linearProgress = goal
-            self.lastSampleTime = time.isFinite ? time : nil
-            return goal
+    public mutating func progress(isProcessing processing: Bool, at time: Double) -> Double {
+        let wasProcessing = isProcessing
+        isProcessing = processing
+        guard processing else {
+            edgeTime = nil
+            return 0
         }
-        target = isProcessing
-        let elapsed = max(0, time - lastSampleTime)
-        self.lastSampleTime = time
-        let step = elapsed / Self.duration
-        linearProgress = goal > linearProgress
-            ? min(goal, linearProgress + step)
-            : max(goal, linearProgress - step)
-        return Self.eased(linearProgress)
+        guard let wasProcessing else { return 1 } // first frame: already transcribing
+        if !wasProcessing { edgeTime = time.isFinite ? time : nil }
+        guard let edge = edgeTime, time.isFinite else { return 1 }
+        let linear = min(1, max(0, time - edge) / Self.duration)
+        if linear >= 1 { edgeTime = nil }
+        return Self.eased(linear)
     }
 
     /// Ease-in-out on the colour and drive, so the hand-over neither snaps at its start nor stops dead.
@@ -229,9 +229,8 @@ public struct WaveformView: View {
             let envelopeLevel = mode != .booting && !isPaused
                 ? envelopeStore.sample(rawLevel: currentLevel(), at: now)
                 : 0
-            let processingProgress = mode == .booting
-                ? 0
-                : envelopeStore.processingProgress(isProcessing: mode == .processing, at: now)
+            // Every frame samples the hand-over, booting included, so a new take resets it (F2).
+            let processingProgress = envelopeStore.processingProgress(isProcessing: mode == .processing, at: now)
             TimelineSample(
                 envelopeLevel: envelopeLevel,
                 processingProgress: processingProgress,
@@ -278,7 +277,7 @@ public struct WaveformView: View {
 
         var body: some View {
             let progress = mode == .booting ? 0 : processingProgress
-            let layers = WaveformMetrics.handoverLayerOpacities(progress: progress, rippleOpacity: processingOpacity)
+            let layers = WaveformMetrics.handoverLayerOpacities(progress: progress)
             WaveformBars(
                 normalizedLevels: normalizedLevels(time: time, progress: progress),
                 color: color,
@@ -291,7 +290,7 @@ public struct WaveformView: View {
                 minHeight: minHeight,
                 glowOpacity: driveGlowOpacity * (1 - progress),
                 glowRadius: driveGlowRadius,
-                overlayGlowOpacity: 0.35 * progress,
+                overlayGlowOpacity: processingGlowOpacity * progress,
                 overlayGlowRadius: 4
             )
         }
@@ -315,9 +314,10 @@ public struct WaveformView: View {
             }
         }
 
-        /// Reduce Motion: no ripple travels; the still arch breathes in place instead.
-        private var processingOpacity: Double {
-            reduceMotion ? WaveformMetrics.processingReducedMotionOpacity(time: time) : 1
+        /// Reduce Motion: no ripple travels. The still arch keeps its full ink (round 2, F7: dimming the bars cost
+        /// contrast on the M4 grey); only its glow breathes, which reads as working without moving anything.
+        private var processingGlowOpacity: Double {
+            reduceMotion ? WaveformMetrics.processingReducedMotionGlowOpacity(time: time) : 0.35
         }
 
         private var driveGlowOpacity: Double {
@@ -337,6 +337,7 @@ public struct WaveformView: View {
 }
 
 public struct VoiceBarNotchWaveform: View {
+    @Environment(\.voiceBarNotchAppearance) private var notchAppearance
     public let mode: VoiceMode
     public let isListening: Bool
     /// False while `.recording` is still optimistic — the press registered but
@@ -369,7 +370,7 @@ public struct VoiceBarNotchWaveform: View {
             color: mode == .transcribing
                 ? Theme.recordingColor
                 : Self.waveformColor(mode: mode, isCaptureLive: isCaptureLive, isPlaybackEnded: isPlaybackEnded),
-            processingColor: Self.waveformColor(mode: .transcribing, isCaptureLive: true),
+            processingColor: Theme.processingRippleColor(for: notchAppearance),
             isListening: mode == .recording && isListening,
             isProcessing: mode == .transcribing,
             isBooting: isBooting,
@@ -482,22 +483,19 @@ public enum WaveformMetrics {
         }
     }
 
-    /// c9-P Reduce Motion: the still ripple breathes between 70 % and 100 % on the slow 2.6 s centre pulse.
-    public static func processingReducedMotionOpacity(time: Double) -> Double {
-        0.85 + 0.15 * sin(time * 2.4)
+    /// c9-P Reduce Motion: the still ripple's glow breathes between 0.1 and 0.6 on the slow 2.6 s centre pulse. The
+    /// bars themselves stay fully opaque (round 2, F7: a 70 % floor fell to 2.3:1 on the M4 grey; holding 3:1 needs
+    /// at least 95 %, where a pulse is no longer visible, so the floor is the peak and the halo carries the pulse).
+    public static func processingReducedMotionGlowOpacity(time: Double) -> Double {
+        0.35 + 0.25 * sin(time * 2.4)
     }
 
-    /// c9-P: the two layers' opacities for a hand-over at `progress` (0 = drive, 1 = ripple). The ripple is drawn
-    /// over the drive on the same bars; together they show the drive and ripple colours mixed by `progress` at a
-    /// total opacity of `1 - progress + progress * rippleOpacity` (`rippleOpacity` < 1 only for Reduce Motion's
-    /// breathing), so the colour moves without the bars thinning out mid-way.
-    public static func handoverLayerOpacities(progress: Double, rippleOpacity: Double = 1)
-        -> (drive: Double, ripple: Double) {
+    /// c9-P: the two layers' opacities for a hand-over at `progress` (0 = drive, 1 = ripple). The ripple is drawn at
+    /// `progress` over the fully opaque drive on the same bars, so together they show the two colours mixed by
+    /// `progress` at full coverage: the colour moves without the bars thinning out mid-way.
+    public static func handoverLayerOpacities(progress: Double) -> (drive: Double, ripple: Double) {
         let p = min(1, max(0, progress))
-        let total = 1 - p + p * min(1, max(0, rippleOpacity))
-        let ripple = p * total
-        let drive = ripple >= 1 || p >= 1 ? 0 : total * (1 - p) / (1 - ripple)
-        return (drive, ripple)
+        return (p >= 1 ? 0 : 1, p)
     }
 
     /// c9-P: the hand-over from the live meter to the ripple blends each bar's height; bar positions never change.

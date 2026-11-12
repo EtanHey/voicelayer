@@ -550,8 +550,9 @@ public enum VoiceBarPresentation {
         }
     }
 
-    /// c9-P: both transcribing wings, the plain recording band's (Stop · ✕ on the left, time and meter on the
-    /// right). The meter's row needs the right wing at exactly this width to sit where it sat while recording.
+    /// c9-P: both transcribing wings, at least the plain recording band's (Stop · ✕ on the left, time and meter on
+    /// the right). A wider recording band (an earlier take's spinner) is held by the presentation model through the
+    /// hand-over (`holdsRecordingWings`, round 2 F1); the meter row is pinned to the outer edge as while recording.
     public static func transcribingWingWidth(visibleCoreOcclusionInset: CGFloat) -> CGFloat {
         recordingWingWidth(showsThirdControl: false, showsEarlierTakeProcessing: false,
                            visibleCoreOcclusionInset: visibleCoreOcclusionInset)
