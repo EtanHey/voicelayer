@@ -386,7 +386,7 @@ public struct VoiceBarNotchWaveform: View {
         case .recording:
             isCaptureLive ? Theme.recordingColor : Theme.captureBootingColor
         case .transcribing:
-            // c9-P: the ripple's lifted processing blue (contrast on the M4 glass); the transcribing spinner shares it.
+            // c9-P: the ripple's lifted processing blue (contrast on the M4 glass).
             Theme.processingRippleColor
         case .speaking:
             Theme.speakingColor

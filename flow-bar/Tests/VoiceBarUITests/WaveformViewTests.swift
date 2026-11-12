@@ -449,7 +449,7 @@ final class WaveformViewTests: XCTestCase {
         let spinner = try XCTUnwrap(transcribingBranch.range(of: "transcriptionSpinner")).lowerBound
         let chevron = try XCTUnwrap(transcribingBranch.range(of: "microphonePickerButton")).lowerBound
         XCTAssertLessThan(spinner, chevron, "the spinner sits left of the 0510 N9 microphone control")
-        XCTAssertTrue(leadingCompactStatusBranch.contains("ProcessingSpinner(color: Theme.processingRippleColor(for: notchAppearance))"))
+        XCTAssertTrue(leadingCompactStatusBranch.contains("ProcessingSpinner()"))
         XCTAssertFalse(leadingCompactStatusBranch.contains("statusLabel"))
         XCTAssertFalse(leadingCompactStatusBranch.contains("WaveformView("))
         XCTAssertTrue(trailingBranch.contains("if showsRecordingMeterRow {\n            recordingMeterRow"))

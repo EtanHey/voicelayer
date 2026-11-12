@@ -77,21 +77,14 @@ public struct ProcessingSpinner: View {
 
     private let size: CGFloat
     private let showsTrack: Bool
-    private let color: Color
 
     public init() {
         self.init(diameter: Self.defaultDiameter, showsTrack: false)
     }
 
-    /// c9-P: the transcribing take's spinner takes the ripple's blue (its own commit, so it can be dropped alone).
-    init(color: Color) {
-        self.init(diameter: Self.defaultDiameter, showsTrack: false, color: color)
-    }
-
-    init(diameter: CGFloat, showsTrack: Bool, color: Color = Theme.speakingColor) {
+    init(diameter: CGFloat, showsTrack: Bool) {
         size = diameter
         self.showsTrack = showsTrack
-        self.color = color
     }
 
     public var body: some View {
@@ -99,8 +92,7 @@ public struct ProcessingSpinner: View {
             ProcessingSpinnerFrame(
                 angle: (renderTime ?? timeline.date.timeIntervalSinceReferenceDate) * 360,
                 diameter: size,
-                showsTrack: showsTrack,
-                color: color
+                showsTrack: showsTrack
             )
         }
         .frame(width: size, height: size)
@@ -113,18 +105,17 @@ struct ProcessingSpinnerFrame: View {
     let angle: Double
     let diameter: CGFloat
     var showsTrack = false
-    var color: Color = Theme.speakingColor
 
     var body: some View {
         ZStack {
             if showsTrack {
                 Circle()
-                    .stroke(color.opacity(0.28), lineWidth: 2.2)
+                    .stroke(Theme.speakingColor.opacity(0.28), lineWidth: 2.2)
             }
             Circle()
                 .trim(from: 0.08, to: 0.74)
                 .stroke(
-                    color.opacity(0.98),
+                    Theme.speakingColor.opacity(0.98),
                     style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
                 )
                 .rotationEffect(.degrees(angle))
@@ -1395,7 +1386,7 @@ public struct BarView: View {
     }
 
     private var transcriptionSpinner: some View {
-        ProcessingSpinner(color: Theme.processingRippleColor(for: notchAppearance))
+        ProcessingSpinner()
             .frame(width: VoiceBarNotchContract.material.compactControlSize,
                    height: VoiceBarNotchContract.material.compactControlSize)
             .accessibilityElement()
