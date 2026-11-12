@@ -123,7 +123,7 @@ final class SettingsGeneralDisclosureTests: XCTestCase {
         let tab = try XCTUnwrap(source.components(separatedBy: "private var dictionaryTab: some View {").dropFirst().first?
             .components(separatedBy: "private var searchRow: some View").first)
         let yourHeader = try XCTUnwrap(tab.components(separatedBy: "let yourTermsTitle").dropFirst().first?
-            .components(separatedBy: "if yourTermsExpanded || isSearching").first)
+            .components(separatedBy: "if yourTermsExpanded {").first)
         let includedLabel = try XCTUnwrap(source.components(separatedBy: "private func includedTermsHeaderLabel(")
             .dropFirst().first?.components(separatedBy: "private var searchRow").first)
         for header in [yourHeader, includedLabel] {

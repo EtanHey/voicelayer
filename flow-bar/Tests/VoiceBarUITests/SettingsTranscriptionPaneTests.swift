@@ -77,14 +77,13 @@ final class SettingsTranscriptionPaneTests: XCTestCase {
         let row = try XCTUnwrap(ModelsSettingsView.unloadWhenIdleRow(for: state()))
         XCTAssertEqual(row.title, "Unload when idle")
         XCTAssertFalse(row.isOn)
-        XCTAssertEqual(row.line, "Frees about 2.5 GB of memory after 5 min without dictation. "
-                       + "The next dictation loads Parakeet again, which adds a few seconds.")
+        XCTAssertEqual(row.line, "Frees about 2.5 GB of memory after 5 minutes without dictation. The next dictation takes a few seconds longer.")
     }
 
     func testProcessingRowsSayWhatEachDoesToYourWords() {
         let rows = ModelsSettingsView.processingRows(for: Self.controls, recognizer: state(selected: .whisper))
         XCTAssertEqual(rows.map(\.key.title), ["Model polish", "Remove made-up closing phrases", "Smart chunks"])
-        XCTAssertEqual(rows[0].line, "Fixes punctuation and capitals. If polish would add or drop a word, VoiceBar keeps the raw text instead.",
+        XCTAssertEqual(rows[0].line, "Fixes punctuation and capitals. Keeps your raw text if polish would change a word.",
                        "polish states its fidelity guard (stt-polish.ts CHANGED_LEXICAL_CONTENT)")
         XCTAssertNil(rows[2].lockedReason)
         XCTAssertTrue(rows[2].experimental)

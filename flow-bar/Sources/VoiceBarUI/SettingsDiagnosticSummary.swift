@@ -26,6 +26,8 @@ struct SettingsCopyButton: View {
     let text: String?
     let label: String
     var onCopy: ((String) -> Bool)? = nil
+    /// Native menus show the existing action title; ordinary copy controls remain icon-only.
+    var showsTitle = false
     @State private var copied = false
 
     var body: some View {
@@ -34,8 +36,12 @@ struct SettingsCopyButton: View {
                 copied = onCopy?(payload) ?? SettingsCopyPayload.write(payload)
                 if copied { AccessibilityNotification.Announcement("Copied \(label)").post() }
             } label: {
-                Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-                    .labelStyle(.iconOnly)
+                if showsTitle {
+                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                } else {
+                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                        .labelStyle(.iconOnly)
+                }
             }
             .buttonStyle(.borderless)
             .help(copied ? "Copied" : Self.tooltip(label))

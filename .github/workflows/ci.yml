@@ -23,6 +23,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # docs/control-availability/test_c5_inventory.py reads sources at a pinned earlier commit
+          # (`git show <sha>:<path>`); a depth-1 checkout does not have it (candidate 8, PR #903).
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -62,7 +66,8 @@ jobs:
     # (glassEffect), so this needs an Xcode 26+ image. Public repo: macOS
     # runner minutes are free.
     runs-on: macos-26
-    timeout-minutes: 30
+    # 30 was exceeded by candidate 8's suite (2,533 UI + 798 core tests; cancelled at 30m, PR #903).
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 

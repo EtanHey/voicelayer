@@ -15,8 +15,11 @@ struct NotchHistoryCategoryPanel: View {
     let dictations: NotchHistoryPanel
     @ObservedObject var archive: NotchHistoryArchiveStore
 
+    var onOpenArchive: (SettingsHistoryDestination) -> Void = { _ in }
+
     @State private var pager: NotchHistoryCategoryPager
-    @State private var isDragging = false
+    @State private var selectorFocus = NotchHistorySelectorFocus()
+    @State private var swipeCancellation = NotchHistorySwipeCancellation()
     @State private var swipeEndedAt: TimeInterval = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -27,10 +30,12 @@ struct NotchHistoryCategoryPanel: View {
 
     /// `initialScope` and `initialSwipe` (points the lists are dragged, as mid-gesture) are for shots.
     init(dictations: NotchHistoryPanel, archive: NotchHistoryArchiveStore,
-         initialScope: SettingsHistoryScope = .recording, initialSwipe: CGFloat = 0) {
+         initialScope: SettingsHistoryScope? = nil, initialSwipe: CGFloat = 0,
+         onOpenArchive: @escaping (SettingsHistoryDestination) -> Void = { _ in }) {
         self.dictations = dictations
         self.archive = archive
-        var pager = NotchHistoryCategoryPager(count: Self.scopes.count, index: Self.scopes.firstIndex(of: initialScope) ?? 0)
+        self.onOpenArchive = onOpenArchive
+        var pager = NotchHistoryCategoryPager(count: Self.scopes.count, index: Self.scopes.firstIndex(of: initialScope ?? archive.selectedScope) ?? 0)
         if initialSwipe != 0 { pager.move(dx: initialSwipe, dy: 0) }
         _pager = State(initialValue: pager)
     }
@@ -48,9 +53,20 @@ struct NotchHistoryCategoryPanel: View {
                 selector(width: width)
                 pages(width: width)
             }
+            .background(NotchHistorySwipeMonitor(
+                onBegin: { beginSwipe() },
+                onMove: { dx, dy in follow { $0.move(dx: dx, dy: dy) } },
+                onEnd: { finish(width: width, flick: nil) },
+                onStep: { select(pager.index + $0) },
+                cancellation: swipeCancellation, selectorFocus: selectorFocus
+            ))
         }
         .frame(height: dictations.listHeight)
         .onAppear { archive.surfaceOpened() }
+        .onChange(of: archive.selectedScope) { _, scope in
+            let index = Self.scopes.firstIndex(of: scope) ?? 0
+            if index != pager.index { select(index) }
+        }
         .onDisappear { archive.surfaceClosed() }
     }
 
@@ -59,7 +75,7 @@ struct NotchHistoryCategoryPanel: View {
     private func selector(width: CGFloat) -> some View {
         let segment = width / CGFloat(Self.scopes.count)
         let position = reduceMotion ? CGFloat(pager.index) : pager.position(width: width)
-        return ZStack(alignment: .leading) {
+        let content = ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(palette.primary.color.opacity(0.14))
                 .frame(width: segment)
@@ -79,13 +95,15 @@ struct NotchHistoryCategoryPanel: View {
                     .background(PillControlTooltip(text: NotchHistoryPresentation.categoryTooltip(scope)))
                     .accessibilityIdentifier(NotchHistoryPresentation.categoryIdentifier(scope))
                     .accessibilityLabel(scope.title)
-                    .accessibilityAddTraits(index == pager.index ? .isSelected : [])
+                    .accessibilityAddTraits(isCurrent ? .isSelected : [])
                 }
             }
         }
         .frame(width: width, height: NotchHistoryPresentation.categorySelectorHeight, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(NotchHistoryPresentation.categorySelectorLabel)
+        return NotchHistorySelectorHost(content: AnyView(content), focus: selectorFocus)
+            .frame(width: width, height: NotchHistoryPresentation.categorySelectorHeight)
     }
 
     // MARK: Lists
@@ -127,23 +145,12 @@ struct NotchHistoryCategoryPanel: View {
             }
         }
         .padding(.horizontal, -Self.pageGap / 2)
-        .background(NotchHistorySwipeMonitor(
-            onBegin: { pager.begin() },
-            onMove: { dx, dy in follow { $0.move(dx: dx, dy: dy) } },
-            onEnd: { finish(width: width, flick: nil) },
-            onStep: { select(pager.index + $0) }
-        ))
         .simultaneousGesture(
             DragGesture(minimumDistance: NotchHistoryCategoryPager.slop)
                 .onChanged { value in
-                    if !isDragging {
-                        isDragging = true
-                        pager.begin()
-                    }
                     _ = follow { $0.move(to: value.translation) }
                 }
                 .onEnded { value in
-                    isDragging = false
                     let throwDistance = value.predictedEndTranslation.width - value.translation.width
                     finish(width: width, flick: abs(throwDistance) > 60 && (throwDistance > 0) == (value.translation.width > 0))
                 }
@@ -153,7 +160,13 @@ struct NotchHistoryCategoryPanel: View {
     private func list(_ scope: SettingsHistoryScope) -> NotchHistoryPanel {
         var panel = dictations
         panel.listHeight = listHeight
+        panel.scope = scope
         // A click that ends a swipe is not a row click.
+        panel.onCopy = { entry in
+            guard !swipeJustHappened else { return false }
+            return dictations.onCopy(entry)
+        }
+        panel.onRetranscribe = { path in if !swipeJustHappened { dictations.onRetranscribe(path) } }
         panel.onOpen = { entry in if !swipeJustHappened { dictations.onOpen(entry) } }
         panel.onPaste = { entry in if !swipeJustHappened { dictations.onPaste(entry) } }
         let rows: [NotchHistoryArchiveStore.Row]?
@@ -164,9 +177,14 @@ struct NotchHistoryCategoryPanel: View {
         case .ask: rows = archive.ask
         case .speech: rows = archive.speech
         }
+        panel.onOpenAtIndex = { index in
+            guard !swipeJustHappened, let destination = rows?[safe: index]?.destination else { return }
+            onOpenArchive(destination)
+        }
+        panel.rowHasActionableText = { rows?[safe: $0]?.hasActionableText ?? false }
         panel.entries = rows?.map(\.entry) ?? []
         panel.emptyState = NotchHistoryPresentation.emptyState(for: scope, isLoaded: rows != nil)
-        panel.forcedHoverIndex = nil
+        panel.forcedHoverIndex = dictations.forcedHoverIndex
         panel.forcedScrollOffset = nil
         panel.rowHeader = { index in
             guard let row = rows?[safe: index] else { return nil }
@@ -196,12 +214,19 @@ struct NotchHistoryCategoryPanel: View {
         return true
     }
 
+    private func beginSwipe() {
+        if pager.isSwiping { swipeEndedAt = ProcessInfo.processInfo.systemUptime }
+        pager.begin()
+    }
+
     private func finish(width: CGFloat, flick: Bool?) {
         if pager.isSwiping { swipeEndedAt = ProcessInfo.processInfo.systemUptime }
         settle(NotchDrawerMotion.contentInDuration) { $0.end(width: width, flick: flick) }
     }
 
     private func select(_ index: Int) {
+        if pager.isSwiping { swipeEndedAt = ProcessInfo.processInfo.systemUptime }
+        swipeCancellation.generation &+= 1
         settle(NotchDrawerMotion.tabInDuration) { $0.select(index) }
     }
 
@@ -212,6 +237,7 @@ struct NotchHistoryCategoryPanel: View {
         } else {
             withAnimation(NotchDrawerMotion.easeOut(duration)) { change(&pager) }
         }
+        archive.selectedScope = Self.scopes[pager.index]
     }
 }
 
@@ -219,20 +245,27 @@ private extension Array {
     subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }
 
+final class NotchHistorySwipeCancellation {
+    var generation = 0
+}
+
 /// Feeds a trackpad's two-finger scroll over the lists to the pager. SwiftUI's vertical ScrollView would take these
 /// events whole, so a local monitor looks at each one first: until the gesture's axis is known, and for every
 /// vertical gesture, the event goes on to the list untouched; once it is a sideways swipe the list never sees it
 /// (nor its momentum). A plain mouse wheel has no gesture phases and is left alone.
 ///
-/// The arrow keys come through here too: Left and Right step a category while the notch panel is the key window
-/// and no text field is being edited. (SwiftUI's `.focusable()` on the lists aborted the process when the panel
-/// closed after a click, so the keys are read where the swipes are.)
+/// Left and Right require the list's AppKit first-responder target or the selector's own hosting subtree
+/// (including Tab-focused SwiftUI buttons). Outside focus never leaks arrows from Settings or text editors. SwiftUI `.focusable()` is
+/// deliberately avoided: it aborted the old hosted panel on close.
 struct NotchHistorySwipeMonitor: NSViewRepresentable {
     let onBegin: () -> Void
     let onMove: (CGFloat, CGFloat) -> Bool
     let onEnd: () -> Void
     /// -1 for Left, +1 for Right.
     let onStep: (Int) -> Void
+    /// A reference fence: a selector/key change invalidates pending events immediately, before view updates.
+    var cancellation: NotchHistorySwipeCancellation? = nil
+    var selectorFocus: NotchHistorySelectorFocus? = nil
 
     func makeNSView(context: Context) -> Probe { Probe() }
 
@@ -250,32 +283,71 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
         private var isTracking = false
         private var isSideways = false
         private var swallowsMomentum = false
+        private var trackingGeneration = 0
 
+        override var acceptsFirstResponder: Bool { true }
+        // Focus ownership must not make the nonactivating notch steal the key window on a pointer press.
+        override var needsPanelToBecomeKey: Bool { false }
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            if newWindow !== window, window?.firstResponder === self { window?.makeFirstResponder(nil) }
+            super.viewWillMove(toWindow: newWindow)
+        }
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             removeMonitor()
             guard window != nil else { return }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .keyDown]) { [weak self] event in
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .keyDown, .leftMouseDown]) { [weak self] event in
                 guard let self else { return event }
+                if event.type == .leftMouseDown {
+                    self.handlePointer(event)
+                    return event
+                }
                 return (event.type == .keyDown ? self.handleKey(event) : self.handle(event)) ? nil : event
             }
         }
 
         func removeMonitor() {
+            if window?.firstResponder === self { window?.makeFirstResponder(nil) }
             if let monitor { NSEvent.removeMonitor(monitor) }
             monitor = nil
+            resetTracking()
         }
 
-        /// Whether the key was Left or Right for the categories (plain, in this key window, outside a text field).
+        private func resetTracking() {
+            isTracking = false
+            isSideways = false
+            swallowsMomentum = false
+            trackingGeneration = handlers?.cancellation?.generation ?? 0
+        }
+
+        /// A pointer press focuses only this History region, including its category selector.
+        func handlePointer(_ event: NSEvent) {
+            guard let window, event.window === window else { return }
+            guard bounds.contains(convert(event.locationInWindow, from: nil)) else {
+                if window.firstResponder === self { window.makeFirstResponder(nil) }
+                return
+            }
+            // A future editor inside History must keep its native text navigation too.
+            var hit = window.contentView.flatMap { $0.hitTest($0.convert(event.locationInWindow, from: nil)) }
+            while let view = hit {
+                if view is NSTextField || view is NSTextView { return }
+                hit = view.superview
+            }
+            window.makeFirstResponder(self)
+        }
+
+        /// Plain Left/Right belong to the categories only when their list/selector has focus in this key window.
         func handleKey(_ event: NSEvent) -> Bool {
             routeKey(event, isKeyWindow: window?.isKeyWindow ?? false)
         }
 
         /// `handleKey` with the key-window fact spelled out (an offscreen test panel cannot become key).
         func routeKey(_ event: NSEvent, isKeyWindow: Bool) -> Bool {
-            guard let window, event.window === window, isKeyWindow, !(window.firstResponder is NSText),
+            guard let window, event.window === window, isKeyWindow,
+                  window.firstResponder === self || handlers?.selectorFocus?.owns(window.firstResponder) == true,
                   event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
                   let handlers else { return false }
             switch event.keyCode {
@@ -294,6 +366,7 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
         /// `handle` with the event's window and place spelled out (a test's synthetic scroll event carries neither).
         func route(_ event: NSEvent, in eventWindow: NSWindow?, at location: NSPoint) -> Bool {
             guard let window, eventWindow === window, let handlers else { return false }
+            if trackingGeneration != (handlers.cancellation?.generation ?? 0) { resetTracking() }
             if !event.momentumPhase.isEmpty {
                 let swallow = swallowsMomentum
                 if event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled) {

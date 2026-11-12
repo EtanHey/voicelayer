@@ -122,9 +122,9 @@ final class TeleprompterAModelTests: XCTestCase {
         XCTAssertEqual(table.seekIndex(token: 1, text: "world"), 1)
         XCTAssertNil(table.seekIndex(token: 1, text: "word"))
         // C7 L3 V09: a word this read has not timed yet (its chunk is still synthesizing) is a pending target;
-        // VoiceState seeks it once timed, checking the same text then. An empty table names nothing.
+        // VoiceState seeks it once timed, checking the same text then. C4 F3: before the first chunk too.
         XCTAssertEqual(table.seekIndex(token: 7, text: "world"), 7)
-        XCTAssertNil(SpeechWordTable(utteranceID: "u1").seekIndex(token: 0, text: "Hello"))
+        XCTAssertEqual(SpeechWordTable(utteranceID: "u1").seekIndex(token: 0, text: "Hello"), 0)
         XCTAssertNil(table.seekIndex(token: -1, text: "Hello"))
     }
 

@@ -70,6 +70,16 @@ export function applyRules(text: string, config?: RulesConfig): string {
     result = result.split(term).join(`\uE000${String.fromCharCode(0xE100 + protectedOutputs.length)}\uE001`);
     protectedOutputs.push(applyPreNumberFormatting(term, disabled));
   }
+  // Decide noun/command intent before code and punctuation commands can produce
+  // decoder-looking marks. Aliases have already had their normal first pass.
+  const layoutNouns: string[] = [];
+  if (!disabled?.has("punctuation")) result = result.replace(/\b(?:new paragraph|new line)\b/giu,
+    (phrase: string, start: number) => {
+      if (!isLayoutNoun(result, start, start + phrase.length, true)) return phrase;
+      const marker = `\uE200${String.fromCodePoint(0xE300 + layoutNouns.length)}\uE201`;
+      layoutNouns.push(phrase);
+      return marker;
+    });
   result = applyPreNumberFormatting(result, disabled);
   if (!disabled?.has("numbers")) result = applyNumberFormatting(result);
   for (let i = 0; i < protectedOutputs.length; i++) {
@@ -98,6 +108,9 @@ export function applyRules(text: string, config?: RulesConfig): string {
     result = applyPunctuation(result);
     result = normalizePunctuationClusters(result);
   }
+  layoutNouns.forEach((phrase, index) => {
+    result = result.split(`\uE200${String.fromCodePoint(0xE300 + index)}\uE201`).join(phrase);
+  });
 
   // Percent normalization (depends on number formatting and punctuation stages)
   if (!disabled?.has("numbers") && !disabled?.has("punctuation")) {
@@ -396,6 +409,8 @@ function dropWhisperCommaBeforeNewline(text: string): string {
   return text.replace(
     /,(\s*)(new paragraph|new line)\b/gi,
     (match: string, gap: string, phrase: string, offset: number) => {
+      const start = offset + 1 + gap.length;
+      if (isSpokenAsNoun(text, start, start + phrase.length)) return match;
       const head = text.slice(0, offset);
       // This comma is the RIGHT delimiter of the command before it — in
       // "week. Colon, new line" it is what lets the unwrap see ". Colon," and
@@ -526,6 +541,9 @@ function unwrapCommaWrappedCommands(text: string): string {
       // separator came back empty and "The words colon, comma, and period"
       // lost the word "comma" again (Macroscope round 2, PR #32).
       const found = [...match.matchAll(SINGLE_COMMAND_PATTERN)];
+      // Wrapping punctuation does not turn a layout noun into a command.
+      if (found.some(phrase => /^(?:new line|new paragraph)$/iu.test(phrase[0]) &&
+          isLayoutNoun(text, offset + phrase.index!, offset + phrase.index! + phrase[0].length, true))) return match;
       const phrases = found.map((phrase) => phrase[0].toLowerCase());
       const end = offset + match.length;
       const anyMetaMention = found.some((phrase) =>
@@ -735,10 +753,38 @@ function markNounArticleBefore(
  * True when an ambiguous spoken command is being used as an ordinary noun and
  * must be left verbatim.
  */
+function isLayoutNoun(text: string, start: number, end: number, decoderPunctuation = false): boolean {
+  const quote = /(["'“‘])[ \t]*$/u.exec(text.slice(0, start))?.[1];
+  if (quote && text.slice(end).trimStart().startsWith(({ '"': '"', "'": "'", "“": "”", "‘": "’" } as Record<string, string>)[quote])) return true;
+  const clause = text.slice(0, start).replace(/\.{2,}|…/gu, " ")
+    .split(/[.!?;\n\uE000\uE001\uE200\uE201]/u).at(-1)!;
+  const words = clause.replace(/[\s,]+$/u, "")
+    .toLowerCase().match(/[\p{L}\p{N}'’]+/gu)?.slice(-4) ?? [];
+  const before = words.at(-1) ?? "";
+  if (/(?:['’]s|s['’])$/u.test(before)) return true;
+  if (/^(?:trailing|leading|empty|blank|extra|additional|unwanted|unexpected|missing|duplicate|accidental)$/u.test(before)) return true;
+  if (/^(?:add|insert|remove|delete|strip|trim|replace|contains?|shows?|has|have|had|is|was|it's|it’s|there's|there’s)$/u.test(before)) return true;
+  // A determiner names the layout noun directly, or describes it after a
+  // copula/possession cue. "call the doctor new line" ends a command clause.
+  for (let i = 0; i < words.length; i++) {
+    const description = words.slice(i + 1);
+    if (/^(?:a|an|the|this|that|my|your|our|their|some|any|every|no)$/u.test(words[i]) &&
+        (description.length === 0 || /^(?:is|was|are|were|be|been|has|have|had|it's|it’s|there's|there’s|got|with|without|reports|shows|contains)$/u.test(words[i - 1] ?? "")) &&
+        (description.length <= 1 || (description.length === 2 && /^(?:very|quite|really|rather|slightly)$/u.test(description[0]))) &&
+        description.every(word => !/^(?:to|from|and|or|but|then|in|on|at|with|for|of|into|over|under|before|after)$/u.test(word))) return true;
+  }
+  // An actual mark here came from the decoder, not a spoken punctuation command.
+  return decoderPunctuation && !COMMAND_REPLACEMENTS.has(before) &&
+    !/[,\.]\s*$/u.test(text.slice(0, start)) && /^[ \t]*[.!?](?=\s|$)/u.test(text.slice(end));
+}
+
 function isSpokenAsNoun(text: string, start: number, end: number): boolean {
   const before = wordBefore(text, start);
   const after = wordAfter(text, end);
   const command = text.slice(start, end).trim().toLowerCase();
+
+  if (/^(?:new line|newline|new paragraph|line break)$/u.test(command) &&
+      isLayoutNoun(text, start, end)) return true;
 
   if (MARK_PHRASE_COMMANDS.has(command)) {
     return markNounArticleBefore(text, start, end);
@@ -1130,13 +1176,25 @@ const NUMBER_WORDS = new Set([
   ...Object.keys(MULTIPLIERS),
 ]);
 
-/** Prose uses of "one" are lexical; counted quantities still use digits. */
-function isProseOne(words: string[], index: number): boolean {
-  if (words[index]?.toLowerCase() !== "one") return false;
-  const before = words[index - 1]?.toLowerCase();
-  const after = words[index + 1]?.toLowerCase();
-  return (before === "the" && !NUMBER_WORDS.has(after ?? "")) || after === "of" ||
-    (after === "more" && /^time[,.!?]?$/i.test(words[index + 2] ?? ""));
+/** Only clear pronoun uses override the existing numeric rendering. */
+export function isProseOne(words: string[], index: number): boolean {
+  const bare = (value?: string) => value?.toLowerCase().replace(/[,.!?;:]+$/u, "") ?? "";
+  if (bare(words[index]) !== "one") return false;
+  const before = /[,.!?;:]$/u.test(words[index - 1] ?? "") ? "" : bare(words[index - 1]);
+  const after = bare(words[index + 1]);
+  const numeric = (value: string) => NUMBER_WORDS.has(value) || /^\d+(?:\.\d+)?$/u.test(value);
+  // Preserve OLD's article-one exception too; its legacy "The one%" is outside
+  // this pronoun fix. Demonstratives before a percent quantity remain numeric.
+  if (after === "percent" || after === "%" || (after === "per" && bare(words[index + 2]) === "cent")) return before === "the";
+  if (NUMBER_WORDS.has(after) || isTensThenUnit(before, "one")) return false;
+  if (/^(?:number|step|version|tier|level|line|row|column|page|chapter|section|item|option|port|code|route)$/u.test(before)) return false;
+  if (/^(?:or|and|to|through|in|plus|minus|by|times)$/u.test(after) && numeric(bare(words[index + 2]))) return false;
+  if (after === "out" && bare(words[index + 2]) === "of" && numeric(bare(words[index + 3]))) return false;
+  if (/^(?:the|this|that|which|each|every|any|no|another|other|either|neither|same)$/u.test(before) ||
+      /^(?:of|more|another)$/u.test(after)) return true;
+  if (/^(?:can|could|should|would|must|may|might|cannot|does|did|knows)$/u.test(after)) return true;
+  return /^(?:need|want|pick|choose|take|get|use|try|keep|select)$/u.test(before) &&
+    /^(?:|now|instead|please|too|as|that|which|with|for)$/u.test(after);
 }
 
 function formatNumbersInLine(text: string): string {

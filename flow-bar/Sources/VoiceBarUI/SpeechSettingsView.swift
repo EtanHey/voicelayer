@@ -49,17 +49,15 @@ public struct SpeechSettingsView: View {
             if let controls, connected {
                 ForEach(SpeechProfile.allCases, id: \.self) { kind in
                     if let profile = controls.profiles[kind], let display = Self.displayProfile(kind, controls: controls, pending: pending) {
-                        // Lane S PR 3 (Etan QA 2026-11-11, video 303.8 s "that's still slop UI"): both profiles share one
-                        // anatomy on the row grid. Voice row: the measurement as its one helper line, the picker and
-                        // Preview trailing (a disabled Preview says why on hover). Rate row: slider and a readable
-                        // value. Nothing inline explains a disabled control.
+                        // Both profiles use the row grid. Latency remains available in help; locked controls
+                        // show their state at rest and their reason on hover or keyboard focus.
                         Section {
-                            SettingsRow(title: "Voice", description: Self.latencyDisplay(profile.latencyLabel)) {
+                            SettingsRow(title: "Voice", description: SpeechControlsState.voiceKindLabel(display.engine)) {
                                 voiceControl(kind, display: display, controls: controls)
                                 previewControl(kind)
                             }
                             .accessibilityIdentifier("speech-\(kind.rawValue)-latency")
-                            .settingsLockedReasonBubble()
+                            .help(profile.latencyLabel + ". Time from requesting speech until its first sound.")
                             SettingsRow(title: "Rate", textMinWidth: Self.rateTitleWidth) {
                                 rateControl(kind, profile: profile, controls: controls)
                             }
@@ -87,7 +85,7 @@ public struct SpeechSettingsView: View {
                                 if let lock = Self.lockFooter(kind, controls: controls) {
                                     Label(lock, systemImage: "lock.fill").fixedSize(horizontal: false, vertical: true)
                                 }
-                                if kind == .long { Text("Changes apply to the next speech.").font(.caption) }
+                                Text("Changes apply to the next speech.").font(.caption)
                             }.font(.callout).foregroundStyle(.secondary)
                         }
                     }
@@ -106,64 +104,52 @@ public struct SpeechSettingsView: View {
         }
         .onChange(of: controls?.shortLimit) { _, limit in thresholdDraft.reconcile(limit) }
         .formStyle(.grouped)
+        // Draw above the Form, so short Voice rows cannot clip the reason at the card edge.
+        .settingsLockedReasonBubble()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("speech-settings-form")
     }
 
-    /// Compact (lane S PR 3): the reported cutoff with its caveat as one row, then the draft line with one helper line.
-    /// Why Apply is unavailable shows on hover of Apply, like a locked switch.
+    /// The split is one explicit draft control; reporting provenance stays in help, never permanent telemetry.
     private var thresholdSection: some View {
         Section("Voice profile threshold") {
-            SettingsRow(title: SpeechThresholdDraft.confirmedLabel(controls?.shortLimit),
-                        description: SpeechThresholdDraft.reportStatus) { EmptyView() }
-                .accessibilityIdentifier("speech-threshold-applied")
             let blocked = SpeechThresholdDraft.blockedReason(controls: controls, connected: connected, busy: busy,
                                                              pending: pending, callbackAvailable: onChange != nil)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Draft").lineLimit(1).fixedSize()
+            let canApply = thresholdDraft.canApply(controls: controls, connected: connected, busy: busy,
+                                                   pending: pending, callbackAvailable: onChange != nil)
+            let summary = controls.map { "Text up to \($0.shortLimit.effective) characters uses the short voice; longer text uses the long voice." }
+                ?? "VoiceBar is waiting for VoiceLayer to report the voice limit."
+            SettingsRow(title: "Voice profile threshold", description: thresholdDraft.validationMessage ?? summary) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Draft").font(.system(size: 10)).foregroundStyle(SettingsPanePalette.helper)
                     TextField("Characters", text: Binding(
                         get: { thresholdDraft.displayedText(controls?.shortLimit) },
                         set: { thresholdDraft.edit($0) }))
                         .labelsHidden()
-                        .textFieldStyle(.roundedBorder).frame(width: 90)
+                        .textFieldStyle(.roundedBorder).frame(width: 58)
                         .multilineTextAlignment(.trailing)
                         .onSubmit {} // Enter, like blur, never applies a draft.
                         .accessibilityLabel("Voice profile threshold draft in characters")
                         .accessibilityIdentifier("speech-threshold-draft")
-                    Text("characters").foregroundStyle(.secondary)
-                        .lineLimit(1).fixedSize().layoutPriority(1)
-                    Spacer()
-                    let canApply = thresholdDraft.canApply(controls: controls, connected: connected, busy: busy,
-                                                           pending: pending, callbackAvailable: onChange != nil)
-                    Button("Apply") {
-                        thresholdDraft.apply(controls: controls, connected: connected, busy: busy,
-                                             pending: pending, onChange: onChange)
-                    }
-                    .lineLimit(1).fixedSize()
-                    .disabled(!canApply)
-                    .accessibilityIdentifier("speech-threshold-apply")
-                    .settingsLockedReason(canApply ? nil : blocked)
-                    Button("Revert") { thresholdDraft.revert() }
-                        .lineLimit(1).fixedSize()
-                        .help(SpeechThresholdDraft.revertHelp)
-                        .accessibilityLabel("Revert draft to last reported cutoff")
-                        .disabled(thresholdDraft.text == nil || controls == nil)
-                        .accessibilityIdentifier("speech-threshold-revert")
                 }
-                Text(Self.thresholdHelper(validation: thresholdDraft.validationMessage))
-                    .font(.system(size: 11.5)).foregroundStyle(SettingsPanePalette.helper)
-                    .fixedSize(horizontal: false, vertical: true)
+                Button("Apply") {
+                    thresholdDraft.apply(controls: controls, connected: connected, busy: busy,
+                                         pending: pending, onChange: onChange)
+                }
+                .controlSize(.small).fixedSize()
+                .disabled(!canApply)
+                .accessibilityIdentifier("speech-threshold-apply")
+                .settingsLockedReason(canApply ? nil : blocked, stateLabel: nil, lift: 16)
+                Button("Revert") { thresholdDraft.revert() }
+                    .controlSize(.small).fixedSize()
+                    .help(SpeechThresholdDraft.revertHelp + " " + SpeechThresholdDraft.reportStatus)
+                    .accessibilityLabel("Revert draft to last reported cutoff")
+                    .disabled(thresholdDraft.text == nil || controls == nil)
+                    .accessibilityIdentifier("speech-threshold-revert")
             }
-            .settingsLockedReasonBubble()
+            .help(SpeechThresholdDraft.confirmedLabel(controls?.shortLimit))
+            .accessibilityIdentifier("speech-threshold-applied")
         }
-    }
-
-    static let thresholdPurpose = "Chooses the short or long voice profile for the next speech."
-
-    /// The draft line's one helper line: what the number does, and a validation problem when there is one.
-    static func thresholdHelper(validation: String?) -> String {
-        [validation, thresholdPurpose].compactMap { $0 }.joined(separator: " ")
     }
 
     @ViewBuilder
@@ -208,7 +194,7 @@ public struct SpeechSettingsView: View {
                 .disabled(disabled)
                 .accessibilityIdentifier("speech-\(kind.rawValue)-preview")
                 .settingsLockedReason(disabled && onPreview != nil
-                    ? previewHint(kind) ?? Self.pendingChangeReason : nil)
+                    ? previewHint(kind) ?? Self.pendingChangeReason : nil, stateLabel: nil)
         }
     }
 
@@ -246,12 +232,7 @@ public struct SpeechSettingsView: View {
     /// "Rate" needs only its own width; the slider takes the rest of the row.
     static let rateTitleWidth: CGFloat = 44
 
-    /// The measurement line as shown: a non-breaking space keeps "0.6 s" together when the line wraps.
-    static func latencyDisplay(_ label: String) -> String {
-        label.replacingOccurrences(of: #"(\d) s\b"#, with: "$1\u{00A0}s", options: .regularExpression)
-    }
-
-    static func engineLabel(_ engine: String) -> String { engine == "clone" ? "Cloned voice" : "Fast" }
+    static func engineLabel(_ engine: String) -> String { SpeechControlsState.isFastVoice(engine) ? "Fast" : "Cloned voice" }
     static func voiceLabel(_ id: String) -> String {
         let names = ["theo-c4s": "Theo", "ben-c1": "Ben", "en-US-JennyNeural": "Jenny (US)", "en-US-GuyNeural": "Guy (US)",
                      "en-US-AndrewNeural": "Andrew (US)", "en-US-BrianMultilingualNeural": "Brian (US, multilingual)",
@@ -271,8 +252,8 @@ public struct SpeechSettingsView: View {
         return "\(rate) \(percent > 0 ? "faster" : "slower")"
     }
     static func subtitle(_ kind: SpeechProfile, limit: Int) -> String {
-        kind == .short ? "Agent announcements and automatic reads up to \(limit) characters."
-            : "Reads over \(limit) characters, such as the speak command and Option+F5."
+        kind == .short ? "Announcements and reads up to \(limit) characters."
+            : "Reads over \(limit) characters, such as Option+F5."
     }
     static func lockFooter(_ kind: SpeechProfile, controls: SpeechControlsState) -> String? {
         guard let profile = controls.profiles[kind] else { return nil }

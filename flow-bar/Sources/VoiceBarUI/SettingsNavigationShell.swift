@@ -173,11 +173,10 @@ struct SettingsVersionFooter: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(["VoiceBar \(installed.version ?? "Unknown")", installed.shortCommit].compactMap { $0 }
-                .joined(separator: " · "))
+            Text(Self.identity(installed: installed, describe: describe))
                 .monospacedDigit()
                 .fixedSize(horizontal: false, vertical: true)
-            if let status, let text = Self.statusText(status, describe: describe) {
+            if describe?.isTaggedRelease != true, let status, let text = Self.statusText(status, describe: describe) {
                 Text(text)
                     .foregroundStyle(tint(status))
                     .fixedSize(horizontal: false, vertical: true)
@@ -185,10 +184,17 @@ struct SettingsVersionFooter: View {
         }
         .font(.system(size: 10))
         .foregroundStyle(.secondary)
-        .help("VoiceBar \(installed.label). \(status?.message ?? "")")
+        .help(describe?.isTaggedRelease == true ? Self.identity(installed: installed, describe: describe)
+            : "VoiceBar \(installed.label). \(status?.message ?? "")")
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("VoiceBar \(installed.label)")
+        .accessibilityLabel(describe?.isTaggedRelease == true ? Self.identity(installed: installed, describe: describe)
+            : "VoiceBar \(installed.label)")
         .accessibilityValue(status?.message ?? "")
+    }
+
+    static func identity(installed: VoiceBarInstalledVersion, describe: VoiceBarGitDescribe?) -> String {
+        ["VoiceBar \(installed.version ?? "Unknown")", describe?.isTaggedRelease == true ? nil : installed.shortCommit]
+            .compactMap { $0 }.joined(separator: " · ")
     }
 
     /// Quiet unless there is something to do: only an available update takes the accent colour.

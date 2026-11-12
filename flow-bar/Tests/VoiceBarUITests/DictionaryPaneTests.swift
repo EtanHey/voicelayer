@@ -24,12 +24,15 @@ final class DictionaryPaneTests: XCTestCase {
         let source = try Self.source("SettingsView.swift")
         let section = try Self.dictionarySection()
         XCTAssertTrue(section.contains(".onDeleteCommand { deleteSelectedTerm() }"))
-        XCTAssertTrue(section.contains(".accessibilityAction(named: \"Delete\")"), "VoiceOver can delete too")
+        XCTAssertTrue(section.contains(".accessibilityLabel(\"Actions for term "), "VoiceOver reaches Delete through the named menu")
         XCTAssertTrue(section.contains(".focused($focusedEditorField, equals: .list)"))
         XCTAssertTrue(section.contains(
             ".keyboardShortcut(focusedEditorField == .search ? nil : KeyboardShortcut(\"z\", modifiers: .command))"))
         XCTAssertTrue(section.contains("DictionaryDeletion.commitIfExpired(now: Date(), pending: &pendingDeletion"))
-        XCTAssertTrue(section.contains(".onDisappear {\n            DictionaryDeletion.commitNow("))
+        let dismissal = try XCTUnwrap(section.components(separatedBy: "\n        .onDisappear {")
+            .dropFirst().first?.components(separatedBy: "\n        }").first)
+        XCTAssertTrue(dismissal.contains("termRemoval = nil"), "Leaving the tab dismisses confirmation")
+        XCTAssertTrue(dismissal.contains("DictionaryDeletion.commitNow("), "Leaving still commits pending Undo")
         XCTAssertTrue(source.contains("termSheet != nil || pendingDeletion != nil"),
                       "a pending deletion holds snapshot reloads back so the row can't reappear mid-window")
         let commit = try XCTUnwrap(section.components(separatedBy: "private func commitDeletion(")

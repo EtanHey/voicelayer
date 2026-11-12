@@ -37,7 +37,7 @@ public enum SettingsSetupFix: Equatable, Sendable {
         case let .permission(action):
             if case .requestMicrophone = action { return "Allow…" }
             return "Open System Settings"
-        case .checkF5: return "Check"
+        case .checkF5: return "Test F5"
         case .restartF5Listener: return "Restart F5 listener"
         case .manageVoice: return "Manage"
         case .startVoiceEngine: return "Start engine"
@@ -228,7 +228,7 @@ enum SettingsMicrophoneRowPresentation {
 enum SettingsGeneralCopy {
     static let dictationKeyTitle = "Dictation key"
     static let dictationKeyDescription =
-        "Hold to talk. Double-tap to keep recording hands-free; it stops after 10 minutes of silence."
+        "Hold to talk. Double-tap to stay hands-free; it stops after 10 minutes of silence."
     static let mouseTitle = "Mouse side buttons"
     static let mouseDescription = "Forward acts like F5. Back sends Return."
     static let openAtLoginTitle = "Open at login"
@@ -238,9 +238,9 @@ enum SettingsGeneralCopy {
     static let shortcutsHeader = "Shortcuts"
     static let singleTapTitle = "Tap F5"
     static let readClipboardTitle = "Read clipboard aloud"
-    static let diagnosticDescription = "Copies the build and recognizer facts for a bug report."
+    static let diagnosticDescription = "Copies build and recognizer details for a bug report."
     static let microphoneNote =
-        "Drag to reorder. VoiceBar uses the first connected microphone. Disconnected ones keep their place."
+        "Drag to set the order. VoiceBar uses the first connected microphone. Disconnected ones keep their place."
 
     static func relayDescription(installed: Bool, listenerActive: Bool) -> String {
         let state = installed ? "Installed." : listenerActive ? "Not installed." : "Needs setup."

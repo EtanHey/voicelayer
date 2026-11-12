@@ -259,8 +259,9 @@ public struct SpeechWordTable: Equatable {
     /// seek waits for its timing and checks the same text then (`VoiceState.seekSpeechWord`).
     public func seekIndex(token: Int, text: String) -> Int? {
         guard token >= 0 else { return nil }
-        // An empty table is the placeholder before any timing (or an older daemon): no word is ours to name yet.
-        guard isTimed(token) else { return hasTimings ? token : nil }
+        // C4 F3: before the first chunk too (the table exists, so this daemon times words): the click waits for the
+        // word's timing. Older daemons send no utterance id, so they have no table and keep the offset seek.
+        guard isTimed(token) else { return token }
         return words[token]?.text == text ? token : nil
     }
 
@@ -277,6 +278,9 @@ struct TeleprompterAModel {
     let layouts: [TeleprompterWordLayout]
     /// Display word (a long token's piece) → display-token index, when the pieces partition the tokens.
     let tokenOfWord: [Int]?
+    /// C4 F6: each display word's token for seeking and highlight: `tokenOfWord` when the pieces partition the tokens,
+    /// otherwise a per-word text alignment, so one unmatched word costs only its own target, never the whole read's.
+    let wordTokens: [Int?]
     let tokens: [String]
     let lines: [Range<Int>]
     let lineOfWord: [Int]
@@ -306,6 +310,8 @@ struct TeleprompterAModel {
             Array(repeating: index, count: TeleprompterContentModel.displayPieceCount(token))
         }
         tokenOfWord = pieces.count == words.count ? pieces : nil
+        wordTokens = tokenOfWord.map { $0.map(Optional.some) }
+            ?? Self.alignedTokens(words: document.layouts.map(\.displayText), tokens: tokens)
         spacing = Self.width(" ", heading: false)
         let widths = layouts.map(Self.renderedWidth)
         self.widths = widths
@@ -339,11 +345,41 @@ struct TeleprompterAModel {
             + width(layout.displayText, heading: heading)
     }
 
+    /// C4 F6: align display words to tokens by text when the counts disagree. A word maps to the token (or the rest
+    /// of a token it continues) containing it, looking a few tokens ahead; a word found nowhere maps to nil alone.
+    static func alignedTokens(words: [String], tokens: [String], lookahead: Int = 3) -> [Int?] {
+        var result: [Int?] = []
+        var cursor = 0
+        var rest: Substring?
+        for word in words {
+            var matched: Int?
+            var probe = cursor
+            var probeRest = rest
+            while probe < tokens.count, probe <= cursor + lookahead, !word.isEmpty {
+                let haystack = probeRest ?? Substring(tokens[probe])
+                if let range = haystack.range(of: word) {
+                    matched = probe
+                    let after = haystack[range.upperBound...]
+                    if after.contains(where: { $0.isLetter || $0.isNumber }) {
+                        cursor = probe; rest = after
+                    } else {
+                        cursor = probe + 1; rest = nil
+                    }
+                    break
+                }
+                probe += 1
+                probeRest = nil
+            }
+            result.append(matched)
+        }
+        return result
+    }
+
     /// The word the clock names: the daemon's table when it covers this text, else the subtitle timeline.
     func focusWord(table: SpeechWordTable?, clock: Int) -> Int? {
-        if let table, let tokenOfWord, !table.words.isEmpty {
+        if let table, !table.words.isEmpty, wordTokens.contains(where: { $0 != nil }) {
             guard let token = table.wordIndex(atMilliseconds: clock) else { return nil }
-            return tokenOfWord.firstIndex(of: token)
+            return wordTokens.firstIndex(of: token)
         }
         guard TeleprompterPlaybackPolicy.usesServerTimestamps(in: words) else { return nil }
         let id = TeleprompterPlaybackPolicy.currentWordIndex(in: words, elapsedMilliseconds: clock)
@@ -353,7 +389,7 @@ struct TeleprompterAModel {
     enum SeekTarget: Equatable { case word(utteranceID: String, index: Int), offset(Int) }
 
     func seekTarget(for word: Int, table: SpeechWordTable?) -> SeekTarget? {
-        if let table, let token = tokenOfWord?[word], let index = table.seekIndex(token: token, text: tokens[token]) {
+        if let table, let token = wordTokens[word], let index = table.seekIndex(token: token, text: tokens[token]) {
             return .word(utteranceID: table.utteranceID, index: index)
         }
         return TeleprompterSeekPolicy.offset(for: words[word], isReadback: false).map(SeekTarget.offset)

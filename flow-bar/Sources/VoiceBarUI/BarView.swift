@@ -352,6 +352,7 @@ public struct BarView: View {
     /// SPEC open question 1 (recommendation built): a notch History row click opens that recording in the History
     /// window. Nil falls back to opening the window at its newest row.
     public var onOpenHistoryRecording: ((String) -> Void)?
+    public var onOpenHistoryEntry: ((SettingsHistoryDestination) -> Void)?
     private let presentationModel: VoiceBarNotchPresentationModel?
     private let morphSelection: VoiceBarNotchMorphSelection?
     private let includesPanelOutsets: Bool
@@ -361,7 +362,7 @@ public struct BarView: View {
     /// Visual shots only: render one History row as hovered without a pointer.
     private var historyForcedHoverIndex: Int?
     private var historyArchive: NotchHistoryArchiveStore = .shared
-    private var historyInitialScope: SettingsHistoryScope = .recording
+    private var historyInitialScope: SettingsHistoryScope?
     private var historyInitialSwipe: CGFloat = 0
     /// 2.4 Lane A: the ONE notch surface (formal/notch-surface). Which drawer is open lives there, never in a flag
     /// here. The app and the UIE2E host inject theirs; a BarView without one owns a private model.
@@ -436,6 +437,7 @@ public struct BarView: View {
         onOpenSettings: @escaping () -> Void,
         onOpenHistory: @escaping () -> Void,
         onOpenHistoryRecording: ((String) -> Void)? = nil,
+        onOpenHistoryEntry: ((SettingsHistoryDestination) -> Void)? = nil,
         presentationModel: VoiceBarNotchPresentationModel? = nil,
         morphSelection: VoiceBarNotchMorphSelection? = nil,
         includesPanelOutsets: Bool = false,
@@ -461,6 +463,7 @@ public struct BarView: View {
         self.onOpenMicrophonePicker = onOpenMicrophonePicker
         self.onOpenSetupSettings = onOpenSetupSettings ?? onOpenSettings
         self.onOpenHistoryRecording = onOpenHistoryRecording
+        self.onOpenHistoryEntry = onOpenHistoryEntry
         self.presentationModel = presentationModel
         self.morphSelection = morphSelection
         self.includesPanelOutsets = includesPanelOutsets
@@ -1868,7 +1871,8 @@ public struct BarView: View {
                     onTextLinesChange: { state.reportTeleprompterTextLines($0) },
                     narrationOrigin: state.narrationOrigin,
                     allowsBrowsing: !state.isTeleprompterDismissed,
-                    readIdentity: state.teleprompterReadIdentity
+                    readIdentity: state.teleprompterReadIdentity,
+                    pendingSeekToken: state.pendingSpeechSeekWordIndex
                 )
                 .transition(TeleprompterPreparingHandoff.transition)
             } else if preparingHandoff.showsText(isPreparing: state.isPreparingSpeech) {
@@ -2294,13 +2298,19 @@ public struct BarView: View {
         // Lane H: Dictations / Ask / Speech, side to side. The category selector comes out of this same height.
         NotchHistoryCategoryPanel(
             dictations: historyDictationsPanel(listHeight: fixedListHeight), archive: historyArchive,
-            initialScope: historyInitialScope, initialSwipe: historyInitialSwipe
+            initialScope: historyInitialScope, initialSwipe: historyInitialSwipe,
+            onOpenArchive: { destination in
+                guard !drawerBodyDragJustHappened else { return }
+                surface.send(.dismiss(.action))
+                if let onOpenHistoryEntry { onOpenHistoryEntry(destination) }
+                else { onOpenHistory() }
+            }
         )
     }
 
     /// Visual shots and tests: the archive rows to show, the category to start on and a mid-swipe offset.
     func historyCategories(
-        archive: NotchHistoryArchiveStore, scope: SettingsHistoryScope = .recording, swipe: CGFloat = 0
+        archive: NotchHistoryArchiveStore, scope: SettingsHistoryScope? = nil, swipe: CGFloat = 0
     ) -> BarView {
         var copy = self
         copy.historyArchive = archive

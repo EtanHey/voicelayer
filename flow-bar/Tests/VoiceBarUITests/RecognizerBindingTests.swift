@@ -320,7 +320,7 @@ final class RecognizerBindingTests: XCTestCase {
         let state = RecognizerPickerState(snapshot: try XCTUnwrap(RecognizerStatusSnapshot(payload: payload)))
         XCTAssertEqual(state.selected, .whisper)
         XCTAssertEqual(state.effective, .parakeet)
-        XCTAssertEqual(state.explanation, "Using Parakeet — Whisper failed to load")
+        XCTAssertEqual(state.explanation, "Using Parakeet because Whisper failed to load.")
         XCTAssertTrue(state.smartChunkingApplicable, "The desired-engine product rule is symmetric during recovery")
     }
 

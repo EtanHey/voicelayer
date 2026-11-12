@@ -213,8 +213,7 @@ final class RecognizerKUICopyTests: XCTestCase {
         let row = try XCTUnwrap(ModelsSettingsView.unloadWhenIdleRow(for: s))
         // U3a (SPEC 2.3): the title is plain; the saving moves into the description.
         XCTAssertEqual(row.title, "Unload when idle")
-        XCTAssertEqual(row.captionLines, ["Frees about 2.5 GB of memory after 10 min without dictation. "
-            + "The next dictation loads Parakeet again, which adds a few seconds."], "from the reported 2.51 GB")
+        XCTAssertEqual(row.captionLines, ["Frees about 2.5 GB of memory after 10 minutes without dictation. The next dictation takes a few seconds longer."], "from the reported 2.51 GB")
         let bigger = try Self.state(Self.payload(unloadWhenIdle: false, parakeetBytes: 3_100_000_000))
         XCTAssertTrue(try XCTUnwrap(ModelsSettingsView.unloadWhenIdleRow(for: bigger)).line.hasPrefix("Frees about 3 GB "),
                       "the size follows the model")
@@ -230,14 +229,14 @@ final class RecognizerKUICopyTests: XCTestCase {
 
     func testParakeetLineFollowsTheSwitch() throws {
         XCTAssertEqual(try Self.state(Self.payload(unloadWhenIdle: false)).autoLoadLine(for: .parakeet), "Stays loaded between dictations.")
-        XCTAssertEqual(try Self.state(Self.payload(unloadWhenIdle: true)).autoLoadLine(for: .parakeet), "Unloads after 10 min idle to free memory.")
+        XCTAssertEqual(try Self.state(Self.payload(unloadWhenIdle: true)).autoLoadLine(for: .parakeet), "Unloads after 10 minutes without dictation to free memory.")
         XCTAssertNil(try Self.state(Self.payload(parakeet: "sleeping", unloadWhenIdle: false)).autoLoadLine(for: .parakeet),
                      "Sleeping already says it loads when you dictate")
         XCTAssertEqual(try Self.state(Self.payload()).autoLoadLine(for: .parakeet),
-                       "Loads automatically when selected; unloads after 10 min idle.", "older daemons keep the old line")
+                       "Loads automatically when selected; unloads after 10 minutes without dictation.", "older daemons keep the old line")
         XCTAssertEqual(try Self.state(Self.payload(desired: "whisper", effective: "whisper", parakeet: "sleeping", whisper: "ready",
                                                    unloadWhenIdle: false)).autoLoadLine(for: .whisper),
-                       "Loads automatically when selected; unloads after 10 min idle.", "the switch governs Parakeet only")
+                       "Loads automatically when selected; unloads after 10 minutes without dictation.", "the switch governs Parakeet only")
     }
 
     func testVoiceStateSendsK2CommandAndSettlesOnTheHigherRevisionAck() throws {

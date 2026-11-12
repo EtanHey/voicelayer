@@ -188,6 +188,7 @@ final class NotchHistoryCategoriesTests: XCTestCase {
                 isARepeat: false, keyCode: code
             ))
         }
+        XCTAssertTrue(harness.panel.makeFirstResponder(monitor))
         XCTAssertFalse(monitor.routeKey(try key(123), isKeyWindow: false),
                        "the arrows are not the notch's while another window has the keys")
         XCTAssertEqual(shown(harness), [.speech])
@@ -207,6 +208,349 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         try swipe(harness, dx: -160)
         XCTAssertTrue(identifiers(harness).contains(NotchHistoryPresentation.emptyRowIdentifier))
         XCTAssertTrue(labels(harness).contains { $0.contains(NotchHistoryPresentation.emptyState(for: .ask).title) })
+    }
+
+    func testH2AskAndSpeechRowsOpenTheirOwnArchiveEntry() throws {
+        for surface in [NotchSurfaceEvent.openHistory, .openSettings(.history)] {
+            for scope in [SettingsHistoryScope.ask, .speech] {
+                let harness = makeHarness()
+                open(harness, surface)
+                wait { harness.archive.speech != nil }
+                try swipe(harness, dx: -160)
+                if scope == .speech { try swipe(harness, dx: -160) }
+                let row = try XCTUnwrap(frame(identified: "history-row-2", harness))
+                let point = harness.panel.convertPoint(fromScreen: NSPoint(x: row.minX + 30, y: row.midY))
+                try send(.leftMouseDown, at: point, to: harness.panel)
+                try send(.leftMouseUp, at: point, to: harness.panel)
+                drain(0.3)
+                XCTAssertEqual(harness.opens.values, ["\(scope.rawValue):synthetic-\(scope.rawValue)-1"],
+                               "a row must preserve its category and archive id")
+            }
+        }
+    }
+
+    func testH2SwipeReleaseCannotCopyButCopyWorksAfterCooldown() throws {
+        var copies = 0
+        let dictations = NotchHistoryPanel(
+            entries: [RecentTranscriptionEntry(text: "Synthetic copy target.")], activeRetranscriptionPath: nil,
+            palette: .resolve(for: .dark), onCopy: { _ in copies += 1; return true },
+            onPaste: { _ in XCTFail("unexpected paste") }, onRetranscribe: { _ in }, forcedHoverIndex: 0)
+        let archive = NotchHistoryArchiveStore(loadAsk: { _ in [] }, loadSpeech: { _ in [] })
+        let host = NSHostingView(rootView: NotchHistoryCategoryPanel(dictations: dictations, archive: archive)
+            .transaction { $0.disablesAnimations = true; $0.animation = nil })
+        host.frame = NSRect(x: 0, y: 0, width: 404, height: 276)
+        let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        window.orderBack(nil)
+        windows.append(window)
+        drain(0.2)
+        host.layoutSubtreeIfNeeded()
+        let copy = try XCTUnwrap(elements(host).first { $0.label == "Copy" && $0.frame.width > 0 }?.frame)
+        let point = window.convertPoint(fromScreen: NSPoint(x: copy.midX, y: copy.midY))
+        let monitor = try XCTUnwrap(swipeMonitor(host))
+        let listPoint = monitor.convert(NSPoint(x: monitor.bounds.midX, y: monitor.bounds.midY), to: nil)
+        for (phase, dx) in [(Int64(1), 0)] + Array(repeating: (Int64(2), -3), count: 8) + [(Int64(4), 0)] {
+            let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+                                           wheel1: 0, wheel2: Int32(dx), wheel3: 0))
+            cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+            cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
+            _ = monitor.route(try XCTUnwrap(NSEvent(cgEvent: cg)), in: window, at: listPoint)
+        }
+        try send(.leftMouseDown, at: point, to: window)
+        try send(.leftMouseUp, at: point, to: window)
+        drain(0.02)
+        XCTAssertEqual(copies, 0, "a click ending a swipe must not copy")
+        drain(0.4)
+        try send(.leftMouseDown, at: point, to: window)
+        try send(.leftMouseUp, at: point, to: window)
+        drain(0.02)
+        XCTAssertEqual(copies, 1, "an intentional copy after the cooldown still works")
+    }
+
+    func testH2CategorySurvivesCloseReopenAcrossBothSurfaces() throws {
+        let harness = makeHarness()
+        open(harness, .openHistory)
+        wait { harness.archive.speech != nil }
+        try swipe(harness, dx: -160)
+        try swipe(harness, dx: -160)
+        XCTAssertEqual(shown(harness), [.speech])
+        harness.surface.send(.dismiss(.toggle))
+        drain(1.0)
+        XCTAssertTrue(harness.archive.ask == nil, "closed History must release transcript rows")
+        XCTAssertTrue(harness.archive.speech == nil)
+        let reads = harness.archive.readCount
+        NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange, object: nil)
+        drain(0.3)
+        XCTAssertEqual(harness.archive.readCount, reads, "closed History does not reload")
+        open(harness, .openSettings(.history))
+        wait { harness.archive.speech != nil }
+        XCTAssertEqual(shown(harness), [.speech], "category memory survives changing the History surface")
+        harness.surface.send(.openSettings(.general))
+        drain(0.8)
+        XCTAssertTrue(harness.archive.ask == nil)
+        XCTAssertTrue(harness.archive.speech == nil)
+        open(harness, .openSettings(.history))
+        wait { harness.archive.speech != nil }
+        XCTAssertEqual(shown(harness), [.speech])
+        let nextSession = makeHarness()
+        open(nextSession, .openHistory)
+        XCTAssertEqual(shown(nextSession), [.recording], "a new session starts on Dictations")
+    }
+
+    func testH2ArchivesReleaseOnlyWhenTheLastSurfaceCloses() {
+        let rows = [NotchHistoryArchiveStore.Row(entry: RecentTranscriptionEntry(text: "Synthetic archive row."), detail: nil)]
+        let archive = NotchHistoryArchiveStore(loadAsk: { _ in rows }, loadSpeech: { _ in rows })
+        archive.surfaceOpened()
+        archive.surfaceOpened()
+        wait { archive.speech != nil }
+        XCTAssertEqual(archive.readCount, 1)
+        archive.surfaceClosed()
+        XCTAssertNotNil(archive.ask, "another History surface is still open")
+        archive.surfaceClosed()
+        XCTAssertTrue(archive.ask == nil)
+        XCTAssertTrue(archive.speech == nil)
+        NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange, object: nil)
+        drain(0.3)
+        XCTAssertEqual(archive.readCount, 1)
+        archive.surfaceOpened()
+        wait { archive.speech != nil }
+        XCTAssertEqual(archive.readCount, 2, "reopening reloads instead of showing retained rows")
+        archive.surfaceClosed()
+    }
+
+    private final class LoadLatch: @unchecked Sendable {
+        private let lock = NSLock()
+        private var pending: [CheckedContinuation<[NotchHistoryArchiveStore.Row], Never>] = []
+        var count: Int { lock.withLock { pending.count } }
+        func load() async -> [NotchHistoryArchiveStore.Row] {
+            await withCheckedContinuation { continuation in lock.withLock { pending.append(continuation) } }
+        }
+        func release() {
+            let continuations = lock.withLock { let all = pending; pending = []; return all }
+            for continuation in continuations {
+                continuation.resume(returning: [.init(entry: RecentTranscriptionEntry(text: "Synthetic late row."), detail: nil)])
+            }
+        }
+    }
+
+    func testH2CloseDuringLoadCannotRestoreClosedRows() {
+        let latch = LoadLatch()
+        let archive = NotchHistoryArchiveStore(loadAsk: { _ in await latch.load() }, loadSpeech: { _ in await latch.load() })
+        archive.surfaceOpened()
+        wait { latch.count == 2 }
+        XCTAssertEqual(latch.count, 2)
+        archive.surfaceClosed()
+        latch.release()
+        drain(0.1)
+        XCTAssertTrue(archive.ask == nil)
+        XCTAssertTrue(archive.speech == nil)
+        archive.surfaceOpened()
+        wait { latch.count == 2 }
+        XCTAssertEqual(latch.count, 2)
+        latch.release()
+        wait { archive.speech != nil }
+        XCTAssertNotNil(archive.ask)
+        XCTAssertEqual(archive.readCount, 2)
+        archive.surfaceClosed()
+        XCTAssertTrue(archive.ask == nil)
+        XCTAssertTrue(archive.speech == nil)
+    }
+
+    private final class OtherFocus: NSView {
+        override var acceptsFirstResponder: Bool { true }
+    }
+
+    func testH2ArrowsRequireHistoryFocusNotMerelyTheKeyWindow() throws {
+        let harness = makeHarness()
+        open(harness, .openSettings(.history))
+        let monitor = try XCTUnwrap(swipeMonitor(harness.host))
+        let right = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: 0, windowNumber: harness.panel.windowNumber, context: nil,
+            characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 124))
+        let other = OtherFocus(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
+        harness.host.addSubview(other)
+        XCTAssertTrue(harness.panel.makeFirstResponder(other))
+        XCTAssertFalse(monitor.routeKey(right, isKeyWindow: true), "arrows belong to the focused Settings control")
+        let field = NSTextView(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
+        harness.host.addSubview(field)
+        XCTAssertTrue(harness.panel.makeFirstResponder(field))
+        XCTAssertFalse(monitor.routeKey(right, isKeyWindow: true), "arrows belong to the focused text field")
+        XCTAssertTrue(harness.panel.makeFirstResponder(monitor), "the list has its own safe AppKit focus target")
+        XCTAssertFalse(monitor.routeKey(right, isKeyWindow: false))
+        XCTAssertTrue(monitor.routeKey(right, isKeyWindow: true), "a focused History list owns Right")
+        drain(0.3)
+        XCTAssertEqual(shown(harness), [.ask])
+        // The same focus target covers a selector click, and a click on the Settings tab bar releases it.
+        let selector = try XCTUnwrap(frame(identified: NotchHistoryPresentation.categoryIdentifier(.ask), harness))
+        let selectorPoint = harness.panel.convertPoint(fromScreen: NSPoint(x: selector.midX, y: selector.midY))
+        let click = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: selectorPoint,
+            modifierFlags: [], timestamp: 0, windowNumber: harness.panel.windowNumber,
+            context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+        XCTAssertTrue(harness.panel.makeFirstResponder(other))
+        monitor.handlePointer(click)
+        XCTAssertTrue(harness.panel.firstResponder === monitor, "the category selector owns the History focus target")
+        let outside = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown,
+            location: NSPoint(x: 1, y: harness.host.bounds.maxY - 1), modifierFlags: [], timestamp: 0,
+            windowNumber: harness.panel.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 1))
+        monitor.handlePointer(outside)
+        XCTAssertFalse(monitor.routeKey(right, isKeyWindow: true), "outside controls release History focus")
+        other.removeFromSuperview()
+        field.removeFromSuperview()
+    }
+
+    func testH2AccessibilityUsesAskAndSpeechNounsOnBothSurfaces() throws {
+        for surface in [NotchSurfaceEvent.openHistory, .openSettings(.history)] {
+            let harness = makeHarness()
+            open(harness, surface)
+            wait { harness.archive.speech != nil }
+            for scope in [SettingsHistoryScope.ask, .speech] {
+                try swipe(harness, dx: -160)
+                let row = try XCTUnwrap(tree(harness).first { $0.id == "history-row-1" })
+                XCTAssertTrue(row.hint.localizedCaseInsensitiveContains(scope.rawValue), "hint identifies its category")
+                XCTAssertFalse(row.hint.localizedCaseInsensitiveContains("recording"), "Ask/Speech must not claim to be recordings")
+                XCTAssertTrue(row.label.hasPrefix(scope.title + ", "), "row label identifies its category")
+            }
+        }
+    }
+
+    func testH2LoadingStateDoesNotHaveBlankAccessibilityDetail() {
+        XCTAssertTrue(NotchHistoryPresentation.emptyState(for: .ask, isLoaded: false).detail.isEmpty)
+    }
+
+    @discardableResult
+    private func partialSwipe(_ harness: Harness, monitor: NotchHistorySwipeMonitor.Probe,
+                              phase: Int64, dx: Int32 = 0) throws -> Bool {
+        let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+                                       wheel1: 0, wheel2: dx, wheel3: 0))
+        cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+        cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
+        let point = monitor.convert(NSPoint(x: monitor.bounds.midX, y: monitor.bounds.midY), to: nil)
+        return monitor.route(try XCTUnwrap(NSEvent(cgEvent: cg)), in: harness.panel, at: point)
+    }
+
+    func testH2NewSwipeInterruptsGestureOrSettlementWithoutSticking() throws {
+        let harness = makeHarness()
+        open(harness, .openHistory)
+        let monitor = try XCTUnwrap(swipeMonitor(harness.host))
+        try partialSwipe(harness, monitor: monitor, phase: 1)
+        try partialSwipe(harness, monitor: monitor, phase: 2, dx: -120)
+        // A new began cancels the unfinished gesture's translation.
+        try partialSwipe(harness, monitor: monitor, phase: 1)
+        try partialSwipe(harness, monitor: monitor, phase: 2, dx: 120)
+        try partialSwipe(harness, monitor: monitor, phase: 4)
+        XCTAssertEqual(harness.archive.selectedScope, .recording)
+        try partialSwipe(harness, monitor: monitor, phase: 1)
+        try partialSwipe(harness, monitor: monitor, phase: 2, dx: -160)
+        try partialSwipe(harness, monitor: monitor, phase: 4)
+        XCTAssertEqual(harness.archive.selectedScope, .ask)
+        // Start back immediately, while the first settlement animation is still in flight.
+        try partialSwipe(harness, monitor: monitor, phase: 1)
+        try partialSwipe(harness, monitor: monitor, phase: 2, dx: 160)
+        try partialSwipe(harness, monitor: monitor, phase: 4)
+        drain(0.3)
+        XCTAssertEqual(shown(harness), [.recording])
+    }
+
+    func testH2CloseDuringSwipeReopensWithoutStuckOffset() throws {
+        let harness = makeHarness()
+        open(harness, .openHistory)
+        let monitor = try XCTUnwrap(swipeMonitor(harness.host))
+        try partialSwipe(harness, monitor: monitor, phase: 1)
+        try partialSwipe(harness, monitor: monitor, phase: 2, dx: -160)
+        harness.surface.send(.dismiss(.toggle))
+        drain(0.8)
+        open(harness, .openHistory)
+        XCTAssertEqual(shown(harness), [.recording])
+        try swipe(harness, dx: -160)
+        XCTAssertEqual(shown(harness), [.ask], "reopened History must accept a fresh gesture")
+    }
+
+    func testH2TabSelectionCancelsTheOldSwipeTail() throws {
+        let harness = makeHarness()
+        open(harness, .openHistory)
+        let monitor = try XCTUnwrap(swipeMonitor(harness.host))
+        try partialSwipe(harness, monitor: monitor, phase: 1)
+        try partialSwipe(harness, monitor: monitor, phase: 2, dx: -100)
+        let tab = try XCTUnwrap(frame(identified: NotchHistoryPresentation.categoryIdentifier(.speech), harness))
+        let point = harness.panel.convertPoint(fromScreen: NSPoint(x: tab.midX, y: tab.midY))
+        try send(.leftMouseDown, at: point, to: harness.panel)
+        try send(.leftMouseUp, at: point, to: harness.panel)
+        drain(0.02)
+        XCTAssertEqual(harness.archive.selectedScope, .speech)
+        try partialSwipe(harness, monitor: monitor, phase: 2, dx: 160)
+        try partialSwipe(harness, monitor: monitor, phase: 4)
+        drain(0.3)
+        XCTAssertEqual(shown(harness), [.speech], "the interrupted swipe must not override the selected tab")
+    }
+
+    func testH2MonitorRemovalDiscardsPendingSwipeEvents() throws {
+        let harness = makeHarness()
+        open(harness, .openHistory)
+        let monitor = try XCTUnwrap(swipeMonitor(harness.host))
+        try partialSwipe(harness, monitor: monitor, phase: 1)
+        try partialSwipe(harness, monitor: monitor, phase: 2, dx: -160)
+        monitor.removeMonitor() // also called during dismantle / window movement
+        XCTAssertFalse(try partialSwipe(harness, monitor: monitor, phase: 2, dx: -160))
+        try partialSwipe(harness, monitor: monitor, phase: 4)
+        XCTAssertEqual(harness.archive.selectedScope, .recording, "a removed monitor cannot finish its old gesture")
+    }
+
+    func testR901MissingArchiveCallbackStillOpensHistory() throws {
+        for scope in [SettingsHistoryScope.ask,.speech] {
+            let harness=makeHarness(archiveCallback:false)
+            open(harness,.openHistory)
+            wait { harness.archive.speech != nil }
+            try swipe(harness,dx:-160)
+            if scope == .speech { try swipe(harness,dx:-160) }
+            let row=try XCTUnwrap(frame(identified:"history-row-2",harness))
+            let point=harness.panel.convertPoint(fromScreen:NSPoint(x:row.minX+30,y:row.midY))
+            try send(.leftMouseDown,at:point,to:harness.panel)
+            try send(.leftMouseUp,at:point,to:harness.panel)
+            drain(0.1)
+            XCTAssertEqual(harness.opens.values,["generic"],"a legacy host must get its History fallback")
+            XCTAssertEqual(harness.archive.selectedScope,scope,"the fallback retains the requested category")
+        }
+    }
+
+    func testR901CategorySelectionInvalidatesTheRestOfAPointerDrag() {
+        var pager=NotchHistoryCategoryPager(count:3)
+        XCTAssertTrue(pager.move(to:CGSize(width:-120,height:0)))
+        pager.select(1)
+        XCTAssertFalse(pager.move(to:CGSize(width:-180,height:0)),"do not restart at the old full translation")
+        XCTAssertEqual(pager.offset(width:400),0)
+        pager.end(width:400,flick:true)
+        XCTAssertEqual(pager.index,1,"release cannot advance beyond the explicitly selected category")
+        XCTAssertTrue(pager.move(to:CGSize(width:-140,height:0)),"the next physical drag still works")
+        pager.end(width:400)
+        XCTAssertEqual(pager.index,2)
+    }
+
+    func testR901TabIntoSelectorOwnsArrowKeysWithoutAPointerClick() throws {
+        let harness=makeHarness()
+        open(harness,.openHistory)
+        func selectorHost(_ view:NSView)->NSView? {
+            if view.identifier?.rawValue == "history-selector-keyboard-host" { return view }
+            return view.subviews.lazy.compactMap(selectorHost).first
+        }
+        let selector=try XCTUnwrap(selectorHost(harness.host),"the selector has its own keyboard focus subtree")
+        let previous=OtherFocus(frame:NSRect(x:0,y:0,width:8,height:8))
+        harness.host.addSubview(previous)
+        defer { previous.removeFromSuperview() }
+        previous.nextKeyView=selector
+        XCTAssertTrue(harness.panel.makeFirstResponder(previous))
+        harness.panel.selectNextKeyView(nil)
+        let responder=try XCTUnwrap(harness.panel.firstResponder as? NSView)
+        XCTAssertTrue(responder === selector || responder.isDescendant(of:selector),"Tab enters the selector")
+        let monitor=try XCTUnwrap(swipeMonitor(harness.host))
+        let right=try XCTUnwrap(NSEvent.keyEvent(with:.keyDown,location:.zero,modifierFlags:[],timestamp:0,
+            windowNumber:harness.panel.windowNumber,context:nil,characters:"",charactersIgnoringModifiers:"",isARepeat:false,keyCode:124))
+        XCTAssertTrue(monitor.routeKey(right,isKeyWindow:true),"selector keyboard focus owns Right without any click")
+        drain(0.3)
+        XCTAssertEqual(shown(harness),[.ask])
+        XCTAssertTrue(harness.panel.makeFirstResponder(previous))
+        XCTAssertFalse(monitor.routeKey(right,isKeyWindow:true),"unrelated keyboard focus keeps its arrows")
     }
 
     // MARK: Pictures (opt-in)
@@ -240,7 +584,7 @@ final class NotchHistoryCategoriesTests: XCTestCase {
             func list(height: CGFloat) -> AnyView {
                 let dictations = NotchHistoryPanel(
                     entries: fixture.state.recentTranscriptionEntries, activeRetranscriptionPath: nil, palette: palette,
-                    onCopy: { _ in true }, onPaste: { _ in }, onRetranscribe: { _ in }, listHeight: height
+                    onCopy: { _ in true }, onPaste: { _ in }, onRetranscribe: { _ in }, listHeight: height, forcedHoverIndex: 0
                 )
                 return Self.historySurface(dictations, fixture.archive, shot.scope, shot.swipe)
             }
@@ -325,6 +669,8 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         func add() { lock.withLock { value += 1 } }
     }
 
+    private final class OpenLog { var values: [String] = [] }
+
     private struct Harness {
         let model: VoiceBarNotchPresentationModel
         let surface: NotchSurfaceModel
@@ -332,6 +678,7 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         let panel: FloatingPillPanel
         let archive: NotchHistoryArchiveStore
         let loads: LoadLog
+        let opens: OpenLog
     }
 
     private static let marker: [SettingsHistoryScope: String] = [
@@ -363,7 +710,8 @@ final class NotchHistoryCategoriesTests: XCTestCase {
                         text: "\(Self.marker[scope]!) \(index + 1).", recordingPath: scope == .recording ? "/synthetic/\(index).wav" : nil,
                         createdAt: Date().addingTimeInterval(Double(-60 * (index + 1)))
                     ),
-                    detail: detail(index)
+                    detail: detail(index),
+                    destination: SettingsHistoryDestination(scope: scope, entryID: "synthetic-\(scope.rawValue)-\(index)")
                 )
             }
         }
@@ -378,14 +726,18 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         return Fixture(state: state, archive: archive, loads: loads, context: context)
     }
 
-    private func makeHarness(askCount: Int = 12) -> Harness {
+    private func makeHarness(askCount: Int = 12, archiveCallback: Bool = true) -> Harness {
         let fixture = makeFixture(askCount: askCount)
         let (state, archive, loads, context) = (fixture.state, fixture.archive, fixture.loads, fixture.context)
+        let opens = OpenLog()
+        let archiveOpen: ((SettingsHistoryDestination) -> Void)? = archiveCallback
+            ? { opens.values.append("\($0.scope.rawValue):\($0.entryID)") } : nil
         let model = VoiceBarNotchPresentationModel()
         let surface = NotchSurfaceModel()
         surface.log = { _ in }
         let host = PillHostingView(rootView: AnyView(BarView(
-            state: state, commandRouter: Router(), onOpenSettings: {}, onOpenHistory: {},
+            state: state, commandRouter: Router(), onOpenSettings: {}, onOpenHistory: { opens.values.append("generic") },
+            onOpenHistoryEntry: archiveOpen,
             presentationModel: model, includesPanelOutsets: true, surface: surface, settingsDrawer: context
         ).historyCategories(archive: archive)))
         host.activeHitTestProvider = { _ in true }
@@ -396,7 +748,7 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         panel.orderBack(nil)
         windows.append(panel)
         model.setHovered(true)
-        let harness = Harness(model: model, surface: surface, host: host, panel: panel, archive: archive, loads: loads)
+        let harness = Harness(model: model, surface: surface, host: host, panel: panel, archive: archive, loads: loads, opens: opens)
         resize(harness)
         drain(0.3)
         return harness
@@ -439,7 +791,7 @@ final class NotchHistoryCategoriesTests: XCTestCase {
     }
 
     /// Every accessibility element under the host, as (identifier, label, frame).
-    private func elements(_ root: Any, depth: Int = 0) -> [(id: String, label: String, frame: NSRect)] {
+    private func elements(_ root: Any, depth: Int = 0) -> [(id: String, label: String, frame: NSRect, hint: String)] {
         guard depth < 40, let object = root as? NSObject,
               object.responds(to: NSSelectorFromString("accessibilityRole")) else { return [] }
         // KVC on a key an element does not implement raises; ask first.
@@ -449,7 +801,8 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         var found = [(
             id: read("accessibilityIdentifier") as? String ?? "",
             label: read("accessibilityLabel") as? String ?? "",
-            frame: (read("accessibilityFrame") as? NSValue)?.rectValue ?? .zero
+            frame: (read("accessibilityFrame") as? NSValue)?.rectValue ?? .zero,
+            hint: read("accessibilityHelp") as? String ?? ""
         )]
         for child in read("accessibilityChildren") as? [Any] ?? [] {
             found += elements(child, depth: depth + 1)
@@ -457,7 +810,7 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         return found
     }
 
-    private func tree(_ harness: Harness) -> [(id: String, label: String, frame: NSRect)] {
+    private func tree(_ harness: Harness) -> [(id: String, label: String, frame: NSRect, hint: String)] {
         harness.host.layoutSubtreeIfNeeded()
         return elements(harness.host)
     }
@@ -472,7 +825,7 @@ final class NotchHistoryCategoriesTests: XCTestCase {
     /// The categories whose rows are exposed: exactly the one on screen.
     private func shown(_ harness: Harness) -> Set<SettingsHistoryScope> {
         let all = labels(harness)
-        return Set(SettingsHistoryScope.allCases.filter { scope in all.contains { $0.hasPrefix(Self.marker[scope]!) } })
+        return Set(SettingsHistoryScope.allCases.filter { scope in all.contains { $0.contains(Self.marker[scope]!) } })
     }
 
     /// A window point inside the list on screen (the middle of its second row, or of the empty row).

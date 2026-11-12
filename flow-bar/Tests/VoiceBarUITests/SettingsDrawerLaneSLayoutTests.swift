@@ -36,19 +36,26 @@ final class SettingsDrawerLaneSLayoutTests: XCTestCase {
     /// It now shares the status line, so the row is two lines tall like its neighbours.
     func testTheInUseMicShowsItsPillOnTheStatusLineNotUnderIt() async throws {
         let updates = await SettingsDrawerLaneSSnapshotTests.updates()
-        let lines = try Self.paintedLines(SettingsDrawerLaneSSnapshotTests.drawer(.general, updates: updates), height: 470)
+        var audit: [SettingsTextAuditEntry] = []
+        let view = SettingsDrawerLaneSSnapshotTests.drawer(.general, updates: updates)
+            .onPreferenceChange(SettingsTextAuditKey.self) { audit = $0 }
+        let lines = try Self.paintedLines(view, height: 470)
+        let usedFrame = try XCTUnwrap(audit.first { $0.text == "MacBook Pro Microphone" }).frame
+        let nextFrame = try XCTUnwrap(audit.first { $0.text == "Master iPhone’s AirPods Pro #2" }).frame
+        let usbFrame = try XCTUnwrap(audit.first { $0.text == "USB Audio Device" }).frame
+        let usedPitch = nextFrame.minY - usedFrame.minY
+        let plainPitch = usbFrame.minY - nextFrame.minY
+        print("Mic title-frame pitch: used=\(usedPitch) plain=\(plainPitch)")
+        // Measure row pitch from equal-font layout frames. OCR ink tops differ between capital letters and
+        // punctuation (the AirPods label alone adds a 3 pt bias); the 3 pt row-spacing limit stays unchanged.
+        XCTAssertLessThan(abs(usedPitch - plainPitch), 3,
+                          "[S1] in-use and plain rows share their two-line pitch (\(usedPitch) vs \(plainPitch))")
         let title = try Self.line(lines, containing: "macbook pro microphone")
         let pill = try Self.line(lines, containing: "used for dictation")
-        let nextTitle = try Self.line(lines, containing: "airpods")
         // OCR may read "Connected Used for dictation" as one line; either way its centre is the status line's.
         let statusLineY = title.box.maxY + 4
         XCTAssertLessThan(abs(pill.box.midY - (statusLineY + pill.box.height / 2)), 6,
                           "[S1] the pill must sit on the status line right under the name: title \(title.box), pill \(pill.box)")
-        let usb = try Self.line(lines, containing: "usb audio device")
-        let rowPitchUsed = nextTitle.box.minY - title.box.minY
-        let rowPitchPlain = usb.box.minY - nextTitle.box.minY
-        XCTAssertLessThan(abs(rowPitchUsed - rowPitchPlain), 3,
-                          "[S1] the in-use row is as tall as a plain two-line row (\(rowPitchUsed) vs \(rowPitchPlain))")
     }
 
     /// Shot 5: "Unavailable with Parakeet." led the Smart chunks description. At rest the row now paints only what it

@@ -1,6 +1,15 @@
 import Combine
 import Foundation
 
+public struct SettingsHistoryDestination: Equatable, Sendable {
+    public let scope: SettingsHistoryScope
+    public let entryID: String
+    public init(scope: SettingsHistoryScope, entryID: String) {
+        self.scope = scope
+        self.entryID = entryID
+    }
+}
+
 /// Lane H: the notch History's Ask and Speech rows. It reads the archive with the Settings History tab's own
 /// loaders (`SettingsAskHistoryArchive`, `SettingsSpeechHistoryArchive`), off the main actor, and only while a
 /// History surface is open: the first surface to open loads, an archive change while one is open reloads, and with
@@ -11,12 +20,17 @@ public final class NotchHistoryArchiveStore: ObservableObject {
         public let entry: RecentTranscriptionEntry
         /// What follows the time on the row's second line.
         public let detail: String?
+        public var hasActionableText = true
+        public var destination: SettingsHistoryDestination? = nil
     }
 
     public typealias Loader = @Sendable (Int) async -> [Row]
 
     public static let shared = NotchHistoryArchiveStore()
     static let limit = NotchHistoryMorph.maximumEntries
+
+    /// Session memory only: closing a surface releases its rows, not the chosen category.
+    @Published var selectedScope: SettingsHistoryScope = .recording
 
     /// Nil until the first load lands.
     @Published public private(set) var ask: [Row]?
@@ -68,6 +82,8 @@ public final class NotchHistoryArchiveStore: ObservableObject {
         changes = nil
         loadTask?.cancel()
         loadTask = nil
+        ask = nil
+        speech = nil
     }
 
     private func reload(debounce: Bool) {
@@ -90,17 +106,22 @@ public final class NotchHistoryArchiveStore: ObservableObject {
     nonisolated static func row(_ entry: SettingsAskHistoryEntry) -> Row {
         Row(
             entry: RecentTranscriptionEntry(text: entry.displayResponseTranscript, createdAt: entry.createdAt),
-            detail: entry.hasQuestionText ? "Asked “\(NotchHistoryPresentation.firstWords(entry.questionText))”" : nil
+            detail: entry.hasQuestionText ? "Asked “\(NotchHistoryPresentation.firstWords(entry.questionText))”" : nil,
+            hasActionableText: entry.hasResponseTranscript,
+            destination: SettingsHistoryDestination(scope: .ask, entryID: entry.id)
         )
     }
 
     /// A Speech row leads with the text that was read aloud; its length follows the time.
     nonisolated static func row(_ entry: SettingsSpeechHistoryEntry) -> Row {
         Row(
-            entry: RecentTranscriptionEntry(text: entry.preview, createdAt: entry.createdAt),
+            entry: RecentTranscriptionEntry(text: entry.spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? entry.preview : entry.spokenText, createdAt: entry.createdAt),
             detail: entry.status == "completed" || entry.durationMs == nil
                 ? (entry.durationMs == nil ? entry.statusLabel : entry.durationLabel)
-                : "\(entry.durationLabel) · \(entry.statusLabel)"
+                : "\(entry.durationLabel) · \(entry.statusLabel)",
+            hasActionableText: !entry.spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            destination: SettingsHistoryDestination(scope: .speech, entryID: entry.id)
         )
     }
 }

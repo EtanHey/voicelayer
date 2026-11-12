@@ -96,6 +96,14 @@ enum HotkeyInputSource {
     case legacySocket
 }
 
+/// One Boolean handed from the main thread to the log rotator's queue.
+final class LogRotationAnswer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var answer = false
+    var value: Bool { lock.lock(); defer { lock.unlock() }; return answer }
+    func set(_ value: Bool) { lock.lock(); answer = value; lock.unlock() }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
     let voiceState = VoiceState(
         transcriptionVocabularyLoader: {
@@ -153,7 +161,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     private let defaults = VoiceBarDefaults.make()
     private lazy var microphonePriority = MicrophoneDevicePriority(defaults: defaults)
-    private lazy var microphonePriorityApply = MicrophonePriorityApplyCoordinator(
+    /// Not private: a test holds this dependency to read the phase board mid-transition.
+    lazy var microphonePriorityApply = MicrophonePriorityApplyCoordinator(
         resolveDeviceID: { [weak self] in
             guard let self else { return nil }
             return microphonePriority.resolveDeviceID(
@@ -166,10 +175,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 MicrophoneDeviceManager.selectInputDevice(id: deviceID)
         }
     )
-    private lazy var responsivenessWatchdog = RuntimeResponsivenessWatchdog(loop: "main") { acknowledgement in
-        let loop = CFRunLoopGetMain()!
-        CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue) { acknowledgement.perform() }
-        CFRunLoopWakeUp(loop)
+    /// c8 X: stalls over 500 ms are logged with the phase (2 s and no phase could not explain the 2026-11-11
+    /// hang). 4 probes a second with 100 ms of leeway; at most one pair per 10 s in an unchanged phase.
+    static let mainStallThreshold: TimeInterval = 0.5
+    static let mainStallProbeInterval: TimeInterval = 0.25
+    static let mainStallProbeLeeway: TimeInterval = 0.1
+    static let mainStallQuietPeriod: TimeInterval = 10
+    private lazy var responsivenessWatchdog: RuntimeResponsivenessWatchdog = {
+        precondition(Thread.isMainThread)
+        let mainThread = StalledThreadStack.currentThreadPort()
+        let defaults = defaults
+        return RuntimeResponsivenessWatchdog(
+            loop: "main", threshold: Self.mainStallThreshold,
+            context: { RuntimePhaseBoard.shared.snapshot() },
+            phaseKey: { RuntimePhaseBoard.shared.phaseKey() },
+            quietPeriod: Self.mainStallQuietPeriod,
+            // Off unless `voicebar.diagnostics.stallStacks` is set (StalledThreadStack.enabledDefaultsKey).
+            stack: { StalledThreadStack.frames(of: mainThread, defaults: defaults) }
+        ) { acknowledgement in
+            let loop = CFRunLoopGetMain()!
+            CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue) { acknowledgement.perform() }
+            CFRunLoopWakeUp(loop)
+        }
+    }()
+    /// c8 X: caps voicebar-err.log (10 MB, 5 files), and only the file stderr appends to. PARKED: off unless
+    /// `voicebar.diagnostics.logRotation` is set at launch. A check is skipped when a take, handoff,
+    /// transcription or stall is in progress at that moment; the answer is a snapshot, so a take that starts
+    /// right after it can overlap the truncate (open: review RX-r3 P2). Only log lines are ever at stake.
+    private lazy var errorLogRotator: ErrorLogRotator = {
+        let watchdog = responsivenessWatchdog
+        let defaults = defaults
+        return ErrorLogRotator(isEnabled: { defaults.bool(forKey: ErrorLogRotator.enabledDefaultsKey) },
+                               isEligible: { [weak self] in
+            guard !watchdog.isStallOutstanding else { return false }
+            // The take state lives on the main thread. A main thread that cannot answer in half a second is
+            // itself a reason not to rotate.
+            let answered = DispatchSemaphore(value: 0)
+            let quiet = LogRotationAnswer()
+            DispatchQueue.main.async {
+                quiet.set(MainActor.assumeIsolated { self.map { Self.isQuietForLogRotation($0.voiceState) } ?? false })
+                answered.signal()
+            }
+            return answered.wait(timeout: .now() + 0.5) == .success && quiet.value && !watchdog.isStallOutstanding
+        })
+    }()
+
+    /// Idle is not enough: the converse handoff publishes idle while a recording is still pending.
+    @MainActor static func isQuietForLogRotation(_ state: VoiceState) -> Bool {
+        state.mode == .idle && !state.isQuitBusy && !state.isSavingDictationForQuit && state.hideDisabledReason == nil
     }
     private var microphonePriorityTimer: Timer?
     private let pillContextMenuController = PillContextMenuController()
@@ -648,7 +701,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        responsivenessWatchdog.start()
+        notchSurface.log = { line in
+            NSLog("%@", line)
+            RuntimePhaseBoard.shared.noteSurfaceTransition(line: line)
+        }
+        responsivenessWatchdog.start(interval: Self.mainStallProbeInterval, leeway: Self.mainStallProbeLeeway)
+        errorLogRotator.start()
         signal(SIGPIPE, SIG_IGN)
         NSLog("[VoiceBar] SIGPIPE ignored process-wide")
         signal(SIGTERM, SIG_IGN)
@@ -717,6 +775,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         pressure.setEventHandler { [weak self, weak server] in
             guard let pressure = self?.memoryPressureSource else { return }
             let level = pressure.data.contains(.critical) ? "critical" : "warning"
+            RuntimePhaseBoard.shared.noteMemoryPressure(level: level)
+            NSLog("[VoiceBar] memory pressure level=%@", level)
             server?.sendCommandToOwner(command: ["cmd": "memory_pressure", "level": level])
         }
         memoryPressureSource = pressure
@@ -833,6 +893,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             onOpenHistory: { [weak self] in self?.openSettingsWindow(tab: .history) },
             onOpenHistoryRecording: { [weak self] path in
                 self?.openSettingsWindow(tab: .history, historyRecordingID: path)
+            },
+            onOpenHistoryEntry: { [weak self] destination in
+                self?.openSettingsWindow(tab: .history, historyDestination: destination)
             },
             presentationModel: notchPresentationModel,
             morphSelection: notchMorphSelection,
@@ -975,6 +1038,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     private func performTerminationCleanup() {
         responsivenessWatchdog.stop()
+        errorLogRotator.stop()
         stopPermissionHealth()
         memoryPressureSource?.cancel()
         memoryPressureSource = nil
@@ -1035,8 +1099,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         pillContextMenuController.updateStatusProvider = { [weak self] in
             guard let self else { return nil }
             let installed = VoiceBarInstalledVersion.current()
-            let status = VoiceBarBuildLine.status(menuUpdateStatus, describe: .current()) ?? menuUpdateStatus.menuMessage
-            return [installed.shortCommit, status].compactMap { $0 }.joined(separator: " · ")
+            return VoiceBarBuildLine.menuStatus(installed: installed, describe: .current(), status: menuUpdateStatus)
         }
         pillContextMenuController.transcriptProvider = { [weak self] in
             self?.voiceState.latestReusableTranscript ?? ""
@@ -1818,6 +1881,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         refreshPermissionHealth(.listenerChanged, force: true)
     }
 
+    func handleVoiceModeChangeForTesting(_ mode: VoiceMode) { handleVoiceModeChange(mode) }
+
     func configureHotkeyCallbacksForTesting() {
         configureHotkeyCallbacks()
     }
@@ -1894,6 +1959,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private func handleVoiceModeChange(_ mode: VoiceMode) {
         previousVoiceMode = currentVoiceMode
         currentVoiceMode = mode
+        // First, before anything that can block: a stall inside this transition must name the new mode.
+        RuntimePhaseBoard.shared.setMode(mode.rawValue)
         microphonePriorityApply.modeDidChange(
             mode,
             captureLive: voiceState.captureLive || voiceState.isRecordingHandoffPending
@@ -3229,10 +3296,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         requestTermination(.menuBar)
     }
 
-    func openSettingsWindow(tab: SettingsTab? = nil, focus: SettingsFocus? = nil, historyRecordingID: String? = nil) {
+    func openSettingsWindow(tab: SettingsTab? = nil, focus: SettingsFocus? = nil, historyRecordingID: String? = nil, historyDestination: SettingsHistoryDestination? = nil) {
         // Notch entry points (gear, menu, system selectors and Cmd+,) stay in its drawer. A specific archive
         // detail still has only the window implementation, so preserve that explicit destination.
-        if historyRecordingID == nil, panel?.isVisible == true, !voiceState.isHidden {
+        if historyRecordingID == nil, historyDestination == nil, panel?.isVisible == true, !voiceState.isHidden {
             let currentTab: SettingsTab?
             if case let .settings(current) = notchSurface.drawer { currentTab = current } else { currentTab = nil }
             let selected = tab ?? currentTab ?? lastSettingsTab
@@ -3246,7 +3313,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         NSApp.activate(ignoringOtherApps: true)
         if let tab {
             settingsTabRequest = SettingsTabRequest(
-                tab: tab, focus: focus, historyRecordingID: historyRecordingID, id: (settingsTabRequest?.id ?? 0) + 1
+                tab: tab, focus: focus, historyRecordingID: historyRecordingID, historyDestination: historyDestination, id: (settingsTabRequest?.id ?? 0) + 1
             )
         }
         if let settingsWindow {

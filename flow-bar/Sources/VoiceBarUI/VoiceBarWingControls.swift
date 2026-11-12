@@ -114,26 +114,55 @@ extension VoiceBarQueueCountBadge {
     /// R892 P3: the badge grows in from 0.6 as it arrives and shrinks as it leaves; with Reduce Motion it only fades.
     static func insertionScale(reduceMotion: Bool) -> CGFloat { reduceMotion ? 1 : 0.6 }
 
-    static func transition(reduceMotion: Bool) -> AnyTransition {
-        reduceMotion ? .opacity
-            : .scale(scale: insertionScale(reduceMotion: false), anchor: .topLeading).combined(with: .opacity)
+    enum TransitionKind: Equatable { case fade, scaleAndFade }
+
+    static func transitionKind(reduceMotion: Bool) -> TransitionKind { reduceMotion ? .fade : .scaleAndFade }
+
+    static func transition(_ kind: TransitionKind) -> AnyTransition {
+        switch kind {
+        case .fade: .opacity
+        case .scaleAndFade:
+            .scale(scale: insertionScale(reduceMotion: false), anchor: .topLeading).combined(with: .opacity)
+        }
+    }
+
+    #if DEBUG
+    /// Test oracle (R892-r2 P3): the transition the mounted modifier chose, in order.
+    nonisolated(unsafe) static var recordedTransitionKinds: [TransitionKind] = []
+    #endif
+}
+
+private struct VoiceBarReduceMotionOverrideKey: EnvironmentKey {
+    static let defaultValue: Bool? = nil
+}
+
+extension EnvironmentValues {
+    /// Tests set this to drive Reduce Motion (SwiftUI's `accessibilityReduceMotion` is read-only); nil uses the system.
+    var voiceBarReduceMotionOverride: Bool? {
+        get { self[VoiceBarReduceMotionOverrideKey.self] }
+        set { self[VoiceBarReduceMotionOverrideKey.self] = newValue }
     }
 }
 
 private struct VoiceBarQueueCountBadgeModifier: ViewModifier {
     let label: String?
     let accessibilityLabel: String?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.voiceBarReduceMotionOverride) private var reduceMotionOverride
 
     func body(content: Content) -> some View {
-        content.overlay(alignment: .bottomTrailing) {
+        let kind = VoiceBarQueueCountBadge.transitionKind(reduceMotion: reduceMotionOverride ?? systemReduceMotion)
+        #if DEBUG
+        VoiceBarQueueCountBadge.recordedTransitionKinds.append(kind)
+        #endif
+        return content.overlay(alignment: .bottomTrailing) {
             if let label {
                 let placement = VoiceBarQueueCountBadge.placement(for: label)
                 VoiceBarQueueCountBadgeView(label: label)
                     .offset(x: placement.width, y: placement.height)
                     .allowsHitTesting(false)
                     .accessibilityLabel(accessibilityLabel ?? "")
-                    .transition(VoiceBarQueueCountBadge.transition(reduceMotion: reduceMotion))
+                    .transition(VoiceBarQueueCountBadge.transition(kind))
             }
         }
     }
