@@ -152,7 +152,7 @@ final class SettingsPolishS5Tests: XCTestCase {
     }
     func testSpeechShowsAControlInsteadOfTelemetry() throws {
         let lines = try Self.ocr(Self.render(Self.drawer(.speech)))
-        XCTAssertTrue(lines.contains { $0.contains("short / long split") })
+        XCTAssertEqual(lines.filter { $0.contains("voice profile threshold") }.count, 2, "The section and row keep their known name")
         XCTAssertFalse(lines.contains { $0.contains("last reported cutoff") || $0.contains("first sound after") })
         XCTAssertEqual(lines.filter { $0.contains("unavailable") }.count, 1)
     }

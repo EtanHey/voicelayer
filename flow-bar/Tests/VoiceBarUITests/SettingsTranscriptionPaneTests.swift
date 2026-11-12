@@ -31,8 +31,8 @@ final class SettingsTranscriptionPaneTests: XCTestCase {
     func testRowsNameTheRecognizerSayWhatItIsGoodForAndRecommendParakeet() {
         XCTAssertEqual(RecognizerPickerView.rowTitle(.parakeet), "Parakeet")
         XCTAssertEqual(RecognizerPickerView.rowTitle(.whisper), "Whisper large-v3-turbo")
-        XCTAssertEqual(RecognizerPickerView.blurb(.parakeet), "Fastest. English.")
-        XCTAssertEqual(RecognizerPickerView.blurb(.whisper), "Slower. Hebrew and mixed languages.")
+        XCTAssertEqual(RecognizerPickerView.blurb(.parakeet), "Fastest on this Mac. English.")
+        XCTAssertEqual(RecognizerPickerView.blurb(.whisper), "Slower. Handles Hebrew and mixed languages.")
     }
 
     func testStatusSaysLoadedOrOnDiskWithTheModelsOwnSize() {

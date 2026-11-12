@@ -17,6 +17,10 @@ public struct SpeechSetting<Value: Equatable & Sendable>: Equatable, Sendable {
 }
 
 public struct SpeechControlsState: Equatable, Sendable {
+    /// Configuration calls the fast engine edge; measured audio calls it edge-tts.
+    static func isFastVoice(_ engine: String) -> Bool { engine == "edge" || engine == "edge-tts" }
+    static func voiceKindLabel(_ engine: String) -> String { isFastVoice(engine) ? "Fast voice" : "Cloned voice" }
+
     public struct Profile: Equatable, Sendable {
         public let engine: SpeechSetting<String>
         public let voice: SpeechSetting<String>
@@ -29,7 +33,7 @@ public struct SpeechControlsState: Equatable, Sendable {
             guard let ms = firstAudioMS, let engine = measuredEngine, let origin = measurementOrigin else {
                 return "Not measured yet. Press Preview."
             }
-            let name = engine == "edge-tts" ? "Fast voice" : "Cloned voice"
+            let name = SpeechControlsState.voiceKindLabel(engine)
             let source = origin == "preview" ? "Last preview" : "Last speech"
             return String(format: "%@: first sound after %.1f s · %@%@", source, ms / 1000, name,
                           measurementFallback ? " (fallback)" : "")

@@ -65,6 +65,6 @@ final class DictionarySearchTests: XCTestCase {
         XCTAssertEqual(DictionarySearchPresentation.includedSample(rows), (1...8).map { "Term\($0)" })
         XCTAssertEqual(DictionarySearchPresentation.includedSample([]), [])
         XCTAssertEqual(DictionarySearchPresentation.includedExplanation,
-                       "Built-in. Your terms override these.")
+                       "These ship with VoiceBar and can't be edited. Your own terms override them.")
     }
 }

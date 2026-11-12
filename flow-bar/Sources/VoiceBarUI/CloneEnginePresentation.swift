@@ -49,7 +49,7 @@ extension CloneEngineControlModel {
         guard let snapshot else {
             return CloneEnginePresentation(
                 pill: "Unavailable", tone: .grey, pulses: false, showsProgress: false,
-                description: "Engine status not reported yet.",
+                description: "VoiceBar hasn't reported the voice engine's status, so Settings can't control it yet.",
                 actions: [], note: note?.0, noteIsProblem: note?.1 ?? false,
                 startWithVoiceBar: nil, startWithVoiceBarEnabled: false
             )
