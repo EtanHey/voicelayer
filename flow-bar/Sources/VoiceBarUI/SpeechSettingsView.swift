@@ -147,6 +147,7 @@ public struct SpeechSettingsView: View {
                     .disabled(thresholdDraft.text == nil || controls == nil)
                     .accessibilityIdentifier("speech-threshold-revert")
             }
+            .settingsLockedReasonAboveRow()
             .help(SpeechThresholdDraft.confirmedLabel(controls?.shortLimit))
             .accessibilityIdentifier("speech-threshold-applied")
         }

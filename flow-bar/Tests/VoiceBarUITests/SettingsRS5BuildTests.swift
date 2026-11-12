@@ -29,8 +29,8 @@ final class SettingsRS5BuildTests: XCTestCase {
             launcher: NoLauncher(), isDictating: { false })
         await controller.checkForUpdates()
         XCTAssertEqual(controller.buildLine, "2.4.0")
-        XCTAssertEqual(NotchSettingsDrawerPresentation.displayUpdateStatus(.ahead(latest: "2.3.0"), describe: controller.describe),
-                       "No newer release is available.")
+        XCTAssertEqual(NotchSettingsDrawerPresentation.updateStatus(.ahead(latest: "2.3.0")),
+                       "No newer release. This build is past 2.3.0.")
     }
 
     private struct NoLauncher: VoiceBarUpdateLaunching {

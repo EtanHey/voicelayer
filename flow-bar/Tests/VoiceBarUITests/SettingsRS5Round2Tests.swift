@@ -8,7 +8,7 @@ final class SettingsRS5Round2Tests: XCTestCase {
     private let installed = VoiceBarInstalledVersion(version: "2.4.0", commit: "123456789abc")
     private let statuses: [(String, VoiceBarVersionStatus)] = [
         ("latest", .latest), ("available", .available("2.4.1")),
-        ("checking", .checking), ("failed", .couldNotCheck)]
+        ("checking", .checking), ("failed", .couldNotCheck), ("ahead", .ahead(latest: "2.3.9"))]
 
     func testReleaseAndNonReleaseKeepEachUpdateStatusOnAllThreeSurfaces() {
         for describe in [VoiceBarGitDescribe.parse("v2.4.0"), VoiceBarGitDescribe.parse("v2.4.0-0-g1234567")] {
@@ -27,8 +27,14 @@ final class SettingsRS5Round2Tests: XCTestCase {
                 case .couldNotCheck: .couldNotCheck
                 case .ahead(let latest): .ahead(latest: latest)
                 }
-                XCTAssertEqual(NotchSettingsDrawerPresentation.displayUpdateStatus(phase, describe: describe),
-                    NotchSettingsDrawerPresentation.updateStatus(phase), name)
+                let expectedDrawer = switch status {
+                case .latest: "No newer release is available."
+                case .available: "VoiceBar 2.4.1 is available."
+                case .checking: "Checking for updates…"
+                case .couldNotCheck: "Could not check for updates. Try again in a moment."
+                case .ahead: "No newer release. This build is past 2.3.9."
+                }
+                XCTAssertEqual(NotchSettingsDrawerPresentation.updateStatus(phase), expectedDrawer, name)
             }
         }
     }
@@ -41,7 +47,7 @@ final class SettingsRS5Round2Tests: XCTestCase {
                     check: VoiceBarVersionCheck(fetch: {
                         if name == "checking" { await pending.wait() }
                         if name == "failed" { throw URLError(.notConnectedToInternet) }
-                        return "cask \"voicebar\" do\n version \"\(name == "available" ? "2.4.1" : "2.4.0")\"\nend\n"
+                        return "cask \"voicebar\" do\n version \"\(name == "available" ? "2.4.1" : name == "ahead" ? "2.3.9" : "2.4.0")\"\nend\n"
                     }), launcher: NoLauncher(), isDictating: { false })
                 let check = Task { await controller.checkForUpdates() }
                 if name == "checking" {
@@ -69,7 +75,8 @@ final class SettingsRS5Round2Tests: XCTestCase {
                 case .available: matched = lines.filter { $0.contains("update available") }.count
                 case .checking: matched = lines.filter { $0.contains("checking") }.count
                 case .couldNotCheck: matched = lines.filter { $0.contains("check failed") || $0.contains("could not check") }.count
-                case .ahead: matched = 0
+                case .ahead: matched = lines.filter { $0.contains("ahead of release") }.count
+                    XCTAssertTrue(lines.joined(separator: " ").contains("this build is past 2.3.9."), "The candidate helper stays verbatim on releases too")
                 }
                 let expected = switch name {
                 case "checking": 3
