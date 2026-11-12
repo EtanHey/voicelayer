@@ -1,19 +1,22 @@
 import Darwin
 import Foundation
 
-/// Caps `voicebar-err.log`. launchd, VoiceBar and every child (daemon, recognizer, polish server) append to
-/// it through one inherited descriptor, so the file cannot be renamed away: it is copied to `.1` and then
-/// truncated in place (copy-then-truncate), which every appender follows without reopening.
+/// Caps `voicebar-err.log`. **Off by default**: it starts only when `voicebar.diagnostics.logRotation` is true.
+///
+/// launchd, VoiceBar and every child (daemon, recognizer, polish server) append to the log through one
+/// inherited descriptor, so the file cannot be renamed away: it is copied to `.1` and then truncated in place
+/// (copy-then-truncate), which every appender follows without reopening.
 ///
 /// What is kept: every byte that was in the file when the last read before the truncate returned, and every
-/// one of those bytes is synced to disk before the truncate. What can still be lost: a write that lands
-/// between that last read and the truncate, one system call later.
+/// one of those bytes is synced to disk before the truncate. What can still be lost: log lines written
+/// between that last read and the truncate. Recordings and transcripts are never touched.
 ///
-/// When it may run (`isEligible`): nothing is recording, handing off, transcribing or re-transcribing, and no
-/// main-loop stall is outstanding. That is asked before the copy, again immediately before the truncate, and
-/// again before any old file is deleted. If the answer turned to no during the copy, the rotation is
-/// abandoned: the live file stays as it is and the partial copy is removed. A hang in progress therefore
-/// never has its lines truncated or its archives aged out.
+/// When it runs (`isEligible`): rotation is skipped when a take, handoff, transcription or stall is in
+/// progress at the moment of a check. The check is made before the copy, before the truncate and before old
+/// files are deleted, and each answer is a snapshot: a take that starts after an answer, or that starts and
+/// ends during the copy, is not seen, so it can overlap the truncate or the pruning. Closing that needs a
+/// shared admission with the activity transitions (open: review RX-r3 P2), which is why this is parked
+/// behind the defaults key.
 final class ErrorLogRotator {
     struct Policy: Equatable {
         /// Rotate once the live file is at least this big.
@@ -48,8 +51,12 @@ final class ErrorLogRotator {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/voicelayer/voicebar-err.log")
     }
 
+    /// `defaults write com.voicelayer.voicebar voicebar.diagnostics.logRotation -bool YES`, then relaunch.
+    static let enabledDefaultsKey = "voicebar.diagnostics.logRotation"
+
     private let url: URL
     private let policy: Policy
+    private let isEnabled: () -> Bool
     private let isEligible: () -> Bool
     private let appendsToLog: () -> Bool
     private let log: (String) -> Void
@@ -63,17 +70,21 @@ final class ErrorLogRotator {
     /// tests and the UI fixture write stderr elsewhere and must never touch the real log, and a writer that
     /// is not in append mode would keep its old offset after a truncate and leave a hole.
     init(url: URL = ErrorLogRotator.defaultLogURL, policy: Policy = Policy(),
+         isEnabled: @escaping () -> Bool = { false },
          isEligible: @escaping () -> Bool, appendsToLog: (() -> Bool)? = nil,
          log: @escaping (String) -> Void = { NSLog("%@", $0) }) {
         self.url = url
         self.policy = policy
+        self.isEnabled = isEnabled
         self.isEligible = isEligible
         self.appendsToLog = appendsToLog ?? { ErrorLogRotator.descriptorAppends(STDERR_FILENO, to: url) }
         self.log = log
     }
 
-    /// One check a minute after launch, then hourly, off the main thread.
+    /// One check a minute after launch, then hourly, off the main thread. Does nothing at all (no timer, no
+    /// look at the file) unless `isEnabled` says so when this is called.
     func start(firstCheckAfter: TimeInterval = 60, every interval: TimeInterval = 3600, leeway: TimeInterval = 30) {
+        guard isEnabled() else { return }
         queue.async { [self] in
             guard timer == nil, !isStopped else { return }
             let timer = DispatchSource.makeTimerSource(queue: queue)
@@ -92,6 +103,9 @@ final class ErrorLogRotator {
     }
 
     deinit { timer?.cancel() }
+
+    /// Tests: whether `start` installed a timer (waits for the start block to run).
+    var hasTimerForTesting: Bool { queue.sync { timer != nil } }
 
     private var isStopped: Bool { stateLock.lock(); defer { stateLock.unlock() }; return stopped }
 
@@ -128,9 +142,20 @@ final class ErrorLogRotator {
         URL(fileURLWithPath: url.path + ".\(index)")
     }
 
-    /// The highest `.N` that exists (0 when none), scanning a bounded range.
-    private static func highestArchive(_ url: URL, limit: Int = 64) -> Int {
-        (1...limit).last { access(rotatedURL(url, $0).path, F_OK) == 0 } ?? 0
+    /// The highest `.N` that exists (0 when none), from the directory itself: no assumed upper bound, so a
+    /// shift can never land on an archive it did not see. Throws when the directory cannot be listed.
+    private static func highestArchive(_ url: URL) throws -> Int {
+        let prefix = url.lastPathComponent + "."
+        let names: [String]
+        do { names = try FileManager.default.contentsOfDirectory(atPath: url.deletingLastPathComponent().path) }
+        catch { throw RotationError(step: "list", code: Int32((error as NSError).code)) }
+        return names.compactMap { name -> Int? in
+            guard name.hasPrefix(prefix) else { return nil }
+            let suffix = name.dropFirst(prefix.count)
+            guard !suffix.isEmpty, suffix.allSatisfy(\.isASCII), suffix.allSatisfy(\.isNumber),
+                  let index = Int(suffix), index >= 1, String(index) == suffix else { return nil }
+            return index
+        }.max() ?? 0
     }
 
     @discardableResult
@@ -177,8 +202,8 @@ final class ErrorLogRotator {
         guard try drain() != nil else { return .abandoned }
         hooks.afterFirstPass?()
 
-        // Commit loop. Each round: copy what arrived, sync the copy, ask again whether rotation is still
-        // allowed, then look once more. Only a round whose last look finds nothing new may truncate, so every
+        // Commit loop. Each round: copy what arrived, sync the copy, ask again whether rotation is allowed
+        // right now (activity that began and ended during the copy is not seen), then look once more. Only a round whose last look finds nothing new may truncate, so every
         // byte about to be discarded from the live file is in the synced copy. A failed sync or a lost
         // eligibility leaves the live file untouched (the deferred unlink removes the partial copy).
         var rounds = 0
@@ -195,18 +220,23 @@ final class ErrorLogRotator {
         truncated = true // From here the copy is the only holder of those lines: it is never unlinked.
         hooks.afterTruncate?()
         try publish(pending, as: url)
-        // Deleting old files is a second destructive step: ask again. Left-over files are pruned by the next
-        // rotation that is allowed to.
+        // Deleting old files is a second destructive step: ask again (a snapshot, like every answer here).
+        // Left-over files are pruned by the next rotation that is allowed to.
         let pruned = isEligible()
-        if pruned { prune(url, keep: policy.keep) }
+        if pruned { try prune(url, keep: policy.keep) }
         return .rotated(copiedBytes: Int(offset), pruned: pruned)
     }
 
-    /// Shifts every existing archive up by one and names `pending` as `.1`. Deletes nothing.
+    /// Shifts every existing archive up by one and names `pending` as `.1`. Deletes nothing and never
+    /// renames onto an existing file.
     private static func publish(_ pending: URL, as url: URL) throws {
-        let highest = highestArchive(url)
+        let highest = try highestArchive(url)
         if highest >= 1 {
             for index in stride(from: highest, through: 1, by: -1) {
+                // The slot above was vacated by the previous step (or is past the highest archive).
+                guard access(rotatedURL(url, index + 1).path, F_OK) != 0 else {
+                    throw RotationError(step: "shift-occupied", code: EEXIST)
+                }
                 if rename(rotatedURL(url, index).path, rotatedURL(url, index + 1).path) != 0, errno != ENOENT {
                     throw RotationError(step: "shift", code: errno)
                 }
@@ -216,8 +246,8 @@ final class ErrorLogRotator {
     }
 
     /// Deletes archives numbered `keep` and above, oldest first.
-    private static func prune(_ url: URL, keep: Int) {
-        let highest = highestArchive(url)
+    private static func prune(_ url: URL, keep: Int) throws {
+        let highest = try highestArchive(url)
         guard highest >= keep else { return }
         for index in stride(from: highest, through: keep, by: -1) { unlink(rotatedURL(url, index).path) }
     }

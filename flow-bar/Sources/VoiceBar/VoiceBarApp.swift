@@ -198,12 +198,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             CFRunLoopWakeUp(loop)
         }
     }()
-    /// c8 X: caps voicebar-err.log (10 MB, 5 files), and only the file stderr appends to. Allowed only while
-    /// nothing is recording, handing off, transcribing or re-transcribing and no main-loop stall is
-    /// outstanding; the rotator asks again before it truncates and before it deletes.
+    /// c8 X: caps voicebar-err.log (10 MB, 5 files), and only the file stderr appends to. PARKED: off unless
+    /// `voicebar.diagnostics.logRotation` is set at launch. A check is skipped when a take, handoff,
+    /// transcription or stall is in progress at that moment; the answer is a snapshot, so a take that starts
+    /// right after it can overlap the truncate (open: review RX-r3 P2). Only log lines are ever at stake.
     private lazy var errorLogRotator: ErrorLogRotator = {
         let watchdog = responsivenessWatchdog
-        return ErrorLogRotator(isEligible: { [weak self] in
+        let defaults = defaults
+        return ErrorLogRotator(isEnabled: { defaults.bool(forKey: ErrorLogRotator.enabledDefaultsKey) },
+                               isEligible: { [weak self] in
             guard !watchdog.isStallOutstanding else { return false }
             // The take state lives on the main thread. A main thread that cannot answer in half a second is
             // itself a reason not to rotate.

@@ -265,7 +265,7 @@ final class ErrorLogRotatorTests: XCTestCase {
         let lock = NSLock()
         var lines: [String] = []
         var asked = 0
-        let rotator = ErrorLogRotator(url: log, policy: .init(maxBytes: 64, keep: 3),
+        let rotator = ErrorLogRotator(url: log, policy: .init(maxBytes: 64, keep: 3), isEnabled: { true },
                                       isEligible: { lock.lock(); asked += 1; lock.unlock(); return eligible.value },
                                       appendsToLog: { ErrorLogRotator.descriptorAppends(fd, to: self.log) },
                                       log: { line in lock.lock(); lines.append(line); lock.unlock() })
@@ -277,6 +277,7 @@ final class ErrorLogRotatorTests: XCTestCase {
         }
         rotator.start(firstCheckAfter: 0.02, every: 0.02, leeway: 0.001)
         defer { rotator.stop() }
+        XCTAssertTrue(rotator.hasTimerForTesting)
         wait("the timer asked several times while busy") { lock.lock(); defer { lock.unlock() }; return asked >= 5 }
         XCTAssertEqual(read(log).count, 201, "busy: the timer fired and did nothing")
         XCTAssertEqual(logged(), [])
@@ -301,5 +302,85 @@ final class ErrorLogRotatorTests: XCTestCase {
         put(fd, String(repeating: "y", count: 300) + "\n")
         usleep(150_000)
         XCTAssertEqual(read(log).count, 301)
+    }
+
+    /// Lead ruling (round 4): rotation is parked. With the defaults key absent the rotator never starts,
+    /// installs no timer and never looks at the log, however far over the cap it is.
+    func testWithoutTheDefaultsKeyTheRotatorNeverStartsOrTouchesTheLog() throws {
+        XCTAssertEqual(ErrorLogRotator.enabledDefaultsKey, "voicebar.diagnostics.logRotation")
+        let suite = "vl-ui-logrotate-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let fd = appender(); defer { close(fd) }
+        put(fd, String(repeating: "z", count: 500) + "\n")
+        let before = try FileManager.default.attributesOfItem(atPath: log.path)
+        let lock = NSLock()
+        var asked = 0, lines: [String] = []
+        func make() -> ErrorLogRotator {
+            ErrorLogRotator(url: log, policy: .init(maxBytes: 64, keep: 3),
+                            isEnabled: { defaults.bool(forKey: ErrorLogRotator.enabledDefaultsKey) },
+                            isEligible: { lock.lock(); asked += 1; lock.unlock(); return true },
+                            appendsToLog: { lock.lock(); asked += 1; lock.unlock(); return true },
+                            log: { line in lock.lock(); lines.append(line); lock.unlock() })
+        }
+        let parked = make()
+        parked.start(firstCheckAfter: 0.01, every: 0.01, leeway: 0.001)
+        XCTAssertFalse(parked.hasTimerForTesting, "key absent: no timer")
+        usleep(200_000)
+        lock.lock(); XCTAssertEqual(asked, 0, "never asked whether it may rotate"); XCTAssertEqual(lines, []); lock.unlock()
+        XCTAssertEqual(files(), ["voicebar-err.log"])
+        XCTAssertEqual(read(log).count, 501)
+        let after = try FileManager.default.attributesOfItem(atPath: log.path)
+        XCTAssertEqual(after[.modificationDate] as? Date, before[.modificationDate] as? Date, "the file was not written")
+        XCTAssertEqual(after[.systemFileNumber] as? Int, before[.systemFileNumber] as? Int)
+        parked.stop()
+
+        // The default initializer is off too, and an explicit false is off.
+        let implicit = ErrorLogRotator(url: log, policy: .init(maxBytes: 64, keep: 3), isEligible: { true }, appendsToLog: { true })
+        implicit.start(firstCheckAfter: 0.01, every: 0.01, leeway: 0.001)
+        XCTAssertFalse(implicit.hasTimerForTesting)
+        defaults.set(false, forKey: ErrorLogRotator.enabledDefaultsKey)
+        let off = make(); off.start(firstCheckAfter: 0.01, every: 0.01, leeway: 0.001)
+        XCTAssertFalse(off.hasTimerForTesting)
+        usleep(100_000)
+        XCTAssertEqual(read(log).count, 501)
+
+        // Turned on deliberately, the same construction does start.
+        defaults.set(true, forKey: ErrorLogRotator.enabledDefaultsKey)
+        let on = make(); on.start(firstCheckAfter: 3600, every: 3600)
+        XCTAssertTrue(on.hasTimerForTesting)
+        on.stop()
+    }
+
+    /// Review r3 P3: archives are discovered from the directory, not from an assumed range. With pruning
+    /// denied and `.64` and `.65` already there, filing a new copy keeps both.
+    func testArchivesPastSixtyFourAreShiftedNotOverwritten() throws {
+        let fd = appender(); defer { close(fd) }
+        for index in 1...65 {
+            try "archive \(index)\n".write(to: ErrorLogRotator.rotatedURL(log, index), atomically: false, encoding: .utf8)
+        }
+        // Names that only look like archives are left alone.
+        for name in ["voicebar-err.log.rotating.bak", "voicebar-err.log.07", "voicebar-err.log.x"] {
+            try "bystander\n".write(to: directory.appendingPathComponent(name), atomically: false, encoding: .utf8)
+        }
+        put(fd, String(repeating: "n", count: 50) + "\n")
+        let eligible = Flag(true)
+        var hooks = ErrorLogRotator.Hooks()
+        hooks.afterTruncate = { eligible.value = false } // pruning denied
+        XCTAssertEqual(try ErrorLogRotator.rotateIfNeeded(url: log, policy: .init(maxBytes: 20, keep: 5),
+                                                         isEligible: { eligible.value }, hooks: hooks),
+                       .rotated(copiedBytes: 51, pruned: false))
+        XCTAssertEqual(read(ErrorLogRotator.rotatedURL(log, 66)), "archive 65\n", "the old .65 moved up, it was not overwritten")
+        XCTAssertEqual(read(ErrorLogRotator.rotatedURL(log, 65)), "archive 64\n")
+        XCTAssertEqual(read(ErrorLogRotator.rotatedURL(log, 2)), "archive 1\n")
+        XCTAssertTrue(read(ErrorLogRotator.rotatedURL(log, 1)).hasPrefix("nnnn"))
+        XCTAssertEqual(read(directory.appendingPathComponent("voicebar-err.log.07")), "bystander\n")
+        // The next allowed rotation prunes everything past the policy, including the ones past 64.
+        eligible.value = true
+        put(fd, String(repeating: "m", count: 50) + "\n")
+        XCTAssertEqual(try ErrorLogRotator.rotateIfNeeded(url: log, policy: .init(maxBytes: 20, keep: 5), isEligible: { eligible.value }),
+                       .rotated(copiedBytes: 51, pruned: true))
+        XCTAssertEqual(files().filter { $0.range(of: #"^voicebar-err\.log\.[1-9][0-9]*$"#, options: .regularExpression) != nil },
+                       ["voicebar-err.log.1", "voicebar-err.log.2", "voicebar-err.log.3", "voicebar-err.log.4"])
     }
 }
