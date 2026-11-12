@@ -20,6 +20,13 @@ describe("a removed filler takes only its own punctuation with it", () => {
     // RF review F2: a protected word ends the run; the filler before it still takes its comma.
     ["Um, ER is what I meant.", "ER is what I meant."],
     ["uh, UM is the abbreviation.", "UM is the abbreviation."],
+    // RF review round 2 F3: unspaced decoder text.
+    ["Um,uh, hello", "Hello"],
+    ["Uh,um, I am confused.", "I am confused."],
+    ["Um,uh", ""],
+    ["Um,hello", "Hello"],
+    ["Um,uh-huh", "Uh-huh"],
+    ["Um.Uh, hello", "Hello"],
     // Words are never eaten.
     ["I went to the ER, it was fine.", "I went to the ER, it was fine."],
     ["Umbrella, yes.", "Umbrella, yes."],

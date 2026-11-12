@@ -205,7 +205,9 @@ function removeFillers(text: string, aggressive: boolean): string {
   // Only at the very start: after a sentence the existing period-comma collapse already decides the join.
   // One token at a time, so a protected word ("ER") ends the run without keeping an earlier filler's comma;
   // a comma or full stop goes only when whitespace or the end follows it, never a decimal point or ".com".
-  const opening = /^\s*(um|uh|er)\b(?:[,.](?=\s|$))?(?![.…\p{Pd}])\s*/iu;
+  // A comma always belongs to the filler (also unspaced: "Um,uh, hello"); a full stop only before whitespace,
+  // the end, or another filler.
+  const opening = /^\s*(um|uh|er)\b(?:,|\.(?=\s|$|(?:um|uh|er)\b))?(?![.…\p{Pd}])\s*/iu;
   for (let match = opening.exec(result); match && !isAcronym(match[1]!); match = opening.exec(result)) {
     result = result.slice(match[0].length);
   }
