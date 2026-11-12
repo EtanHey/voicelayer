@@ -90,9 +90,15 @@ final class NotchPanelVisibilityTests: XCTestCase {
         XCTAssertEqual(hides, 0)
     }
 
-    @MainActor private func productPanel() -> (AppDelegate, FloatingPillPanel) {
+    @MainActor private func productPanel(meter: UIE2ENoDeviceLevelEngine = UIE2ENoDeviceLevelEngine())
+        -> (AppDelegate, FloatingPillPanel) {
         _ = NSApplication.shared
         let app = AppDelegate()
+        // A recording mode starts the level meter: never the real input device or the live update gate
+        // (an absent gate file admits without writing).
+        let gatePath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("notch-visibility-\(UUID().uuidString)/update-gate.json").path
+        app.configureAudioLevelMonitoringForTesting(engine: meter, gate: NativeUpdateGate(path: gatePath))
         app.voiceState.sendCommand = { _ in } // No socket, daemon, audio, or hotkey startup.
         app.voiceState.setConnectionStatus(true)
         let panel = FloatingPillPanel(content: NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 100)))
@@ -109,8 +115,9 @@ final class NotchPanelVisibilityTests: XCTestCase {
 
     @MainActor func testHideRefusesUnfinishedTakesWithoutCancelOrPanelChanges() throws {
         for phase in ["capturing", "draining", "queued", "processing", "delivering"] {
-            let (app, panel) = productPanel()
-            defer { panel.orderOut(nil) }
+            let meter = UIE2ENoDeviceLevelEngine()
+            let (app, panel) = productPanel(meter: meter)
+            defer { app.stopAudioLevelMonitoring(); panel.orderOut(nil) }
             var commands: [[String: Any]] = []
             app.voiceState.sendCommand = { commands.append($0) }
             app.voiceState.handleEvent([
@@ -119,6 +126,7 @@ final class NotchPanelVisibilityTests: XCTestCase {
                 "recording_jobs": [["take_id": "take", "kind": "live", "phase": phase]],
             ])
             let mode = app.voiceState.mode
+            XCTAssertEqual(meter.starts, mode == .recording ? 1 : 0, "the meter must be the device-free one: \(phase)")
             commands.removeAll()
             app.hideNotchForOneHour(nil)
             XCTAssertFalse(app.isSnoozed, phase)

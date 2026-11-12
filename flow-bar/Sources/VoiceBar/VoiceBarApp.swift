@@ -123,8 +123,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         self?.voiceState.setLocalRecordingLevel(level)
     }
     private var releaseLevelAdmission: (() -> Void)?
+    #if VOICEBAR_QA
+    private var levelAdmissionGateForTesting: NativeUpdateGate?
+    #endif
 
     func startAudioLevelMonitoring(gate: NativeUpdateGate? = nil) {
+        #if VOICEBAR_QA
+        let gate = gate ?? levelAdmissionGateForTesting
+        #endif
         if releaseLevelAdmission == nil {
             do { releaseLevelAdmission = try MainActor.assumeIsolated { try (gate ?? .shared).acquire() } }
             catch { return } // The daemon reports UPDATE_BUSY; never open the meter first.
@@ -150,10 +156,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     /// Install before panel observation; the QA fixture supplies a device-free engine.
-    func configureAudioLevelMonitoringForTesting(engine: AudioLevelMonitoringEngine) {
+    /// `gate` replaces the shared (live) update gate for mode-change admissions.
+    func configureAudioLevelMonitoringForTesting(engine: AudioLevelMonitoringEngine, gate: NativeUpdateGate? = nil) {
         audioLevelMonitor = AudioLevelMonitor(engine: engine) { [weak self] level in
             self?.voiceState.setLocalRecordingLevel(level)
         }
+        levelAdmissionGateForTesting = gate
     }
     #endif
 
