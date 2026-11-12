@@ -711,8 +711,10 @@ export interface RecordingCaptureState {
   pausedSpans?: RecordingPauseSpan[];
   /** c8-M3: sox reported CoreAudio buffer overruns (audio dropped before it reached us). */
   captureOverruns?: CaptureOverruns;
-  /** c8-M3: an overrun line read after the archive row exists re-stamps it. */
-  onCaptureOverrun?: () => void;
+  /** c8-M3: the recorder's stderr reached EOF, so `captureOverruns` is final. */
+  captureOverrunsFinal?: boolean;
+  /** c8-M3: called once at stderr EOF; stamps the archive row if it already exists. */
+  onCaptureOverrunsFinal?: () => void;
   /**
    * The take ended while paused. Its end is the Pause click, not the user's own end of speech, so STT, the
    * archive and recovery all keep the complete gated PCM: no trailing-silence trim and no physical-stop cut.
@@ -2116,13 +2118,14 @@ export interface RecorderStderrWatcher {
  * PIPE_BUF are atomic, so that is not a practical concern, and the next chunk
  * plus the EOF pass rescan the complete text regardless.
  */
-/** c8-M3: audio CoreAudio dropped because sox's ring buffer was full (the reader was starved). */
+/**
+ * c8-M3: audio CoreAudio dropped because sox's ring buffer was full (the reader was starved).
+ * Only a count: the stderr line is read on its own pipe, independently of the PCM on stdout, so the
+ * position at which we read it says nothing provable about where the samples were lost (RM-overrun P2).
+ */
 export interface CaptureOverruns {
   count: number;
-  /** Approximate offsets into the kept take (mono 16 kHz) where audio is missing; first 20. */
-  offsetsMs: number[];
 }
-const MAX_OVERRUN_OFFSETS = 20;
 const SOX_OVERRUN_LINE = /buffer overrun/iu;
 
 /**
@@ -2143,24 +2146,14 @@ export function createRecorderOverrunCounter(onOverrun: () => void): { push(text
   };
 }
 
-export function noteCaptureOverrun(overruns: CaptureOverruns | undefined, offsetMs: number): CaptureOverruns {
-  const next = overruns ?? { count: 0, offsetsMs: [] };
-  next.count++;
-  if (next.offsetsMs.length < MAX_OVERRUN_OFFSETS) next.offsetsMs.push(Math.max(0, Math.round(offsetMs)));
-  return next;
-}
-
-function formatTakeOffset(ms: number): string {
-  const total = Math.floor(ms / 1000);
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+export function noteCaptureOverrun(overruns: CaptureOverruns | undefined): CaptureOverruns {
+  return { count: (overruns?.count ?? 0) + 1 };
 }
 
 /** The History line for a take with a hole in it. */
 export function captureOverrunNote(overruns: CaptureOverruns): string {
-  const first = overruns.offsetsMs[0];
-  const where = first === undefined ? "" : `, first near ${formatTakeOffset(first)}`;
   const times = overruns.count === 1 ? "once" : `${overruns.count} times`;
-  return `Audio was dropped by the system during this take (${times}${where}). The transcript may be missing words there.`;
+  return `The system dropped audio during this take (${times}). The transcript may be missing words.`;
 }
 
 export function createRecorderStderrWatcher(
@@ -2942,15 +2935,13 @@ export async function recordToBuffer(
         ).getReader();
         (async () => {
           const watcher = createRecorderStderrWatcher("rec");
-          // c8-M3: reporting only. The recorder's arguments and the PCM path are unchanged.
+          // c8-M3: reporting only. The recorder's arguments and the PCM path are unchanged. Per line this
+          // only counts in memory: no log, no file I/O, so a burst never delays the next recorder's drain.
           const overrunDecoder = new TextDecoder();
+          let overrunCount = 0;
           const overruns = createRecorderOverrunCounter(() => {
-            const offsetMs = capturedPcmBytesSoFar / (SAMPLE_RATE * BYTES_PER_SAMPLE / 1000);
-            if (captureState) {
-              captureState.captureOverruns = noteCaptureOverrun(captureState.captureOverruns, offsetMs);
-              captureState.onCaptureOverrun?.();
-            }
-            console.error(`[voicelayer] rec: CoreAudio buffer overrun — audio dropped near ${formatTakeOffset(offsetMs)} of the take`);
+            overrunCount++;
+            if (captureState) captureState.captureOverruns = noteCaptureOverrun(captureState.captureOverruns);
           });
           try {
             while (true) {
@@ -2963,6 +2954,15 @@ export async function recordToBuffer(
             }
           } catch {}
           overruns.finish();
+          if (overrunCount > 0) {
+            console.error(`[voicelayer] rec: CoreAudio buffer overrun ${overrunCount} time(s) during this take — audio was dropped`);
+          }
+          if (captureState) {
+            captureState.captureOverrunsFinal = true;
+            const final = captureState.onCaptureOverrunsFinal;
+            // Batched at the take's end, after this reader is done: one write per take at most.
+            if (final && overrunCount > 0) setImmediate(final);
+          }
           const text = watcher.finish();
           if (text) {
             console.error(`[voicelayer] rec stderr: ${text}`);
@@ -3394,22 +3394,25 @@ export async function waitForInput(
       ? { type: "error", message: micNote, recoverable: true, show_during_bar_recording: true }
       : { type: "mic_disconnected", at_ms: micDisconnect.atMs, reason: micDisconnect.reason, message: micNote });
   }
-  // c8-M3: a take with a hole is never presented as complete. Overrun lines can still be in the
-  // recorder's stderr pipe when the row is created, so a late one re-stamps the row.
-  const stampedOverrunArchives = new Set<string>();
-  const stampCaptureOverruns = (archivePath: string) => {
-    stampedOverrunArchives.add(archivePath);
+  // c8-M3: a take with a hole is never presented as complete. The count is final at the recorder's
+  // stderr EOF: stamp at archive creation if it is already final, otherwise once at EOF.
+  const overrunArchives = new Set<string>();
+  const writeCaptureOverruns = (archivePath: string) => {
     const overruns = captureState.captureOverruns;
-    if (!overruns?.count) return;
+    if (!overruns?.count) return false;
     updateArchivedRecordingMetadata(join(archivePath, "audio.wav"), (metadata) => {
-      metadata.capture_overruns = { count: overruns.count, approx_offsets_ms: [...overruns.offsetsMs] };
+      metadata.capture_overruns = { count: overruns.count };
       metadata.capture_overrun_note = captureOverrunNote(overruns);
     });
+    return true;
   };
-  captureState.onCaptureOverrun = () => {
-    for (const path of stampedOverrunArchives) {
-      stampCaptureOverruns(path);
-      broadcast({ type: "archive_metadata_updated", recording_path: join(path, "audio.wav") });
+  const stampCaptureOverruns = (archivePath: string) => {
+    overrunArchives.add(archivePath);
+    if (captureState.captureOverrunsFinal) writeCaptureOverruns(archivePath);
+  };
+  captureState.onCaptureOverrunsFinal = () => {
+    for (const path of overrunArchives) {
+      if (writeCaptureOverruns(path)) broadcast({ type: "archive_metadata_updated", recording_path: join(path, "audio.wav") });
     }
   };
   const stampMicDisconnect = (archivePath: string) => {
@@ -3430,7 +3433,10 @@ export async function waitForInput(
       audioBytes: createWavBuffer(new Uint8Array()), source: "voicebar", silenceMode, pushToEnd,
       durationMs: 0, backend: "not-transcribed", reason: recordingJobCancelled() ? "cancelled" : "captured",
     }) : null;
-    if (emptyArchive) invokeArchiveCreatedObserver(emptyArchive, options.onArchiveCreated);
+    if (emptyArchive) {
+      stampCaptureOverruns(emptyArchive);
+      invokeArchiveCreatedObserver(emptyArchive, options.onArchiveCreated);
+    }
     return finishBarCapture(captureState.recorderExited ?? Promise.resolve(), emptyArchive, async () => null);
   }
 

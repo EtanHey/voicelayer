@@ -20,16 +20,15 @@ describe("c8-M3 recorder overrun counter", () => {
     expect(count).toBe(3);
   });
 
-  it("keeps the count exact and at most 20 offsets", () => {
+  it("keeps an exact count and no position (a stderr read position is not where audio was lost)", () => {
     let overruns;
-    for (let i = 0; i < 25; i++) overruns = noteCaptureOverrun(overruns, i * 1000);
-    expect(overruns!.count).toBe(25);
-    expect(overruns!.offsetsMs).toHaveLength(20);
+    for (let i = 0; i < 25; i++) overruns = noteCaptureOverrun(overruns);
+    expect(overruns).toEqual({ count: 25 });
   });
 
-  it("says plainly that audio was dropped and where", () => {
-    expect(captureOverrunNote({ count: 1, offsetsMs: [49_300] }))
-      .toBe("Audio was dropped by the system during this take (once, first near 0:49). The transcript may be missing words there.");
-    expect(captureOverrunNote({ count: 4, offsetsMs: [87_000] })).toContain("(4 times, first near 1:27)");
+  it("says plainly that audio was dropped during the take, with the count", () => {
+    expect(captureOverrunNote({ count: 1 }))
+      .toBe("The system dropped audio during this take (once). The transcript may be missing words.");
+    expect(captureOverrunNote({ count: 4 })).toContain("(4 times)");
   });
 });
