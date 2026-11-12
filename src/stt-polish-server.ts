@@ -259,13 +259,18 @@ export function setPolishEnabledProbeForTests(probe: (() => boolean) | null): vo
  */
 async function settlePolishBaseline(proc: ManagedPolishProcess, options: EnsureSTTPolishServerOptions): Promise<void> {
   let previous: number | null = null;
+  let highest = 0;
   for (let i = 0; i < 40; i++) {
     const sample = await polishRssProbe(proc.pid);
     if (sample === null || polishProcess !== proc) return;
+    highest = Math.max(highest, sample);
     if (previous !== null && Math.abs(sample - previous) <= 32) { polishBaseline = { pid: proc.pid, rssMb: sample }; return; }
     previous = sample;
     await (options.sleep ?? Bun.sleep)(250);
   }
+  // RM-memory-r4 R4-1: readings that never agree must not leave the first request to become its own baseline.
+  // No request has been admitted yet, so the highest pre-request reading is still model-only.
+  if (polishProcess === proc) polishBaseline = { pid: proc.pid, rssMb: highest };
 }
 
 /** Last `Prompt Cache: N sequences, X GB` line the server logged; sizes only, never prompt text. */

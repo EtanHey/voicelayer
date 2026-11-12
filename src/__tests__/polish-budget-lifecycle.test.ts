@@ -123,6 +123,21 @@ describe("c8-M2 r4 polish budget edge paths (RM-memory-r3)", () => {
     expect(await until(() => servers.spawned.length === 2, 2_000)).toBe(true);
   });
 
+  it("R4-1 launch readings that never agree still give a model-only baseline, so an oversized first use owes a restart", async () => {
+    polish.resetSTTPolishServerManagerForTests();
+    P.setPolishBudgetPollMsForTests?.(20);
+    const servers = fakeServers();
+    let reads = 0;
+    let used = false;
+    P.setPolishRssProbeForTests?.(async () => (used ? 4245 : reads++ % 2 === 0 ? 2400 : 2440));
+    const options = { ...servers.options, sleep: async () => {} };
+    await polish.ensureSTTPolishServer(options);
+    expect(reads).toBeGreaterThanOrEqual(40);
+    used = true;
+    await polish.withSTTPolishServer(async () => "first, large", options);
+    expect(await until(() => servers.spawned.length === 2, 2_000)).toBe(true);
+  });
+
   it("R3-2 an owed restart superseded by polish Off (or shutdown) is abandoned, never relaunched", async () => {
     polish.resetSTTPolishServerManagerForTests();
     P.setPolishBudgetPollMsForTests?.(20);
