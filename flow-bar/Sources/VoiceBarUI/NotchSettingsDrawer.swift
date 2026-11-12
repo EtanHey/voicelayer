@@ -72,11 +72,6 @@ public enum NotchSettingsDrawerPresentation {
         }
     }
 
-    public static func displayUpdateStatus(_ phase: NotchUpdatePhase, describe: VoiceBarGitDescribe?) -> String? {
-        if describe?.isTaggedRelease == true, case .ahead = phase { return "No newer release is available." }
-        return updateStatus(phase)
-    }
-
     /// A tab's tooltip. Never painted in the drawer (0510 N2: no explanatory prose rows).
     public static func tabDescription(_ tab: SettingsTab) -> String {
         switch tab {
@@ -274,7 +269,7 @@ struct NotchSettingsVersionRow: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
                 .accessibilityIdentifier("notch-settings-build-line")
-            if let status = NotchSettingsDrawerPresentation.displayUpdateStatus(updates.phase, describe: updates.describe) {
+            if let status = NotchSettingsDrawerPresentation.updateStatus(updates.phase) {
                 HStack(spacing: 6) {
                     if updates.phase == .checking || updates.phase == .updating {
                         ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 12, height: 12)

@@ -176,7 +176,7 @@ struct SettingsVersionFooter: View {
             Text(Self.identity(installed: installed, describe: describe))
                 .monospacedDigit()
                 .fixedSize(horizontal: false, vertical: true)
-            if describe?.isTaggedRelease != true, let status, let text = Self.statusText(status, describe: describe) {
+            if let status, let text = Self.statusText(status, describe: describe) {
                 Text(text)
                     .foregroundStyle(tint(status))
                     .fixedSize(horizontal: false, vertical: true)
@@ -184,7 +184,7 @@ struct SettingsVersionFooter: View {
         }
         .font(.system(size: 10))
         .foregroundStyle(.secondary)
-        .help(describe?.isTaggedRelease == true ? Self.identity(installed: installed, describe: describe)
+        .help(describe?.isTaggedRelease == true ? "\(Self.identity(installed: installed, describe: describe)). \(status?.message ?? "")"
             : "VoiceBar \(installed.label). \(status?.message ?? "")")
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(describe?.isTaggedRelease == true ? Self.identity(installed: installed, describe: describe)
