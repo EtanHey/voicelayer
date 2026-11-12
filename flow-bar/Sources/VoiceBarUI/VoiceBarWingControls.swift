@@ -375,28 +375,46 @@ public struct VoiceBarRecordingTimeRegion: View {
     let isCaptureOpen: Bool
     let microphoneName: String?
     let color: Color
+    /// c11-Q: the quieter ink of the arming `0:00`.
+    let armingColor: Color
 
-    public init(elapsedMilliseconds: @escaping () -> Int, isCaptureOpen: Bool, microphoneName: String?, color: Color) {
+    /// c11-Q (Etan, 2026-11-12: "until the mic is open, there's just space between the waveform and the notch instead
+    /// of having at least the seconds there, even though it's 0 0 0"): what the lane shows before capture opens.
+    /// Display only: it is a constant, and the recording clock is never read before capture opens.
+    public static let armingText = VoiceBarReadingTimeLabel.text(elapsedMilliseconds: 0)
+
+    public init(
+        elapsedMilliseconds: @escaping () -> Int,
+        isCaptureOpen: Bool,
+        microphoneName: String?,
+        color: Color,
+        armingColor: Color? = nil
+    ) {
         self.elapsedMilliseconds = elapsedMilliseconds
         self.isCaptureOpen = isCaptureOpen
         self.microphoneName = microphoneName
         self.color = color
+        self.armingColor = armingColor ?? color.opacity(0.72)
     }
 
     public var body: some View {
         TimelineView(.periodic(from: .now, by: 0.25)) { _ in
-            let time = VoiceBarReadingTimeLabel.text(elapsedMilliseconds: elapsedMilliseconds())
+            // Arming shows a quiet 0:00 in the live clock's own frame, font and width class; when capture opens the
+            // same Text turns live in place, so nothing shifts and nothing counts before the mic is open.
+            let time = isCaptureOpen
+                ? VoiceBarReadingTimeLabel.text(elapsedMilliseconds: elapsedMilliseconds())
+                : Self.armingText
             ZStack(alignment: .trailing) {
                 Color.clear.frame(height: 1)
-                if isCaptureOpen {
-                    Text(time)
-                        .font(Font(VoiceBarRecordingWingLabel.timeFont))
-                        .foregroundStyle(color)
-                        .lineLimit(1)
-                        .accessibilityElement()
-                        .accessibilityLabel("Recording time")
-                        .accessibilityValue(microphoneName.map { "\(time), \($0)" } ?? time)
-                }
+                Text(time)
+                    .font(Font(VoiceBarRecordingWingLabel.timeFont))
+                    .foregroundStyle(isCaptureOpen ? color : armingColor)
+                    .lineLimit(1)
+                    .accessibilityElement()
+                    .accessibilityLabel("Recording time")
+                    .accessibilityValue(isCaptureOpen
+                        ? microphoneName.map { "\(time), \($0)" } ?? time
+                        : "Starting microphone")
             }
             .frame(width: VoiceBarRecordingWingLabel.clockWidth(for: time), alignment: .trailing)
         }

@@ -737,7 +737,7 @@ final class BarViewClickabilityTests: XCTestCase {
         let leading = source[leadingStart.lowerBound ..< trailingStart.lowerBound]
 
         XCTAssertTrue(leading.contains("if notchPresentation.bandState == .compactStatus, state.mode == .transcribing"))
-        XCTAssertTrue(leading.contains("ProcessingSpinner()"))
+        XCTAssertTrue(leading.contains("ProcessingSpinner(style: .transcribing(for: notchAppearance))"))
         XCTAssertFalse(leading.contains("statusLabel"))
     }
 
@@ -756,7 +756,7 @@ final class BarViewClickabilityTests: XCTestCase {
         let leading = source[leadingStart.lowerBound ..< trailingStart.lowerBound]
         let trailing = source[trailingStart.lowerBound ..< compactStart.lowerBound]
 
-        XCTAssertTrue(leading.contains("ProcessingSpinner()"))
+        XCTAssertTrue(leading.contains("ProcessingSpinner(style: .transcribing(for: notchAppearance))"))
         XCTAssertFalse(leading.contains("WaveformView("))
         XCTAssertTrue(trailing.contains("notchWaveform"))
         XCTAssertTrue(source.contains("VoiceBarNotchWaveform("))

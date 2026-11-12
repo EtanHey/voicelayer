@@ -75,52 +75,102 @@ public struct ProcessingSpinner: View {
     @Environment(\.visualRenderTime) private var renderTime
     public static let defaultDiameter: CGFloat = 14
 
-    private let size: CGFloat
-    private let showsTrack: Bool
+    private let style: ProcessingSpinnerStyle
 
     public init() {
         self.init(diameter: Self.defaultDiameter, showsTrack: false)
     }
 
     init(diameter: CGFloat, showsTrack: Bool) {
-        size = diameter
-        self.showsTrack = showsTrack
+        style = ProcessingSpinnerStyle(diameter: diameter, showsTrack: showsTrack)
+    }
+
+    init(style: ProcessingSpinnerStyle) {
+        self.style = style
     }
 
     public var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: renderTime != nil)) { timeline in
             ProcessingSpinnerFrame(
                 angle: (renderTime ?? timeline.date.timeIntervalSinceReferenceDate) * 360,
-                diameter: size,
-                showsTrack: showsTrack
+                style: style
             )
         }
-        .frame(width: size, height: size)
+        .frame(width: style.diameter, height: style.diameter)
         .accessibilityHidden(true)
     }
+}
+
+/// How a `ProcessingSpinner` draws. The default is the spinner every other surface keeps (History's badge, Settings).
+struct ProcessingSpinnerStyle: Equatable {
+    var diameter: CGFloat = ProcessingSpinner.defaultDiameter
+    var lineWidth: CGFloat = 2.2
+    var color: Color = Theme.speakingColor
+    var arcOpacity: Double = 0.98
+    /// The full ring under the moving arc; 0 draws none.
+    var trackOpacity: Double = 0
+    /// The notch's opposite-tone glyph edge (`notchAdaptiveGlyphEdge`), or nil for none.
+    var edgeColor: Color?
+    static let arcStart: CGFloat = 0.08
+    static let arcEnd: CGFloat = 0.74
+
+    init(diameter: CGFloat = ProcessingSpinner.defaultDiameter, showsTrack: Bool = false) {
+        self.diameter = diameter
+        trackOpacity = showsTrack ? 0.28 : 0
+    }
+
+    /// c11-Q (Etan, 2026-11-12: "more prominent or more obvious that it's like transcribing" / "make it actually
+    /// more blue"): the notch's transcribing spinner. Same slot and centre as candidate 9 (20 pt); the arc is the
+    /// saturated processing blue, 2.6 pt instead of 2.2 on a 15 pt circle instead of 14 (ink 17.6 pt, 19.1 pt with
+    /// its edge), over a full faint track ring, with the 0.75 pt contrast edge every band glyph has.
+    static func transcribing(for appearance: VoiceBarNotchAppearance) -> Self {
+        var style = Self(diameter: 15)
+        style.lineWidth = 2.6
+        style.color = Theme.transcribingSpinnerColor(for: appearance)
+        style.arcOpacity = 1
+        style.trackOpacity = 0.24
+        style.edgeColor = VoiceBarNotchGlyphContrastTreatment.resolve(for: appearance).color
+        return style
+    }
+
+    /// The ink's outer extent: the circle, its stroke, and the 0.75 pt edge on each side.
+    var inkExtent: CGFloat { diameter + lineWidth + (edgeColor == nil ? 0 : 1.5) }
 }
 
 /// One frame of `ProcessingSpinner` at a fixed angle, so a test can render any point of the turn.
 struct ProcessingSpinnerFrame: View {
     let angle: Double
-    let diameter: CGFloat
-    var showsTrack = false
+    let style: ProcessingSpinnerStyle
+
+    init(angle: Double, diameter: CGFloat, showsTrack: Bool = false) {
+        self.init(angle: angle, style: ProcessingSpinnerStyle(diameter: diameter, showsTrack: showsTrack))
+    }
+
+    init(angle: Double, style: ProcessingSpinnerStyle) {
+        self.angle = angle
+        self.style = style
+    }
 
     var body: some View {
-        ZStack {
-            if showsTrack {
+        let rings = ZStack {
+            if style.trackOpacity > 0 {
                 Circle()
-                    .stroke(Theme.speakingColor.opacity(0.28), lineWidth: 2.2)
+                    .stroke(style.color.opacity(style.trackOpacity), lineWidth: style.lineWidth)
             }
             Circle()
-                .trim(from: 0.08, to: 0.74)
+                .trim(from: ProcessingSpinnerStyle.arcStart, to: ProcessingSpinnerStyle.arcEnd)
                 .stroke(
-                    Theme.speakingColor.opacity(0.98),
-                    style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
+                    style.color.opacity(style.arcOpacity),
+                    style: StrokeStyle(lineWidth: style.lineWidth, lineCap: .round)
                 )
                 .rotationEffect(.degrees(angle))
         }
-        .frame(width: diameter, height: diameter)
+        .frame(width: style.diameter, height: style.diameter)
+        if let edge = style.edgeColor {
+            rings.notchAdaptiveGlyphEdge(edge)
+        } else {
+            rings
+        }
     }
 }
 
@@ -1382,7 +1432,7 @@ public struct BarView: View {
     }
 
     private var transcriptionSpinner: some View {
-        ProcessingSpinner()
+        ProcessingSpinner(style: .transcribing(for: notchAppearance))
             .frame(width: VoiceBarNotchContract.material.compactControlSize,
                    height: VoiceBarNotchContract.material.compactControlSize)
             .accessibilityElement()
@@ -1519,7 +1569,8 @@ public struct BarView: View {
                     elapsedMilliseconds: { state.recordingElapsedMilliseconds() },
                     isCaptureOpen: state.isRecordingCaptureOpen,
                     microphoneName: state.recordingMicrophoneName,
-                    color: notchPrimaryLabelColor
+                    color: notchPrimaryLabelColor,
+                    armingColor: notchPalette.tertiary.color
                 )
             } meter: {
                 if state.isRecordingPaused {

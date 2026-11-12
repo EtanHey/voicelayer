@@ -24,6 +24,21 @@ public enum Theme {
     /// vetted idle gray so the waveform never shows red before capture exists.
     public static let captureBootingColor = idleColor
 
+    /// c11-Q (Etan, 2026-11-12: "make it actually more blue"): the notch's transcribing spinner. The processing hue
+    /// (211°, as `speakingColor`) at full saturation. No saturated blue reaches 3:1 by fill alone on the M4's grey
+    /// glass (106, 115, 125): only pale ones do (#A3D7FF, which he called "not blue that much"). So the arc keeps
+    /// the vivid blue and takes the notch's own 0.75 pt opposite-tone glyph edge, as every band glyph does. Dark:
+    /// fill 1.68:1 on the M4 grey (the old #4A90D9 1.44:1), 7.1:1 on its black edge, the edge 4.2:1 on that grey;
+    /// ≥ 6.6:1 on the M1's darker pill. TranscribingSpinnerTests computes every figure.
+    public static let transcribingSpinnerColor = Color(hex: 0x3D9BFF)
+    /// Light glass draws dark ink: the same hue, deep (HSL 213° / 100 % / 35 %). 3.28:1 on the offscreen light wing
+    /// as rendered here (171, 171, 171), 3.8:1 on 185, 6.0:1 on a 230 grey, 7.5:1 on its white edge.
+    public static let transcribingSpinnerColorLight = Color(hex: 0x0050B2)
+
+    public static func transcribingSpinnerColor(for appearance: VoiceBarNotchAppearance) -> Color {
+        appearance == .light ? transcribingSpinnerColorLight : transcribingSpinnerColor
+    }
+
     // MARK: - Pill background
 
     /// Solid dark background — works on any wallpaper, no vibrancy edge artifacts.
