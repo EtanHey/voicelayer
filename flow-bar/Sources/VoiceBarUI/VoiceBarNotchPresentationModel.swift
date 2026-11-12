@@ -43,9 +43,6 @@ public final class VoiceBarNotchPresentationModel {
     private var compactStatusTrailingWingWidth: CGFloat?
     private var recordingLeadingWingWidth: CGFloat?
     private var recordingTrailingWingWidth: CGFloat?
-    /// c9-P round 2 (F1): the recording wings this shell last showed, held while the take transcribes so its meter
-    /// does not move (an earlier take's spinner widens the recording band past the plain transcribing wings).
-    private var lastRecordingWings: (leading: CGFloat, trailing: CGFloat)?
     private var teleprompterLeadingWingWidth: CGFloat?
     /// T5/T7: a live read's right wing is the recording-style time + meter wing, open or collapsed.
     private var teleprompterTrailingWingWidth: CGFloat?
@@ -93,8 +90,7 @@ public final class VoiceBarNotchPresentationModel {
         virtualNotchIdleCoreHeight: CGFloat? = nil,
         transientNoteWidth: CGFloat? = nil,
         feedback: VoiceBarNotchFeedback? = nil,
-        holdsReadingCanvas: Bool = false,
-        holdsRecordingWings: Bool = false
+        holdsReadingCanvas: Bool = false
     ) {
         if holdsReadingCanvas {
             readingCanvasReleaseSerial &+= 1
@@ -111,16 +107,8 @@ public final class VoiceBarNotchPresentationModel {
         self.hasTeleprompter = hasTeleprompter
         self.isRecording = isRecording
         self.hasCompactStatus = hasCompactStatus
-        if isRecording, let leading = recordingLeadingWingWidth, let trailing = recordingTrailingWingWidth {
-            lastRecordingWings = (leading, trailing)
-        } else if !(hasCompactStatus && holdsRecordingWings) {
-            lastRecordingWings = nil
-        }
-        let held = hasCompactStatus && holdsRecordingWings ? lastRecordingWings : nil
-        self.compactStatusLeadingWingWidth = held.map { max($0.leading, compactStatusLeadingWingWidth ?? 0) }
-            ?? compactStatusLeadingWingWidth
-        self.compactStatusTrailingWingWidth = held.map { max($0.trailing, compactStatusTrailingWingWidth ?? 0) }
-            ?? compactStatusTrailingWingWidth
+        self.compactStatusLeadingWingWidth = compactStatusLeadingWingWidth
+        self.compactStatusTrailingWingWidth = compactStatusTrailingWingWidth
         self.recordingLeadingWingWidth = recordingLeadingWingWidth
         self.recordingTrailingWingWidth = recordingTrailingWingWidth
         self.teleprompterLeadingWingWidth = teleprompterLeadingWingWidth

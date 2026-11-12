@@ -28,15 +28,6 @@ public enum Theme {
     /// lifted to 206° / HSL lightness 0.82 so it holds ≥ 3:1 on the M4's grey glass, measured at (106, 115, 125)
     /// in recording 13.30.27 (`speakingColor` reads 1.4:1 there). TranscribingRippleTests pins the figure.
     public static let processingRippleColor = Color(hex: 0xA3D7FF)
-    /// c9-P round 2 (F7): the notch's light appearance draws light glass with dark ink, where the pale blue measured
-    /// 1.40:1 on the render. The same processing hue, deep (HSL 211° / 0.75 / 0.30): 4.5:1 on the offscreen light
-    /// wing (185, 185, 185) by token, 7.1:1 on a 230 grey; the rendered bars (with their glow) measure lower.
-    public static let processingRippleColorLight = Color(hex: 0x134B86)
-
-    /// c9-P round 2: the ripple's blue for the notch's appearance.
-    public static func processingRippleColor(for appearance: VoiceBarNotchAppearance) -> Color {
-        appearance == .light ? processingRippleColorLight : processingRippleColor
-    }
     /// The M4 glass behind the right wing as recorded on 2026-11-12 (the backdrop sets it; see the c9-P report).
     static let measuredM4GlassRGB: (red: Double, green: Double, blue: Double) = (106.3, 114.8, 125.0)
 

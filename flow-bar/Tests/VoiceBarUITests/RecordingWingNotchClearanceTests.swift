@@ -78,7 +78,8 @@ final class RecordingWingNotchClearanceTests: XCTestCase {
         let recording = try XCTUnwrap(trailing.components(separatedBy: "private var recordingMeterRow").dropFirst().first)
             .components(separatedBy: "private var notchTrailingStatusContent")[0]
         XCTAssertFalse(recording.contains("VoiceBarRecordingMicrophoneRegion"), "no visible microphone name")
-        XCTAssertTrue(recording.contains("microphoneName: state.recordingMicrophoneName"), "the name rides on the time")
+        XCTAssertTrue(recording.contains("microphoneName: isRecording ? state.recordingMicrophoneName : nil"),
+                      "the name rides on the time")
         let controls = try String(contentsOf: url.deletingLastPathComponent().appendingPathComponent("VoiceBarWingControls.swift"),
                                   encoding: .utf8)
         let region = try XCTUnwrap(controls.components(separatedBy: "public struct VoiceBarRecordingTimeRegion").dropFirst().first)

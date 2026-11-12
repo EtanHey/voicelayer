@@ -371,8 +371,6 @@ public struct BarView: View {
     /// The Settings drawer's data and actions. Without it the gear keeps opening the Settings window (2.3).
     private let settingsDrawer: NotchSettingsDrawerContext?
     @State private var modalObserver: NotchModalObserver?
-    /// c9-P round 2 (F4): the recording clock's last shown text, whose width class the transcribing time lane keeps.
-    @State private var heldRecordingClockText = "0:00"
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isMorphTeleprompterContentPresented = false
     /// The History panel is on screen (open, opening, closing or being pulled). The window keeps the panel's size
@@ -1536,18 +1534,12 @@ public struct BarView: View {
         let padding = isRecording ? (leading: 0, trailing: 0) : VoiceBarPresentation.transcribingMeterRowPadding(
             visibleCoreOcclusionInset: notchPresentation.visibleCoreOcclusionInset)
         return VoiceBarRecordingTrailingRow {
-            if isRecording {
-                VoiceBarRecordingTimeRegion(
-                    elapsedMilliseconds: { state.recordingElapsedMilliseconds() },
-                    isCaptureOpen: state.isRecordingCaptureOpen,
-                    microphoneName: state.recordingMicrophoneName,
-                    color: notchPrimaryLabelColor
-                )
-            } else {
-                // c9-P round 2: a still placeholder holds the width class the take's clock last showed (F4: a 10:00
-                // or 1:02:03 take keeps its meter columns) and schedules no clock while transcribing (F6).
-                Color.clear.frame(width: VoiceBarRecordingWingLabel.clockWidth(for: heldRecordingClockText), height: 1)
-            }
+            VoiceBarRecordingTimeRegion(
+                elapsedMilliseconds: { state.recordingElapsedMilliseconds() },
+                isCaptureOpen: isRecording && state.isRecordingCaptureOpen,
+                microphoneName: isRecording ? state.recordingMicrophoneName : nil,
+                color: notchPrimaryLabelColor
+            )
         } meter: {
             notchWaveform(isPaused: isPaused)
                 .accessibilityElement()
@@ -1559,13 +1551,6 @@ public struct BarView: View {
         }
         .padding(.leading, padding.leading)
         .padding(.trailing, padding.trailing)
-        // Pinned to the outer edge as the recording slot pins it (`.outer`), so a wider wing (F1: an earlier take's
-        // spinner) leaves the spare width facing the notch in both states.
-        .frame(maxWidth: .infinity, alignment: .trailing)
-        // A removed clock publishes nil, which keeps the last text it showed.
-        .onPreferenceChange(VoiceBarRecordingClockTextKey.self) { text in
-            if let text { heldRecordingClockText = text }
-        }
     }
 
     @ViewBuilder

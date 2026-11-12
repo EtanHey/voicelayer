@@ -2464,9 +2464,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
             transientNoteWidth: resolved.transientNoteWidth,
             feedback: resolved.feedback,
-            holdsReadingCanvas: resolved.holdsReadingCanvas,
-            // c9-P round 2 (F1): a transcribing take keeps the recording wings its band was showing.
-            holdsRecordingWings: voiceState.mode == .transcribing
+            holdsReadingCanvas: resolved.holdsReadingCanvas
         )
         model.setHovered(voiceState.isHovering)
     }

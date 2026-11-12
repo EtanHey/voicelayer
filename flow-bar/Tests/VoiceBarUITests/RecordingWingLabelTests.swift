@@ -141,7 +141,8 @@ final class RecordingWingLabelTests: XCTestCase {
         let rowMeter = try XCTUnwrap(row.range(of: "            meter\n")).lowerBound
         XCTAssertLessThan(try XCTUnwrap(row.range(of: "            time\n")).lowerBound, rowMeter)
         XCTAssertFalse(row.contains("Color.clear"), "no empty region after the recording meter")
-        XCTAssertTrue(recording.contains("isCaptureOpen: state.isRecordingCaptureOpen"))
+        // c9-P: the time shows only while the take records (no words while transcribing).
+        XCTAssertTrue(recording.contains("isCaptureOpen: isRecording && state.isRecordingCaptureOpen"))
         XCTAssertTrue(recording.contains("state.recordingMicrophoneName"))
     }
 }
