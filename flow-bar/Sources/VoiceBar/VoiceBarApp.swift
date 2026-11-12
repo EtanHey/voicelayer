@@ -2340,10 +2340,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .compactStatus:
             switch state.mode {
             case .transcribing:
-                // The spinner is not a control. 0510 N9: the microphone control takes the left wing's core-side slot.
-                // c9-P: the right wing is the rippling meter, not controls (History and Settings come back with the
-                // launcher; the drawer pull reaches them meanwhile, as while recording).
-                return VoiceBarNotchInteractionConfiguration(leadingControlCount: 1)
+                // 2.3 U2: the spinner is not a control; History and Settings stay live on the right. 0510 N9: the
+                // microphone control takes the left wing's core-side slot.
+                return VoiceBarNotchInteractionConfiguration(leadingControlCount: 1, trailingControlCountFromCore: 2)
             case .speaking:
                 // T1/T6: speed, Back, pause/play and Forward on the left.
                 // T5/T7: collapsed, Stop follows the meter (a hidden read's eye one pitch inside it). X4: the row is

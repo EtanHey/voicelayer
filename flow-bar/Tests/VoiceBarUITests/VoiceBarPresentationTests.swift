@@ -378,9 +378,9 @@ final class VoiceBarPresentationTests: XCTestCase {
                 statusText: "Loading speech model"
             )
         )
-        // c9-P: the spinner on the left, the rippling recording meter on the right, in the recording band's wings.
-        XCTAssertEqual(baseline.geometry.leadingWingWidth, 102)
-        XCTAssertEqual(baseline.geometry.trailingWingWidth, 102)
+        // 2.3 U2: the spinner in the fixed left wing, History + Settings in the fixed right wing.
+        XCTAssertEqual(baseline.geometry.leadingWingWidth, 73.5)
+        XCTAssertEqual(baseline.geometry.trailingWingWidth, 73.5)
         XCTAssertEqual(baseline.geometry.topHeight, 32)
         XCTAssertEqual(warmup.geometry.leadingWingWidth, baseline.geometry.leadingWingWidth)
         XCTAssertEqual(warmup.geometry.trailingWingWidth, baseline.geometry.trailingWingWidth)
@@ -404,13 +404,12 @@ final class VoiceBarPresentationTests: XCTestCase {
             from: VoiceBarNotchOperationalInput(mode: .transcribing)
         )
 
-        // The launcher retains its fixed wings; recording's symmetric wings fit the time/meter row with its 8 pt gap
-        // and 14 pt outer inset (C7-W: 8 + 26 + 8 + 46 + 14), and c9-P processing keeps them (its meter ripples in
-        // place). The fitted F5 hint remains independent.
-        XCTAssertEqual(launcher.geometry.leadingWingWidth, 73.5)
-        XCTAssertEqual(launcher.geometry.trailingWingWidth, 73.5)
-        XCTAssertEqual(processing.geometry.leadingWingWidth, 102)
-        XCTAssertEqual(processing.geometry.trailingWingWidth, 102)
+        // Launcher and processing retain their fixed wings; recording's symmetric wings fit the time/meter row with
+        // its 8 pt gap and 14 pt outer inset (C7-W: 8 + 26 + 8 + 46 + 14). The fitted F5 hint remains independent.
+        for presentation in [launcher, processing] {
+            XCTAssertEqual(presentation.geometry.leadingWingWidth, 73.5)
+            XCTAssertEqual(presentation.geometry.trailingWingWidth, 73.5)
+        }
         XCTAssertEqual(recording.geometry.leadingWingWidth, 102)
         XCTAssertEqual(recording.geometry.trailingWingWidth, 102)
         XCTAssertEqual(quickTap.geometry.leadingWingWidth, 47.5)
@@ -423,7 +422,7 @@ final class VoiceBarPresentationTests: XCTestCase {
                 VoiceBarNotchContract.morphCanvasWingCapacity
             )
         )
-        XCTAssertEqual(processing.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth)
+        XCTAssertEqual(processing.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth)
     }
 
     func testRecordingWingFitsMountedControlsInsteadOfKeepingAGhostTail() {

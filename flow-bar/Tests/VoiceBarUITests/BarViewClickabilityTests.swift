@@ -800,15 +800,11 @@ final class BarViewClickabilityTests: XCTestCase {
             )
         )
         let trailing = String(source[trailingStart.lowerBound ..< compactStart.lowerBound])
-        // c9-P: the recording/transcribing meter row sits before the band switch (`notchTrailingStatusContent`).
         let hover = try XCTUnwrap(
             trailing.components(separatedBy: "case .hoverLauncher, .history:").dropFirst().first?
-                .components(separatedBy: "case .compactStatus, .teleprompter:").first
+                .components(separatedBy: "case .recording:").first
         )
-        let meterRow = try XCTUnwrap(trailing.components(separatedBy: "private var recordingMeterRow").dropFirst().first?
-            .components(separatedBy: "private var notchTrailingStatusContent").first)
-        let status = try XCTUnwrap(trailing.components(separatedBy: "case .compactStatus, .teleprompter:").dropFirst().first)
-        let active = meterRow + status
+        let active = try XCTUnwrap(trailing.components(separatedBy: "case .recording:").dropFirst().first)
         let leading = String(source[leadingStart.lowerBound ..< trailingStart.lowerBound])
         let teleprompterLeading = try XCTUnwrap(
             leading.components(separatedBy: "case .compactStatus, .teleprompter:").dropFirst().first

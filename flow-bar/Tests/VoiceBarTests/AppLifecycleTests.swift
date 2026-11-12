@@ -270,8 +270,8 @@ final class AppLifecycleTests: XCTestCase {
         state.mode = .transcribing
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus),
-            // 0510 N9: the microphone control stays live. c9-P: the right wing is the rippling meter, no controls.
-            VoiceBarNotchInteractionConfiguration(leadingControlCount: 1)
+            // 2.3 U2: History and Settings stay live while transcribing. 0510 N9: the microphone control too.
+            VoiceBarNotchInteractionConfiguration(leadingControlCount: 1, trailingControlCountFromCore: 2)
         )
         // 0510 R3: a drawer open while recording keeps the recording wing's controls live, over a live drawer body.
         state.mode = .recording
