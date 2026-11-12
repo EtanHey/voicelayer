@@ -27,7 +27,7 @@ public struct RecognizerPickerView: View {
     }
 
     static func blurb(_ engine: RecognizerPickerEngine) -> String {
-        engine == .parakeet ? "Fastest on this Mac. English." : "Slower. Handles Hebrew and mixed languages."
+        engine == .parakeet ? "Fastest. English." : "Slower. Hebrew and mixed languages."
     }
 
     /// The row's status: Loaded / On disk / Not downloaded, with the model's size once known, or the live
@@ -158,22 +158,29 @@ public struct RecognizerPickerView: View {
                     Image(systemName: Self.selectionSymbol(isSelected: state.selected == engine))
                         .font(.system(size: 14))
                         .foregroundStyle(state.selected == engine ? Color.accentColor : Color.secondary)
+                        .opacity(onSelect != nil && !state.isSelectionDisabled ? 1 : 0.45)
                         .accessibilityHidden(true)
+                    if onSelect == nil || state.isSelectionDisabled {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(SettingsPanePalette.helper)
+                            .accessibilityHidden(true)
+                    }
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             ClippingAwareText(text: Self.rowTitle(engine), font: SettingsRowLabel.titleFont,
-                                              lineLimit: SettingsRowLabel.lineLimit)
+                                              lineLimit: nil)
                             if engine == .parakeet {
                                 SettingsPill(text: "Recommended", tint: .green)
                                     .accessibilityIdentifier("recognizer-recommended")
                             }
                         }
                         ClippingAwareText(text: Self.blurb(engine) + " " + Self.subtitle(state, engine),
-                                          font: SettingsRowLabel.descriptionFont, lineLimit: SettingsRowLabel.lineLimit)
+                                          font: SettingsRowLabel.descriptionFont, lineLimit: nil)
                             .foregroundStyle(SettingsPanePalette.helper)
                         if let line = state.autoLoadLine(for: engine) {
                             ClippingAwareText(text: line, font: SettingsRowLabel.descriptionFont,
-                                              lineLimit: SettingsRowLabel.lineLimit)
+                                              lineLimit: nil)
                                 .foregroundStyle(SettingsPanePalette.helper)
                                 .accessibilityIdentifier("recognizer-autoload-\(engine.rawValue)")
                         }

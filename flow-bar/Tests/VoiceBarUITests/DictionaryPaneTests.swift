@@ -24,7 +24,7 @@ final class DictionaryPaneTests: XCTestCase {
         let source = try Self.source("SettingsView.swift")
         let section = try Self.dictionarySection()
         XCTAssertTrue(section.contains(".onDeleteCommand { deleteSelectedTerm() }"))
-        XCTAssertTrue(section.contains(".accessibilityAction(named: \"Delete\")"), "VoiceOver can delete too")
+        XCTAssertTrue(section.contains(".accessibilityLabel(\"Actions for term "), "VoiceOver reaches Delete through the named menu")
         XCTAssertTrue(section.contains(".focused($focusedEditorField, equals: .list)"))
         XCTAssertTrue(section.contains(
             ".keyboardShortcut(focusedEditorField == .search ? nil : KeyboardShortcut(\"z\", modifiers: .command))"))

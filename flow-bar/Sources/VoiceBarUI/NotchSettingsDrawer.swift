@@ -64,7 +64,7 @@ public enum NotchSettingsDrawerPresentation {
         case .idle: nil
         case .checking: "Checking for updates…"
         case .upToDate: "No newer release is available."
-        case let .ahead(latest): "No newer release. This build is past \(latest)."
+        case .ahead: "No newer release."
         case let .available(version): "VoiceBar \(version) is available."
         case .couldNotCheck: "Could not check for updates. Try again in a moment."
         case .updating: "Updating. VoiceBar restarts when it is done."
@@ -393,8 +393,10 @@ struct NotchScrollEdgeFade: ViewModifier {
         if isActive {
             content.mask {
                 VStack(spacing: 0) {
+                    // Keep a clear guard below the tabs; a full-height fade leaves readable half-lines.
+                    Color.clear.frame(height: NotchSettingsDrawerPresentation.scrollEdgeFade - 6)
                     LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                        .frame(height: NotchSettingsDrawerPresentation.scrollEdgeFade)
+                        .frame(height: 6)
                     Color.black
                 }
             }

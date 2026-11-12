@@ -44,9 +44,6 @@ public struct VoiceBarGitDescribe: Equatable, Sendable {
 public enum VoiceBarBuildLine {
     /// The status part alone ("ahead of release by 14 commits", "up to date", "update available: 2.3.1").
     public static func status(_ status: VoiceBarVersionStatus?, describe: VoiceBarGitDescribe?) -> String? {
-        if let ahead = describe?.commitsAhead, ahead > 0, status != nil, !status.isAvailable {
-            return "ahead of release by \(ahead) \(ahead == 1 ? "commit" : "commits")"
-        }
         switch status {
         case nil: return nil
         case .checking: return "checking…"
@@ -63,7 +60,6 @@ public enum VoiceBarBuildLine {
         status: VoiceBarVersionStatus?
     ) -> String {
         var parts = [installed.version ?? "Unknown version"]
-        if let commit = installed.shortCommit { parts.append(commit) }
         if let status = self.status(status, describe: describe) { parts.append(status) }
         return parts.joined(separator: " · ")
     }

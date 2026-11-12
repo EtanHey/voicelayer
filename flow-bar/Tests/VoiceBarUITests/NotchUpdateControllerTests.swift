@@ -29,20 +29,20 @@ final class NotchUpdateControllerTests: XCTestCase {
         }
     }
 
-    func testTheBuildLineCarriesVersionShaAndHowFarAhead() {
+    func testTheBuildLineShowsVersionAndUserFacingUpdateState() {
         let installed = VoiceBarInstalledVersion(version: "2.3.0", commit: "a1b2c3d4e5f6")
         let ahead = VoiceBarGitDescribe(releaseVersion: "2.2.61", commitsAhead: 14)
         XCTAssertEqual(VoiceBarBuildLine.text(installed: installed, describe: ahead, status: .ahead(latest: "2.2.61")),
-                       "2.3.0 · a1b2c3d · ahead of release by 14 commits")
+                       "2.3.0 · ahead of release 2.2.61")
         XCTAssertEqual(VoiceBarBuildLine.text(installed: installed, describe: .init(releaseVersion: "2.3.0", commitsAhead: 1),
-                                              status: .latest), "2.3.0 · a1b2c3d · ahead of release by 1 commit")
+                                              status: .latest), "2.3.0 · up to date")
         XCTAssertEqual(VoiceBarBuildLine.text(installed: installed, describe: .init(releaseVersion: "2.3.0", commitsAhead: 0),
-                                              status: .latest), "2.3.0 · a1b2c3d · up to date")
+                                              status: .latest), "2.3.0 · up to date")
         XCTAssertEqual(VoiceBarBuildLine.text(installed: installed, describe: ahead, status: .available("2.3.1")),
-                       "2.3.0 · a1b2c3d · update available: 2.3.1", "an available update outranks local commits")
-        XCTAssertEqual(VoiceBarBuildLine.text(installed: installed, describe: nil, status: nil), "2.3.0 · a1b2c3d")
+                       "2.3.0 · update available: 2.3.1", "an available update outranks local commits")
+        XCTAssertEqual(VoiceBarBuildLine.text(installed: installed, describe: nil, status: nil), "2.3.0")
         XCTAssertEqual(VoiceBarBuildLine.text(installed: installed, describe: nil, status: .ahead(latest: "2.2.61")),
-                       "2.3.0 · a1b2c3d · ahead of release 2.2.61")
+                       "2.3.0 · ahead of release 2.2.61")
     }
 
     func testCheckForUpdatesFindsAnAvailableReleaseAndItsNotes() async {
@@ -57,7 +57,7 @@ final class NotchUpdateControllerTests: XCTestCase {
         XCTAssertTrue(controller.canUpdate)
         XCTAssertEqual(NotchUpdateController.releaseNotesURL(version: "2.3.1")?.absoluteString,
                        "https://github.com/EtanHey/voicelayer/releases/tag/v2.3.1")
-        XCTAssertEqual(controller.buildLine, "2.3.0 · abcdef1 · update available: 2.3.1")
+        XCTAssertEqual(controller.buildLine, "2.3.0 · update available: 2.3.1")
     }
 
     func testTheButtonSkipsTheSixHourCache() async {

@@ -164,17 +164,12 @@ struct SettingsVersionFooter: View {
 
     /// Sentence case for the sidebar: "Up to date", "Ahead of release by 14 commits", "Update available".
     static func statusText(_ status: VoiceBarVersionStatus?, describe: VoiceBarGitDescribe?) -> String? {
-        if let ahead = describe?.commitsAhead, ahead > 0, let status, !status.isUpdateAvailable,
-           let text = VoiceBarBuildLine.status(status, describe: describe) {
-            return text.prefix(1).uppercased() + text.dropFirst()
-        }
         return status?.sidebarMessage
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(["VoiceBar \(installed.version ?? "Unknown")", installed.shortCommit].compactMap { $0 }
-                .joined(separator: " · "))
+            Text("VoiceBar \(installed.version ?? "Unknown")")
                 .monospacedDigit()
                 .fixedSize(horizontal: false, vertical: true)
             if let status, let text = Self.statusText(status, describe: describe) {
@@ -185,9 +180,9 @@ struct SettingsVersionFooter: View {
         }
         .font(.system(size: 10))
         .foregroundStyle(.secondary)
-        .help("VoiceBar \(installed.label). \(status?.message ?? "")")
+        .help(Self.line(installed: installed, status: status))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("VoiceBar \(installed.label)")
+        .accessibilityLabel("VoiceBar \(installed.version ?? "Unknown")")
         .accessibilityValue(status?.message ?? "")
     }
 

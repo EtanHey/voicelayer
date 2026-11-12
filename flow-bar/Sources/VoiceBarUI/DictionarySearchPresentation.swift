@@ -19,7 +19,7 @@ enum DictionarySearchPresentation {
     }
 
     static let includedExplanation =
-        "These ship with VoiceBar and can't be edited. A term of your own wins over an included one."
+        "Built-in. Your terms override these."
 }
 
 /// Chips that wrap onto as many lines as they need.

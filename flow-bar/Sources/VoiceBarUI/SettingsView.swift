@@ -617,6 +617,13 @@ public struct SettingsView: View {
     /// A term deleted from Your terms that Undo can still put back (4 s; spec Dictionary).
     @State private var pendingDeletion: DictionaryPendingDeletion?
     @State private var hoveredTermRowID: String?
+    private struct TermRemoval {
+        let canonical: String
+        let rowID: String
+    }
+    @State private var termRemoval: TermRemoval?
+    @State private var removalEscapeClaim = UUID()
+    @FocusState private var focusedTermAction: String?
     /// The last Set up / Reinstall: which one ran, and its result (nil while it runs).
     @State private var relaySetupFeedback: (
         action: SettingsRelaySetupFeedback.Action,
@@ -880,8 +887,8 @@ public struct SettingsView: View {
         _microphoneDrag = State(initialValue: initialMicrophoneDrag)
         // The list is there on the first frame instead of flashing "No known input devices" until onAppear.
         _microphoneSnapshot = State(initialValue: prioritySnapshot())
-        _includedTermsExpanded = State(initialValue: initialIncludedTermsExpanded)
-        _yourTermsExpanded = State(initialValue: initialYourTermsExpanded)
+        _includedTermsExpanded = State(initialValue: initialIncludedTermsExpanded || !Self.dictionaryQuery(initialDictionarySearch).isEmpty)
+        _yourTermsExpanded = State(initialValue: initialYourTermsExpanded || !Self.dictionaryQuery(initialDictionarySearch).isEmpty)
         _selectedTermRowID = State(initialValue: initialSelectedTermRowID)
         _selectedHistoryScope = State(initialValue: initialHistoryScope)
         if let historyPlayback {
@@ -1349,6 +1356,7 @@ public struct SettingsView: View {
             SettingsRow(title: SettingsGeneralCopy.readClipboardTitle,
                         description: VoiceBarHotkeyContract.readClipboardDescription) {
                 Button(VoiceBarHotkeyContract.readClipboardActionLabel) { onReadClipboard?() }
+                    .accessibilityLabel(VoiceBarHotkeyContract.readClipboardActionLabel)
                     .disabled(onReadClipboard == nil)
             }
         }
@@ -1417,9 +1425,11 @@ public struct SettingsView: View {
             ForEach(Array(visibleRows.enumerated()), id: \.offset) { index, row in
                 microphonePriorityRow(row, at: index, visibleCount: visibleRows.count)
             }
-            Label(SettingsGeneralCopy.microphoneNote, systemImage: "info.circle")
-                .font(.system(size: 11.5))
-                .foregroundStyle(SettingsPanePalette.helper)
+            if !visibleRows.isEmpty {
+                Label(SettingsGeneralCopy.microphoneNote, systemImage: "info.circle")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(SettingsPanePalette.helper)
+            }
         } header: {
             Text("Microphone priority")
                 .id(SettingsFocus.microphonePriority)
@@ -1435,7 +1445,8 @@ public struct SettingsView: View {
         // Etan (QA 2026-11-11, shots 1-2): status and the "Used for dictation" pill share the second line, and Make
         // default is the row's only trailing control. Nothing appears under the row and hovering moves nothing.
         let content = SettingsRow(title: row.label, description: SettingsMicrophoneRowPresentation.status(row),
-                                  badge: isUsed ? SettingsMicrophoneRowPresentation.usedBadge : nil, lead: {
+                                  badge: isUsed ? SettingsMicrophoneRowPresentation.usedBadge : nil,
+                                  controlsFollowStatus: true, lead: {
             Image(systemName: "line.3.horizontal")
                 .foregroundStyle(.tertiary)
                 .opacity(row.canPrioritize ? 1 : 0)
@@ -1449,6 +1460,10 @@ public struct SettingsView: View {
                     makeMicrophoneDefault(at: index)
                 }
                 .controlSize(.small)
+                .background(GeometryReader { proxy in
+                    Color.clear.preference(key: SettingsControlFrameKey.self,
+                        value: ["microphone-default-\(index)": proxy.frame(in: .global)])
+                })
                 .disabled(microphoneEditReason != nil)
                 .opacity(isHovered ? 1 : 0)
                 .animation(.easeOut(duration: 0.12), value: isHovered)
@@ -1513,8 +1528,8 @@ public struct SettingsView: View {
         }
     }
 
-    /// Half the gap between two priority rows' content, so the line sits on the divider between them.
-    private static let dropLineOffset: CGFloat = 11.5
+    /// Half the 3 pt stroke plus clearance: stay just outside this row, independent of Form gaps or text height.
+    private static let dropLineOffset: CGFloat = 2
 
     private func makeMicrophoneDefault(at index: Int) {
         guard microphoneEditReason == nil, let uids = microphoneSnapshot.makingDefaultUIDs(at: index) else { return }
@@ -2554,7 +2569,7 @@ public struct SettingsView: View {
                         SettingsDisclosureHeader(yourTermsTitle, isExpanded: $yourTermsExpanded)
                             .font(Self.dictionaryGroupFont)
                             .help(yourTermsExpanded ? "Collapse your terms" : "Show your terms")
-                        if yourTermsExpanded || isSearching {
+                        if yourTermsExpanded {
                             switch Self.dictionaryPlaceholder(
                                 loaded: hasLoadedDictionaryOnce, personalIsEmpty: personal.isEmpty,
                                 searching: isSearching
@@ -2562,17 +2577,14 @@ public struct SettingsView: View {
                             case .loading:
                                 HStack(spacing: 8) {
                                     ProgressView().controlSize(.small)
-                                    Text("Loading…").foregroundStyle(SettingsPanePalette.helper)
+                                    SettingsRowLabel(title: "Loading…",
+                                                     description: "Your terms and included spellings will appear here.")
                                 }
-                                .frame(maxWidth: .infinity, minHeight: 170)
+                                .padding(.horizontal, 6).padding(.vertical, 12)
                             case .empty:
-                                VStack(spacing: 10) {
-                                    Image(systemName: "text.book.closed").font(.largeTitle).foregroundStyle(.secondary)
-                                    Text("No terms yet").font(.headline)
-                                    Text("Add names, products, and other preferred spellings.")
-                                        .font(.caption).foregroundStyle(SettingsPanePalette.helper)
-                                }
-                                .frame(maxWidth: .infinity, minHeight: 170)
+                                SettingsRowLabel(title: "No terms yet",
+                                                 description: "Add names, products, and other preferred spellings.")
+                                    .padding(.horizontal, 6).padding(.vertical, 12)
                             case nil:
                                 EmptyView()
                             }
@@ -2597,10 +2609,10 @@ public struct SettingsView: View {
                         .font(Self.dictionaryGroupFont)
                         .help(includedTermsExpanded ? "Collapse included terms" : "Show included terms")
                         .padding(.top, 18)
-                        if includedHeader.showsChevron, !isSearching {
+                        if includedHeader.showsChevron, includedTermsExpanded, !isSearching {
                             includedTermsSummary(expanded: includedTermsExpanded)
                         }
-                        if includedTermsExpanded || isSearching {
+                        if includedTermsExpanded {
                             ForEach(included, id: \.rowID) { row in
                                 dictionaryEntryCard(row.entry, rowID: row.rowID, isEditable: false)
                                 Divider()
@@ -2638,6 +2650,34 @@ public struct SettingsView: View {
                     }
                 }
             }
+            if let removal = termRemoval {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Delete term?").font(.system(size: 13, weight: .semibold))
+                    Text("Remove “\(removal.canonical)” from your dictionary?")
+                        .font(SettingsRowLabel.descriptionFont).foregroundStyle(SettingsPanePalette.helper)
+                    HStack {
+                        Spacer()
+                        Button("Cancel") { termRemoval = nil }
+                            .focusable(interactions: .edit)
+                            .onKeyPress(.space) { termRemoval = nil; return .handled }
+                        Button("Delete", role: .destructive) {
+                            confirmTermRemoval()
+                        }
+                        .focusable(interactions: .edit)
+                        .onKeyPress(.space) { confirmTermRemoval(); return .handled }
+                    }
+                }
+                .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                .background(.bar)
+                .onAppear {
+                    if notchEmbeddedTab != nil {
+                        NotchEscapeOwnership.shared.claim(removalEscapeClaim) { termRemoval = nil }
+                    }
+                }
+                .onDisappear { NotchEscapeOwnership.shared.release(removalEscapeClaim) }
+                .onExitCommand { termRemoval = nil }
+                .accessibilityIdentifier("dictionary-delete-confirmation")
+            }
             if let pendingDeletion {
                 dictionaryUndoBar(pendingDeletion)
                     .transition(reduceMotion
@@ -2658,6 +2698,12 @@ public struct SettingsView: View {
                 saveTermSheet(saved)
             }, onCancel: { termSheet = nil })
         })
+        .onChange(of: dictionarySearch) { _, search in
+            if !Self.dictionaryQuery(search).isEmpty {
+                yourTermsExpanded = true
+                includedTermsExpanded = true
+            }
+        }
         .onChange(of: termSheet) { _, sheet in
             // A save could re-add the very term waiting for its Undo window; send that removal first.
             if sheet != nil { DictionaryDeletion.commitNow(pending: &pendingDeletion, commit: commitDeletion) }
@@ -2681,44 +2727,16 @@ public struct SettingsView: View {
     }
 
     private func includedTermsHeaderLabel(_ header: IncludedTermsHeader) -> some View {
-        HStack {
-            Text(header.title)
-            if header.isLoading {
-                ProgressView().controlSize(.small)
-                Text("Loading…").font(.caption).foregroundStyle(SettingsPanePalette.helper)
-            }
-            Spacer()
-            Text("built in").font(.caption).foregroundStyle(SettingsPanePalette.helper)
-        }
+        Text(header.title)
     }
 
-    /// Spec: Included terms (closed) shows a sample of the daemon's own rows as chips, and why they can't be edited.
+    /// Included terms use the same counted header and rows as Your terms. No second chip layout while closed.
     private func includedTermsSummary(expanded: Bool) -> some View {
-        let sample = DictionarySearchPresentation.includedSample(
-            dictionaryDisplayIndex.sortedEntries.filter { !$0.isPersonal }.map(\.entry)
-        )
-        return VStack(alignment: .leading, spacing: 8) {
-            if !expanded, !sample.isEmpty {
-                DictionaryChipFlow(spacing: 6) {
-                    ForEach(sample, id: \.self) { term in
-                        Text(term)
-                            .font(.system(size: 11.5))
-                            .lineLimit(1)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Capsule().fill(Color.primary.opacity(0.07)))
-                    }
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Included terms include " + sample.joined(separator: ", "))
-            }
-            Text(DictionarySearchPresentation.includedExplanation)
-                .font(.system(size: 11.5))
-                .foregroundStyle(SettingsPanePalette.helper)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 8)
+        Text(DictionarySearchPresentation.includedExplanation)
+            .font(SettingsRowLabel.descriptionFont)
+            .foregroundStyle(SettingsPanePalette.helper)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 6).padding(.vertical, 8)
     }
 
     private func dictionaryNoMatches(_ query: String) -> some View {
@@ -2815,12 +2833,7 @@ public struct SettingsView: View {
                 focusedEditorField = .list
             }
             .accessibilityAddTraits(selectedTermRowID == rowID ? .isSelected : [])
-            .accessibilityAction(named: "Edit") {
-                if isEditable { termSheet = DictionaryTermEdit(original: entry) }
-            }
-            .accessibilityAction(named: "Delete") {
-                if isEditable { deleteTerm(entry.canonical, rowID: rowID) }
-            }
+
     }
 
     /// A term's misheard spellings, as the row's description, only when it has some.
@@ -2831,18 +2844,26 @@ public struct SettingsView: View {
     /// Group headers ("Your terms", "Included terms") in the section-header role (lane S DESIGN.md §6).
     static let dictionaryGroupFont = Font.system(size: 13, weight: .semibold)
 
-    /// The term in the row-title role, then its misheard spellings in the helper role, as one wrapping line.
+    /// Keep the canonical spelling and first variant complete, wrapping at narrow widths. Editing and
+    /// accessibility retain every variant, including fragments, without modifying the dictionary data.
     static func dictionaryTermLine(_ entry: STTDictionaryEntry) -> some View {
-        var line = Text(entry.canonical).font(SettingsRowLabel.titleFont).foregroundColor(.primary)
-        if !entry.variants.isEmpty {
-            line = line + Text("   " + variantSummary(entry.variants).lowercasedFirst)
-                .font(SettingsRowLabel.descriptionFont)
-                .foregroundColor(SettingsPanePalette.helper)
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            ClippingAwareText(text: entry.canonical, font: SettingsRowLabel.titleFont, lineLimit: nil)
+                .foregroundStyle(.primary).layoutPriority(1)
+            if let first = entry.variants.first {
+                ClippingAwareText(text: "Also heard as " + first + ".", font: SettingsRowLabel.descriptionFont, lineLimit: nil)
+                    .foregroundStyle(SettingsPanePalette.helper)
+                if entry.variants.count > 1 {
+                    Text("\(entry.variants.count - 1) more").font(SettingsRowLabel.descriptionFont)
+                        .foregroundStyle(SettingsPanePalette.helper).fixedSize()
+                }
+            }
         }
-        return line
-            .fixedSize(horizontal: false, vertical: true)
-            .accessibilityLabel(entry.variants.isEmpty ? entry.canonical
-                : "\(entry.canonical). \(variantSummary(entry.variants))")
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(entry.variants.isEmpty ? entry.canonical
+            : "\(entry.canonical). \(variantSummary(entry.variants))")
+        .help(entry.variants.isEmpty ? entry.canonical : "\(entry.canonical). \(variantSummary(entry.variants))")
     }
 
     private func dictionaryEntryHeader(
@@ -2851,64 +2872,68 @@ public struct SettingsView: View {
         isEditable: Bool
     ) -> some View {
         let isSelected = selectedTermRowID == rowID
-        // Spec: hover or selection shows the row's actions. They keep their width while hidden, so the text never
-        // reflows under the pointer; VoiceOver reaches them as row actions instead.
-        let showsActions = isSelected || hoveredTermRowID == rowID || settingsHoverPreview.termRowID == rowID
-        // Lane S PR 3: one line per term, its misheard spellings after it as helper text; long ones wrap, never cut.
         let label = Self.dictionaryTermLine(entry)
             .frame(minWidth: SettingsRowLabel.textMinWidth, maxWidth: .infinity, alignment: .leading)
-        let actions = HStack(spacing: 4) {
-            SettingsCopyButton(text: entry.canonical, label: "term \(entry.canonical)")
-            if isEditable {
-                Button {
-                    termSheet = DictionaryTermEdit(original: entry)
-                } label: {
-                    Image(systemName: "pencil")
-                        .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.borderless)
-                .help("Edit term")
-                .accessibilityLabel("Edit term \(entry.canonical)")
-                deleteDictionaryEntryButton(entry.canonical, rowID: rowID)
-            }
-        }
-        .fixedSize()
-        .opacity(showsActions ? 1 : 0)
-        .allowsHitTesting(showsActions)
-        .accessibilityHidden(!showsActions)
-        // Trailing controls keep their natural width; when the text column can't keep its minimum beside them they
-        // wrap under the text (V12).
         return SettingsRowLayout {
             label
-            actions
+            HStack(spacing: 2) {
+                if isEditable {
+                    Button { termSheet = DictionaryTermEdit(original: entry) } label: {
+                        Image(systemName: "pencil")
+                            .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(SettingsPanePalette.helper)
+                    .focusable(isSelected, interactions: .edit)
+                    .onKeyPress(.space) {
+                        guard isSelected else { return .ignored }
+                        termSheet = DictionaryTermEdit(original: entry)
+                        return .handled
+                    }
+                    .help("Edit term")
+                    .accessibilityLabel("Edit term \(entry.canonical)")
+                }
+                // Only the selected row contributes action stops. Delete stays behind this menu and confirmation.
+                Menu {
+                    SettingsCopyButton(text: entry.canonical, label: "term \(entry.canonical)", showsTitle: true)
+                    if isEditable {
+                        Divider()
+                        Button("Delete…", role: .destructive) { requestTermRemoval(entry.canonical, rowID: rowID) }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .focusable(isSelected, interactions: .edit)
+                .focused($focusedTermAction, equals: rowID)
+                .accessibilityLabel("Actions for term \(entry.canonical)")
+                .help(isEditable ? "Copy or delete term" : "Copy included term")
+            }
+            .fixedSize()
         }
         .frame(minHeight: DictionaryCardLayout.headerHeight)
     }
 
-    @ViewBuilder
-    private func deleteDictionaryEntryButton(_ canonical: String, rowID: String) -> some View {
-        Button {
-            deleteTerm(canonical, rowID: rowID)
-        } label: {
-            Image(systemName: "trash")
-                .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.borderless)
-        .foregroundStyle(.red)
-        .help("Delete term")
-        .accessibilityLabel("Delete term \(canonical)")
+    private func confirmTermRemoval() {
+        guard let removal = termRemoval else { return }
+        termRemoval = nil
+        deleteTerm(removal.canonical, rowID: removal.rowID)
+    }
+
+    private func requestTermRemoval(_ canonical: String, rowID: String) {
+        guard termRemoval == nil else { return }
+        termRemoval = TermRemoval(canonical: canonical, rowID: rowID)
     }
 
     /// The rows arrow keys move through, in display order.
     private var visibleTermRowIDs: [String] {
-        let isSearching = !Self.dictionaryQuery(dictionarySearch).isEmpty
         var rows: [String] = []
-        if yourTermsExpanded || isSearching {
+        if yourTermsExpanded {
             rows += dictionaryDisplayIndex.entries(source: "personal", matching: dictionarySearch).map(\.rowID)
         }
-        if includedTermsExpanded || isSearching {
+        if includedTermsExpanded {
             rows += dictionaryDisplayIndex.entries(source: "bundled", matching: dictionarySearch).map(\.rowID)
         }
         return rows
@@ -2920,7 +2945,7 @@ public struct SettingsView: View {
               let row = dictionaryDisplayIndex.entries(source: "personal", matching: dictionarySearch)
                   .first(where: { $0.rowID == rowID })
         else { return }
-        deleteTerm(row.entry.canonical, rowID: rowID)
+        requestTermRemoval(row.entry.canonical, rowID: rowID)
     }
 
     private func deleteTerm(_ canonical: String, rowID: String) {
@@ -3298,7 +3323,7 @@ public struct SettingsView: View {
     }
 
     private var hasPendingDictionaryEdit: Bool {
-        termSheet != nil || pendingDeletion != nil
+        termSheet != nil || pendingDeletion != nil || termRemoval != nil
     }
 
     /// Arriving on the tab never finds an editor already open (UI pass #17: the first row was).

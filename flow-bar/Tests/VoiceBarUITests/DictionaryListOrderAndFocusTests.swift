@@ -74,8 +74,12 @@ final class DictionaryListOrderAndFocusTests: XCTestCase {
 
         let source = try settingsViewSource()
         XCTAssertFalse(source.contains("dictionarySearch.isEmpty"), "every check goes through the one trimmed query")
-        XCTAssertTrue(source.contains("if yourTermsExpanded || isSearching {"))
-        XCTAssertTrue(source.contains("if includedTermsExpanded || isSearching {"))
+        XCTAssertTrue(source.contains("if yourTermsExpanded {"))
+        XCTAssertTrue(source.contains("if includedTermsExpanded {"))
+        // Search now opens the actual disclosure state, so the chevron and content cannot disagree.
+        XCTAssertTrue(source.contains("if !Self.dictionaryQuery(search).isEmpty {"))
+        XCTAssertTrue(source.contains("yourTermsExpanded = true"))
+        XCTAssertTrue(source.contains("includedTermsExpanded = true"))
         XCTAssertTrue(source.contains("matches: isSearching ? personal.count : nil"))
         XCTAssertTrue(source.contains("matches: isSearching ? included.count : nil"))
     }
@@ -87,7 +91,7 @@ final class DictionaryListOrderAndFocusTests: XCTestCase {
 
         XCTAssertTrue(source.contains("@State private var yourTermsExpanded"))
         XCTAssertTrue(source.contains("SettingsDisclosureHeader(yourTermsTitle, isExpanded: $yourTermsExpanded)"))
-        XCTAssertTrue(source.contains("if yourTermsExpanded || isSearching {"))
+        XCTAssertTrue(source.contains("if yourTermsExpanded {"))
     }
 
     func testTheSavedTermIsScrolledToSelectedAndFlashed() throws {

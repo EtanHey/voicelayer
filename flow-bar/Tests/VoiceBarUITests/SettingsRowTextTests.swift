@@ -25,19 +25,6 @@ final class SettingsRowTextTests: XCTestCase {
         XCTAssertEqual(SettingsRowLabel.lineLimit, 2)
     }
 
-    func testRowActionsShowOnHoverOrSelectionAndStayReachable() throws {
-        let source = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Sources/VoiceBarUI/SettingsView.swift"), encoding: .utf8)
-        let start = try XCTUnwrap(source.range(of: "private func dictionaryEntryCard("))
-        let end = try XCTUnwrap(source.range(of: "private func deleteDictionaryEntryButton("))
-        let section = String(source[start.lowerBound..<end.lowerBound])
-        XCTAssertTrue(section.contains("let showsActions = isSelected || hoveredTermRowID == rowID"))
-        XCTAssertTrue(section.contains(".opacity(showsActions ? 1 : 0)"))
-        XCTAssertTrue(section.contains(".allowsHitTesting(showsActions)"))
-        XCTAssertTrue(section.contains(".accessibilityAction(named: \"Edit\")"))
-    }
-
     // MARK: - Helper text contrast (≥ 4.5:1, light and dark)
 
     func testHelperAndWarningTextMeetFourAndAHalfToOneOnTheWindowBackground() throws {

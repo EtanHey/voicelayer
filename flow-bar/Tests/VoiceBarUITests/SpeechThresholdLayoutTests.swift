@@ -43,16 +43,18 @@ final class SpeechThresholdLayoutTests: XCTestCase {
                 return (text, observation.boundingBox)
             }
             let draft = try XCTUnwrap(lines.first { $0.0.contains("Draft") }, "\(lines)")
-            // OCR must see the full unit on the draft row, rather than split fragments or an ellipsis.
-            let unit = try XCTUnwrap(lines.first {
-                $0.0.contains("characters") && abs($0.1.midY - draft.1.midY) * size.height < 8
-            }, "Full characters unit missing from draft row: \(lines)")
-            let apply = try XCTUnwrap(lines.first { $0.0.contains("Apply") }, "\(lines)")
-            XCTAssertEqual(unit.1.midY * size.height, apply.1.midY * size.height, accuracy: 8)
-            let number = try XCTUnwrap(lines.first {
-                $0.0.contains("400") && abs($0.1.midY - draft.1.midY) * size.height < 8
-            }, "Number field missing from draft row: \(lines)")
+            // Approved threshold anatomy: Draft is above the number; the full unit belongs in the helper.
+            let summary = try XCTUnwrap(lines.first {
+                $0.0.contains("400 characters") && $0.0.contains("short voice")
+            }, "Full threshold meaning and unit must remain visible: \(lines)")
+            XCTAssertNotNil(lines.first { $0.0.contains("the long voice.") }, "Full summary must wrap without clipping")
+            let apply = try XCTUnwrap(lines.first { $0.0 == "Apply" }, "\(lines)")
+            let revert = try XCTUnwrap(lines.first { $0.0 == "Revert" }, "\(lines)")
+            let number = try XCTUnwrap(lines.first { $0.0 == "400" }, "Number field missing: \(lines)")
+            XCTAssertGreaterThan(draft.1.midY, number.1.midY, "Draft labels the field above it")
+            XCTAssertLessThan(summary.1.maxX, number.1.minX, "The summary leaves the controls their own column")
             XCTAssertEqual(number.1.midY * size.height, apply.1.midY * size.height, accuracy: 8)
+            XCTAssertEqual(revert.1.midY * size.height, apply.1.midY * size.height, accuracy: 8)
         }
     }
 }
