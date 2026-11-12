@@ -100,3 +100,34 @@ jobs:
 
       - name: Swift tests
         run: swift test --package-path flow-bar
+
+      # Lane c10-K: hosted xctest died twice with signal 11 and left nothing to read. On failure,
+      # keep the crash reports and the xctest unified log so the next crash names its frame.
+      - name: Collect Swift crash evidence
+        if: failure()
+        run: |
+          out=.build.noindex/swift-crash-evidence
+          mkdir -p "$out"
+          for dir in "$HOME/Library/Logs/DiagnosticReports" /Library/Logs/DiagnosticReports; do
+            [ -d "$dir" ] || continue
+            find "$dir" -maxdepth 1 -type f -mmin -60 \
+              \( -name 'xctest*' -o -name 'VoiceBar*' \) \( -name '*.ips' -o -name '*.crash' \) \
+              -exec cp {} "$out/" \;
+          done
+          log show --last 5m --predicate 'process == "xctest"' --style compact 2>&1 | tail -n 2000 > "$out/xctest-unified.log" || true
+          # A hosted runner holds no private data; drop any file that matches a private marker anyway.
+          markers='docs\.local|\.voicelayer/voices|voicelayer/recordings|BEGIN [A-Z ]*PRIVATE KEY|Bearer [A-Za-z0-9._-]{20,}'
+          for file in "$out"/*; do
+            [ -f "$file" ] || continue
+            if grep -qE "$markers" "$file"; then echo "dropped (private marker): $(basename "$file")"; rm -f "$file"; fi
+          done
+          ls -la "$out"
+
+      - name: Upload Swift crash evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: swift-crash-evidence-${{ github.run_attempt }}
+          path: .build.noindex/swift-crash-evidence/
+          retention-days: 7
+          if-no-files-found: warn
