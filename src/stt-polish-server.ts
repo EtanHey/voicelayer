@@ -144,39 +144,96 @@ export function setPolishRssProbeForTests(probe: ((pid: number) => Promise<numbe
 }
 
 export type PolishMemoryCheck =
-  | { action: "none"; reason: "not-running" | "unmeasured" | "baseline" | "within-budget" | "voice-busy" | "unload-unconfirmed"; rss_mb?: number; baseline_rss_mb?: number }
-  | { action: "reset"; rss_mb: number; baseline_rss_mb: number; bytes_freed: number };
+  | { action: "none"; reason: "not-running" | "unmeasured" | "within-budget"; rss_mb?: number; baseline_rss_mb?: number }
+  | { action: "owed"; rss_mb: number; baseline_rss_mb: number; logged_cache_gb: number | null };
 
 /**
- * After a polish request: measure, and restart the server when its growth exceeds the budget.
- * Never while a voice operation runs; the next request checks again.
+ * c8-M2 round 3 (RM-memory-r2 R2-1): the budget restart is a small state machine, so a decision taken while
+ * a take is still transcribing is never forgotten:
+ *
+ *   ok --over budget--> owed --voice idle, no polish user--> restarting --stopped and relaunched--> ok
+ *
+ * `owed` is bound to the server process it was measured on (a server that went away for another reason
+ * clears it). It is retried on a short timer until the voice path is idle and no polish request holds the
+ * server, then runs exactly once. A polish request that arrives while `restarting` waits for the fresh server;
+ * the caller's polish deadline (stt-polish.ts) bounds that wait and delivers the take unpolished at expiry,
+ * so text is never lost.
  */
+type BudgetState =
+  | { state: "ok" }
+  | { state: "owed"; pid: number; rssMb: number; baselineMb: number }
+  | { state: "restarting"; done: Promise<void> };
+let budget: BudgetState = { state: "ok" };
+let budgetTimer: ReturnType<typeof setTimeout> | undefined;
+let budgetPollMs = 1_000;
+let lastEnsureOptions: EnsureSTTPolishServerOptions = {};
+/** Tests only. */
+export function setPolishBudgetPollMsForTests(ms: number | null): void { budgetPollMs = ms ?? 1_000; }
+export function polishBudgetState(): BudgetState["state"] { return budget.state; }
+
+/** After a polish use: measure; over budget makes a restart owed (it runs at idle, see above). */
 export async function checkPolishMemoryAfterRequest(): Promise<PolishMemoryCheck> {
   const proc = polishProcess;
   if (!proc) return { action: "none", reason: "not-running" };
   const rss = await polishRssProbe(proc.pid);
   if (rss === null || polishProcess !== proc) return { action: "none", reason: "unmeasured" };
-  if (!polishBaseline || polishBaseline.pid !== proc.pid) {
-    polishBaseline = { pid: proc.pid, rssMb: rss };
-    return { action: "none", reason: "baseline", rss_mb: rss, baseline_rss_mb: rss };
-  }
+  // Baseline: the smallest post-use footprint of this process (model plus at most one small entry). A large
+  // first take cannot hide behind itself for long: the server's own logged cache size is checked every time,
+  // and the warm-up request at the next take's start logs the previous take's entry.
+  if (!polishBaseline || polishBaseline.pid !== proc.pid || rss < polishBaseline.rssMb) polishBaseline = { pid: proc.pid, rssMb: rss };
   const baseline = polishBaseline.rssMb;
-  // The server's own accounting (logged at the start of each request, so one request behind) is a
-  // second witness: with one entry it is the size of the previous polish's cached sequence.
-  const loggedCacheBytes = (lastPolishCache?.gb ?? 0) * 1e9;
-  if (!polishCacheResetNeeded(baseline, rss) && loggedCacheBytes <= POLISH_CACHE_GROWTH_BUDGET_BYTES) return { action: "none", reason: "within-budget", rss_mb: rss, baseline_rss_mb: baseline };
+  const loggedGb = lastPolishCache?.gb ?? null;
+  const over = polishCacheResetNeeded(baseline, rss) || (loggedGb ?? 0) * 1e9 > POLISH_CACHE_GROWTH_BUDGET_BYTES;
+  if (!over) return { action: "none", reason: "within-budget", rss_mb: rss, baseline_rss_mb: baseline };
+  if (budget.state === "ok") {
+    budget = { state: "owed", pid: proc.pid, rssMb: rss, baselineMb: baseline };
+    console.error(`[voicelayer] ${JSON.stringify({ event: "polish_cache_restart_owed", rss_mb: rss, baseline_rss_mb: baseline,
+      logged_cache_gb: loggedGb, budget_bytes: POLISH_CACHE_GROWTH_BUDGET_BYTES })}`);
+  }
+  void runOwedPolishRestart();
+  return { action: "owed", rss_mb: rss, baseline_rss_mb: baseline, logged_cache_gb: loggedGb };
+}
+
+function armBudgetTimer(): void {
+  if (budgetTimer) return;
+  budgetTimer = setTimeout(() => { budgetTimer = undefined; void runOwedPolishRestart(); }, budgetPollMs);
+  budgetTimer.unref?.();
+}
+
+/** Runs an owed restart if the server is idle now; otherwise re-arms. Exactly one restart per owed state. */
+async function runOwedPolishRestart(): Promise<void> {
+  const owed = budget;
+  if (owed.state !== "owed") return;
+  if (polishProcess?.pid !== owed.pid) { budget = { state: "ok" }; return; } // that server is gone already
+  if (polishResidency.inUse || polishLaunch || stoppingPolishProcess) { armBudgetTimer(); return; }
   const release = reserveVoiceMaintenance(residencyBusy);
-  if (!release) return { action: "none", reason: "voice-busy", rss_mb: rss, baseline_rss_mb: baseline };
+  if (!release) { armBudgetTimer(); return; }
+  let finish!: () => void;
+  const done = new Promise<void>(resolve => { finish = resolve; });
+  budget = { state: "restarting", done };
   try {
     try { await stopSTTPolishServerAndWait(); }
-    catch { return { action: "none", reason: "unload-unconfirmed", rss_mb: rss, baseline_rss_mb: baseline }; }
+    catch {
+      console.error('[voicelayer] {"event":"polish_cache_restart","outcome":"unload-unconfirmed"}');
+      budget = { state: "owed", pid: owed.pid, rssMb: owed.rssMb, baselineMb: owed.baselineMb };
+      armBudgetTimer();
+      return;
+    }
     polishBaseline = null;
     lastPolishCache = null;
     publishSTTPolishServerStatus({ status: "stopped" });
-    const result = { action: "reset" as const, rss_mb: rss, baseline_rss_mb: baseline, bytes_freed: rss * 1024 * 1024 };
-    console.error(`[voicelayer] ${JSON.stringify({ event: "polish_cache_reset", ...result, budget_bytes: POLISH_CACHE_GROWTH_BUDGET_BYTES })}`);
-    return result;
+    console.error(`[voicelayer] ${JSON.stringify({ event: "polish_cache_restart", outcome: "stopped",
+      rss_mb: owed.rssMb, baseline_rss_mb: owed.baselineMb, bytes_freed: owed.rssMb * 1024 * 1024 })}`);
   } finally { release(); }
+  try {
+    const status = await ensureSTTPolishServer(lastEnsureOptions);
+    console.error(`[voicelayer] ${JSON.stringify({ event: "polish_cache_restart", outcome: "relaunched", status: status.status })}`);
+  } catch {
+    console.error('[voicelayer] {"event":"polish_cache_restart","outcome":"relaunch-failed"}');
+  } finally {
+    if (budget.state === "restarting" && budget.done === done) budget = { state: "ok" };
+    finish();
+  }
 }
 
 /** Last `Prompt Cache: N sequences, X GB` line the server logged; sizes only, never prompt text. */
@@ -265,14 +322,19 @@ const polishResidency = new ModelResidency(async () => {
 
 export function withSTTPolishServer<T>(work: () => Promise<T>, options: EnsureSTTPolishServerOptions & { loadOnDemand?: boolean } = {}): Promise<T> {
   idleEnv = options.env;
-  return polishResidency.use(async () => {
+  lastEnsureOptions = options;
+  return (async () => {
+    // A budget restart in progress: wait for the fresh server rather than the dying one. The caller's polish
+    // deadline bounds this wait (the take is then delivered unpolished, never lost).
+    if (budget.state === "restarting") await budget.done.catch(() => {});
+  })().then(() => polishResidency.use(async () => {
     if (options.loadOnDemand !== false && (!polishProcess || polishLaunch || stoppingPolishProcess)) {
       try { await ensureSTTPolishServer(options); }
       catch (error: unknown) { console.error("[voicelayer] Lazy polish launch failed:", error); }
     }
     return work();
-  }).finally(() => {
-    // c8-M2 round 2: the byte budget the server itself does not enforce on our path.
+  })).finally(() => {
+    // c8-M2: the byte budget the server itself does not enforce on our path (owed until idle, see above).
     void checkPolishMemoryAfterRequest().catch(() => {});
   });
 }
@@ -326,6 +388,10 @@ export function resetSTTPolishServerManagerForTests(): void {
   polishResidency.reset();
   cacheCapSupport.clear();
   polishBaseline = null;
+  budget = { state: "ok" };
+  if (budgetTimer) clearTimeout(budgetTimer);
+  budgetTimer = undefined;
+  lastEnsureOptions = {};
   lastPolishCache = null;
   polishCacheLinePending = "";
   resetSTTPolishServerManager(false);

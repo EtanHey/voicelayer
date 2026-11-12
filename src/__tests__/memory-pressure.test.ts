@@ -103,10 +103,11 @@ describe("c8-M2 polish prompt cache has a hard cap", () => {
     try {
       const { options } = fakePolish();
       await ensureSTTPolishServer({ ...options, probeCacheCaps: async () => true });
-      expect(await polish.checkPolishMemoryAfterRequest?.()).toMatchObject({ action: "none", reason: "baseline" });
+      expect(await polish.checkPolishMemoryAfterRequest?.()).toMatchObject({ action: "none", reason: "within-budget", baseline_rss_mb: 2400 });
       expect(await polish.checkPolishMemoryAfterRequest?.()).toMatchObject({ action: "none", reason: "within-budget" });
-      expect(await polish.checkPolishMemoryAfterRequest?.()).toMatchObject({ action: "reset", baseline_rss_mb: 2400, rss_mb: 3169 });
-      expect(await releaseSTTPolishServerForMemoryPressure()).toEqual({ released: false, reason: "not-running" });
+      // Over budget: the restart is owed (it runs when the voice path is idle; the lifecycle test covers that).
+      expect(await polish.checkPolishMemoryAfterRequest?.()).toMatchObject({ action: "owed", baseline_rss_mb: 2400, rss_mb: 3169 });
+      expect(["owed", "restarting", "ok"]).toContain(polish.polishBudgetState());
     } finally {
       polish.setPolishRssProbeForTests?.(null);
       resetSTTPolishServerManagerForTests();
