@@ -29,8 +29,9 @@ final class SpeechThresholdLayoutTests: XCTestCase {
             host.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.2))
             host.layoutSubtreeIfNeeded()
-            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-            host.cacheDisplay(in: host.bounds, to: bitmap)
+            // Fixed 2x bitmap: the hosted runner renders at 1x, where the text-recognition boxes for "400" and
+            // "Apply" came out 8.0000003 pt apart against an 8 pt tolerance (PR #903, second hosted run).
+            let bitmap = try EtanQA0510Tests.fixedScaleBitmap(host)
             if let directory = ProcessInfo.processInfo.environment["VOICEBAR_SPEECH_SHOTS_DIR"] {
                 let url = URL(fileURLWithPath: directory).appendingPathComponent("threshold-\(appearance.rawValue).png")
                 try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: url)
