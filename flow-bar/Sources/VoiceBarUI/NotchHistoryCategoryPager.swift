@@ -24,6 +24,8 @@ struct NotchHistoryCategoryPager: Equatable {
     private(set) var axis: Axis = .undecided
     private var travel: CGSize = .zero
     private var lastDeltaX: CGFloat = 0
+    private var pointerActive = false
+    private var pointerInvalidated = false
 
     init(count: Int, index: Int = 0) {
         self.count = max(1, count)
@@ -50,6 +52,8 @@ struct NotchHistoryCategoryPager: Equatable {
         axis = .undecided
         travel = .zero
         lastDeltaX = 0
+        pointerActive = false
+        pointerInvalidated = false
     }
 
     /// One more step of the gesture. Returns whether it is a category swipe (the caller then keeps the event from
@@ -69,7 +73,9 @@ struct NotchHistoryCategoryPager: Equatable {
     /// A pointer drag reports its whole translation each time.
     @discardableResult
     mutating func move(to translation: CGSize) -> Bool {
-        move(dx: translation.width - travel.width, dy: translation.height - travel.height)
+        guard !pointerInvalidated else { return false }
+        if !pointerActive { begin(); pointerActive = true }
+        return move(dx: translation.width - travel.width, dy: translation.height - travel.height)
     }
 
     /// The gesture ended: settle on a category. `flick` overrides the scroll-delta test (a drag passes its own).
@@ -83,7 +89,10 @@ struct NotchHistoryCategoryPager: Equatable {
     }
 
     mutating func select(_ target: Int) {
+        let invalidatesPointer = pointerActive
         begin()
+        pointerActive = invalidatesPointer
+        pointerInvalidated = invalidatesPointer
         index = min(count - 1, max(0, target))
     }
 }

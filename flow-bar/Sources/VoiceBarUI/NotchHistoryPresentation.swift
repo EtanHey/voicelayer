@@ -111,7 +111,7 @@ public enum NotchHistoryPresentation {
 
     /// `isLoaded` is false only while a category's first archive read is still running.
     public static func emptyState(for scope: SettingsHistoryScope, isLoaded: Bool = true) -> EmptyState {
-        guard isLoaded else { return EmptyState(title: "Loading…", detail: " ") }
+        guard isLoaded else { return EmptyState(title: "Loading…", detail: "") }
         switch scope {
         case .recording:
             return EmptyState(title: "No dictations yet", detail: "What you dictate shows up here.")
@@ -123,6 +123,14 @@ public enum NotchHistoryPresentation {
     }
 
     public static let openHint = "Opens this recording in the History window"
+
+    public static func openHint(for scope: SettingsHistoryScope) -> String {
+        switch scope {
+        case .recording: openHint
+        case .ask: "Opens this ask in the History window"
+        case .speech: "Opens this speech in the History window"
+        }
+    }
 
     /// "history-row-1" for the newest row: one-based, by position in the list.
     public static func rowAccessibilityIdentifier(index: Int) -> String { "history-row-\(index + 1)" }

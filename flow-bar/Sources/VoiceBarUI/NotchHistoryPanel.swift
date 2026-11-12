@@ -11,11 +11,12 @@ struct NotchHistoryPanel: View {
     let activeRetranscriptionPath: String?
     let palette: VoiceBarNotchContrastPalette
     /// Returns whether the text reached the pasteboard; the tick shows only then (#161 review).
-    let onCopy: (RecentTranscriptionEntry) -> Bool
+    var onCopy: (RecentTranscriptionEntry) -> Bool
     var onPaste: (RecentTranscriptionEntry) -> Void
-    let onRetranscribe: (String) -> Void
+    var onRetranscribe: (String) -> Void
     /// A click on a row's text opens it in the History window (SPEC open question 1). Copy / Paste stay on hover.
     var onOpen: (RecentTranscriptionEntry) -> Void = { _ in }
+    var onOpenAtIndex: ((Int) -> Void)?
     var retranscriptionAvailability: () -> HistoryRetranscriptionAvailability = { .available }
     /// The visible list: six rows, or eight once the extend handle pulled it down (V6).
     var listHeight: CGFloat = NotchHistoryMorph.listHeight
@@ -23,6 +24,8 @@ struct NotchHistoryPanel: View {
     var rowHeader: ((Int) -> String?)?
     /// Lane H: what an empty category says, in a row's own anatomy.
     var emptyState: NotchHistoryPresentation.EmptyState?
+    var scope: SettingsHistoryScope = .recording
+    var rowHasActionableText: ((Int) -> Bool)?
     /// Shots only: render one row as hovered without a pointer.
     var forcedHoverIndex: Int?
     /// Shots only: render the scroll indicator as if mid-scroll, at this content offset.
@@ -132,7 +135,7 @@ struct NotchHistoryPanel: View {
         return HStack(alignment: .center, spacing: NotchHistoryPresentation.rowColumnSpacing) {
             // A row click opens it in the History window (SPEC open question 1). A plain button, so the clipped-text
             // tooltip sits on a control and keyboard users reach it too.
-            Button { onOpen(entry) } label: {
+            Button { open(entry, index: index) } label: {
                 VStack(alignment: .leading, spacing: NotchHistoryPresentation.rowLineSpacing) {
                     Text(NotchHistoryPresentation.firstWords(entry.text))
                         .font(.system(size: NotchHistoryPresentation.rowTextFontSize))
@@ -159,7 +162,7 @@ struct NotchHistoryPanel: View {
                 )
             } else if showsActions {
                 // UXP-3: the Copy glyph itself turns into the tick; no second "Copied ✓" beside it.
-                actionButtons(entry, id: id)
+                actionButtons(entry, index: index, id: id)
             }
         }
         .padding(.leading, NotchHistoryPresentation.rowLeadingPadding)
@@ -177,21 +180,27 @@ struct NotchHistoryPanel: View {
         .accessibilityIdentifier(NotchHistoryPresentation.rowAccessibilityIdentifier(index: index))
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel(
-            [NotchHistoryPresentation.firstWords(entry.text), header(entry, index: index)]
+            [scope == .recording ? nil : scope.title, NotchHistoryPresentation.firstWords(entry.text), header(entry, index: index)]
                 .compactMap { $0 }
                 .joined(separator: ", ")
         )
         // UXP-3: the hover buttons exist only under the pointer; VoiceOver and keyboard users get the same actions
         // on the row itself.
-        .accessibilityAction { onOpen(entry) }
+        .accessibilityAction { open(entry, index: index) }
         .accessibilityActions {
-            ForEach(NotchHistoryPresentation.accessibilityActions(for: entry), id: \.symbol) { action in
+            ForEach(actions(for: entry, index: index), id: \.symbol) { action in
                 if action.kind != .retranscribe || retranscriptionAvailability().isEnabled {
                     Button(action.label) { perform(action.kind, entry: entry, id: id) }
                 }
             }
         }
-        .accessibilityHint(retranscriptionAvailability().reason ?? NotchHistoryPresentation.openHint)
+        .accessibilityHint(scope == .recording
+            ? retranscriptionAvailability().reason ?? NotchHistoryPresentation.openHint(for: scope)
+            : NotchHistoryPresentation.openHint(for: scope))
+    }
+
+    private func open(_ entry: RecentTranscriptionEntry, index: Int) {
+        if let onOpenAtIndex { onOpenAtIndex(index) } else { onOpen(entry) }
     }
 
     private func header(_ entry: RecentTranscriptionEntry, index: Int) -> String? {
@@ -205,7 +214,7 @@ struct NotchHistoryPanel: View {
             Text(state.title)
                 .font(.system(size: NotchHistoryPresentation.rowTextFontSize))
                 .foregroundStyle(palette.secondary.color)
-            Text(state.detail)
+            Text(state.detail.isEmpty ? " " : state.detail)
                 .font(.system(size: NotchHistoryPresentation.rowMetaFontSize))
                 .foregroundStyle(palette.tertiary.color)
         }
@@ -215,13 +224,21 @@ struct NotchHistoryPanel: View {
         .padding(.trailing, NotchHistoryPresentation.rowTrailingPadding)
         .frame(height: NotchHistoryMorph.rowHeight)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(state.title). \(state.detail)")
+        .accessibilityLabel([state.title, state.detail].filter { !$0.isEmpty }.joined(separator: ". "))
         .accessibilityIdentifier(NotchHistoryPresentation.emptyRowIdentifier)
     }
 
-    private func actionButtons(_ entry: RecentTranscriptionEntry, id: String) -> some View {
+    func actions(for entry: RecentTranscriptionEntry, index: Int) -> [NotchHistoryPresentation.RowAction] {
+        guard !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              rowHasActionableText?(index) ?? true else { return [] }
+        return NotchHistoryPresentation.accessibilityActions(for: entry).filter {
+            scope != .speech || $0.kind == .copy
+        }
+    }
+
+    private func actionButtons(_ entry: RecentTranscriptionEntry, index: Int, id: String) -> some View {
         HStack(spacing: 0) {
-            ForEach(NotchHistoryPresentation.rowActions, id: \.symbol) { action in
+            ForEach(actions(for: entry, index: index), id: \.symbol) { action in
                 if action.kind == .copy {
                     CopyFeedbackButton(
                         action.label,
