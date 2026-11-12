@@ -39,6 +39,19 @@ final class SettingsMicrophoneLandingTests: XCTestCase {
         XCTAssertEqual(gap, fade + SettingsScrollLanding.sectionGap, accuracy: 1.5, "fade + one section gap")
     }
 
+    /// Round 2 (review F2): Etan's screenshot has a HEALTHY Setup, so Microphone priority is General's FIRST section
+    /// and there is nothing above it to scroll. In the real drawer, at every height its grip allows (8 to 11 rows),
+    /// "Change…" must still land the title fully below the fade, measured from the pane's top edge (where the fade
+    /// starts) to the title's drawn top.
+    func testInAHealthyDrawerTheFirstSectionTitleLandsBelowTheFadeAtEveryHeight() throws {
+        let fade = NotchSettingsDrawerPresentation.scrollEdgeFade
+        for rows in NotchSettingsDrawerPresentation.minimumRows ... NotchSettingsDrawerPresentation.maximumRows {
+            let gap = try drawerTitleGap(rows: rows)
+            XCTAssertGreaterThanOrEqual(gap, fade + 4, "\(rows) rows: the title clears the \(fade) pt fade (gap \(gap) pt)")
+            XCTAssertEqual(gap, fade + SettingsScrollLanding.sectionGap, accuracy: 1.5, "\(rows) rows: fade + one gap")
+        }
+    }
+
     /// The window measured 20 pt on the M1 at 92d7ab5b too; the landing keeps it there (it no longer depends on the
     /// Form's header-row padding, which is what put the drawer's title in the fade on the M4).
     func testInTheWindowTheTitleLandsWhereItDid() throws {
@@ -46,23 +59,53 @@ final class SettingsMicrophoneLandingTests: XCTestCase {
         XCTAssertEqual(gap, SettingsScrollLanding.windowLead, accuracy: 1.5, "gap \(gap) pt below the top")
     }
 
-    /// Points from the scroll view's visible top down to the top of the "Microphone priority" title, after "Change…".
-    private func titleGap(drawer: Bool, size: CGSize) throws -> CGFloat {
-        // One broken Setup row sits above Microphone priority, so General scrolls (healthy General has no Setup).
-        let view = SettingsView(
-            hotkeyEnabled: true, missingPermissions: [.accessibility], availableDevices: { [] },
+    private func settingsView(healthy: Bool, request: SettingsTabRequest?) -> SettingsView {
+        // A broken Setup row sits above Microphone priority; healthy General has no Setup section at all.
+        SettingsView(
+            hotkeyEnabled: true, missingPermissions: healthy ? [] : [.accessibility], availableDevices: { [] },
             selectedDeviceID: { nil }, modelsStatus: { .loading }, onRefreshModelsStatus: {},
             vocabularyPreview: { STTVocabularyPreview(updatedAt: nil, entries: []) }, vocabularyRevision: { 0 },
-            initialTab: .general,
-            tabRequest: SettingsTabRequest(tab: .general, focus: .microphonePriority, id: 1)
+            initialTab: .general, tabRequest: request
         )
-        let root: AnyView = drawer ? AnyView(view.notchDrawerPane(.general)) : AnyView(view)
-        let host = NSHostingView(rootView: root.frame(width: size.width, height: size.height))
+    }
+
+    /// The real notch drawer (tab bar, pane, fade) at `rows`, healthy General, opened by "Change…". Points from the
+    /// pane's top edge to the title's top.
+    private func drawerTitleGap(rows: Int) throws -> CGFloat {
+        let request = SettingsTabRequest(tab: .general, focus: .microphonePriority, id: 1)
+        let context = NotchSettingsDrawerContext(updates: nil, pane: { tab, request in
+            AnyView(self.settingsView(healthy: true, request: request).notchDrawerPane(tab))
+        })
+        let size = CGSize(width: NotchHistoryMorph.bodyWidth,
+                          height: NotchSettingsDrawerPresentation.lowerSurfaceHeight(rows: CGFloat(rows))
+                              - NotchHistoryMorph.handleBandHeight)
+        let drawer = NotchSettingsDrawer(selectedTab: .general, appearance: .dark, context: context, request: request,
+                                         onSelectTab: { _ in })
+        let (host, window) = show(AnyView(drawer), size: size, titled: false)
+        defer { window.orderOut(nil); window.contentView = nil }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+        let title = try XCTUnwrap(frame(of: "Microphone priority", in: host), "\(rows) rows: the title's frame")
+        let hostTop = window.convertToScreen(host.convert(host.bounds, to: nil)).maxY
+        let paneTop = hostTop - NotchSettingsDrawerPresentation.topInset - NotchSettingsDrawerPresentation.tabBarHeight
+        return paneTop - title.maxY
+    }
+
+    private func show(_ root: AnyView, size: CGSize, titled: Bool) -> (NSHostingView<AnyView>, NSWindow) {
+        let host = NSHostingView(rootView: AnyView(root.frame(width: size.width, height: size.height)))
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
-                              styleMask: drawer ? [.borderless] : [.titled], backing: .buffered, defer: false)
+                              styleMask: titled ? [.titled] : [.borderless], backing: .buffered, defer: false)
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         VLOrderTestWindow(window)
+        return (host, window)
+    }
+
+    /// Points from the scroll view's visible top down to the top of the "Microphone priority" title, after "Change…".
+    private func titleGap(drawer: Bool, size: CGSize) throws -> CGFloat {
+        let view = settingsView(healthy: false,
+                                request: SettingsTabRequest(tab: .general, focus: .microphonePriority, id: 1))
+        let root: AnyView = drawer ? AnyView(view.notchDrawerPane(.general)) : AnyView(view)
+        let (host, window) = show(root, size: size, titled: !drawer)
         defer {
             window.orderOut(nil)
             window.contentView = nil
@@ -73,8 +116,6 @@ final class SettingsMicrophoneLandingTests: XCTestCase {
         settle(timeout: 2) { form.contentView.bounds.origin.y > 1 }
         RunLoop.main.run(until: Date().addingTimeInterval(0.6))
         let title = try XCTUnwrap(frame(of: "Microphone priority", in: host), "the section title's frame")
-        let visible = window.convertToScreen(form.convert(form.bounds, to: nil))
-        let visibleTop = visible.maxY - form.contentInsets.top
         if drawer, let path = ProcessInfo.processInfo.environment["VOICEBAR_LANDING_SHOT"], !path.isEmpty,
            let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
             // Opt-in picture for the lane report. A dark backdrop stands in for the notch glass the M1 cannot draw.
@@ -82,7 +123,11 @@ final class SettingsMicrophoneLandingTests: XCTestCase {
             host.cacheDisplay(in: host.bounds, to: bitmap)
             try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
         }
-        return visibleTop - title.maxY
+        // The drawer's fade is drawn on the pane, so its gap is measured from the pane's top (the host's top here);
+        // the window's from its scroll view's visible top below the title bar.
+        let hostRect = window.convertToScreen(host.convert(host.bounds, to: nil))
+        let visible = window.convertToScreen(form.convert(form.bounds, to: nil))
+        return (drawer ? hostRect.maxY : visible.maxY - form.contentInsets.top) - title.maxY
     }
 
     private func frame(of label: String, in root: Any, depth: Int = 0) -> NSRect? {

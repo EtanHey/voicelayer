@@ -559,6 +559,8 @@ public struct SettingsView: View {
     @State private var permissionsRefreshTick = 0
     /// C9-N item 3: where "Change…" lands Microphone priority's title (below the drawer's top fade).
     @State private var microphonePriorityLanding = SettingsScrollLanding()
+    /// C9-N round 2 (F2): the top inset the drawer's General form needs for that landing to clear the fade.
+    @State private var drawerLandingInset: CGFloat = 0
     @State private var localVoiceBarHidden: Bool
     @State private var historyDayGroups: [SettingsHistoryDayGroup]
     @State private var historyLoadedEntryCount: Int
@@ -1134,6 +1136,7 @@ public struct SettingsView: View {
     private var generalTab: some View {
         ScrollViewReader { proxy in
             generalForm
+                .contentMargins(.top, drawerLandingInset, for: .scrollContent)
                 .onAppear { scrollToRequestedFocus(proxy, animated: false) }
                 .onChange(of: tabRequest) { _, _ in scrollToRequestedFocus(proxy, animated: true) }
         }
@@ -1156,11 +1159,21 @@ public struct SettingsView: View {
     /// C9-N item 3: the title lands fully below the top fade. An already laid-out title is scrolled to in one
     /// move; otherwise `scrollTo` brings it into view first and the landing corrects it on the next turn.
     private func landAtMicrophonePriority(_ proxy: ScrollViewProxy, animated: Bool) {
-        let lead = SettingsScrollLanding.lead(inDrawer: notchEmbeddedTab != nil)
+        let inDrawer = notchEmbeddedTab != nil
+        let lead = SettingsScrollLanding.lead(inDrawer: inDrawer)
         let landing = microphonePriorityLanding
-        if landing.land(lead: lead, animated: animated && !reduceMotion) { return }
+        func land(animated: Bool) -> SettingsScrollLanding.Outcome {
+            let outcome = landing.land(lead: lead, fromScrollViewTop: inDrawer, animated: animated)
+            // Round 2 (F2): a first section cannot scroll down to the lead; the drawer's form gets the shortfall as
+            // top inset, then the title lands again on the next turn, once that inset is laid out.
+            guard inDrawer, case let .short(missing) = outcome else { return outcome }
+            drawerLandingInset += missing
+            DispatchQueue.main.async { _ = landing.land(lead: lead, fromScrollViewTop: true, animated: false) }
+            return outcome
+        }
+        if land(animated: animated && !reduceMotion) != .notLaidOut { return }
         proxy.scrollTo(SettingsFocus.microphonePriority, anchor: .top)
-        DispatchQueue.main.async { landing.land(lead: lead, animated: false) }
+        DispatchQueue.main.async { _ = land(animated: false) }
     }
 
     private var generalSetup: SettingsGeneralSetup {
