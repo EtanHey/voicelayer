@@ -51,11 +51,6 @@ final class RuntimePhaseBoard: @unchecked Sendable {
         return "\(mode)/\(surface)"
     }
 
-    var isIdle: Bool {
-        lock.lock(); defer { lock.unlock() }
-        return mode == "idle"
-    }
-
     /// A state name is short and has no spaces, so a field can never smuggle free text into the log.
     private static func token(_ value: String) -> String {
         String(value.filter { $0.isLetter || $0.isNumber || "()_-.".contains($0) }.prefix(40))
@@ -92,6 +87,18 @@ final class RuntimeResponsivenessWatchdog {
     private var lastLoggedKey: String?
     private var suppressed = 0
     private var generation = 0
+    private let outstandingLock = NSLock()
+    private var outstanding = false
+
+    /// A stall has crossed the threshold and the loop has not answered yet. Safe from any thread.
+    var isStallOutstanding: Bool {
+        outstandingLock.lock(); defer { outstandingLock.unlock() }
+        return outstanding
+    }
+
+    private func setOutstanding(_ value: Bool) {
+        outstandingLock.lock(); outstanding = value; outstandingLock.unlock()
+    }
 
     /// `context`, `phaseKey` and `stack` run on the watchdog queue while the watched loop is blocked: they
     /// must not touch that loop.
@@ -141,6 +148,7 @@ final class RuntimeResponsivenessWatchdog {
             noted = false
             logged = false
             stackReported = false
+            setOutstanding(false)
         }
     }
 
@@ -174,6 +182,7 @@ final class RuntimeResponsivenessWatchdog {
                 if self.logged { self.receipt("recovered", elapsed: elapsed) }
                 self.pendingAcknowledgement = nil
                 self.pending = nil
+                self.setOutstanding(false)
                 self.noted = false
                 self.logged = false
                 self.stackReported = false
@@ -185,7 +194,9 @@ final class RuntimeResponsivenessWatchdog {
 
     /// Decides once per stall whether it is logged or counted, and promotes a counted stall that turns long.
     private func noteStall(elapsed: TimeInterval, now: TimeInterval) {
-        guard elapsed >= threshold, !logged else { return }
+        guard elapsed >= threshold else { return }
+        setOutstanding(true) // Counted or logged: either way the loop is not answering.
+        guard !logged else { return }
         if !noted {
             noted = true
             let key = phaseKey?() ?? ""

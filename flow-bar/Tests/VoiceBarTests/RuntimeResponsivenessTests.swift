@@ -34,14 +34,17 @@ final class RuntimeResponsivenessTests: XCTestCase {
             if line.contains("state=stalled") { stalled.fulfill() }
             if line.contains("state=recovered") { recovered.fulfill() }
         })
+        XCTAssertFalse(watchdog.isStallOutstanding)
         watchdog.start(interval: 0.01)
         wait(for: [stalled], timeout: 3)
+        XCTAssertTrue(watchdog.isStallOutstanding, "the log rotator reads this to stay away from a hang in progress")
         lock.lock()
         XCTAssertEqual(probes, 1)
         XCTAssertEqual(receipts.count, 1)
         lock.unlock()
         release.signal()
         wait(for: [recovered], timeout: 3)
+        XCTAssertFalse(watchdog.isStallOutstanding)
         watchdog.stop()
         let dispatched = expectation(description: "ordinary work retained")
         blocked.async { dispatched.fulfill() }

@@ -96,6 +96,14 @@ enum HotkeyInputSource {
     case legacySocket
 }
 
+/// One Boolean handed from the main thread to the log rotator's queue.
+final class LogRotationAnswer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var answer = false
+    var value: Bool { lock.lock(); defer { lock.unlock() }; return answer }
+    func set(_ value: Bool) { lock.lock(); answer = value; lock.unlock() }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
     let voiceState = VoiceState(
         transcriptionVocabularyLoader: {
@@ -190,8 +198,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             CFRunLoopWakeUp(loop)
         }
     }()
-    /// c8 X: caps voicebar-err.log (10 MB, 5 files). Only while idle, and only the file stderr appends to.
-    private let errorLogRotator = ErrorLogRotator(isIdle: { RuntimePhaseBoard.shared.isIdle })
+    /// c8 X: caps voicebar-err.log (10 MB, 5 files), and only the file stderr appends to. Allowed only while
+    /// nothing is recording, handing off, transcribing or re-transcribing and no main-loop stall is
+    /// outstanding; the rotator asks again before it truncates and before it deletes.
+    private lazy var errorLogRotator: ErrorLogRotator = {
+        let watchdog = responsivenessWatchdog
+        return ErrorLogRotator(isEligible: { [weak self] in
+            guard !watchdog.isStallOutstanding else { return false }
+            // The take state lives on the main thread. A main thread that cannot answer in half a second is
+            // itself a reason not to rotate.
+            let answered = DispatchSemaphore(value: 0)
+            let quiet = LogRotationAnswer()
+            DispatchQueue.main.async {
+                quiet.set(MainActor.assumeIsolated { self.map { Self.isQuietForLogRotation($0.voiceState) } ?? false })
+                answered.signal()
+            }
+            return answered.wait(timeout: .now() + 0.5) == .success && quiet.value && !watchdog.isStallOutstanding
+        })
+    }()
+
+    /// Idle is not enough: the converse handoff publishes idle while a recording is still pending.
+    @MainActor static func isQuietForLogRotation(_ state: VoiceState) -> Bool {
+        state.mode == .idle && !state.isQuitBusy && !state.isSavingDictationForQuit && state.hideDisabledReason == nil
+    }
     private var microphonePriorityTimer: Timer?
     private let pillContextMenuController = PillContextMenuController()
     private lazy var notchMorphSelection = VoiceBarNotchMorphSelection(
