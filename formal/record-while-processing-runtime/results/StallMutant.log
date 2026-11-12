@@ -3,8 +3,8 @@
   "kind": "temporal",
   "target": "ProcessingSettles",
   "status": "EXPECTED_FAIL",
-  "generated": 105286,
-  "distinct": 32036,
+  "generated": 102939,
+  "distinct": 31578,
   "trace": [
     "s = [ stage |-> [A |-> \"fresh\", B |-> \"fresh\"],\n  event |-> \"init\",\n  target |-> \"none\",\n  capable |-> [A |-> FALSE, B |-> FALSE],\n  age |-> [A |-> 0, B |-> 0],\n  readable |-> [A |-> TRUE, B |-> TRUE],\n  matches |-> [A |-> TRUE, B |-> TRUE],\n  focusSame |-> TRUE,\n  guard |-> \"none\",\n  cooldown |-> 0,\n  expected |-> \"none\",\n  escapedGuarded |-> TRUE,\n  notice |-> FALSE,\n  captureReleased |-> TRUE ]",
     "s = [ stage |-> [A |-> \"fresh\", B |-> \"fresh\"],\n  event |-> \"focus-change\",\n  target |-> \"none\",\n  capable |-> [A |-> FALSE, B |-> FALSE],\n  age |-> [A |-> 0, B |-> 0],\n  readable |-> [A |-> TRUE, B |-> TRUE],\n  matches |-> [A |-> TRUE, B |-> TRUE],\n  focusSame |-> FALSE,\n  guard |-> \"none\",\n  cooldown |-> 0,\n  expected |-> \"none\",\n  escapedGuarded |-> TRUE,\n  notice |-> FALSE,\n  captureReleased |-> TRUE ]",
@@ -17,6 +17,6 @@
     "s = [ stage |-> [A |-> \"captured\", B |-> \"cancelled\"],\n  event |-> \"tick\",\n  target |-> \"none\",\n  capable |-> [A |-> FALSE, B |-> TRUE],\n  age |-> [A |-> 0, B |-> 0],\n  readable |-> [A |-> TRUE, B |-> TRUE],\n  matches |-> [A |-> TRUE, B |-> TRUE],\n  focusSame |-> FALSE,\n  guard |-> \"A\",\n  cooldown |-> 1,\n  expected |-> \"none\",\n  escapedGuarded |-> TRUE,\n  notice |-> TRUE,\n  captureReleased |-> TRUE ]",
     "s = [ stage |-> [A |-> \"captured\", B |-> \"cancelled\"],\n  event |-> \"tick\",\n  target |-> \"none\",\n  capable |-> [A |-> FALSE, B |-> TRUE],\n  age |-> [A |-> 0, B |-> 0],\n  readable |-> [A |-> TRUE, B |-> TRUE],\n  matches |-> [A |-> TRUE, B |-> TRUE],\n  focusSame |-> FALSE,\n  guard |-> \"A\",\n  cooldown |-> 0,\n  expected |-> \"none\",\n  escapedGuarded |-> TRUE,\n  notice |-> TRUE,\n  captureReleased |-> TRUE ]",
     "s = [ stage |-> [A |-> \"processing\", B |-> \"cancelled\"],\n  event |-> \"decode\",\n  target |-> \"A\",\n  capable |-> [A |-> FALSE, B |-> TRUE],\n  age |-> [A |-> 0, B |-> 0],\n  readable |-> [A |-> TRUE, B |-> TRUE],\n  matches |-> [A |-> TRUE, B |-> TRUE],\n  focusSame |-> FALSE,\n  guard |-> \"A\",\n  cooldown |-> 0,\n  expected |-> \"none\",\n  escapedGuarded |-> TRUE,\n  notice |-> TRUE,\n  captureReleased |-> TRUE ]",
-    "Finished checking temporal properties in 00s at 2026-11-11 21:07:59"
+    "Finished checking temporal properties in 00s at 2026-11-12 02:10:25"
   ]
 }
