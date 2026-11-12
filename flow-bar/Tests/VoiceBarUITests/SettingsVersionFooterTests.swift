@@ -44,11 +44,11 @@ final class SettingsVersionFooterTests: XCTestCase {
     }
 
     /// 2.4 Lane A: "ahead of release" says by how much, and is never cut to "Ahead of rel…".
-    func testLocalBuildKeepsEngineeringDetailsOutOfTheFooter() {
+    func testAheadOfReleaseSaysByHowMuch() {
         let installed = VoiceBarInstalledVersion(version: "2.4.0", commit: "abcdef0123")
         let describe = VoiceBarGitDescribe(releaseVersion: "2.3.0", commitsAhead: 14)
         XCTAssertEqual(SettingsVersionFooter.line(installed: installed, status: .ahead(latest: "2.3.0"), describe: describe),
-                       "VoiceBar 2.4.0 · Ahead of release")
+                       "VoiceBar 2.4.0 · Ahead of release by 14 commits")
         XCTAssertEqual(SettingsVersionFooter.line(installed: installed, status: .available("2.4.1"), describe: describe),
                        "VoiceBar 2.4.0 · Update available")
         XCTAssertEqual(SettingsVersionFooter.statusText(.latest, describe: .init(releaseVersion: "2.4.0", commitsAhead: 0)),

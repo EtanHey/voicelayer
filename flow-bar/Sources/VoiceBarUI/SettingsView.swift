@@ -617,6 +617,12 @@ public struct SettingsView: View {
     }
     @State private var termRemoval: TermRemoval?
     @State private var removalEscapeClaim = UUID()
+    @FocusState private var removalCancelFocused: Bool
+    private struct DictionaryGroupExpansion {
+        let your: Bool
+        let included: Bool
+    }
+    @State private var groupsBeforeSearch: DictionaryGroupExpansion?
     @FocusState private var focusedTermAction: String?
     /// The last Set up / Reinstall: which one ran, and its result (nil while it runs).
     @State private var relaySetupFeedback: (
@@ -883,6 +889,8 @@ public struct SettingsView: View {
         _microphoneSnapshot = State(initialValue: prioritySnapshot())
         _includedTermsExpanded = State(initialValue: initialIncludedTermsExpanded || !Self.dictionaryQuery(initialDictionarySearch).isEmpty)
         _yourTermsExpanded = State(initialValue: initialYourTermsExpanded || !Self.dictionaryQuery(initialDictionarySearch).isEmpty)
+        _groupsBeforeSearch = State(initialValue: Self.dictionaryQuery(initialDictionarySearch).isEmpty ? nil
+            : DictionaryGroupExpansion(your: initialYourTermsExpanded, included: initialIncludedTermsExpanded))
         _selectedTermRowID = State(initialValue: initialSelectedTermRowID)
         _selectedHistoryScope = State(initialValue: initialHistoryScope)
         if let historyPlayback {
@@ -1028,6 +1036,7 @@ public struct SettingsView: View {
         }
         .onChange(of: selectedTab) { _, tab in
             onSelectedTabChange(tab)
+            if tab != .dictionary { resetDictionaryEditors() }
             if tab == .history {
                 switch selectedHistoryScope {
                 case .recording:
@@ -2584,7 +2593,9 @@ public struct SettingsView: View {
                     HStack {
                         Spacer()
                         Button("Cancel") { termRemoval = nil }
+                            .keyboardShortcut(.cancelAction)
                             .focusable(interactions: .edit)
+                            .focused($removalCancelFocused)
                             .onKeyPress(.space) { termRemoval = nil; return .handled }
                         Button("Delete", role: .destructive) {
                             confirmTermRemoval()
@@ -2596,11 +2607,15 @@ public struct SettingsView: View {
                 .padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 .background(.bar)
                 .onAppear {
+                    removalCancelFocused = true
                     if notchEmbeddedTab != nil {
                         NotchEscapeOwnership.shared.claim(removalEscapeClaim) { termRemoval = nil }
                     }
                 }
-                .onDisappear { NotchEscapeOwnership.shared.release(removalEscapeClaim) }
+                .onDisappear {
+                    removalCancelFocused = false
+                    NotchEscapeOwnership.shared.release(removalEscapeClaim)
+                }
                 .onExitCommand { termRemoval = nil }
                 .accessibilityIdentifier("dictionary-delete-confirmation")
             }
@@ -2626,8 +2641,13 @@ public struct SettingsView: View {
         })
         .onChange(of: dictionarySearch) { _, search in
             if !Self.dictionaryQuery(search).isEmpty {
+                if groupsBeforeSearch == nil {
+                    groupsBeforeSearch = DictionaryGroupExpansion(your: yourTermsExpanded, included: includedTermsExpanded)
+                }
                 yourTermsExpanded = true
                 includedTermsExpanded = true
+            } else {
+                restoreDictionaryGroupsAfterSearch()
             }
         }
         .onChange(of: termSheet) { _, sheet in
@@ -2638,6 +2658,7 @@ public struct SettingsView: View {
             resetDictionaryEditors()
         }
         .onDisappear {
+            termRemoval = nil
             DictionaryDeletion.commitNow(pending: &pendingDeletion, commit: commitDeletion)
         }
         .onChange(of: hasPendingDictionaryEdit) { _, pending in
@@ -2759,7 +2780,6 @@ public struct SettingsView: View {
                 focusedEditorField = .list
             }
             .accessibilityAddTraits(selectedTermRowID == rowID ? .isSelected : [])
-
     }
 
     /// A term's misheard spellings, as the row's description, only when it has some.
@@ -3249,12 +3269,21 @@ public struct SettingsView: View {
     }
 
     private var hasPendingDictionaryEdit: Bool {
-        termSheet != nil || pendingDeletion != nil || termRemoval != nil
+        termSheet != nil || pendingDeletion != nil
     }
 
     /// Arriving on the tab never finds an editor already open (UI pass #17: the first row was).
     private func resetDictionaryEditors() {
         termSheet = nil
+        termRemoval = nil
+        removalCancelFocused = false
+    }
+
+    private func restoreDictionaryGroupsAfterSearch() {
+        guard let previous = groupsBeforeSearch else { return }
+        yourTermsExpanded = previous.your
+        includedTermsExpanded = previous.included
+        groupsBeforeSearch = nil
     }
 
     private func saveTermSheet(_ edit: DictionaryTermEdit) {
@@ -3273,7 +3302,10 @@ public struct SettingsView: View {
         guard let saved else { return }
         let savedVariants = localEntries.first { $0.canonical == saved }?.variants ?? []
         let focus = Self.dictionaryFocus(afterSaving: saved, variants: savedVariants, search: dictionarySearch)
-        if focus.clearsSearch { dictionarySearch = "" }
+        if focus.clearsSearch {
+            restoreDictionaryGroupsAfterSearch()
+            dictionarySearch = ""
+        }
         yourTermsExpanded = true
         selectedTermRowID = focus.rowID
         flashingTermRowID = focus.rowID

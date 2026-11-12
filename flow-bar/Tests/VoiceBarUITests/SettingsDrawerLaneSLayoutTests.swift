@@ -126,8 +126,8 @@ final class SettingsDrawerLaneSLayoutTests: XCTestCase {
         let updates = await SettingsDrawerLaneSSnapshotTests.updates()
         let lines = try Self.paintedLines(SettingsDrawerLaneSSnapshotTests.drawer(.general, updates: updates), height: 470)
         let status = try Self.line(lines, containing: "no newer release")
-        XCTAssertFalse(lines.contains { $0.text.contains("commits") || $0.text.contains("8e1d535") })
-        let build = try Self.line(lines, containing: "2.4.0")
+        XCTAssertTrue(status.text.contains("past 2.2.61"), "[S5] the status wraps: \(lines.map(\.text))")
+        let build = try Self.line(lines, containing: "ahead of release")
         XCTAssertEqual(status.box.minX, build.box.minX, accuracy: 2, "[S5] status and build line share an edge")
     }
 

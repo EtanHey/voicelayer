@@ -3,6 +3,7 @@ import OffscreenTestSupport
 import SwiftUI
 @testable import VoiceBarUI
 import Vision
+import Observation
 import XCTest
 
 /// Drive the production views' AppKit key loop, without hover injection, pointer events or foreground activation.
@@ -98,6 +99,96 @@ final class SettingsRowActionFocusTests: XCTestCase {
         }
     }
 
+    func testClearingSearchRestoresEachGroupsPreviousDisclosureState() throws {
+        let personal = STTDictionaryEntry(canonical: "Typewriter", variants: [])
+        let bundled = STTDictionaryEntry(canonical: "TypeScript", variants: [])
+        let preview = STTVocabularyPreview(updatedAt: nil, entries: [personal], displayEntries: [
+            .init(source: "personal", entry: personal), .init(source: "bundled", entry: bundled)])
+        for (your, included) in [(false, false), (false, true), (true, false), (true, true)] {
+            let pane = SettingsView(hotkeyEnabled: true, missingPermissions: [], availableDevices: { [] },
+                selectedDeviceID: { nil }, modelsStatus: { .loading }, onRefreshModelsStatus: {},
+                vocabularyPreview: { preview }, vocabularyRevision: { 0 }, initialTab: .dictionary,
+                initialDictionarySearch: "Type", initialDictionaryPreview: preview,
+                initialIncludedTermsExpanded: included, initialYourTermsExpanded: your)
+            try withHost(pane, tab: .dictionary) { host, window in
+                try focusSearch(window, in: host)
+                window.sendEvent(try key("a", code: 0, window: window, modifiers: .command))
+                window.sendEvent(try key("\u{7f}", code: 51, window: window))
+                settle()
+                let visible = try lines(host)
+                XCTAssertFalse(visible.contains { $0.text.contains("of 1") }, "Search must really be cleared")
+                XCTAssertEqual(visible.contains { $0.text == "typewriter" }, your)
+                XCTAssertEqual(visible.contains { $0.text == "typescript" }, included)
+            }
+        }
+    }
+
+    @Observable final class ReloadState {
+        var request: SettingsTabRequest?
+        var revision: UInt64 = 0
+        var preview = STTVocabularyPreview(updatedAt: nil, entries: [.init(canonical: "Kubernetes", variants: [])])
+    }
+    private struct ReloadPane: View {
+        let state: ReloadState
+        var body: some View {
+            SettingsView(hotkeyEnabled: true, missingPermissions: [], availableDevices: { [] },
+                selectedDeviceID: { nil }, modelsStatus: { .loading }, onRefreshModelsStatus: {},
+                vocabularyPreview: { state.preview }, vocabularyRevision: { state.revision },
+                initialTab: .dictionary, tabRequest: state.request, initialDictionaryPreview: state.preview,
+                initialSelectedTermRowID: "personal:Kubernetes")
+        }
+    }
+
+    func testWindowDeleteConfirmationTakesFocusAndEscapeCancels() throws {
+        try withHost(ReloadPane(state: ReloadState()), tab: nil) { host, window in
+            try focusList(window, in: host)
+            window.sendEvent(try key("\u{7f}", code: 51, window: window)); settle()
+            // SwiftUI focus can share the hosting responder. Test the focused action by
+            // pressing Space immediately, without a Tab or pointer event.
+            try pressSpace(window)
+            XCTAssertFalse(try lines(host).contains { $0.text.contains("delete term?") },
+                           "Cancel must take keyboard focus when the prompt appears")
+            XCTAssertTrue(try lines(host).contains { $0.text == "kubernetes" })
+            try focusList(window, in: host)
+            window.sendEvent(try key("\u{7f}", code: 51, window: window)); settle()
+            XCTAssertTrue(try lines(host).contains { $0.text.contains("delete term?") })
+            window.sendEvent(try key("\u{1b}", code: 53, window: window)); settle()
+            XCTAssertFalse(try lines(host).contains { $0.text.contains("delete term?") })
+            XCTAssertTrue(try lines(host).contains { $0.text == "kubernetes" })
+        }
+    }
+
+    func testConfirmationAllowsReloadAndDoesNotSurviveATabSwitch() throws {
+        let state = ReloadState()
+        try withHost(ReloadPane(state: state), tab: nil) { host, window in
+            try focusList(window, in: host)
+            window.sendEvent(try key("\u{7f}", code: 51, window: window)); settle()
+            XCTAssertTrue(try lines(host).contains { $0.text.contains("delete term?") })
+            state.preview = STTVocabularyPreview(updatedAt: nil, entries: [
+                .init(canonical: "Kubernetes", variants: []), .init(canonical: "Reloaded", variants: [])])
+            state.revision += 1
+            let deadline = Date().addingTimeInterval(2)
+            var reloaded = false
+            repeat {
+                settle()
+                reloaded = try lines(host).contains { $0.text == "reloaded" }
+            } while !reloaded && Date() < deadline
+            XCTAssertTrue(reloaded, "A confirmation must not defer a vocabulary reload")
+            state.request = .init(tab: .general, id: 1); settle()
+            state.request = .init(tab: .dictionary, id: 2); settle()
+            XCTAssertFalse(try lines(host).contains { $0.text.contains("delete term?") })
+        }
+    }
+
+    private func focusSearch(_ window: NSWindow, in host: NSView) throws {
+        for _ in 0..<16 {
+            try tab(window)
+            if let frame = try? focusedFrame(window, in: host), frame.width > 180,
+               frame.height < 45, frame.minY < 100 { return }
+        }
+        XCTFail("Tab did not reach the search field")
+    }
+
     private func focusList(_ window: NSWindow, in host: NSView) throws {
         for _ in 0..<16 {
             try tab(window)
@@ -145,12 +236,12 @@ final class SettingsRowActionFocusTests: XCTestCase {
             content = AnyView(view)
         }
         let host = NSHostingView(rootView: VStack(spacing: 0) {
-            content.frame(width: 420, height: 500)
+            content.frame(width: tab == nil ? 780 : 420, height: tab == nil ? 900 : 500)
             Text("M1 synthetic focus · solid backdrop; glass unsupported")
                 .font(.system(size: 10)).foregroundStyle(.secondary).frame(height: 22)
         }.background(Color(white: 0.16)).environment(\.colorScheme, .dark))
         host.appearance = NSAppearance(named: .darkAqua)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 522),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: tab == nil ? 780 : 420, height: tab == nil ? 922 : 522),
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host

@@ -14,10 +14,13 @@ public struct VoiceBarGitDescribe: Equatable, Sendable {
     public let releaseVersion: String
     /// Commits on top of that tag; 0 for a build of the tag itself.
     public let commitsAhead: Int
+    /// Only an exact, clean release tag may hide candidate identity.
+    public let isTaggedRelease: Bool
 
-    public init(releaseVersion: String, commitsAhead: Int) {
+    public init(releaseVersion: String, commitsAhead: Int, isTaggedRelease: Bool? = nil) {
         self.releaseVersion = releaseVersion
         self.commitsAhead = commitsAhead
+        self.isTaggedRelease = isTaggedRelease ?? (commitsAhead == 0)
     }
 
     /// Accepts `v2.2.61`, `v2.2.61-14-gabc1234`, and either with `-dirty`. Anything else is nil (fail closed: a
@@ -26,13 +29,14 @@ public struct VoiceBarGitDescribe: Equatable, Sendable {
         guard var value = text?.trimmingCharacters(in: .whitespacesAndNewlines), value.hasPrefix("v") else {
             return nil
         }
-        if value.hasSuffix("-dirty") { value.removeLast("-dirty".count) }
+        let dirty = value.hasSuffix("-dirty")
+        if dirty { value.removeLast("-dirty".count) }
         let parts = value.dropFirst().split(separator: "-", omittingEmptySubsequences: false)
         guard let tag = parts.first, VoiceBarReleaseVersion.components(String(tag)) != nil else { return nil }
-        if parts.count == 1 { return VoiceBarGitDescribe(releaseVersion: String(tag), commitsAhead: 0) }
+        if parts.count == 1 { return VoiceBarGitDescribe(releaseVersion: String(tag), commitsAhead: 0, isTaggedRelease: !dirty) }
         guard parts.count == 3, let ahead = Int(parts[1]), ahead >= 0, parts[2].hasPrefix("g"),
               parts[2].count > 1, parts[2].dropFirst().allSatisfy(\.isHexDigit) else { return nil }
-        return VoiceBarGitDescribe(releaseVersion: String(tag), commitsAhead: ahead)
+        return VoiceBarGitDescribe(releaseVersion: String(tag), commitsAhead: ahead, isTaggedRelease: false)
     }
 
     public static func current(bundle: Bundle = .main) -> VoiceBarGitDescribe? {
@@ -44,6 +48,9 @@ public struct VoiceBarGitDescribe: Equatable, Sendable {
 public enum VoiceBarBuildLine {
     /// The status part alone ("ahead of release by 14 commits", "up to date", "update available: 2.3.1").
     public static func status(_ status: VoiceBarVersionStatus?, describe: VoiceBarGitDescribe?) -> String? {
+        if let ahead = describe?.commitsAhead, ahead > 0, status != nil, !status.isAvailable {
+            return "ahead of release by \(ahead) \(ahead == 1 ? "commit" : "commits")"
+        }
         switch status {
         case nil: return nil
         case .checking: return "checking…"
@@ -60,9 +67,25 @@ public enum VoiceBarBuildLine {
         status: VoiceBarVersionStatus?
     ) -> String {
         var parts = [installed.version ?? "Unknown version"]
+        if let commit = installed.shortCommit { parts.append(commit) }
         if let status = self.status(status, describe: describe) { parts.append(status) }
         return parts.joined(separator: " · ")
     }
+    /// Release displays stay plain; unknown metadata retains every available identity fact.
+    public static func displayText(installed: VoiceBarInstalledVersion, describe: VoiceBarGitDescribe?,
+                                   status: VoiceBarVersionStatus?) -> String {
+        describe?.isTaggedRelease == true ? installed.version ?? "Unknown version"
+            : text(installed: installed, describe: describe, status: status)
+    }
+
+    /// The pill supplies the version separately; candidate metadata uses the same restored formatter.
+    public static func menuStatus(installed: VoiceBarInstalledVersion, describe: VoiceBarGitDescribe?,
+                                  status: VoiceBarVersionStatus) -> String? {
+        guard describe?.isTaggedRelease != true else { return nil }
+        return [installed.shortCommit, self.status(status, describe: describe) ?? status.menuMessage]
+            .compactMap { $0 }.joined(separator: " · ")
+    }
+
 }
 
 extension Optional where Wrapped == VoiceBarVersionStatus {
@@ -174,7 +197,7 @@ public final class NotchUpdateController {
     }
 
     public var buildLine: String {
-        VoiceBarBuildLine.text(installed: installed, describe: describe, status: status)
+        VoiceBarBuildLine.displayText(installed: installed, describe: describe, status: status)
     }
 
     /// The release notes for an available version (the GitHub release of its tag).

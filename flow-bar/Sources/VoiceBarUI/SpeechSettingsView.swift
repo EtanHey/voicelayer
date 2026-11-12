@@ -52,7 +52,7 @@ public struct SpeechSettingsView: View {
                         // Both profiles use the row grid. Latency remains available in help; locked controls
                         // show their state at rest and their reason on hover or keyboard focus.
                         Section {
-                            SettingsRow(title: "Voice", description: display.engine == "clone" ? "Cloned voice" : "Fast voice") {
+                            SettingsRow(title: "Voice", description: SpeechControlsState.voiceKindLabel(display.engine)) {
                                 voiceControl(kind, display: display, controls: controls)
                                 previewControl(kind)
                             }
@@ -119,7 +119,7 @@ public struct SpeechSettingsView: View {
                                                    pending: pending, callbackAvailable: onChange != nil)
             let summary = controls.map { "Text up to \($0.shortLimit.effective) characters uses the short voice; longer text uses the long voice." }
                 ?? "VoiceBar is waiting for VoiceLayer to report the voice limit."
-            SettingsRow(title: "Short / long split", description: thresholdDraft.validationMessage ?? summary) {
+            SettingsRow(title: "Voice profile threshold", description: thresholdDraft.validationMessage ?? summary) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Draft").font(.system(size: 10)).foregroundStyle(SettingsPanePalette.helper)
                     TextField("Characters", text: Binding(
@@ -150,13 +150,6 @@ public struct SpeechSettingsView: View {
             .help(SpeechThresholdDraft.confirmedLabel(controls?.shortLimit))
             .accessibilityIdentifier("speech-threshold-applied")
         }
-    }
-
-    static let thresholdPurpose = "Chooses the short or long voice profile for the next speech."
-
-    /// The draft line's one helper line: what the number does, and a validation problem when there is one.
-    static func thresholdHelper(validation: String?) -> String {
-        [validation, thresholdPurpose].compactMap { $0 }.joined(separator: " ")
     }
 
     @ViewBuilder
@@ -239,12 +232,7 @@ public struct SpeechSettingsView: View {
     /// "Rate" needs only its own width; the slider takes the rest of the row.
     static let rateTitleWidth: CGFloat = 44
 
-    /// The measurement line as shown: a non-breaking space keeps "0.6 s" together when the line wraps.
-    static func latencyDisplay(_ label: String) -> String {
-        label.replacingOccurrences(of: #"(\d) s\b"#, with: "$1\u{00A0}s", options: .regularExpression)
-    }
-
-    static func engineLabel(_ engine: String) -> String { engine == "clone" ? "Cloned voice" : "Fast" }
+    static func engineLabel(_ engine: String) -> String { SpeechControlsState.isFastVoice(engine) ? "Fast" : "Cloned voice" }
     static func voiceLabel(_ id: String) -> String {
         let names = ["theo-c4s": "Theo", "ben-c1": "Ben", "en-US-JennyNeural": "Jenny (US)", "en-US-GuyNeural": "Guy (US)",
                      "en-US-AndrewNeural": "Andrew (US)", "en-US-BrianMultilingualNeural": "Brian (US, multilingual)",

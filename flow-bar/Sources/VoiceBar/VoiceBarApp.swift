@@ -1035,8 +1035,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         pillContextMenuController.updateStatusProvider = { [weak self] in
             guard let self else { return nil }
             let installed = VoiceBarInstalledVersion.current()
-            let status = VoiceBarBuildLine.status(menuUpdateStatus, describe: .current()) ?? menuUpdateStatus.menuMessage
-            return [installed.shortCommit, status].compactMap { $0 }.joined(separator: " · ")
+            return VoiceBarBuildLine.menuStatus(installed: installed, describe: .current(), status: menuUpdateStatus)
         }
         pillContextMenuController.transcriptProvider = { [weak self] in
             self?.voiceState.latestReusableTranscript ?? ""

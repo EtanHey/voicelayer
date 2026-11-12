@@ -233,17 +233,17 @@ enum SettingsGeneralCopy {
     static let mouseDescription = "Forward acts like F5. Back sends Return."
     static let openAtLoginTitle = "Open at login"
     static let hideTitle = "Hide the notch"
-    static let hideDescription = "Stays running. Click the Dock icon to show the notch."
+    static let hideDescription = "VoiceBar keeps working. Click its Dock icon to bring the notch back."
     static let relayTitle = "F5 key helper"
     static let shortcutsHeader = "Shortcuts"
     static let singleTapTitle = "Tap F5"
     static let readClipboardTitle = "Read clipboard aloud"
     static let diagnosticDescription = "Copies build and recognizer details for a bug report."
     static let microphoneNote =
-        "Drag to set the order. VoiceBar uses the first connected microphone."
+        "Drag to set the order. VoiceBar uses the first connected microphone. Disconnected ones keep their place."
 
     static func relayDescription(installed: Bool, listenerActive: Bool) -> String {
         let state = installed ? "Installed." : listenerActive ? "Not installed." : "Needs setup."
-        return "Keeps F5 for dictation when macOS claims the key. \(state)"
+        return "Lets F5 start dictation even when macOS maps it to the dictation key. \(state)"
     }
 }

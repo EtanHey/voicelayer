@@ -164,15 +164,19 @@ struct SettingsVersionFooter: View {
 
     /// Sentence case for the sidebar: "Up to date", "Ahead of release by 14 commits", "Update available".
     static func statusText(_ status: VoiceBarVersionStatus?, describe: VoiceBarGitDescribe?) -> String? {
+        if let ahead = describe?.commitsAhead, ahead > 0, let status, !status.isUpdateAvailable,
+           let text = VoiceBarBuildLine.status(status, describe: describe) {
+            return text.prefix(1).uppercased() + text.dropFirst()
+        }
         return status?.sidebarMessage
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text("VoiceBar \(installed.version ?? "Unknown")")
+            Text(Self.identity(installed: installed, describe: describe))
                 .monospacedDigit()
                 .fixedSize(horizontal: false, vertical: true)
-            if let status, let text = Self.statusText(status, describe: describe) {
+            if describe?.isTaggedRelease != true, let status, let text = Self.statusText(status, describe: describe) {
                 Text(text)
                     .foregroundStyle(tint(status))
                     .fixedSize(horizontal: false, vertical: true)
@@ -180,10 +184,17 @@ struct SettingsVersionFooter: View {
         }
         .font(.system(size: 10))
         .foregroundStyle(.secondary)
-        .help(Self.line(installed: installed, status: status))
+        .help(describe?.isTaggedRelease == true ? Self.identity(installed: installed, describe: describe)
+            : "VoiceBar \(installed.label). \(status?.message ?? "")")
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("VoiceBar \(installed.version ?? "Unknown")")
+        .accessibilityLabel(describe?.isTaggedRelease == true ? Self.identity(installed: installed, describe: describe)
+            : "VoiceBar \(installed.label)")
         .accessibilityValue(status?.message ?? "")
+    }
+
+    static func identity(installed: VoiceBarInstalledVersion, describe: VoiceBarGitDescribe?) -> String {
+        ["VoiceBar \(installed.version ?? "Unknown")", describe?.isTaggedRelease == true ? nil : installed.shortCommit]
+            .compactMap { $0 }.joined(separator: " · ")
     }
 
     /// Quiet unless there is something to do: only an available update takes the accent colour.
