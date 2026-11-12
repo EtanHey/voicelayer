@@ -119,6 +119,8 @@ struct SettingsHistoryMediaPart: Equatable {
     var processingLabel: String?
     /// MICDROP2: "Mic disconnected at 0:42" when the input device was lost mid-recording.
     var micDisconnectLabel: String?
+    /// c8-M3: the system dropped audio during this take, so the transcript may be missing words.
+    var audioLossLabel: String? = nil
     var playbackQueue: [URL] = []
 
     var label: String? {
@@ -284,7 +286,8 @@ struct SettingsHistoryRowModel: Equatable {
                     spokenDurationLabel: hasSpokenLength ? durationLabels.transcribed : nil,
                     processingLabel: processingLabel(entry.processingDurationMs),
                     micDisconnectLabel: [entry.micDisconnectNote, entry.deliveryNote].compactMap { $0 }.joined(separator: " · ").settingsArchiveNilIfEmpty
-                        ?? entry.micDisconnectedAtMs.map(MicDisconnectFeedback.historyNote(atMs:))
+                        ?? entry.micDisconnectedAtMs.map(MicDisconnectFeedback.historyNote(atMs:)),
+                    audioLossLabel: entry.captureOverrunNote
                 ),
             ]
         )
@@ -2237,7 +2240,7 @@ public struct SettingsView: View {
         let micDisconnectLabel = part.micDisconnectLabel
 
         if audioLabel != nil || heardLabel != nil || spokenLabel != nil || processingLabel != nil
-            || micDisconnectLabel != nil
+            || micDisconnectLabel != nil || part.audioLossLabel != nil
         {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 12) { historyStatLabels(part) }
@@ -2283,6 +2286,13 @@ public struct SettingsView: View {
                 .foregroundStyle(.orange)
                 .help("The microphone signal was lost here; the whole recording is kept, and only the audio before it was transcribed")
                 .accessibilityLabel(micDisconnectLabel)
+        }
+        if let audioLossLabel = part.audioLossLabel {
+            Label(audioLossLabel, systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
+                .help("macOS discarded microphone audio before VoiceBar received it, so words from those moments are not in this transcript or the saved audio")
+                .accessibilityLabel(audioLossLabel)
+                .accessibilityIdentifier("history-audio-loss")
         }
     }
 
