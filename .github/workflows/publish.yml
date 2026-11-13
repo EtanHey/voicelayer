@@ -35,6 +35,8 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.ref }}
           path: source
+          # The release gate walks from the proven build commit to the tag.
+          fetch-depth: 0
 
       # Older requested tags need the guard from this immutable workflow revision.
       # Keep tooling beside the package so it cannot enter the selected archive.
@@ -46,6 +48,15 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+
+      # R2, one release, one step: from v2.4.0 on, no npm package without the app's
+      # installed-candidate T3 Option+F5 proof for this exact build, committed at
+      # release-proofs/<tag>.json (docs/voicebar-release-runbook.md). First check, before any
+      # build or publish step. The gate runs from this workflow revision; no bypass input.
+      - name: Release gate (installed-candidate proof)
+        env:
+          RELEASE_TAG: ${{ inputs.ref || github.ref_name }}
+        run: bun ../workflow-tools/scripts/t3-optf5-proof.ts release-gate --tag "$RELEASE_TAG"
 
       # No registry-url: that makes setup-node write a token-based .npmrc
       # (always-auth + empty NODE_AUTH_TOKEN) which overrides OIDC and 404s.

@@ -15,18 +15,43 @@ release-asset upload, and the `EtanHey/homebrew-layers` formula and cask commit 
 - `release-voicebar.sh --upload` is retired: that script always rebuilds, and a fresh build is
   newer than any proof.
 
-npm publication is separate. It is CI-only (`.github/workflows/publish.yml`, OIDC), and CI
-cannot produce native proof, so CI is not gated on it.
+npm publication is CI-only (`.github/workflows/publish.yml`, OIDC), and since 2.4 it is gated
+on the same proof (R2, "one release, one step"; the 2.3 package shipped while its app never
+did). From `v2.4.0` on, the workflow's first step, `t3-optf5-proof.ts release-gate`, refuses
+the tag unless `release-proofs/<tag>.json` is committed and passes:
+
+- the promote path's own `checkProof` (schema, `release` receipt, evidence hashes, text-hash
+  match, `readError`, UUID, freshness), run against the candidate identity `record` read from
+  the proven app (`release.gitCommit`, `release.buildTimeUTC`, `release.bundleSha256`);
+- `release.version` equals the tag and `package.json` at the tag;
+- the tag is the proven build commit, or a descendant whose diff against it touches only
+  `release-proofs/` (the proof cannot name the commit it is committed in, so it names the
+  build commit, and the tag adds nothing but the proof);
+- the build time is not before that build commit was made.
+
+Tags older than `v2.4.0` are not gated, so `workflow_dispatch` can still republish them; any
+ref that is not `vMAJOR.MINOR.PATCH[-pre]` is refused. There is no bypass input. A hosted
+runner has no app, so it cannot recompute the bundle digest: that digest is checked against
+the real app by `record` and again by promotion, which must be given the committed file.
 
 ## Order
 
 1. **Build the candidate.** `scripts/release-voicebar.sh --skip-tap-check`. It prints the
-   zip sha256. Tag the release so CI publishes the npm package.
+   zip sha256. Do NOT tag yet.
 2. **Install exactly that build on the MBP** and relaunch VoiceBar. Install it from that
    `VoiceBar.zip` or app, not through the cask: the cask is what reaches users, so it cannot
-   come first. Confirm with `scripts/voicelayer-deploy-check.sh` → `DEPLOYED`.
+   come first. Confirm with
+   `scripts/voicelayer-deploy-check.sh` → `DEPLOYED`.
 3. **Produce the proof** (below), with output muted.
-4. **Promote:**
+4. **Record, commit, tag.** In a checkout at the build commit:
+   ```bash
+   bun scripts/t3-optf5-proof.ts record --proof docs.local/<release>/t3-optf5-proof.json \
+     --app /Applications/VoiceBar.app --out release-proofs/vX.Y.Z.json
+   git add release-proofs/vX.Y.Z.json && git commit -m "release: vX.Y.Z installed-candidate proof"
+   ```
+   `record` runs `check` against the app first. Land that commit (it may only add the file),
+   then tag it `vX.Y.Z`; CI's gate passes and publishes the npm package.
+5. **Promote** with the committed file as the proof:
    ```bash
    NPM_SHA="$(curl -fsSL https://registry.npmjs.org/voicelayer-mcp/-/voicelayer-mcp-X.Y.Z.tgz | shasum -a 256 | awk '{print $1}')"
    scripts/promote-voicebar-release.sh --version X.Y.Z \
@@ -34,7 +59,7 @@ cannot produce native proof, so CI is not gated on it.
      --zip .build.noindex/voicebar-release/X.Y.Z/VoiceBar.zip \
      --tap-root ~/Gits/homebrew-layers \
      --formula-sha256 "$NPM_SHA" \
-     --t3-proof docs.local/<release>/t3-optf5-proof.json
+     --t3-proof release-proofs/vX.Y.Z.json
    ```
    The tap must be clean. In order, the script:
    1. verifies the artifact against the proof;

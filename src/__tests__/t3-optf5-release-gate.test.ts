@@ -363,10 +363,12 @@ describe("release delivery refuses without a matching T3 Option+F5 proof", () =>
     expect(text).toMatch(/VERIFY_ARGS\+=\(--t3-proof/);
   });
 
-  test("CI publication does not depend on native T3 proof", () => {
+  // R2 (2026-11-13) reverses the old "CI is not gated" rule: npm publication now needs the
+  // committed proof. CI still never produces one; publish-release-gate.test.ts covers the gate.
+  test("CI publication checks the committed proof and never produces one", () => {
     const publish = readFileSync(join(repoRoot, ".github", "workflows", "publish.yml"), "utf8");
-    expect(publish).not.toContain("t3-proof");
-    expect(publish).not.toContain("t3-optf5");
+    expect(publish).toContain("t3-optf5-proof.ts release-gate");
+    expect(publish).not.toMatch(/t3-optf5-proof\.ts (start|finish|run|record)\b/);
   });
 });
 

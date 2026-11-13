@@ -139,6 +139,107 @@ export function checkProof(
   return p as unknown as T3OptF5Proof;
 }
 
+// ---- npm publish gate (R2) ---------------------------------------------------------------
+//
+// The 2.3 npm package shipped while its app never did. From v2.4.0 on, publish.yml refuses a
+// tag unless release-proofs/v<version>.json is committed: the proof plus the candidate identity
+// `record` read from the proven app. A hosted runner has no app, so it re-runs checkProof
+// against that recorded identity and binds the proven build commit to the tag in git.
+
+export const RELEASE_GATE_FROM = [2, 4, 0];
+export const RELEASE_PROOF_DIR = "release-proofs";
+const TAG_RE = /^v(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?$/;
+
+// Prereleases of a gated version are gated too: npm publishes them all the same.
+export function releaseGateApplies(tag: string): boolean {
+  const m = tag.match(TAG_RE);
+  if (!m) fail(`'${tag}' is not a release tag vMAJOR.MINOR.PATCH[-pre]`);
+  const v = m.slice(1, 4).map(Number);
+  for (let i = 0; i < 3; i++) if (v[i] !== RELEASE_GATE_FROM[i]) return v[i] > RELEASE_GATE_FROM[i];
+  return true;
+}
+
+export interface BuildCommitFacts {
+  isAncestor: boolean;
+  changedPaths: string[];
+  committedAtMs: number;
+}
+
+export function checkReleaseRecord(
+  raw: unknown,
+  ctx: { tag: string; tagCommit: string; packageVersion: string; buildCommit: (sha: string) => BuildCommitFacts | null },
+  now = Date.now(),
+): T3OptF5Proof {
+  const version = ctx.tag.slice(1);
+  const path = `${RELEASE_PROOF_DIR}/${ctx.tag}.json`;
+  if (ctx.packageVersion !== version) fail(`package.json version '${ctx.packageVersion}' at the tag is not ${version}`);
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail(`${path} is not a JSON object`);
+  const release = (raw as Record<string, unknown>).release as Record<string, unknown> | undefined;
+  if (typeof release !== "object" || release === null) fail(`${path} has no release block; write it with t3-optf5-proof.ts record`);
+  if (release.version !== version) fail(`${path} release.version '${String(release.version)}' is not the tag's ${version}`);
+  const build = String(release.gitCommit);
+  if (!COMMIT_RE.test(build)) fail(`${path} release.gitCommit '${build}' is not a full SHA`);
+  const facts = ctx.buildCommit(build);
+  if (!facts) fail(`proven build commit ${build} is not in this repository`);
+  if (!facts.isAncestor) fail(`proven build commit ${build} is not the tagged commit ${ctx.tagCommit} or its ancestor`);
+  const outside = facts.changedPaths.filter((p) => !p.startsWith(`${RELEASE_PROOF_DIR}/`));
+  if (outside.length > 0) {
+    fail(`tagged commit differs from the proven build ${build} outside ${RELEASE_PROOF_DIR}/: ${outside.slice(0, 5).join(", ")}`);
+  }
+  const buildMs = Date.parse(String(release.buildTimeUTC));
+  if (Number.isFinite(buildMs) && buildMs < facts.committedAtMs - MAX_FUTURE_SKEW_MS) {
+    fail(`release.buildTimeUTC ${String(release.buildTimeUTC)} is before its commit ${build} was made`);
+  }
+  return checkProof(
+    raw,
+    { gitCommit: build, buildTimeUTC: String(release.buildTimeUTC), bundleSha256: String(release.bundleSha256) },
+    now,
+  );
+}
+
+function git(repo: string, ...args: string[]) {
+  const r = Bun.spawnSync(["git", "-C", repo, ...args], { stdout: "pipe", stderr: "pipe", env: process.env });
+  return { ok: r.exitCode === 0, out: r.stdout.toString().trim() };
+}
+
+function releaseGate(args: Map<string, string>) {
+  const tag = need(args, "--tag").replace(/^refs\/tags\//, "");
+  const repo = args.get("--repo") ?? process.cwd();
+  if (!releaseGateApplies(tag)) {
+    console.log(`[t3-optf5-proof] release gate not applied: ${tag} is older than v${RELEASE_GATE_FROM.join(".")}`);
+    return;
+  }
+  const head = git(repo, "rev-parse", "HEAD").out;
+  const tagged = git(repo, "rev-parse", "--verify", "-q", `refs/tags/${tag}^{commit}`);
+  if (!tagged.ok || tagged.out !== head) fail(`tag ${tag} does not resolve to the checked-out commit ${head}`);
+  const path = join(repo, RELEASE_PROOF_DIR, `${tag}.json`);
+  if (!existsSync(path)) fail(`${RELEASE_PROOF_DIR}/${tag}.json is missing: no installed-candidate T3 Option+F5 proof for this release`);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    fail(`${RELEASE_PROOF_DIR}/${tag}.json is not valid JSON`);
+  }
+  const packageVersion = String(JSON.parse(readFileSync(join(repo, "package.json"), "utf8")).version);
+  const p = checkReleaseRecord(raw, {
+    tag,
+    tagCommit: head,
+    packageVersion,
+    buildCommit: (sha) => {
+      if (!git(repo, "cat-file", "-e", `${sha}^{commit}`).ok) return null;
+      const changed = git(repo, "diff", "--name-only", "--no-renames", sha, head);
+      const committed = Number(git(repo, "show", "-s", "--format=%ct", sha).out) * 1000;
+      if (!changed.ok || !Number.isFinite(committed)) fail(`cannot read git facts for ${sha}`);
+      return {
+        isAncestor: git(repo, "merge-base", "--is-ancestor", sha, head).ok,
+        changedPaths: changed.out.split("\n").filter(Boolean),
+        committedAtMs: committed,
+      };
+    },
+  });
+  console.log(`[t3-optf5-proof] PASS: release gate ${tag}: proof for build ${p.gitCommit} (${p.t3Build}, ${p.timestamp})`);
+}
+
 // ---- artifact readers ------------------------------------------------------------------
 
 function readPlistString(plistPath: string, key: string): string {
@@ -558,6 +659,28 @@ function check(args: Map<string, string>) {
   );
 }
 
+// The committed release proof: `check` against the proven app, plus the identity it read from
+// that app, so a hosted runner without the app can re-run checkProof (publish.yml, R2).
+function record(args: Map<string, string>) {
+  const app = need(args, "--app");
+  const out = need(args, "--out");
+  check(args);
+  const plist = `${app}/Contents/Info.plist`;
+  const version = readPlistString(plist, "CFBundleShortVersionString");
+  const bundled = String(JSON.parse(readFileSync(`${app}/Contents/Resources/package.json`, "utf8")).version);
+  if (!version || version !== bundled) fail(`app version '${version}' does not equal its bundled package.json version '${bundled}'`);
+  if (resolve(out) !== resolve(RELEASE_PROOF_DIR, `v${version}.json`)) fail(`--out must be ${RELEASE_PROOF_DIR}/v${version}.json in the release checkout`);
+  const proof = JSON.parse(readFileSync(need(args, "--proof"), "utf8"));
+  const release = {
+    version,
+    gitCommit: readPlistString(plist, "GitCommit"),
+    buildTimeUTC: readPlistString(plist, "BuildTimeUTC"),
+    bundleSha256: bundleDigest(app),
+  };
+  writeFileSync(out, `${JSON.stringify({ ...proof, release }, null, 2)}\n`);
+  console.log(`[t3-optf5-proof] recorded ${out}: commit only this file, then tag v${version} on that commit`);
+}
+
 function need(args: Map<string, string>, flag: string): string {
   const value = args.get(flag);
   if (!value) fail(`${flag} is required`);
@@ -578,6 +701,8 @@ const USAGE = `Usage:
                                        (--app/--voicebar-log/--history-file: test preload only)
   bun scripts/t3-optf5-proof.ts finish --state FILE --out PROOF.json
   bun scripts/t3-optf5-proof.ts check  --proof PROOF.json --app VoiceBar.app
+  bun scripts/t3-optf5-proof.ts record --proof PROOF.json --app VoiceBar.app --out release-proofs/vX.Y.Z.json
+  bun scripts/t3-optf5-proof.ts release-gate --tag vX.Y.Z [--repo DIR]   (publish.yml)
   bun scripts/t3-optf5-proof.ts zip-matches-app --app VoiceBar.app --zip VoiceBar.zip
   bun scripts/t3-optf5-proof.ts bundle-digest --app VoiceBar.app`;
 
@@ -588,6 +713,8 @@ if (import.meta.main) {
     if (command === "start") start(args);
     else if (command === "finish") finish(args);
     else if (command === "check") check(args);
+    else if (command === "record") record(args);
+    else if (command === "release-gate") releaseGate(args);
     else if (command === "zip-matches-app") zipCommand(args);
     else if (command === "bundle-digest") console.log(bundleDigest(need(args, "--app")));
     else {
@@ -596,7 +723,10 @@ if (import.meta.main) {
     }
   } catch (error) {
     if (!(error instanceof GateError)) throw error;
-    const prefix = command === "check" || command === "zip-matches-app" ? "REFUSED: T3 Option+F5 proof" : "FAIL";
+    const prefix =
+      command === "release-gate" ? "REFUSED: npm publish release gate"
+        : command === "check" || command === "record" || command === "zip-matches-app" ? "REFUSED: T3 Option+F5 proof"
+          : "FAIL";
     console.error(`[t3-optf5-proof] ${prefix}: ${error.message}`);
     process.exit(1);
   }
