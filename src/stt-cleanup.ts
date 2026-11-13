@@ -733,11 +733,25 @@ function joinPathSeparators(text: string, commands: ReadonlySet<string>): string
   };
   text = text.replace(/\s*\/\s*/gu, (match, offset: number) =>
     isCommand(offset + match.indexOf("/")) ? match : "/");
-  return text.replace(/\s*-\s*/gu, (match, offset: number) => {
+  text = text.replace(/\s*-\s*/gu, (match, offset: number) => {
     // A hyphen may own the whitespace before the next slash in this same join.
     const trailing = match.match(/\s+$/u)?.[0] ?? "";
     return "-" + (trailing && isCommand(offset + match.length) ? trailing : "");
   });
+  // A retained command boundary becomes a path join if a later separator
+  // has joined onto the command itself.
+  const boundaries = [...text.matchAll(/\s+(\/[A-Za-z0-9][A-Za-z0-9-]*)/gu)];
+  const joins = new Set<number>();
+  // Work backwards so a chain ending in a path joins all its segments. Match
+  // the whole token: backtracking at a hyphen would split a valid command.
+  for (let i = boundaries.length - 1; i >= 0; i--) {
+    const boundary = boundaries[i];
+    const end = boundary.index + boundary[0].length;
+    if (text[end] === "/" || (!commands.has(boundary[1]) && boundary[1].includes("-")) ||
+        (boundaries[i + 1]?.index === end && joins.has(end))) joins.add(boundary.index);
+  }
+  return text.replace(/\s+(\/[A-Za-z0-9][A-Za-z0-9-]*)/gu, (match, _token: string, offset: number) =>
+    joins.has(offset) ? match.trimStart() : match);
 }
 
 export function normalizePathTokens(text: string, commands: ReadonlySet<string> = new Set()): string {
@@ -762,16 +776,19 @@ export function normalizePathTokens(text: string, commands: ReadonlySet<string> 
       // Only path portions are case-normalized around kept command boundaries.
       // Keep each command and its preceding whitespace exactly as joined above.
       const boundaries = /\s+\/([A-Za-z0-9][A-Za-z0-9-]*)(?=[\s.,;:!?]|$)/gu;
-      const originals = Array.from(match.matchAll(boundaries))
-        .filter((boundary) => commands.has(`/${boundary[1]}`));
-      let commandIndex = 0;
+      // Joining only deletes whitespace. Map retained characters back to the
+      // original span once, so vanished command boundaries cannot shift slices.
+      const toOriginal = new Int32Array(joined.length + 1);
+      for (let j = 0, i = 0; j <= joined.length; j++, i++) {
+        while (i < match.length && j < joined.length && joined[j] !== match[i]) i++;
+        toOriginal[j] = j === joined.length ? match.length : i;
+      }
       for (const boundary of joined.matchAll(boundaries)) {
         if (!commands.has(`/${boundary[1]}`)) continue;
         const before = joined.slice(cursor, boundary.index);
-        const original = originals[commandIndex++];
-        parts.push(before.includes("/") ? before.toLowerCase() : match.slice(originalCursor, original.index), original[0]);
+        parts.push(before.includes("/") ? before.toLowerCase() : match.slice(originalCursor, toOriginal[boundary.index]), boundary[0]);
         cursor = boundary.index + boundary[0].length;
-        originalCursor = original.index + original[0].length;
+        originalCursor = toOriginal[cursor];
       }
       if (cursor === 0) return joined.toLowerCase();
       const tail = joined.slice(cursor);

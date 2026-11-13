@@ -1289,6 +1289,9 @@ describe("stt-polish", () => {
   for (const [name, candidate, status] of [
     ["glued", "Run/quill now.", "rejected"],
     ["standalone", "Run /quill now!", "applied"],
+    // A wrapped command cannot execute where it is typed; rejection delivers
+    // the cleaned text, preserving the command the speaker actually said.
+    ["backtick-wrapped", "Run `/quill` now.", "rejected"],
   ] as const) {
     it(`delivers the correct text for a ${name} dictionary command`, async () => {
       const vocabularyPath = join(TEST_DIR, "commands.json");

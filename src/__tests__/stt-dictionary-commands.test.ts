@@ -28,7 +28,7 @@ afterAll(() => {
 
 const clean = (raw: string) => cleanupTranscriptionText(raw, env);
 const expectControl = () =>
-  expect(clean("And to tidy up, you just slash zephyr sweep.")).toBe("And to tidy up, you just /zephyr-sweep.");
+  expect(clean("Zorple glim narb, flarn slash zephyr sweep.")).toBe("Zorple glim narb, flarn /zephyr-sweep.");
 
 describe("a dictionary command stays its own token", () => {
   it("control: keeps one space before a command that ends the sentence", () => {
@@ -38,7 +38,7 @@ describe("a dictionary command stays its own token", () => {
   it("keeps the command before a question mark, a comma and the end of text", () => {
     expect(clean("should I run slash quill?")).toBe("Should I run /quill?");
     expect(clean("run slash quill, then rest")).toBe("Run /quill, then rest");
-    expect(clean("you just slash quill")).toBe("You just /quill");
+    expect(clean("flarn zib slash quill")).toBe("Flarn zib /quill");
   });
 
   it("starts the text or a line with no space before it", () => {
@@ -53,9 +53,9 @@ describe("a dictionary command stays its own token", () => {
   // Round 2 (Codex P1): no placeholder is put in the text, so characters the
   // recognizer already wrote are never turned into a command or leaked.
   it("leaves private-use characters next to a command untouched", () => {
-    expect(clean("keep \uE400\uE500\uE401 and \uF900 here, you just slash quill."))
-      .toBe("Keep \uE400\uE500\uE401 and \uF900 here, you just /quill.");
-    expect(clean("you just slash quill \uE400\uE500\uE401.")).toBe("You just /quill \uE400\uE500\uE401.");
+    expect(clean("zib \uE400\uE500\uE401 norp \uF900 blim, flarn zib slash quill."))
+      .toBe("Zib \uE400\uE500\uE401 norp \uF900 blim, flarn zib /quill.");
+    expect(clean("flarn zib slash quill \uE400\uE500\uE401.")).toBe("Flarn zib /quill \uE400\uE500\uE401.");
   });
 
   it("keeps several thousand protected commands correct", () => {
@@ -72,7 +72,7 @@ describe("a dictionary command stays its own token", () => {
   // Codex P2 (provenance): text matching, so a "/quill" the recognizer wrote
   // itself is protected exactly like one the dictionary produced.
   it("protects a literal /quill the recognizer wrote, like a dictionary one", () => {
-    expect(clean("you just /quill.")).toBe("You just /quill.");
+    expect(clean("flarn zib /quill.")).toBe("Flarn zib /quill.");
     expect(clean("open src/quill/index now.")).toBe("Open src/quill/index now.");
   });
 
@@ -89,9 +89,9 @@ describe("a dictionary command stays its own token", () => {
       ["open src slash rules engine dot ts", "Open src / rules engine .ts"],
       ["open tilde slash code slash notes.", "Open ~/code/notes."],
       ["see https://example.com/quill for more.", "See HTTPS://example.com/quill for more."],
-      // The joining rule retains whitespace before a written dictionary command.
-      ["run slash quill slash index", "run /quill/index"],
-      ["run slash quill slash zephyr sweep slash index", "Run /quill /zephyr-sweep/index"],
+      // N1: a command followed by a joined separator is a path segment.
+      ["run slash quill slash index", "run/quill/index"],
+      ["run slash quill slash zephyr sweep slash index", "run/quill/zephyr-sweep/index"],
       // Slashes without a written standalone command keep their original behavior.
       ["open src slash slash quill.", "Open src / /quill."],
       ["open src/ slash quill.", "Open src/ /quill."],
@@ -200,4 +200,68 @@ it("lowercases a joined path before a kept command", () => {
 it("returns a non-path span unchanged, including hyphen spacing and command whitespace", () => {
   expect(normalizePathTokens("Birch - Maple  /quill.", commands))
     .toBe("Birch - Maple  /quill.");
+});
+
+// B1: a pre-join command can become a path segment; offsets must still refer
+// to the same original characters when the later command is kept standalone.
+for (const [input, expected] of [
+  ["Foo /quill / Index /other.", "foo/quill/index /other."],
+  ["A /other / B /quill.", "a/other/b /quill."],
+  ["A /quill -B /other.", "a/quill-b /other."],
+]) {
+  it(`B1 offset regression: ${input}`, () => {
+    expect(normalizePathTokens(input, commands)).toBe(expected);
+  });
+}
+it("B1 pipeline does not repeat a command that became a path segment", () => {
+  const pipelineEnv = { ...env, QA_VOICE_STT_VOCABULARY_PATH: join(directory, "pipeline.json") };
+  writeFileSync(pipelineEnv.QA_VOICE_STT_VOCABULARY_PATH, JSON.stringify({ entries: [
+    { canonical: "/think", variants: [] }, { canonical: "/brief", variants: [] },
+  ] }));
+  expect(cleanupTranscriptionText("open notes slash think slash index slash brief.", pipelineEnv))
+    .toBe("Open notes/think/index /brief.");
+});
+
+it("20000 seeded inputs conserve main letters and keep non-path commands separate", () => {
+  let seed = 0x241b1;
+  const pick = <T,>(items: readonly T[]): T => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return items[(seed >>> 8) % items.length];
+  };
+  const atoms = ["Birch", "CEDAR", "MapLe", "42", "7X", " /quill", " /other",
+    " /quill / Index", " /other -B", " / x", " -x", "~/", "/", "-",
+    ".", ",", ";", "!", "?", " ", "  ", "\t", "\n"];
+  let letterFailures = 0;
+  let boundaryFailures = 0;
+  const examples: string[] = [];
+  for (let i = 0; i < 20000; i++) {
+    const input = Array.from({ length: 8 + (i % 25) }, () => pick(atoms)).join(" ");
+    const baseline = mainNormalizePathTokens(input);
+    const output = normalizePathTokens(input, commands);
+    // Align letters/digits only, allowing case differences solely at positions
+    // inside main's joined path tokens (main also glued standalone commands).
+    // Outside those paths the comparison is case-sensitive.
+    const baselineLetters: string[] = [];
+    const pathPositions: boolean[] = [];
+    for (const token of baseline.matchAll(/\S+|\s+/gu)) {
+      for (const char of token[0]) if (/[A-Za-z0-9]/u.test(char)) {
+        baselineLetters.push(char);
+        pathPositions.push(token[0].includes("/"));
+      }
+    }
+    const letters = output.match(/[A-Za-z0-9]/gu) ?? [];
+    const letterBad = letters.length !== baselineLetters.length || letters.some((char, index) =>
+      pathPositions[index] ? char.toLowerCase() !== baselineLetters[index].toLowerCase() : char !== baselineLetters[index]);
+    // Every generated command starts after whitespace. Joining may absorb that
+    // whitespace only when the command has become a slash/hyphen path segment.
+    const boundaryBad = [...output.matchAll(/\/(?:quill|other)(?=[\s.,;:!?/\-]|$)/gu)]
+      .some((match) => match.index > 0 && !/[\s/]/u.test(output[match.index - 1]) &&
+        !/[/-]/u.test(output[match.index + match[0].length] ?? ""));
+    letterFailures += Number(letterBad);
+    boundaryFailures += Number(boundaryBad);
+    if ((letterBad || boundaryBad) && examples.length < 3) examples.push(input);
+  }
+  console.info(`T8A seeded differential: inputs=20000 letterFailures=${letterFailures} boundaryFailures=${boundaryFailures}`);
+  expect(letterFailures, JSON.stringify(examples)).toBe(0);
+  expect(boundaryFailures, JSON.stringify(examples)).toBe(0);
 });
