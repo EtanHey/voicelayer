@@ -1,0 +1,4 @@
+{
+  "comment": "Macs accepted to collect the installed-candidate T3 Option+F5 release proof (R3). Hardware model identifier (sysctl -n hw.model) and chip (sysctl -n machdep.cpu.brand_string) only: never a serial number, host name, user name or path. A guard against the wrong Mac by mistake, not attestation. A proof-only release commit may not change this file.",
+  "hosts": [{ "model": "MacBookPro18,3", "chip": "Apple M1 Pro" }]
+}

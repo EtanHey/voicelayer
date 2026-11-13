@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import { createHash } from "crypto";
-import { bundleDigest } from "../../scripts/t3-optf5-proof";
+import { bundleDigest, checkProof, PROOF_HOSTS_FILE } from "../../scripts/t3-optf5-proof";
 
 // T3GATE1 (2026-10-18): the 2.2.45 T3 Option+F5 regression shipped because publication never
 // required the installed-candidate T3 proof. The tap-check (final, pre-cask-bump) mode of
@@ -115,6 +115,11 @@ esac
   return app;
 }
 
+// The accepted proof host (release-proofs/proof-hosts.json), passed explicitly through the
+// test-only --host-model/--host-chip seam; production reads sysctl and has no default.
+const M1_HOST = { model: "MacBookPro18,3", chip: "Apple M1 Pro" };
+const HOST_ARGS = ["--host-model", M1_HOST.model, "--host-chip", M1_HOST.chip];
+
 // A release receipt for the fixture candidate. The bundle digest is the candidate's own, as
 // if the identical bundle had been installed and exercised.
 function proof(overrides: Record<string, unknown> = {}) {
@@ -135,6 +140,7 @@ function proof(overrides: Record<string, unknown> = {}) {
     historyTextSha256: sha256(SYNTHETIC),
     speakTextCommandId: UUID,
     readError: false,
+    machine: M1_HOST,
     ...overrides,
   };
 }
@@ -363,10 +369,12 @@ describe("release delivery refuses without a matching T3 Option+F5 proof", () =>
     expect(text).toMatch(/VERIFY_ARGS\+=\(--t3-proof/);
   });
 
-  test("CI publication does not depend on native T3 proof", () => {
+  // R2 (2026-11-13) reverses the old "CI is not gated" rule: npm publication now needs the
+  // committed proof. CI still never produces one; publish-release-gate.test.ts covers the gate.
+  test("CI publication checks the committed proof and never produces one", () => {
     const publish = readFileSync(join(repoRoot, ".github", "workflows", "publish.yml"), "utf8");
-    expect(publish).not.toContain("t3-proof");
-    expect(publish).not.toContain("t3-optf5");
+    expect(publish).toContain("t3-optf5-proof.ts release-gate");
+    expect(publish).not.toMatch(/t3-optf5-proof\.ts (start|finish|run|record)\b/);
   });
 });
 
@@ -787,6 +795,7 @@ function start(f: ReturnType<typeof producerFixture>, env: Record<string, string
     "--voicebar-log", f.log,
     "--history-file", f.history,
     "--expected-text-file", f.expected,
+    ...HOST_ARGS,
   ], env);
 }
 
@@ -882,6 +891,25 @@ describe("t3-optf5-proof producer reads the installed app's real artifacts", () 
     expect(gate.code).toBe(0);
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
+  // R3: `run` is start, a wait that sends no keys, then finish, so the lead starts one background
+  // command and the operator's only job is the press.
+  test("run arms, waits for the operator's one press, and writes the same proof finish would", async () => {
+    const f = producerFixture();
+    const child = Bun.spawn([
+      process.execPath, proofScript, "run",
+      "--state", f.state, "--out", f.out,
+      "--app", f.installed, "--t3-app", f.t3,
+      "--voicebar-log", f.log, "--history-file", f.history, "--expected-text-file", f.expected, ...HOST_ARGS,
+    ], { stdout: "pipe", stderr: "pipe", env: { ...process.env, TZ: "Etc/UTC" } });
+    const deadline = Date.now() + 5_000;
+    while (!existsSync(f.state) && Date.now() < deadline) sleepSync(50);
+    expect(existsSync(f.out)).toBe(false);
+    simulateKeypress(f);
+    expect(await child.exited).toBe(0);
+    expect(await new Response(child.stderr).text()).toBe("");
+    expect(JSON.parse(readFileSync(f.out, "utf8"))).toMatchObject({ speakTextCommandId: UUID, receipt: "test", readError: false });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
   test("the producer's proof refuses a candidate with equal plist identity but different contents", () => {
     const f = producerFixture();
     expect(start(f).code).toBe(0);
@@ -892,6 +920,52 @@ describe("t3-optf5-proof producer reads the installed app's real artifacts", () 
     const r = runVerify(["--t3-proof", writeProof({ ...p, receipt: "release" })]);
     expect(r.code).not.toBe(0);
     expect(r.err).toContain("bundle");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("R3: start (so run) refuses a Mac that is not an accepted proof host, before writing state", () => {
+    const f = producerFixture();
+    const r = runProducer(["start", "--state", f.state, "--app", f.installed, "--t3-app", f.t3, "--voicebar-log", f.log,
+      "--history-file", f.history, "--expected-text-file", f.expected, "--host-model", "Mac14,2", "--host-chip", "Apple M2"]);
+    expect(r.code).toBe(1);
+    expect(r.err.trim().split("\n")).toEqual([
+      "[t3-optf5-proof] FAIL: this Mac (Mac14,2, Apple M2) is not an accepted proof host in release-proofs/proof-hosts.json: run the proof on the M1",
+    ]);
+    expect(existsSync(f.state)).toBe(false);
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("R3: the producer's proof carries the host it ran on", () => {
+    const f = producerFixture();
+    expect(start(f).code).toBe(0);
+    simulateKeypress(f);
+    expect(finish(f).code).toBe(0);
+    expect(JSON.parse(readFileSync(f.out, "utf8")).machine).toEqual(M1_HOST);
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("R3: the shared verifier refuses a proof with a missing or unaccepted machine identity", () => {
+    makeReleaseFixture();
+    const candidate = { gitCommit: COMMIT, buildTimeUTC: BUILD_TIME, bundleSha256: bundleDigest(join(dir, "VoiceBar.app")) };
+    expect(checkProof(proof(), candidate).machine).toEqual(M1_HOST);
+    for (const machine of [undefined, null, {}, { model: M1_HOST.model }, { model: "Mac14,2", chip: "Apple M2" }, { model: M1_HOST.model, chip: "Apple M1 Max" }]) {
+      expect(() => checkProof(proof({ machine }), candidate)).toThrow("not an accepted proof host");
+    }
+  });
+
+  test("R3: the committed host list carries only a model identifier and a chip", () => {
+    const raw = readFileSync(PROOF_HOSTS_FILE, "utf8");
+    const hosts = JSON.parse(raw).hosts as Record<string, unknown>[];
+    expect(hosts).toEqual([M1_HOST]);
+    expect(Object.keys(JSON.parse(raw)).sort()).toEqual(["comment", "hosts"]); // nothing else rides along
+  });
+
+  test("outside the test preload, the host identity cannot be passed in", () => {
+    const r = Bun.spawnSync(
+      ["env", "-u", "VOICELAYER_TEST_RUN_ROOT", process.execPath, proofScript, "start", "--state", join(dir, "s.json"), "--t3-app", join(dir, "T3.app"),
+        "--expected-text-file", join(dir, "e.txt"), ...HOST_ARGS],
+      { stdout: "pipe", stderr: "pipe", env: { ...process.env, TZ: "Etc/UTC" } },
+    );
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr.toString()).toContain("--host-model, --host-chip is test-only; the proof host is read from sysctl");
+    expect(existsSync(join(dir, "s.json"))).toBe(false);
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("outside the test preload, path overrides are refused before anything is read", () => {
