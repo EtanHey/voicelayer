@@ -1,10 +1,15 @@
-// bun tests/fixtures/typed-delivery/build-fixture.ts <outdir>
-// Bundles editors.ts against a READ-ONLY T3 Code checkout (T3CODE_DIR, default ~/Gits/t3code):
-// its apps/web sources and its installed node_modules. Builds nothing inside that checkout.
+// T3CODE_DIR=/path/to/t3code bun tests/fixtures/typed-delivery/build-fixture.ts <outdir>
+// Bundles editors.ts against a READ-ONLY T3 Code checkout: its apps/web sources and its installed
+// node_modules. Builds nothing inside that checkout. T3CODE_DIR is required (no default): point it at
+// your own t3code clone with dependencies installed.
 import { dirname, join } from "node:path";
 const outdir = Bun.argv[2] ?? ".build.noindex/typed-delivery-fixture";
 const here = dirname(Bun.fileURLToPath(import.meta.url));
-const T3 = process.env.T3CODE_DIR ?? `${process.env.HOME}/Gits/t3code`;
+const T3 = process.env.T3CODE_DIR;
+if (!T3) {
+  console.error("T3CODE_DIR is not set: point it at a read-only t3code checkout with node_modules installed");
+  process.exit(2);
+}
 const roots = [`${T3}/apps/web/node_modules`, `${T3}/node_modules/.pnpm/node_modules`, `${T3}/node_modules`];
 const result = await Bun.build({
   entrypoints: [join(here, "editors.ts")],
