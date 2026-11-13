@@ -374,9 +374,9 @@ print_plan() {
             ;;
         *)
             log "  3. + $app_update (refresh the tap, detect drift, adopt with --force instead of a destructive upgrade)"
+            log "     download: before VoiceBar stops"
             ;;
     esac
-    log "     download: before VoiceBar stops"
     log "     upgrade $VOICEBAR_FORMULA_NAME if the formula is installed and behind"
     log "  4. create/update $VENV_DIR and pull the Qwen3 model if missing"
     log "     $(qwen3_model_step_plan)"
@@ -841,7 +841,7 @@ verify_voicebar_stack() {
 bcs_preflight_tap_refresh() {
     local tap="$1" repo
     [[ -n "$tap" ]] || return 0
-    repo="$(bcs_tap_repo_path "$tap")" || return 1
+    repo="$(bcs_tap_repo_path "$tap")" || { err "Cannot resolve tap $tap; refusing update before stopping VoiceBar."; return 1; }
     if [[ -d "$repo/.git" ]]; then
         run_cmd git -C "$repo" pull --ff-only origin "$VOICEBAR_CASK_TAP_BRANCH"
     else
@@ -857,13 +857,21 @@ preflight_brew() {
 
 preflight_cask_download() {
     local tap repo offered installed formula formula_offer
+    if ! bcs_brew_bin >/dev/null 2>&1 && bcs_caller_simulates_commands; then
+        log "no Homebrew; simulating preflight"
+        return 0
+    fi
     tap="$(bcs_cask_tap "$VOICEBAR_CASK_NAME")"
-    bcs_preflight_tap_refresh "$tap" || return 1
-    repo="$(bcs_tap_repo_path "$tap")" || return 1
+    bcs_preflight_tap_refresh "$tap" || { err "Tap refresh failed; refusing update before stopping VoiceBar."; return 1; }
+    repo="$(bcs_tap_repo_path "$tap")" || { err "Cannot resolve tap $tap; refusing update before stopping VoiceBar."; return 1; }
     offered="$(bcs_tap_offered_version "$VOICEBAR_CASK_NAME")"
     installed="$(bcs_app_bundle_version "$VOICEBAR_CANONICAL_APP")"
     if [[ -z "$offered" ]]; then
         err "Cannot read offered cask version from $repo; refusing update."
+        return 1
+    fi
+    if [[ -z "$installed" && -e "$VOICEBAR_CANONICAL_APP" ]]; then
+        err "Cannot read installed VoiceBar version; refusing update before stopping VoiceBar."
         return 1
     fi
     if [[ -n "$installed" ]]; then
@@ -886,14 +894,15 @@ PYVERSION
         fi
     fi
     preflight_brew fetch --cask "$VOICEBAR_CASK_NAME" || { err "Cask fetch failed; refusing update before stopping VoiceBar."; return 1; }
-    formula="$(bcs_formula_version "$VOICEBAR_FORMULA_NAME")" || return 1
+    formula="$(bcs_formula_version "$VOICEBAR_FORMULA_NAME")" || { err "Cannot read installed formula version; refusing update before stopping VoiceBar."; return 1; }
     if [[ -n "$formula" ]]; then
-        formula_offer="$(formula_offered_version)" || return 1
-        [[ -n "$formula_offer" ]] || return 1
+        formula_offer="$(formula_offered_version)" || { err "Cannot read offered formula version; refusing update before stopping VoiceBar."; return 1; }
+        [[ -n "$formula_offer" ]] || { err "Cannot read offered formula version; refusing update before stopping VoiceBar."; return 1; }
         if [[ "$formula" != "$formula_offer" ]]; then
             preflight_brew fetch --formula "$VOICEBAR_FORMULA_NAME" || { err "Formula fetch failed; refusing update before stopping VoiceBar."; return 1; }
         fi
     fi
+    export VOICELAYER_UPDATE_PREFETCHED_CASK_VERSION="$offered"
 }
 
 main() {
