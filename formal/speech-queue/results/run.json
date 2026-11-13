@@ -95,7 +95,7 @@
     "src/__tests__/recording-review-regressions.test.ts": "2191c022696f86a385b89172729b0153667229d961e4850fcfd496d00c5bd211",
     "src/__tests__/setup/recording-jobs-fixture.ts": "28ee19f8bb2d1ac52d1616f3fb2f62754b2a1dd6f7823f06cc97fcdc177ded21",
     "src/__tests__/socket-handlers-idempotency.test.ts": "f71f151ca814fd6d8970e5c6abb6c08ecedc7bb7a9fcb1038871fa27109b2666",
-    "src/__tests__/socket-residency.test.ts": "e9f232220f031e848cfd948ba388f1a969e46a90027a0c56eab93a4f708b4f1e",
+    "src/__tests__/socket-residency.test.ts": "c0dc8de0bcb0869ce0178f9538411805ac4b3a2b0d8d8a1653184db0a7e98fa5",
     "src/__tests__/test-safety-lifecycle.test.ts": "c21f6d539f68125c11a32aaf7916c0726353b87858257a8f927846734c368275",
     "src/__tests__/tts-chunking.test.ts": "5e3af40d4e638e585051552b47707d4979edea0d19d9edf52b32a779ead5fbd7",
     "src/__tests__/tts-long-read-runtime.test.ts": "5cc72db55a287ed312626bcc17e57b321bdb33c381799890ae7cd558befee368",
