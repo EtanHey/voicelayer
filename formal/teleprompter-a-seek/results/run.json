@@ -2,17 +2,21 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/teleprompter-a-seek/TeleprompterASeek.tla": "03f32c1b2fb3f010b6e9db0870fe03889c2158789ab8e35383f3f266a45dfdb6",
-    "formal/teleprompter-a-seek/checks.json": "848ba374f772ebcf3a78d3389461d2a3538d6a5feff61d8db6b2e1f4ca2db067",
+    "formal/teleprompter-a-seek/TeleprompterASeek.tla": "e2685d32e7ea457b617124b628203c3ea8cc73a7a5d573367871f0e64f3ba64c",
+    "formal/teleprompter-a-seek/checks.json": "ab8884222786f222a6c02b9c9d6e794cefc35a22f5a22b796dca064a3f718274",
     "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
-    "formal/teleprompter-a-seek/StaleSlideMutant.cfg": "2017d74348677b00318719211ea5f16899b211f3643f885cdd5765c506c333e4",
-    "formal/teleprompter-a-seek/StaleTableMutant.cfg": "a1aab71e60c801b951f2fd74a96c5e5c5fb110b8536daef8362d8b9f9b26e983",
-    "formal/teleprompter-a-seek/PausedSeekMutant.cfg": "376ddf7a158ddefa2d27d4c0cc4cf308854e5c9e6a5e86d523dc35b5da866457",
-    "formal/teleprompter-a-seek/Fixed.cfg": "32257b310bb458b8eab228503d83047703d0862689440649412c17e5d3f482d9",
-    "flow-bar/Sources/VoiceBarUI/TeleprompterAView.swift": "fa63b8ebc8c110393b382037c544959e260e4a0f81b99b6b1341237707600f2c",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "b323b9bbad39093b3680b4ccc40e22b8274bc11cb41ab52fb34909b43b2d40c3",
-    "flow-bar/Tests/VoiceBarUITests/TeleprompterAWiringTests.swift": "75db0df217618e22a506fc2019c368c2eab47affc81848cfdd3c83aae8a0c67b",
+    "formal/teleprompter-a-seek/StaleSlideMutant.cfg": "4fef87e69264ebe439dde8ad036307ba5dde72e26c80a6b146d483c0f8a9b855",
+    "formal/teleprompter-a-seek/OldPausedSliderMutant.cfg": "f0d632322bae223d043070805e1afb58baacf74ffe3b0b495003d4c22909158d",
+    "formal/teleprompter-a-seek/StaleTableMutant.cfg": "bb45ff189d274036e25085789c93cdf1384b46857cab7cefae30a98512f09cde",
+    "formal/teleprompter-a-seek/OldTimingNoticeMutant.cfg": "4bc81401a94f844d987976b1762a8317dee91f0cd9572ca2785a0c97c2834e53",
+    "formal/teleprompter-a-seek/PausedSeekMutant.cfg": "3ee2506468c002c91ebbb5a7b635eca14af857345820a1a3a58ea8b0801eb562",
+    "formal/teleprompter-a-seek/Fixed.cfg": "b63f79f479524afc3793227d14e141a0954f45757d9c441d62d37b3a7b079b31",
+    "flow-bar/Sources/VoiceBarUI/TeleprompterAView.swift": "ba647066912d5c16b6639401b3c5b8eec28b050cbe0ef9fa86123c13dfbc199f",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "58f90e0459215e2a128ff849611a20795c5b34c172ffa850f50d1ba6bc72736c",
+    "flow-bar/Tests/VoiceBarUITests/TeleprompterAWiringTests.swift": "e7d1fc5de555a9bb79fa6f8575d97115bfd78273def3f710c31615349de6c88a",
+    "flow-bar/Sources/VoiceBarUI/TeleprompterPlaybackScrubBar.swift": "a4b4ff1b3acebee07c28d0276fd47d2a2421800eddfeaf762981d4be01a01de0",
+    "flow-bar/Sources/VoiceBarUI/TeleprompterAModel.swift": "1a0d01fb0cb5549c9e640c12df13ac35cbb69399974dd3ee58d02057289b5ddf",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
@@ -24,10 +28,16 @@
     ],
     "SettledShowsClock": [
       "StaleSlideMutant"
+    ],
+    "NoPausedSliderSend": [
+      "OldPausedSliderMutant"
+    ],
+    "TruthfulTimingNotice": [
+      "OldTimingNoticeMutant"
     ]
   },
   "graphHashes": {
-    "Fixed": "f85cfb242f1a7f564d85132a94e5f83352d80c60a733094452b10b1b10cb7543"
+    "Fixed": "be82b3215dfb483ad8377f474e8b0ab633790d3fd36633fc82f8e84c1537778a"
   },
   "checks": {
     "Fixed": {
@@ -35,8 +45,8 @@
       "kind": "pass",
       "target": null,
       "status": "PASS",
-      "generated": 3303,
-      "distinct": 792
+      "generated": 15261,
+      "distinct": 2640
     },
     "StaleTableMutant": {
       "role": "mutant",
@@ -51,16 +61,32 @@
       "kind": "invariant",
       "target": "NoPausedSeek",
       "status": "EXPECTED_FAIL",
-      "generated": 61,
-      "distinct": 32
+      "generated": 118,
+      "distinct": 50
     },
     "StaleSlideMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "SettledShowsClock",
       "status": "EXPECTED_FAIL",
-      "generated": 164,
-      "distinct": 96
+      "generated": 437,
+      "distinct": 174
+    },
+    "OldPausedSliderMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoPausedSliderSend",
+      "status": "EXPECTED_FAIL",
+      "generated": 118,
+      "distinct": 50
+    },
+    "OldTimingNoticeMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "TruthfulTimingNotice",
+      "status": "EXPECTED_FAIL",
+      "generated": 4,
+      "distinct": 4
     }
   }
 }

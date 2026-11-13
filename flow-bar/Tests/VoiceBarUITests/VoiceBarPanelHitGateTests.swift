@@ -117,9 +117,13 @@ final class VoiceBarPanelHitGateTests: XCTestCase {
                     )
                 }
                 var claimed = 0
+                // The grid hangs from the window's top edge, as the notch does (C6 L2c): a taller drawer window
+                // (N16) adds canvas at the bottom, so a bottom-anchored grid would sample the shape at different
+                // offsets in every state. For History's window these are exactly the points the 577 pt window
+                // sampled before.
                 for x in stride(from: CGFloat(0.5), to: to.panelSize.width, by: 3) {
-                    for y in stride(from: CGFloat(0.5), to: to.panelSize.height, by: 3) {
-                        let point = CGPoint(x: x, y: y)
+                    for depth in stride(from: CGFloat(0.5), to: to.panelSize.height, by: 3) {
+                        let point = CGPoint(x: x, y: to.panelSize.height - depth)
                         guard gate.containsVisibleSurface(point, now: 0.01) else { continue }
                         claimed += 1
                         for (index, frame) in frames.enumerated() where !frame.containsVisibleSurface(point) {

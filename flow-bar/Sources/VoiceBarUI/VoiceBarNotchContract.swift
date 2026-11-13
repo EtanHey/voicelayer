@@ -176,14 +176,18 @@ public struct VoiceBarNotchMaterialContract: Equatable {
         ].contains(state)
         // 2.3 N1 (Etan, real M4): the recording time starts 8 pt past the PHYSICAL notch, which hides the wing's first
         // `visibleCoreOcclusionInset` points on a hardware notch (0 on a flat display).
-        let hiddenByGlass = side == .trailing && state == .recording ? max(0, visibleCoreOcclusionInset) : 0
+        let isRecordingTrailing = side == .trailing && state == .recording
+        let hiddenByGlass = isRecordingTrailing ? max(0, visibleCoreOcclusionInset) : 0
+        // C7-W (Etan, QA 2026-11-11): the recording row ends `compactContentInset` from the wing's outer edge, the
+        // inset Stop keeps from the left edge, and is pinned there; spare width faces the notch.
         return VoiceBarNotchWingContentLayout(
             side: side,
             coreInset: isFixedTrailing
                 ? hiddenByGlass + VoiceBarNotchContract.fixedWingContentInset
                 : VoiceBarNotchContract.compactCoreContentInset,
-            outerInset: isFixedTrailing ? VoiceBarNotchContract.fixedWingContentInset : compactContentInset,
-            alignment: .center
+            outerInset: isFixedTrailing && !isRecordingTrailing
+                ? VoiceBarNotchContract.fixedWingContentInset : compactContentInset,
+            alignment: isRecordingTrailing ? .outer : .center
         )
     }
 
@@ -224,6 +228,8 @@ public enum VoiceBarNotchWingContentAlignment: Equatable {
     case core
     case center
     case screenLeading
+    /// Against the wing's outer edge.
+    case outer
 }
 
 public struct VoiceBarNotchWingContentLayout: Equatable {
@@ -269,6 +275,16 @@ public struct VoiceBarNotchPresentation: Equatable {
     /// Etan, QA 0510 R3: a drawer (History or Settings) hangs below whatever band the notch's activity has: the
     /// launcher's, the recording wings, or a compact status (transcribing, Typed). Non-nil only for `.history`.
     public private(set) var drawerBand: VoiceBarNotchVisualState? = nil
+    /// C7 L3 V10: a read is on screen (playing or paused, shown or hidden). Its canvas keeps the teleprompter's
+    /// eight lines in the compact state too (`VoiceBarNotchMorphCanvasLayout`), so Hide, Show and Pause never
+    /// shrink the canvas or the window under a shell that is still collapsing.
+    public private(set) var holdsReadingCanvas = false
+
+    public func holdingReadingCanvas(_ holds: Bool) -> Self {
+        var copy = self
+        copy.holdsReadingCanvas = holds
+        return copy
+    }
 
     /// What the 32 pt band shows: the visual state, or under a drawer the activity's own band.
     public var bandState: VoiceBarNotchVisualState { drawerBand ?? visualState }
@@ -301,7 +317,8 @@ public struct VoiceBarNotchPresentation: Equatable {
         return VoiceBarNotchPresentation(visualState: visualState, geometry: grown,
             visibleCoreOcclusionInset: visibleCoreOcclusionInset, virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
             contentRoles: contentRoles, accessibilityLabel: accessibilityLabel,
-            transientNoteWidth: transientNoteWidth, feedback: feedback, drawerBand: drawerBand)
+            transientNoteWidth: transientNoteWidth, feedback: feedback, drawerBand: drawerBand,
+            holdsReadingCanvas: holdsReadingCanvas)
     }
 
     /// Where the transient note draws: the band directly under the top row, across the lower body. Any
@@ -330,7 +347,8 @@ public struct VoiceBarNotchPresentation: Equatable {
             virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
             contentRoles: contentRoles,
             accessibilityLabel: accessibilityLabel,
-            transientNoteWidth: transientNoteWidth, feedback: feedback, drawerBand: drawerBand
+            transientNoteWidth: transientNoteWidth, feedback: feedback, drawerBand: drawerBand,
+            holdsReadingCanvas: holdsReadingCanvas
         )
     }
 
@@ -551,17 +569,11 @@ public enum VoiceBarNotchContract {
 
     public static let recordingLeadingWingWidth = fixedWingWidth
 
-    /// 2.3 N1 (Etan, QA round 1, S2-F3; real M4, 2026-11-08): while recording, the right wing holds the time and
-    /// the level meter, with an equal empty region on the outer side so the meter is centred in the wing's VISIBLE
-    /// part (review D3). On a hardware notch the camera glass hides the wing's first `visibleCoreOcclusionInset`
-    /// points (the drawn core is AppKit's auxiliary gap pulled in by the calibration), so the visible wing starts
-    /// there and the time keeps 8 pt clear of the real notch edge: occlusion + 8 + 26 + 2 + 46 + 4 + 26 + 8, which
-    /// is 120 pt on a flat display and 128.5 pt on the M4, inside the 130 pt morph canvas and the 132 pt bound.
-    /// The left wing keeps its controls at the fixed width.
+    /// The time/meter row with its insets: 8 pt clear of the physical notch, and (C7-W) the left wing's own outer
+    /// inset past the meter, so the band's two ends match.
     public static func recordingTrailingWingWidth(visibleCoreOcclusionInset: CGFloat) -> CGFloat {
-        max(0, visibleCoreOcclusionInset) + 2 * fixedWingContentInset + VoiceBarRecordingWingLabel.width +
-            VoiceBarRecordingWingLabel.timeGap + VoiceBarRecordingWingLabel.meterGap + WaveformLayout.viewportWidth +
-            VoiceBarRecordingWingLabel.outerRegionWidth
+        max(0, visibleCoreOcclusionInset) + fixedWingContentInset + VoiceBarRecordingWingLabel.width +
+            VoiceBarRecordingWingLabel.recordingMeterGap + WaveformLayout.viewportWidth + material.compactContentInset
     }
 
     /// The flat-display (no hidden notch) recording right wing.

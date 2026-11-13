@@ -16,7 +16,7 @@
     "src/update-gate-installer-participant.ts": "daad633ba3a8d0c5b3fbcc9749f1f1bac8caeb44e7b19a449d19793a0aaf22c8",
     "src/update-gate-admission.ts": "5cd6a3a13da5aa3b822da6b4623ba3a127001697660c07cb13507a24885b3d34",
     "src/__tests__/update-gate-drain-readback.test.ts": "e1204f9a3d50a5ae52444e5310f06693a737bfba6c1be5aaa613cf0fad02ad6c",
-    "flow-bar/Sources/VoiceBarUI/NativeUpdateGate.swift": "467763de15b00bc45940b695ad792914fdcc7e42dd414e6831e3b9604a47f11f",
+    "flow-bar/Sources/VoiceBarUI/NativeUpdateGate.swift": "4a65b08844c2664fcae549ca641c03ec8e1efdb85c3fc06b595dd8e4ba5ced52",
     "src/update-gate-drain-status.ts": "05b34ac493ce81f2629240f21527283891dd061dfbdd73660050b0d6bc41118a",
     "src/__tests__/update-gate-user-block.test.ts": "eeb2587ffdcbdff90067fcad7a888f8260149d9d953711ac2ee50ac6921bb035",
     "src/update-gate-native-participant.ts": "ff8b16b965e44271ab62aafc85a83d200780f15a9ccd988579704ba5bdd1caa0",

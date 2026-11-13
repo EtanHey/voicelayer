@@ -127,7 +127,9 @@ final class NotchIconButtonTooltipTests: XCTestCase {
         assertEveryControlHasATooltip("history", mounted, expecting: [
             // 2.3 U2 (mic tooltip + chevron) × U4 (row actions, the long row's clipped-text tooltip).
             "Start dictation (F5)", "Choose microphone", "Close history", "Settings",
-            "Copy", "Paste into the app you were using", "Transcribe again", Self.longRow,
+            "Copy", "Paste into the app you were using", "Re-transcribe", Self.longRow,
+            // Lane H: the category selector's three segments.
+            "What you dictated", "Your answers to spoken questions", "Text read aloud to you",
         ], textButtons: 2)
     }
 
@@ -142,26 +144,30 @@ final class NotchIconButtonTooltipTests: XCTestCase {
         let s = state { $0.handleEvent(["type": "state", "state": "recording", "mode": "ptt", "capture_id": 4]) }
         let mounted = try mount(bar(s))
         assertEveryControlHasATooltip("recording ptt", mounted,
-                                     expecting: ["Stop recording", "Pause recording", "Cancel recording"])
+                                     expecting: ["Stop recording", "Mute microphone", "Cancel recording"])
         func frame(_ text: String) throws -> CGRect {
             let tip = try XCTUnwrap(mounted.tooltips.first { $0.text == text }, text)
             return try XCTUnwrap(mounted.controls.first { $0.insetBy(dx: -1, dy: -1).contains(CGPoint(x: tip.frame.midX, y: tip.frame.midY)) }, text)
         }
-        let stop = try frame("Stop recording"), pause = try frame("Pause recording"), cancel = try frame("Cancel recording")
+        let stop = try frame("Stop recording"), pause = try frame("Mute microphone"), cancel = try frame("Cancel recording")
         XCTAssertFalse(pause.intersects(stop), "Pause \(pause) overlaps Stop \(stop)")
         XCTAssertFalse(pause.intersects(cancel), "Pause \(pause) overlaps Cancel \(cancel)")
         XCTAssertEqual(abs(pause.midX - stop.midX) < abs(cancel.midX - stop.midX), true, "Pause sits next to Stop")
 
         s.setRecordingPaused(true)
         assertEveryControlHasATooltip("recording ptt paused", try mount(bar(s)),
-                                     expecting: ["Stop recording", "Resume recording", "Cancel recording"])
+                                     expecting: ["Stop recording", "Unmute microphone", "Cancel recording"])
     }
 
     func testTranscribingAndErrorButtons() throws {
         let transcribing = state { $0.handleEvent(["type": "state", "state": "transcribing"]) }
         assertEveryControlHasATooltip("transcribing", try mount(bar(transcribing)),
-                                     // 2.3 U2: no third control while transcribing; History and Settings stay live.
-                                     expecting: ["History", "Settings"])
+                                     // c9-P: the right wing is the rippling meter (no controls); the microphone
+                                     // control stays on the left (0510 N9).
+                                     expecting: ["Choose microphone"])
+        let transcribingTips = try mount(bar(transcribing)).tooltips.map(\.text)
+        XCTAssertFalse(transcribingTips.contains("History"), "c9-P: History leaves the meter's slot while transcribing")
+        XCTAssertFalse(transcribingTips.contains("Settings"), "c9-P: Settings leaves the meter's slot while transcribing")
         let error = state { $0.handleEvent(["type": "error", "message": "Synthetic diagnostic for the tooltip test."]) }
         assertEveryControlHasATooltip("error", try mount(bar(error)),
                                      expecting: ["Synthetic diagnostic for the tooltip test.", "Dismiss error",

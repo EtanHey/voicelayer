@@ -1,3 +1,4 @@
+import { availableWhisperModelPath, requireWhisperModelPath, whisperAssetPath, whisperLaunchIdentity } from "./recognizer-assets";
 /**
  * whisper-server lifecycle manager.
  *
@@ -63,12 +64,7 @@ const PORT_OWNER_PROBE_TIMEOUT = 1000;
 const SERVER_BINARY_NAMES = ["whisper-server"];
 
 /** Model search (same order as stt.ts). */
-const MODEL_SEARCH_PATHS = [
-  () => join(homedir(), ".cache", "whisper", "ggml-large-v3-turbo.bin"),
-  () => join(homedir(), ".cache", "whisper", "ggml-large-v3-turbo-q5_0.bin"),
-  () => join(homedir(), ".cache", "whisper", "ggml-base.en.bin"),
-  () => join(homedir(), ".cache", "whisper", "ggml-base.bin"),
-];
+
 
 interface WhisperServerState {
   /**
@@ -285,6 +281,7 @@ async function resolveFirstBinaryAsync(
 export interface WhisperServerLaunchRecord {
   binary: string;
   modelPath: string;
+  modelSha256?: string;
   args: string[];
   performanceEffort: WhisperPerformanceEffort | null;
   accelerationMode: WhisperAccelerationMode;
@@ -365,14 +362,7 @@ export function resolveWhisperModelPath(): string | null {
 
 /** Find a whisper model file. */
 function findModel(): string | null {
-  const envModel = process.env.QA_VOICE_WHISPER_MODEL;
-  if (envModel && existsSync(envModel)) return envModel;
-
-  for (const pathFn of MODEL_SEARCH_PATHS) {
-    const p = pathFn();
-    if (existsSync(p)) return p;
-  }
-  return null;
+  return availableWhisperModelPath();
 }
 
 function normalizeAccelerationRequest(
@@ -827,6 +817,10 @@ function adoptedFlagsMatch(record: {
 function adoptHealthyServer(port: number): void {
   const record = readWhisperServerOwnership(port);
   const listeners = findPortListenerPids(port);
+  const configured = testHooks.findModel?.() ?? requireWhisperModelPath();
+  if (record && record.model_path !== configured) {
+    throw new Error(`Whisper server model mismatch: serving ${record.model_path}; configured ${configured}`);
+  }
 
   if (record && listeners.includes(record.pid) && isPidAlive(record.pid)) {
     const flagsMatch = adoptedFlagsMatch(record);
@@ -842,6 +836,7 @@ function adoptHealthyServer(port: number): void {
     lastLaunchRecord = {
       binary: record.binary,
       modelPath: record.model_path,
+      modelSha256: record.model_sha256,
       args: record.args,
       performanceEffort: parseWhisperPerformanceEffort(record.performance_effort),
       accelerationMode: normalizeAdoptedAccelerationMode(
@@ -857,15 +852,9 @@ function adoptHealthyServer(port: number): void {
     return;
   }
 
-  const pid = listeners[0] ?? 0;
-  console.error(
-    `[voicelayer] Healthy whisper-server on port ${port}${pid ? ` (PID ${pid})` : ""} has no live ownership record; adopting it rather than killing a server this process did not launch.`,
-  );
-  serverState = { proc: null, port, pid, adopted: true };
-  // No ownership record means no provenance. Reporting the flags we *would*
-  // have used would be a guess, not provenance.
-  lastLaunchRecord = null;
-  notifyWhisperModelStateChange();
+  // Health proves liveness, not the loaded model. Refuse without signalling
+  // or relaunching over a server whose live ownership cannot bind its identity.
+  throw new Error("Whisper server model identity unverified: no live ownership record");
 }
 
 function normalizeAdoptedAccelerationMode(
@@ -979,6 +968,7 @@ function refuseBenchLaunchOnLiveHost(port: number): void {
 }
 
 async function ensureServerUnlocked(port: number): Promise<number> {
+  if (!testHooks.findModel) requireWhisperModelPath();
   if (serverState?.stoppingRecord && serverState.proc) {
     const state = serverState;
     const { proc, stoppingRecord } = serverState;
@@ -987,6 +977,9 @@ async function ensureServerUnlocked(port: number): Promise<number> {
     }
     assertWhisperOwnerOpen();
     detachExitedWhisperServer(state, stoppingRecord);
+  }
+  if (!testHooks.findModel && lastLaunchRecord && lastLaunchRecord.modelPath !== whisperAssetPath()) {
+    throw new Error(`Whisper server model does not match configured file: ${whisperAssetPath()}`);
   }
   // Already running?
   if (serverState && serverState.port === port) {
@@ -1030,12 +1023,10 @@ async function ensureServerUnlocked(port: number): Promise<number> {
 
   const model = testHooks.findModel?.() ?? findModel();
   if (!model) {
-    throw new Error(
-      "No whisper model found. Download:\n" +
-        "  curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin \\\n" +
-        "    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
-    );
+    throw new Error(`Whisper model is missing: ${whisperAssetPath()}. Download it in Settings.`);
   }
+
+  const modelSha256 = testHooks.findModel ? undefined : await whisperLaunchIdentity(model);
 
   // Get brew prefix for Metal shaders
   let metalPath: string | undefined;
@@ -1113,7 +1104,6 @@ async function ensureServerUnlocked(port: number): Promise<number> {
     startingChildren.add(proc);
     let cleanupAttempted = false;
     try {
-      let stderrTail = "";
       let failureReason: string | undefined;
       let signalFailure!: (reason: string) => void;
       const failed = new Promise<string>((resolve) => { signalFailure = resolve; });
@@ -1126,19 +1116,30 @@ async function ensureServerUnlocked(port: number): Promise<number> {
         (code) => fail(`whisper-server exited during startup (code ${code}); WHISPER_STARTUP_EXIT`),
         () => { /* A rejected exit promise does not confirm termination. */ },
       );
-      // Drain stderr, retaining only a bounded line tail for load diagnostics.
-      // Do not expose model contents or silently select another model.
+      // Startup needs full diagnostics. Once healthy, retain only a bounded
+      // tail for stream close/error (normally child exit), never per inference.
+      let startupDiagnostics = true;
       if (proc.stderr) {
         const reader = (proc.stderr as ReadableStream<Uint8Array>).getReader();
         (async () => {
           const decoder = new TextDecoder();
+          let tail = "";
+          const diagnostic = (text: string) => {
+            if (!text) return;
+            if (startupDiagnostics) console.error("[voicelayer] whisper-server stderr: " + text);
+            else tail = (tail + text).slice(-4096).split("\n").slice(-20).join("\n");
+          };
           try {
             while (true) {
               const { done, value } = await reader.read();
               if (done) break;
-              stderrTail = (stderrTail + decoder.decode(value, { stream: true })).slice(-4096);
+              diagnostic(decoder.decode(value, { stream: true }));
             }
-          } catch {}
+          } catch {} finally {
+            diagnostic(decoder.decode());
+            if (tail) console.error("[voicelayer] whisper-server stderr tail: " + tail);
+            reader.releaseLock();
+          }
         })();
       }
 
@@ -1173,6 +1174,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
           lastLaunchRecord = {
             binary,
             modelPath: model,
+            modelSha256: modelSha256,
             args: plan.args,
             performanceEffort: launchedPerformanceEffort,
             accelerationMode: plan.acceleration.mode,
@@ -1188,9 +1190,11 @@ async function ensureServerUnlocked(port: number): Promise<number> {
             binary,
             args: plan.args,
             model_path: model,
+            model_sha256: modelSha256,
             performance_effort: launchedPerformanceEffort,
             acceleration_mode: plan.acceleration.mode,
           });
+          startupDiagnostics = false;
           console.error(
             `[voicelayer] whisper-server ready (PID ${proc.pid}, port ${port})`,
           );
@@ -1209,7 +1213,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
       }
 
       startupFailure = failureReason
-        ? `${failureReason}${stderrTail ? `; stderr=${JSON.stringify(stderrTail)}` : ""}`
+        ? failureReason
         : `whisper-server failed to start within ${startupTimeoutMs / 1000}s; WHISPER_STARTUP_TIMEOUT`;
       console.error(`[voicelayer] ${startupFailure}`);
       // Failed startup — kill and report failure to caller.

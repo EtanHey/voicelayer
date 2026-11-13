@@ -63,6 +63,14 @@ final class TeleprompterAModelTests: XCTestCase {
         XCTAssertEqual([0, 3, 5, 8, 12].map(TeleprompterA.clamp), [3, 3, 5, 8, 8])
     }
 
+    func testOnlyAOneLineReadingStepSlides() {
+        XCTAssertNotNil(TeleprompterA.slide(reduceMotion: false, fromLine: 4, toLine: 5))
+        XCTAssertNotNil(TeleprompterA.slide(reduceMotion: false, fromLine: 5, toLine: 4))
+        XCTAssertNil(TeleprompterA.slide(reduceMotion: false, fromLine: 6, toLine: 0), "a backward seek lands")
+        XCTAssertNil(TeleprompterA.slide(reduceMotion: false, fromLine: 0, toLine: 4), "a forward seek lands")
+        XCTAssertNil(TeleprompterA.slide(reduceMotion: true, fromLine: 4, toLine: 5))
+    }
+
     func testFooterStateHasNoReadingProse() {
         // T3 (Etan QA 2026-11-09): reading draws no status words; the pause words are VoiceOver-only.
         XCTAssertEqual(TeleprompterA.footerState(isPaused: false, isPausedForDictation: false), "")
@@ -113,7 +121,11 @@ final class TeleprompterAModelTests: XCTestCase {
         XCTAssertEqual(table.words[2]?.startMs, 1900)
         XCTAssertEqual(table.seekIndex(token: 1, text: "world"), 1)
         XCTAssertNil(table.seekIndex(token: 1, text: "word"))
-        XCTAssertNil(table.seekIndex(token: 7, text: "world"))
+        // C7 L3 V09: a word this read has not timed yet (its chunk is still synthesizing) is a pending target;
+        // VoiceState seeks it once timed, checking the same text then. C4 F3: before the first chunk too.
+        XCTAssertEqual(table.seekIndex(token: 7, text: "world"), 7)
+        XCTAssertEqual(SpeechWordTable(utteranceID: "u1").seekIndex(token: 0, text: "Hello"), 0)
+        XCTAssertNil(table.seekIndex(token: -1, text: "Hello"))
     }
 
     /// The highlighted word is exactly the last `speech_words` start the utterance clock has reached.

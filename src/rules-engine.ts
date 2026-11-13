@@ -1,3 +1,4 @@
+import { hasDirectQuestionOpener } from "./stt-interrogative";
 import { dictionarySurfacePattern, dictionaryOccurrencePattern, dictionaryReplacement, isWholeDictionarySurface } from "./stt-dictionary-matching";
 
 /**
@@ -70,8 +71,21 @@ export function applyRules(text: string, config?: RulesConfig): string {
     result = result.split(term).join(`\uE000${String.fromCharCode(0xE100 + protectedOutputs.length)}\uE001`);
     protectedOutputs.push(applyPreNumberFormatting(term, disabled));
   }
+  // Decide noun/command intent before code and punctuation commands can produce
+  // decoder-looking marks. Aliases have already had their normal first pass.
+  const layoutNouns: string[] = [];
+  if (!disabled?.has("punctuation")) result = result.replace(/\b(?:new paragraph|new line)\b/giu,
+    (phrase: string, start: number) => {
+      if (!isLayoutNoun(result, start, start + phrase.length, true)) return phrase;
+      const marker = `\uE200${String.fromCodePoint(0xE300 + layoutNouns.length)}\uE201`;
+      layoutNouns.push(phrase);
+      return marker;
+    });
   result = applyPreNumberFormatting(result, disabled);
-  if (!disabled?.has("numbers")) result = applyNumberFormatting(result);
+  if (!disabled?.has("numbers")) {
+    result = applyNumberFormatting(result);
+    result = joinSpokenIdentifierDigits(result);
+  }
   for (let i = 0; i < protectedOutputs.length; i++) {
     result = result.split(`\uE000${String.fromCharCode(0xE100 + i)}\uE001`).join(protectedOutputs[i]);
   }
@@ -98,6 +112,9 @@ export function applyRules(text: string, config?: RulesConfig): string {
     result = applyPunctuation(result);
     result = normalizePunctuationClusters(result);
   }
+  layoutNouns.forEach((phrase, index) => {
+    result = result.split(`\uE200${String.fromCodePoint(0xE300 + index)}\uE201`).join(phrase);
+  });
 
   // Percent normalization (depends on number formatting and punctuation stages)
   if (!disabled?.has("numbers") && !disabled?.has("punctuation")) {
@@ -184,8 +201,22 @@ function removeFillers(text: string, aggressive: boolean): string {
   const patterns = aggressive
     ? [...DISFLUENCY_PATTERNS, ...AGGRESSIVE_FILLER_PATTERNS]
     : DISFLUENCY_PATTERNS;
+  // A filler that opens the take takes its own comma or full stop with it; otherwise
+  // "Um, I'm confused" is delivered as ", I'm confused" (Etan, take 2026-11-12T10-24-45-799Z). Only the
+  // punctuation attached to the removed filler goes: never a word, and never an ellipsis or dash (a cut-off).
+  // "ER" and other all-capital spellings are words (the emergency room), never a hesitation: they stay.
+  const isAcronym = (match: string) => /\b(?:UM|UH|ER)\b/.test(match);
+  // Only at the very start: after a sentence the existing period-comma collapse already decides the join.
+  // One token at a time, so a protected word ("ER") ends the run without keeping an earlier filler's comma;
+  // a comma or full stop goes only when whitespace or the end follows it, never a decimal point or ".com".
+  // A comma always belongs to the filler (also unspaced: "Um,uh, hello"); a full stop only before whitespace,
+  // the end, or another filler.
+  const opening = /^\s*(um|uh|er)\b(?:,|\.(?=\s|$|(?:um|uh|er)\b))?(?![.…\p{Pd}])\s*/iu;
+  for (let match = opening.exec(result); match && !isAcronym(match[1]!); match = opening.exec(result)) {
+    result = result.slice(match[0].length);
+  }
   for (const pattern of patterns) {
-    result = result.replace(pattern, " ");
+    result = result.replace(pattern, match => (isAcronym(match) ? match : " "));
   }
   return result.replace(/  +/g, " ").trim();
 }
@@ -396,6 +427,8 @@ function dropWhisperCommaBeforeNewline(text: string): string {
   return text.replace(
     /,(\s*)(new paragraph|new line)\b/gi,
     (match: string, gap: string, phrase: string, offset: number) => {
+      const start = offset + 1 + gap.length;
+      if (isSpokenAsNoun(text, start, start + phrase.length)) return match;
       const head = text.slice(0, offset);
       // This comma is the RIGHT delimiter of the command before it — in
       // "week. Colon, new line" it is what lets the unwrap see ". Colon," and
@@ -526,6 +559,9 @@ function unwrapCommaWrappedCommands(text: string): string {
       // separator came back empty and "The words colon, comma, and period"
       // lost the word "comma" again (Macroscope round 2, PR #32).
       const found = [...match.matchAll(SINGLE_COMMAND_PATTERN)];
+      // Wrapping punctuation does not turn a layout noun into a command.
+      if (found.some(phrase => /^(?:new line|new paragraph)$/iu.test(phrase[0]) &&
+          isLayoutNoun(text, offset + phrase.index!, offset + phrase.index! + phrase[0].length, true))) return match;
       const phrases = found.map((phrase) => phrase[0].toLowerCase());
       const end = offset + match.length;
       const anyMetaMention = found.some((phrase) =>
@@ -735,10 +771,38 @@ function markNounArticleBefore(
  * True when an ambiguous spoken command is being used as an ordinary noun and
  * must be left verbatim.
  */
+function isLayoutNoun(text: string, start: number, end: number, decoderPunctuation = false): boolean {
+  const quote = /(["'“‘])[ \t]*$/u.exec(text.slice(0, start))?.[1];
+  if (quote && text.slice(end).trimStart().startsWith(({ '"': '"', "'": "'", "“": "”", "‘": "’" } as Record<string, string>)[quote])) return true;
+  const clause = text.slice(0, start).replace(/\.{2,}|…/gu, " ")
+    .split(/[.!?;\n\uE000\uE001\uE200\uE201]/u).at(-1)!;
+  const words = clause.replace(/[\s,]+$/u, "")
+    .toLowerCase().match(/[\p{L}\p{N}'’]+/gu)?.slice(-4) ?? [];
+  const before = words.at(-1) ?? "";
+  if (/(?:['’]s|s['’])$/u.test(before)) return true;
+  if (/^(?:trailing|leading|empty|blank|extra|additional|unwanted|unexpected|missing|duplicate|accidental)$/u.test(before)) return true;
+  if (/^(?:add|insert|remove|delete|strip|trim|replace|contains?|shows?|has|have|had|is|was|it's|it’s|there's|there’s)$/u.test(before)) return true;
+  // A determiner names the layout noun directly, or describes it after a
+  // copula/possession cue. "call the doctor new line" ends a command clause.
+  for (let i = 0; i < words.length; i++) {
+    const description = words.slice(i + 1);
+    if (/^(?:a|an|the|this|that|my|your|our|their|some|any|every|no)$/u.test(words[i]) &&
+        (description.length === 0 || /^(?:is|was|are|were|be|been|has|have|had|it's|it’s|there's|there’s|got|with|without|reports|shows|contains)$/u.test(words[i - 1] ?? "")) &&
+        (description.length <= 1 || (description.length === 2 && /^(?:very|quite|really|rather|slightly)$/u.test(description[0]))) &&
+        description.every(word => !/^(?:to|from|and|or|but|then|in|on|at|with|for|of|into|over|under|before|after)$/u.test(word))) return true;
+  }
+  // An actual mark here came from the decoder, not a spoken punctuation command.
+  return decoderPunctuation && !COMMAND_REPLACEMENTS.has(before) &&
+    !/[,\.]\s*$/u.test(text.slice(0, start)) && /^[ \t]*[.!?](?=\s|$)/u.test(text.slice(end));
+}
+
 function isSpokenAsNoun(text: string, start: number, end: number): boolean {
   const before = wordBefore(text, start);
   const after = wordAfter(text, end);
   const command = text.slice(start, end).trim().toLowerCase();
+
+  if (/^(?:new line|newline|new paragraph|line break)$/u.test(command) &&
+      isLayoutNoun(text, start, end)) return true;
 
   if (MARK_PHRASE_COMMANDS.has(command)) {
     return markNounArticleBefore(text, start, end);
@@ -1130,13 +1194,25 @@ const NUMBER_WORDS = new Set([
   ...Object.keys(MULTIPLIERS),
 ]);
 
-/** Prose uses of "one" are lexical; counted quantities still use digits. */
-function isProseOne(words: string[], index: number): boolean {
-  if (words[index]?.toLowerCase() !== "one") return false;
-  const before = words[index - 1]?.toLowerCase();
-  const after = words[index + 1]?.toLowerCase();
-  return (before === "the" && !NUMBER_WORDS.has(after ?? "")) || after === "of" ||
-    (after === "more" && /^time[,.!?]?$/i.test(words[index + 2] ?? ""));
+/** Only clear pronoun uses override the existing numeric rendering. */
+export function isProseOne(words: string[], index: number): boolean {
+  const bare = (value?: string) => value?.toLowerCase().replace(/[,.!?;:]+$/u, "") ?? "";
+  if (bare(words[index]) !== "one") return false;
+  const before = /[,.!?;:]$/u.test(words[index - 1] ?? "") ? "" : bare(words[index - 1]);
+  const after = bare(words[index + 1]);
+  const numeric = (value: string) => NUMBER_WORDS.has(value) || /^\d+(?:\.\d+)?$/u.test(value);
+  // Preserve OLD's article-one exception too; its legacy "The one%" is outside
+  // this pronoun fix. Demonstratives before a percent quantity remain numeric.
+  if (after === "percent" || after === "%" || (after === "per" && bare(words[index + 2]) === "cent")) return before === "the";
+  if (NUMBER_WORDS.has(after) || isTensThenUnit(before, "one")) return false;
+  if (/^(?:number|step|version|tier|level|line|row|column|page|chapter|section|item|option|port|code|route)$/u.test(before)) return false;
+  if (/^(?:or|and|to|through|in|plus|minus|by|times)$/u.test(after) && numeric(bare(words[index + 2]))) return false;
+  if (after === "out" && bare(words[index + 2]) === "of" && numeric(bare(words[index + 3]))) return false;
+  if (/^(?:the|this|that|which|each|every|any|no|another|other|either|neither|same)$/u.test(before) ||
+      /^(?:of|more|another)$/u.test(after)) return true;
+  if (/^(?:can|could|should|would|must|may|might|cannot|does|did|knows)$/u.test(after)) return true;
+  return /^(?:need|want|pick|choose|take|get|use|try|keep|select)$/u.test(before) &&
+    /^(?:|now|instead|please|too|as|that|which|with|for)$/u.test(after);
 }
 
 function formatNumbersInLine(text: string): string {
@@ -1226,6 +1302,70 @@ function formatNumbersInLine(text: string): string {
   flushBuffer();
 
   return result.join(" ");
+}
+
+// --- Stage 4a: an identifier read digit by digit ---
+//
+// "PR number four seven one three six" reaches here as "PR number 4 7 1 3 6":
+// the number stage deliberately keeps adjacent single values apart ("two
+// three" is a list or a retraction, never 5). After a PR head, a run of three
+// or more single digits is one identifier, so it is joined. The only head is
+// PR: across the private archive that is the only identifier he reads digit
+// by digit, bare "number N" counts items, and versions are dotted. Separate
+// things stay separate: a comma between digits, a run that ends in a
+// multi-digit token, a time, a decimal or a percent never joins.
+//
+// Parakeet also puts its "?" after the head ("for PR number? 4 7 1 3 6"). When
+// the identifier ends the sentence and the head is not a complete noun phrase
+// ("the PR number?" may be a question answered by the number), the mark moves
+// to the end of the sentence. No mark is added and no word changes.
+const DIGIT_WORD = "(?:zero|one|two|three|four|five|six|seven|eight|nine)";
+// The number stage leaves a period-final digit word as a word ("4 9 eight."),
+// so the last token of a run may still be spelled out.
+const IDENTIFIER_DIGIT_RUN = new RegExp(
+  "\\b(PR(?:[ \\t]+number)?)(\\?)?([ \\t]+)(#[ \\t]*)?" +
+    `(\\d(?:[ \\t]+\\d)+(?!\\d)(?:[ \\t]+${DIGIT_WORD}\\b)?|\\d+)` +
+    `(?![\\d:%]|[.,]\\d|[ \\t]+\\d|[ \\t]+${DIGIT_WORD}\\b|[ \\t]*(?:%|percent\\b))(\\.(?=\\s|$))?`,
+  "giu",
+);
+
+// After one of these the head is a complete noun phrase, so a number after its
+// "?" may be an answer ("What's the PR number? 2 8 4.") and the mark stays.
+const COMPLETE_NOUN_PHRASE_BEFORE_HEAD = new Set([
+  "a", "an", "the", "this", "that", "these", "those", "my", "your", "our",
+  "his", "her", "its", "their", "which", "what", "whose", "what's", "whats",
+]);
+
+function joinSpokenIdentifierDigits(text: string): string {
+  if (!/\bPR\b/iu.test(text)) return text;
+  return text.replace(
+    IDENTIFIER_DIGIT_RUN,
+    (match: string, head: string, mark: string | undefined, gap: string,
+      hash: string | undefined, run: string, period: string | undefined,
+      offset: number, whole: string) => {
+      const tokens = run.split(/[ \t]+/u);
+      // Two spoken digits may be two values; only a longer run is one identifier.
+      if (tokens.length === 2) return match;
+      const identifier = tokens.map((token) => /^\d+$/u.test(token)
+        ? token : String(WORD_TO_NUMBER[token.toLowerCase()])).join("");
+      const number = `${hash ?? ""}${identifier}`;
+      if (!mark) return tokens.length > 1 ? `${head}${gap}${number}${period ?? ""}` : match;
+      const before = whole.slice(0, offset);
+      const previous = /([\p{L}'’]+)[ \t]*$/u.exec(before)?.[1]
+        ?.toLowerCase().replace("’", "'");
+      const sentenceStart = /(?:^|[.!?\n])[ \t]*$/u.test(before);
+      const endsSentence = period !== undefined || /^\s*$/u.test(whole.slice(offset + match.length));
+      // Etan's law: a "." never becomes "?" without an interrogative signal
+      // from that sentence. "I checked PR number? 2 8 4." keeps its marks.
+      const sentence = before.slice(Math.max(
+        before.lastIndexOf("."), before.lastIndexOf("!"), before.lastIndexOf("?"), before.lastIndexOf("\n")) + 1);
+      if (!sentenceStart && previous && !COMPLETE_NOUN_PHRASE_BEFORE_HEAD.has(previous) && endsSentence
+        && hasDirectQuestionOpener(sentence)) {
+        return `${head}${gap}${number}?`;
+      }
+      return `${head}${mark}${gap}${number}${period ?? ""}`;
+    },
+  );
 }
 
 // --- Stage 5: Tech vocabulary ---
@@ -1502,6 +1642,8 @@ const CONTENT_ENUMERATOR_HEADS = new Set([
 const SPOKEN_ENUMERATOR_HEAD_PATTERN = new RegExp(
   [
     "(^|([.?!,;:\\n])([ \\t]*))",
+    // A spoken lead-in ("So number one, ...") stays in the item's words.
+    "(?:(so,?)[ \\t]+)?",
     "(?:(and|or)[ \\t]+)?",
     "(?:(number|step)[ \\t]+)?",
     "(first of all|second of all|third of all|first off|then lastly|then next|firstly|secondly|thirdly|fourthly|finally|lastly|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|next|then|one|two|three|four|five|six|seven|eight|nine|ten|\\d{1,2})",
@@ -1516,6 +1658,7 @@ interface SpokenEnumeratorHead {
   boundary: string;
   conjunction?: string;
   qualifier?: string;
+  leadIn?: string;
   head: string;
   originalHead: string;
   delimiter: string;
@@ -1536,7 +1679,7 @@ function findSpokenEnumeratorHeads(text: string): SpokenEnumeratorHead[] {
   return [...text.matchAll(SPOKEN_ENUMERATOR_HEAD_PATTERN)]
     .filter((match) => {
       const start = match.index ?? 0;
-      const headIsNumeric = /^\d{1,2}$/u.test(match[6]);
+      const headIsNumeric = /^\d{1,2}$/u.test(match[7]);
       const followsDigitPeriod =
         match[2] === "." && /\d/u.test(text[start - 1] ?? "");
       const precedesDigit = /\d/u.test(
@@ -1545,17 +1688,18 @@ function findSpokenEnumeratorHeads(text: string): SpokenEnumeratorHead[] {
       return !headIsNumeric || (!followsDigitPeriod && !precedesDigit);
     })
     .map((match) => {
-      const originalHead = match[6];
+      const originalHead = match[7];
       const head = originalHead.toLowerCase();
       return {
         start: match.index ?? 0,
         end: (match.index ?? 0) + match[0].length,
         boundary: match[2] ?? "",
-        conjunction: match[4],
-        qualifier: match[5],
+        leadIn: match[4],
+        conjunction: match[5],
+        qualifier: match[6],
         head,
         originalHead,
-        delimiter: match[7],
+        delimiter: match[8],
         value: spokenEnumeratorValue(head),
         keepHead: CONTENT_ENUMERATOR_HEADS.has(head),
       };
@@ -1639,20 +1783,20 @@ export function applySpokenEnumeratorsWithDetail(text: string): {
     intro += heads[0].boundary;
   }
 
+  // Only the numeral phrase ("number one", "first", "step two") becomes the
+  // item number. A spoken "So", "and" or "or" before it is his word and stays
+  // at the front of that item.
   const removedWords: string[] = [];
   const items = heads.map((head, index) => {
-    if (head.conjunction && head.conjunction.toLowerCase() !== "or") {
-      removedWords.push(head.conjunction);
-    }
     if (head.qualifier) removedWords.push(head.qualifier);
     if (!head.keepHead) removedWords.push(...head.head.split(" "));
 
-    const keptConjunction =
-      head.conjunction?.toLowerCase() === "or" ? `${head.conjunction} ` : "";
+    const keptLeadIn = head.leadIn ? `${head.leadIn} ` : "";
+    const keptConjunction = head.conjunction ? `${head.conjunction} ` : "";
     const keptHead = head.keepHead
       ? `${head.originalHead}${head.delimiter} `
       : "";
-    return `${index + 1}. ${keptConjunction}${keptHead}${clauses[index]}`;
+    return `${index + 1}. ${keptLeadIn}${keptConjunction}${keptHead}${clauses[index]}`;
   });
 
   return {

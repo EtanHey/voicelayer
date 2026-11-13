@@ -15,6 +15,8 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
     public let lowerTerminalControl: Bool
     /// The lower row's bottom edge, from the body's bottom.
     public let lowerControlBottomInset: CGFloat
+    /// The first leading control's distance from the core (C7-W: the recording controls sit further out).
+    public let leadingCoreInset: CGFloat
 
     public init(
         leadingControlCount: Int = 0,
@@ -25,7 +27,8 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
         lowerSurfaceIsInteractive: Bool = false,
         leadingOutermostControlWidth: CGFloat? = nil,
         lowerTerminalControl: Bool = false,
-        lowerControlBottomInset: CGFloat = 14
+        lowerControlBottomInset: CGFloat = 14,
+        leadingCoreInset: CGFloat = VoiceBarNotchContract.compactCoreContentInset
     ) {
         self.leadingControlCount = max(0, leadingControlCount)
         self.trailingControlCountFromCore = max(0, trailingControlCountFromCore)
@@ -36,6 +39,7 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
         self.leadingOutermostControlWidth = leadingOutermostControlWidth.map { max(0, $0) }
         self.lowerTerminalControl = lowerTerminalControl
         self.lowerControlBottomInset = max(0, lowerControlBottomInset)
+        self.leadingCoreInset = max(0, leadingCoreInset)
     }
 
     /// The History panel: the launcher's buttons stay live (History closes it again) and the body is live.
@@ -53,7 +57,8 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
         VoiceBarNotchInteractionConfiguration(
             leadingControlCount: leadingControlCount, trailingControlCountFromCore: trailingControlCountFromCore,
             trailingControlCountFromOuter: trailingControlCountFromOuter, trailingOuterInset: trailingOuterInset,
-            lowerControlCount: lowerControlCount, lowerSurfaceIsInteractive: true
+            lowerControlCount: lowerControlCount, lowerSurfaceIsInteractive: true,
+            leadingCoreInset: leadingCoreInset
         )
     }
 
@@ -108,7 +113,7 @@ public struct VoiceBarNotchHitRegion: Equatable {
             rects.append(
                 CGRect(
                     x: geometry.coreOriginX
-                        - VoiceBarNotchContract.compactCoreContentInset
+                        - configuration.leadingCoreInset
                         - size
                         - (CGFloat(index) * pitch)
                         - (width - size),
@@ -149,24 +154,15 @@ public struct VoiceBarNotchHitRegion: Equatable {
         }
 
         if configuration.lowerControlCount > 0 {
-            let lowerPitch = size + 10
-            let rowWidth = (CGFloat(configuration.lowerControlCount) * size)
-                + (CGFloat(configuration.lowerControlCount - 1) * 10)
-            let rowOriginX = (geometry.totalWidth - rowWidth) / 2
-            for index in 0 ..< configuration.lowerControlCount {
+            // X4: the group and the terminal control are one row centred on the body (the drag bar's centre). The
+            // rects keep their order: the group, then the terminal slot.
+            let count = configuration.lowerControlCount + (configuration.lowerTerminalControl ? 1 : 0)
+            for index in 0 ..< count {
+                let midX = geometry.totalWidth / 2
+                    + VoiceBarPresentation.teleprompterLowerControlOffset(index: index, count: count)
                 rects.append(
                     CGRect(
-                        x: rowOriginX + (CGFloat(index) * lowerPitch),
-                        y: configuration.lowerControlBottomInset,
-                        width: size,
-                        height: size
-                    )
-                )
-            }
-            if configuration.lowerTerminalControl {
-                rects.append(
-                    CGRect(
-                        x: rowOriginX + rowWidth + 10,
+                        x: midX - size / 2,
                         y: configuration.lowerControlBottomInset,
                         width: size,
                         height: size

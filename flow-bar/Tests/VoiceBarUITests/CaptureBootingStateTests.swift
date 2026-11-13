@@ -263,9 +263,10 @@ final class CaptureBootingStateTests: XCTestCase {
             VoiceBarNotchWaveform.waveformColor(mode: .speaking, isCaptureLive: false),
             equals: Theme.speakingColor
         )
+        // c9-P: the transcribing ripple uses the lifted processing blue.
         assertColor(
             VoiceBarNotchWaveform.waveformColor(mode: .transcribing, isCaptureLive: false),
-            equals: Theme.stateColor(for: .transcribing)
+            equals: Theme.processingRippleColor
         )
     }
 

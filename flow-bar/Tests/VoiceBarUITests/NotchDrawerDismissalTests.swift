@@ -27,6 +27,58 @@ final class NotchDrawerDismissalTests: XCTestCase {
         return dismissal
     }
 
+    func testShowRebindsAStalePanelBeforeTheFirstInsideClick() {
+        let model = NotchSurfaceModel()
+        let dismissal = wired(model)
+        let oldPanel = panel(), livePanel = panel()
+        defer { oldPanel.orderOut(nil); livePanel.orderOut(nil) }
+        let hostWindow = HostWindowBox()
+        hostWindow.rebind(oldPanel)
+        hostWindow.bind(dismissal)
+        model.send(.openSettings(.general))
+        oldPanel.orderOut(nil) // Hide, then Show on the live host panel.
+        model.send(.dismiss(.action))
+        hostWindow.rebind(livePanel) // The production Show lifecycle call.
+        VLOrderTestWindow(livePanel)
+        model.send(.openSettings(.general))
+        XCTAssertFalse(dismissal.handleLocalMouseDown(in: livePanel))
+        XCTAssertEqual(model.drawer, .settings(.general), "first inside click must reach the drawer")
+    }
+
+    func testOutsideClickDiagnosticContainsOnlyWindowNumbersAndBooleans() {
+        let model = NotchSurfaceModel()
+        let dismissal = wired(model)
+        let stored = panel(), live = panel(), outside = settingsWindow()
+        defer { stored.orderOut(nil); live.orderOut(nil); outside.orderOut(nil) }
+        dismissal.panelWindow = stored
+        dismissal.livePanelWindow = { live }
+        live.ignoresMouseEvents = true
+        var lines: [String] = []
+        dismissal.logOutsideClick = { lines.append($0) }
+        model.send(.openHistory)
+        XCTAssertFalse(dismissal.handleLocalMouseDown(in: live), "live panel wins over stale stored identity")
+        XCTAssertTrue(lines.isEmpty)
+        XCTAssertTrue(dismissal.handleLocalMouseDown(in: outside))
+        XCTAssertEqual(lines, ["[VoiceBar] drawer_outside_click eventWindow=\(outside.windowNumber) storedPanelWindow=\(stored.windowNumber) livePanelWindow=\(live.windowNumber) panelKey=false ignoresMouseEvents=true"])
+        dismissal.handleGlobalMouseDown(windowNumber: 42)
+        XCTAssertEqual(lines.count, 2)
+        XCTAssertTrue(lines[1].contains("eventWindow=42"))
+    }
+
+    func testMissingLivePanelIsNotReportedAsTheStaleStoredPanel() {
+        let model = NotchSurfaceModel()
+        let dismissal = wired(model)
+        let stale = panel()
+        defer { stale.orderOut(nil) }
+        dismissal.panelWindow = stale
+        dismissal.livePanelWindow = { nil }
+        var lines: [String] = []
+        dismissal.logOutsideClick = { lines.append($0) }
+        model.send(.openHistory)
+        XCTAssertTrue(dismissal.handleLocalMouseDown(in: stale))
+        XCTAssertTrue(lines[0].contains("storedPanelWindow=\(stale.windowNumber) livePanelWindow=0"))
+    }
+
     func testAClickOnVoiceBarsOwnSettingsWindowClosesHistory() {
         let model = NotchSurfaceModel()
         model.send(.openHistory)

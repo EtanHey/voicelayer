@@ -128,8 +128,9 @@ final class Tip2PausedTooltipTests: XCTestCase {
         panel.setFrameOrigin(NSPoint(x: -100_000, y: -100_000))
         panel.orderBack(nil)
 
-        func controls(_ pauseLabel: String) throws -> [NSView] {
-            let labels = [pauseLabel, "Next read", "Stop speaking"]
+        // X1-32 (C6 L3): paused, the terminal control is an X ("Close read"), not the Stop square.
+        func controls(_ pauseLabel: String, terminal: String = "Stop speaking") throws -> [NSView] {
+            let labels = [pauseLabel, "Next read", terminal]
             let ready = expectation(for: NSPredicate { _, _ in
                 host.layoutSubtreeIfNeeded()
                 return labels.allSatisfy { label in
@@ -157,9 +158,10 @@ final class Tip2PausedTooltipTests: XCTestCase {
         }
         state.handleEvent(["type": "playback_state", "state": "paused", "offset_ms": 0,
                            "playback_id": "tip3", "generation": 2])
-        let paused = try controls("Resume speech")
+        let paused = try controls("Resume speech", terminal: "Close read")
         XCTAssertTrue(playing[0] === paused[0])
         XCTAssertTrue(playing[1] === paused[1])
+        XCTAssertFalse(descendants(host).contains { $0.toolTip == "Stop speaking" }, "no Stop square while paused")
         state.handleEvent(["type": "playback_state", "state": "resumed", "offset_ms": 0,
                            "playback_id": "tip3", "generation": 3])
         let resumed = try controls("Pause speech")

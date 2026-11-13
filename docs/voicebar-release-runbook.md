@@ -15,18 +15,55 @@ release-asset upload, and the `EtanHey/homebrew-layers` formula and cask commit 
 - `release-voicebar.sh --upload` is retired: that script always rebuilds, and a fresh build is
   newer than any proof.
 
-npm publication is separate. It is CI-only (`.github/workflows/publish.yml`, OIDC), and CI
-cannot produce native proof, so CI is not gated on it.
+npm publication is CI-only (`.github/workflows/publish.yml`, OIDC), and since 2.4 it is gated
+on the same proof (R2, "one release, one step"; the 2.3 package shipped while its app never
+did). From `v2.4.0` on, the workflow's first step, `t3-optf5-proof.ts release-gate`, refuses
+the tag unless `release-proofs/<tag>.json` is committed and passes:
+
+- the promote path's own `checkProof` (schema, `release` receipt, evidence hashes, text-hash
+  match, `readError`, UUID, freshness), run against the candidate identity `record` read from
+  the proven app (`release.gitCommit`, `release.buildTimeUTC`, `release.bundleSha256`);
+- `release.version` equals the tag and `package.json` at the tag;
+- the tag is the proven build commit, or a descendant whose diff against it touches only
+  `release-proofs/` (the proof cannot name the commit it is committed in, so it names the
+  build commit, and the tag adds nothing but the proof);
+- the build time is not before that build commit was made.
+
+Before the version rule, every ref must be a tag that resolves to the checked-out commit,
+and `package.json` there must equal the tag's version. Then tags older than `v2.4.0` are not
+gated, so `workflow_dispatch` can still republish them (a `v2.3.0` tag whose tree packs 2.4.0
+is refused); any ref that is not `vMAJOR.MINOR.PATCH[-pre]` without leading zeros is refused.
+
+**The limit:** the gate binds every tag whose tree contains it. A `v*` tag on a tree without
+the gate is not stopped by this workflow, because a tag-triggered workflow is read from the
+tagged commit. The gate has no skip input or env, but that is all it can promise. So tags are
+created **only** with `scripts/tag-voicebar-release.sh <version>`, which refuses unless the
+working tree is clean, HEAD carries the gate script and the gate step, `package.json` is that
+version, and the committed `release-proofs/v<version>.json` passes the same gate. It creates
+the annotated tag locally and prints the push command without running it. A hosted
+runner has no app, so it cannot recompute the bundle digest: that digest is checked against
+the real app by `record` and again by promotion, which must be given the committed file.
 
 ## Order
 
 1. **Build the candidate.** `scripts/release-voicebar.sh --skip-tap-check`. It prints the
-   zip sha256. Tag the release so CI publishes the npm package.
-2. **Install exactly that build on the MBP** and relaunch VoiceBar. Install it from that
-   `VoiceBar.zip` or app, not through the cask: the cask is what reaches users, so it cannot
-   come first. Confirm with `scripts/voicelayer-deploy-check.sh` → `DEPLOYED`.
+   zip sha256. Do NOT tag yet.
+2. **Install exactly that build on the M1** (see "Where the proof runs: the M1"). Install it
+   from that `VoiceBar.zip` or app through the M1's update gate, not through the cask: the
+   cask is what reaches users, so it cannot come first. Confirm with
+   `scripts/voicelayer-deploy-check.sh` → `DEPLOYED`.
 3. **Produce the proof** (below), with output muted.
-4. **Promote:**
+4. **Record, commit, tag.** In a checkout at the build commit:
+   ```bash
+   bun scripts/t3-optf5-proof.ts record --proof docs.local/<release>/t3-optf5-proof.json \
+     --app /Applications/VoiceBar.app --out release-proofs/vX.Y.Z.json
+   git add release-proofs/vX.Y.Z.json && git commit -m "release: vX.Y.Z installed-candidate proof"
+   ```
+   `record` runs `check` against the app first. Land that commit (it may only add the file),
+   then tag it with `scripts/tag-voicebar-release.sh X.Y.Z` (never `git tag` by hand). Push
+   the tag it printed only when you mean to publish; CI's gate passes and publishes the npm
+   package.
+5. **Promote** with the committed file as the proof:
    ```bash
    NPM_SHA="$(curl -fsSL https://registry.npmjs.org/voicelayer-mcp/-/voicelayer-mcp-X.Y.Z.tgz | shasum -a 256 | awk '{print $1}')"
    scripts/promote-voicebar-release.sh --version X.Y.Z \
@@ -34,7 +71,7 @@ cannot produce native proof, so CI is not gated on it.
      --zip .build.noindex/voicebar-release/X.Y.Z/VoiceBar.zip \
      --tap-root ~/Gits/homebrew-layers \
      --formula-sha256 "$NPM_SHA" \
-     --t3-proof docs.local/<release>/t3-optf5-proof.json
+     --t3-proof release-proofs/vX.Y.Z.json
    ```
    The tap must be clean. In order, the script:
    1. verifies the artifact against the proof;
@@ -67,11 +104,71 @@ The gate refuses, with a non-zero exit and a message naming the problem, when:
 - `expectedTextSha256` differs from `historyTextSha256`;
 - the evidence-excerpt hashes are missing, `speakTextCommandId` is not a UUID, `t3Build` is
   empty, or `readError` is not exactly `false`.
+- its `machine` is missing or not in `release-proofs/proof-hosts.json`.
+
+## Where the proof runs: the M1
+
+The proof runs on the M1 Pro, never on Etan's daily Mac (R3). The M1 runs the same signed,
+notarized candidate bundle as the M4, so the bundle digest it proves is the one users get.
+
+**Preconditions (all checked by the lead before anyone is asked to press):**
+
+- The candidate is installed at `/Applications/VoiceBar.app` through the M1's update gate
+  (`src/update-gate-installer.ts COMMAND`, the way candidates 9 and 10 were installed), only
+  at idle: no take, no read, no `rec`. Never rsync or unzip into `/Applications` by hand and
+  never touch the cask. The installer relaunches VoiceBar through launchd, so VoiceBar and its
+  daemon start after the bundle was written, which `start` requires.
+- `scripts/voicelayer-deploy-check.sh` → `DEPLOYED`; exactly one VoiceBar.
+- VoiceBar has Accessibility and Input Monitoring on the M1 (General shows no broken step).
+  No microphone is used: Option+F5 reads a selection aloud.
+- System output is muted by Etan (the proof needs the TTS history entry, not sound).
+- T3 Code on the M1 is `/Applications/T3 Code (Nightly).app` (`com.t3tools.t3code`).
+- The proof host is checked, not assumed: `run` (through `start`) and `record` refuse unless
+  this Mac's `sysctl -n hw.model` and `sysctl -n machdep.cpu.brand_string` are listed in
+  `release-proofs/proof-hosts.json` (today only the M1: `MacBookPro18,3`, `Apple M1 Pro`). The
+  proof carries that `machine`, and every verifier (`check`, promotion, the publish gate)
+  refuses a proof whose `machine` is missing or not listed. A proof-only release commit may
+  not change the list. This stops a proof made on the wrong Mac by mistake; it is not
+  attestation (the values are self-reported).
+
+**Steps an agent does alone:**
+
+1. Write the synthetic paragraph to `docs.local/<release>/synthetic.txt` (one short, plain,
+   public sentence) and make it render in an assistant message of a T3 thread on the M1 (for
+   example, the lead answers with exactly that sentence).
+2. Start the collector as ONE background command (it sends no keys and ends by itself):
+   ```bash
+   bun scripts/t3-optf5-proof.ts run \
+     --state docs.local/<release>/t3-proof-state.json \
+     --t3-app "/Applications/T3 Code (Nightly).app" \
+     --expected-text-file docs.local/<release>/synthetic.txt \
+     --out docs.local/<release>/t3-optf5-proof.json
+   ```
+   `run` is `start`, then a wait of up to 9.5 minutes for one `selection_capture` and one new
+   TTS history entry, then `finish`. The proof is written to
+   `docs.local/<release>/t3-optf5-proof.json`; exit 0 is PASS.
+3. After PASS: `record`, commit, tag (Order, step 4).
+
+**The steps that need Etan (one sitting at the M1, about 3 minutes):**
+
+- **Relaunch T3 Code on the M1** (step 0 below, T3AX1). Agents never quit T3 Code, and every
+  agent thread on the M1, the lead's included, runs inside that T3, so this happens only when
+  the lead reports every M1 turn idle. Threads survive the relaunch.
+- **The press:** with output muted, select the synthetic paragraph in the rendered assistant
+  message and press Option+F5 once, within 9 minutes of the lead starting `run`.
+
+Agents do not synthesize the selection or the key: computer use is allowed only on the
+agent browser, and a script cannot open a T3 thread. A remote press over Screen Sharing is
+not proven to reach the F5 relay; use the M1's own keyboard.
 
 ## Producing the proof
 
-The helper reads the resident's real artifacts only. It never presses keys: the operator, or
-a harness that sends a real CGEvent, does the Option+F5.
+The helper reads the resident's real artifacts only. It never presses keys. For a release
+proof the Option+F5 is **one real press by a person at the proving Mac's own keyboard**; no
+synthesized key event (CGEvent or otherwise) counts. The repository has no key-sending
+harness. A synthesized press is acceptable only in a non-release experiment, and its output
+is never recorded or committed; automated tests use the preload's fixture paths, whose proofs
+are `test` receipts that every verifier refuses.
 
 0. **Quit and relaunch T3 Code first** (RULINGS 2026-10-18T14:40:22Z). T3 is Electron, and
    Chromium keeps its accessibility tree off until an assistive client turns it on. A T3
@@ -84,7 +181,7 @@ a harness that sends a real CGEvent, does the Option+F5.
    ```bash
    bun scripts/t3-optf5-proof.ts start \
      --state docs.local/<release>/t3-proof-state.json \
-     --t3-app "/Applications/T3 Code (Alpha).app" \
+     --t3-app "/Applications/T3 Code (Nightly).app" \
      --expected-text-file docs.local/<release>/synthetic.txt
    ```
    This records:

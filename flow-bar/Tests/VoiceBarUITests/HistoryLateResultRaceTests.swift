@@ -31,6 +31,7 @@ final class HistoryLateResultRaceTests: XCTestCase {
         var sentCommand: [String: Any]?
         var pastedTexts: [String] = []
         var archiveChanges: [String?] = []
+        state.isConnected = true // The request fixture has a connected daemon.
         state.sendCommand = { sentCommand = $0 }
         state.pasteHandler = { text in
             pastedTexts.append(text)

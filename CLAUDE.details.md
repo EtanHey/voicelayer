@@ -26,7 +26,7 @@
 - Backend selection: `QA_VOICE_STT_BACKEND=whisper|wispr|auto` (default auto).
 - The rules engine deterministically turns an ordered run with at least two valued spoken enumerator heads (`One,` / `First,`) into numbered lines before capitalization and polish; sequence/content heads such as `Next,` or `First of all,` may continue a qualified run, content heads stay verbatim, and polish may not renumber or merge an existing list.
 - whisper.cpp binary detection checks `whisper-cli` then `whisper-cpp`.
-- Model search order: `QA_VOICE_WHISPER_MODEL` -> `~/.cache/whisper/ggml-large-v3-turbo.bin` -> any `ggml-*.bin` in `~/.cache/whisper/`.
+- Model search order: `QA_VOICE_WHISPER_MODEL` (explicit override), otherwise `~/.cache/whisper/ggml-large-v3-turbo.bin`. Missing or empty configured weights fail with "Whisper model is missing"; other cached models are never substituted.
 - Transcription effort (backend configuration in `src/whisper-performance.ts`; no Settings picker): `fast` (`-bo 1 -bs 1`), `balanced` (`-bo 3 -bs 3`), `accurate` (`-bo 5 -bs 5`, default). Same `large-v3-turbo` model for all three — only whisper.cpp beam-search/best-of changes. Persisted to `~/.local/state/voicelayer/whisper-performance.json`; override per-process with `QA_VOICE_WHISPER_PERFORMANCE_EFFORT`. Saved values and environment overrides remain supported; Settings shows configured/active facts in Recognizer details.
 
 ## VoiceBar Settings (SwiftUI, `flow-bar/Sources/VoiceBarUI/SettingsView.swift`)
@@ -38,6 +38,7 @@
 - Speech: Short/Long voice profiles, long-text threshold, clone status, preview, and locked-control explanations.
 - Sidebar status footer: a static accessible button opening General for permissions and setup.
 - History: Recording | Ask, with per-row Play / Copy / Paste / Re-transcribe / Finder.
+- Notch History categories (lane H, 2026-11-11): the History drawer under the band and the Settings drawer's History tab show Dictations / Ask / Speech (`NotchHistoryCategoryPanel`). A three-segment selector tops the list; a two-finger swipe or sideways drag slides the lists with the finger (`NotchHistoryCategoryPager` picks the gesture's axis once, so a vertical scroll never switches), and Left/Right step only when its list or selector has focus in the key panel, including Tab entry without a mouse click. The category choice lasts for the app session; an explicit category change cancels the previous swipe tail. Ask and Speech rows come from `NotchHistoryArchiveStore`, which uses the Settings loaders (`SettingsAskHistoryArchive.loadPage`, `SettingsSpeechHistoryArchive.load`, 20 rows) and reads only while a History surface is open; it drops Ask/Speech rows when the last surface closes. Ask/Speech row clicks select that archive entry in the Settings window. Speech has Copy only, placeholders have no text actions, and all row actions share the swipe cooldown. The selector takes its 26 pt from the list; the drawer's height is unchanged.
 - History refresh: known Dictation/Ask archive events update that row while Settings has an open archive index;
   after Settings closes, these events do no archive disk reads. Speech intentionally does not reload on these
   events: the old incidental "refresh Speech on the next dictation" behavior is removed. Speech still loads on

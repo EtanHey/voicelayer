@@ -119,7 +119,7 @@ public enum TeleprompterA {
     }
 
     /// T3 (Etan QA 2026-11-09: "the reading prose ... can be totally removed"): reading has no status words. A
-    /// pause keeps its words, for VoiceOver only (the teleprompter collapses while paused).
+    /// pause keeps its words, for VoiceOver only (X1-34: the paused teleprompter stays readable on screen).
     public static func footerState(isPaused: Bool, isPausedForDictation: Bool) -> String {
         isPausedForDictation ? "Paused for your dictation · resumes after paste" : isPaused ? "Paused" : ""
     }
@@ -153,6 +153,57 @@ public enum TeleprompterA {
         var upper = at
         while upper < texts.count - 1, !ends(upper) { upper += 1 }
         return texts[lower ... upper].joined(separator: " ")
+    }
+}
+
+/// V3-8 (Etan: no scroll-back in the live teleprompter): follow or browse. Following, the text keeps the spoken line
+/// on the middle row (`TeleprompterA.scrolledLines`). Scrolling takes the text off the reader's clock and holds it at
+/// a browsed top line; the highlight keeps tracking the voice, but the text never moves back on its own. Only an
+/// explicit return (Back to reading, a word click that seeks, or a new read) follows again.
+public struct TeleprompterFollow: Equatable {
+    /// Nil while following; otherwise the browsed top line.
+    public private(set) var browseTop: Int?
+    /// Sub-line trackpad travel not yet worth a whole line.
+    private var pendingPoints: CGFloat = 0
+
+    public init() {}
+
+    public var isBrowsing: Bool { browseTop != nil }
+
+    /// The last top line that still fills the window.
+    public static func maximumTop(lineCount: Int, visibleLines: Int) -> Int { max(0, lineCount - visibleLines) }
+
+    /// The top line drawn now.
+    public func top(followTop: Int, maximumTop: Int) -> Int {
+        browseTop.map { min(max(0, $0), maximumTop) } ?? followTop
+    }
+
+    /// Moves by whole lines; negative goes back toward earlier text. A move that changes nothing starts no browse.
+    public mutating func scroll(byLines delta: Int, followTop: Int, maximumTop: Int) {
+        guard delta != 0 else { return }
+        let start = top(followTop: followTop, maximumTop: maximumTop)
+        let next = min(max(0, start + delta), maximumTop)
+        guard next != start || browseTop != nil else { return }
+        browseTop = next
+    }
+
+    /// A scroll event's travel. Precise (trackpad) deltas are points, a line per `TeleprompterA.lineHeight`; a wheel
+    /// click is one line. AppKit's positive delta reveals earlier text, which is a negative line move here.
+    public mutating func scroll(deltaY: CGFloat, isPrecise: Bool, followTop: Int, maximumTop: Int) {
+        let lines: Int
+        if isPrecise {
+            pendingPoints += deltaY
+            lines = Int((pendingPoints / TeleprompterA.lineHeight).rounded(.towardZero))
+            pendingPoints -= CGFloat(lines) * TeleprompterA.lineHeight
+        } else {
+            lines = deltaY > 0 ? Int(ceil(deltaY)) : deltaY < 0 ? Int(floor(deltaY)) : 0
+        }
+        scroll(byLines: -lines, followTop: followTop, maximumTop: maximumTop)
+    }
+
+    public mutating func returnToReading() {
+        browseTop = nil
+        pendingPoints = 0
     }
 }
 
@@ -203,10 +254,22 @@ public struct SpeechWordTable: Equatable {
         return found
     }
 
-    /// A click seeks only the same text at the same index; anything else is not ours to name.
+    /// A click seeks only the same text at the same index; anything else is not ours to name. C7 L3 V09: a word the
+    /// daemon has not timed yet (its chunk is still synthesizing) is still this read's word, so it is a target; the
+    /// seek waits for its timing and checks the same text then (`VoiceState.seekSpeechWord`).
     public func seekIndex(token: Int, text: String) -> Int? {
-        words.indices.contains(token) && words[token]?.text == text ? token : nil
+        guard token >= 0 else { return nil }
+        // C4 F3: before the first chunk too (the table exists, so this daemon times words): the click waits for the
+        // word's timing. Older daemons send no utterance id, so they have no table and keep the offset seek.
+        guard isTimed(token) else { return token }
+        return words[token]?.text == text ? token : nil
     }
+
+    /// The daemon has sent this word's timing.
+    public func isTimed(_ token: Int) -> Bool { words.indices.contains(token) && words[token] != nil }
+
+    /// The daemon has started timing this read (at least its first chunk).
+    public var hasTimings: Bool { words.contains { $0 != nil } }
 }
 
 /// Words, formatting and wrapped lines for one text at one column width; a clock tick reuses it.
@@ -215,6 +278,9 @@ struct TeleprompterAModel {
     let layouts: [TeleprompterWordLayout]
     /// Display word (a long token's piece) → display-token index, when the pieces partition the tokens.
     let tokenOfWord: [Int]?
+    /// C4 F6: each display word's token for seeking and highlight: `tokenOfWord` when the pieces partition the tokens,
+    /// otherwise a per-word text alignment, so one unmatched word costs only its own target, never the whole read's.
+    let wordTokens: [Int?]
     let tokens: [String]
     let lines: [Range<Int>]
     let lineOfWord: [Int]
@@ -228,7 +294,15 @@ struct TeleprompterAModel {
     let glued: [Bool]
     let column: CGFloat
 
+    #if DEBUG
+    /// Test oracle: availability reads must never build the full word layout.
+    nonisolated(unsafe) static var layoutBuildCount = 0
+    #endif
+
     init(document: TeleprompterRenderedDocument, text: String, column: CGFloat) {
+        #if DEBUG
+        Self.layoutBuildCount += 1
+        #endif
         words = document.words
         layouts = document.layouts
         tokens = TeleprompterContentModel.displayTokens(text)
@@ -236,6 +310,8 @@ struct TeleprompterAModel {
             Array(repeating: index, count: TeleprompterContentModel.displayPieceCount(token))
         }
         tokenOfWord = pieces.count == words.count ? pieces : nil
+        wordTokens = tokenOfWord.map { $0.map(Optional.some) }
+            ?? Self.alignedTokens(words: document.layouts.map(\.displayText), tokens: tokens)
         spacing = Self.width(" ", heading: false)
         let widths = layouts.map(Self.renderedWidth)
         self.widths = widths
@@ -269,11 +345,41 @@ struct TeleprompterAModel {
             + width(layout.displayText, heading: heading)
     }
 
+    /// C4 F6: align display words to tokens by text when the counts disagree. A word maps to the token (or the rest
+    /// of a token it continues) containing it, looking a few tokens ahead; a word found nowhere maps to nil alone.
+    static func alignedTokens(words: [String], tokens: [String], lookahead: Int = 3) -> [Int?] {
+        var result: [Int?] = []
+        var cursor = 0
+        var rest: Substring?
+        for word in words {
+            var matched: Int?
+            var probe = cursor
+            var probeRest = rest
+            while probe < tokens.count, probe <= cursor + lookahead, !word.isEmpty {
+                let haystack = probeRest ?? Substring(tokens[probe])
+                if let range = haystack.range(of: word) {
+                    matched = probe
+                    let after = haystack[range.upperBound...]
+                    if after.contains(where: { $0.isLetter || $0.isNumber }) {
+                        cursor = probe; rest = after
+                    } else {
+                        cursor = probe + 1; rest = nil
+                    }
+                    break
+                }
+                probe += 1
+                probeRest = nil
+            }
+            result.append(matched)
+        }
+        return result
+    }
+
     /// The word the clock names: the daemon's table when it covers this text, else the subtitle timeline.
     func focusWord(table: SpeechWordTable?, clock: Int) -> Int? {
-        if let table, let tokenOfWord, !table.words.isEmpty {
+        if let table, !table.words.isEmpty, wordTokens.contains(where: { $0 != nil }) {
             guard let token = table.wordIndex(atMilliseconds: clock) else { return nil }
-            return tokenOfWord.firstIndex(of: token)
+            return wordTokens.firstIndex(of: token)
         }
         guard TeleprompterPlaybackPolicy.usesServerTimestamps(in: words) else { return nil }
         let id = TeleprompterPlaybackPolicy.currentWordIndex(in: words, elapsedMilliseconds: clock)
@@ -283,7 +389,7 @@ struct TeleprompterAModel {
     enum SeekTarget: Equatable { case word(utteranceID: String, index: Int), offset(Int) }
 
     func seekTarget(for word: Int, table: SpeechWordTable?) -> SeekTarget? {
-        if let table, let token = tokenOfWord?[word], let index = table.seekIndex(token: token, text: tokens[token]) {
+        if let table, let token = wordTokens[word], let index = table.seekIndex(token: token, text: tokens[token]) {
             return .word(utteranceID: table.utteranceID, index: index)
         }
         return TeleprompterSeekPolicy.offset(for: words[word], isReadback: false).map(SeekTarget.offset)

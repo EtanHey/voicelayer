@@ -82,8 +82,8 @@ final class RecognizerKUICopyTests: XCTestCase {
     func testHistoryEngineFactNamesTheWriterAndExplainsTheHandOff() {
         XCTAssertEqual(SettingsHistoryDiagnosticsCopy.engineName(Self.liveBackend), "Whisper", "was \"Parakeet\" before K-ui")
         let facts = SettingsHistoryDiagnosticsCopy.engineFacts(Self.liveBackend)
-        XCTAssertEqual(facts.map(\.title), ["Engine", "How it was transcribed"])
-        XCTAssertEqual(facts.map(\.value), ["Whisper", "Whisper transcribed this recording: Parakeet's text stopped before the ending."])
+        XCTAssertEqual(facts.map(\.title), ["Engine", "Transcription error"])
+        XCTAssertEqual(facts.map(\.value), ["Whisper", "Parakeet missed the ending, so Whisper transcribed this recording."])
         XCTAssertEqual(SettingsHistoryDiagnosticsCopy.engineFacts("parakeet-resident").map(\.title), ["Engine"])
         XCTAssertEqual(SettingsHistoryDiagnosticsCopy.engineFacts("fake-stt"), [])
     }

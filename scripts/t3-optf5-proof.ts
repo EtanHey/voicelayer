@@ -7,7 +7,7 @@
 // halves of the gate:
 //
 //   start  — snapshot the installed app, T3 build, log offset and time BEFORE the keypress.
-//   finish — after the operator (or a harness) selects the synthetic paragraph in a rendered
+//   finish — after the operator (one real press; no synthesized key) selects the synthetic paragraph in a rendered
 //            T3 assistant message and presses Option+F5, read only what the resident wrote
 //            since `start` and write the proof JSON. This script never sends input itself.
 //   check  — called by scripts/verify-voicebar-release.sh before the cask bump. Refuses a
@@ -35,7 +35,7 @@ import {
   writeFileSync,
 } from "fs";
 import { homedir, tmpdir } from "os";
-import { join, resolve } from "path";
+import { dirname, join, resolve } from "path";
 
 export const PROOF_SCHEMA = "voicelayer.t3-optf5-proof.v2";
 const T3_BUNDLE_ID = "com.t3tools.t3code";
@@ -68,6 +68,26 @@ export interface T3OptF5Proof {
   historyTextSha256: string;
   speakTextCommandId: string;
   readError: boolean;
+  // The Mac that collected it (R3): hardware model identifier and chip, never serial, host or
+  // user. It must be in release-proofs/proof-hosts.json. A guard against the wrong Mac by
+  // mistake, not attestation: the values are self-reported.
+  machine: ProofHost;
+}
+
+export interface ProofHost {
+  model: string;
+  chip: string;
+}
+
+// Read beside this script, so the publish gate uses the tagged tree's list and promote its own.
+export const PROOF_HOSTS_FILE = join(import.meta.dir, "..", "release-proofs", "proof-hosts.json");
+
+export function isProofHost(machine: unknown, hostsFile = PROOF_HOSTS_FILE): machine is ProofHost {
+  const m = machine as Partial<ProofHost> | null;
+  if (typeof m?.model !== "string" || typeof m?.chip !== "string") return false;
+  if (!existsSync(hostsFile)) fail(`${hostsFile} is missing: no accepted proof hosts`);
+  const hosts = (JSON.parse(readFileSync(hostsFile, "utf8")) as { hosts: ProofHost[] }).hosts;
+  return hosts.some((h) => h.model === m.model && h.chip === m.chip);
 }
 
 class GateError extends Error {}
@@ -97,6 +117,9 @@ export function checkProof(
   if (p.schema !== PROOF_SCHEMA) fail(`proof schema is '${String(p.schema)}', expected '${PROOF_SCHEMA}'`);
   if (p.receipt !== "release") {
     fail(`proof receipt is '${String(p.receipt)}', not a release receipt: only a collection from the resident's real log and history counts`);
+  }
+  if (!isProofHost(p.machine)) {
+    fail(`proof machine ${JSON.stringify(p.machine ?? null)} is missing or not an accepted proof host in release-proofs/proof-hosts.json: the proof runs on the M1`);
   }
   if (typeof p.bundleSha256 !== "string" || !SHA_RE.test(p.bundleSha256)) fail("proof bundleSha256 is not a lowercase sha256");
   if (p.bundleSha256 !== candidate.bundleSha256) {
@@ -137,6 +160,123 @@ export function checkProof(
   }
   if (p.readError !== false) fail(`proof readError is ${JSON.stringify(p.readError)}, must be false`);
   return p as unknown as T3OptF5Proof;
+}
+
+// ---- npm publish gate (R2) ---------------------------------------------------------------
+//
+// The 2.3 npm package shipped while its app never did. From v2.4.0 on, publish.yml refuses a
+// tag unless release-proofs/v<version>.json is committed: the proof plus the candidate identity
+// `record` read from the proven app. A hosted runner has no app, so it re-runs checkProof
+// against that recorded identity and binds the proven build commit to the tag in git.
+
+export const RELEASE_GATE_FROM = [2, 4, 0];
+export const RELEASE_PROOF_DIR = "release-proofs";
+// No leading zeros: `v02.4.0` is malformed, not a second spelling of v2.4.0.
+const TAG_RE = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?$/;
+
+// Prereleases of a gated version are gated too: npm publishes them all the same.
+export function releaseGateApplies(tag: string): boolean {
+  const m = tag.match(TAG_RE);
+  if (!m) fail(`'${tag}' is not a release tag vMAJOR.MINOR.PATCH[-pre]`);
+  const v = m.slice(1, 4).map(Number);
+  for (let i = 0; i < 3; i++) if (v[i] !== RELEASE_GATE_FROM[i]) return v[i] > RELEASE_GATE_FROM[i];
+  return true;
+}
+
+export interface BuildCommitFacts {
+  isAncestor: boolean;
+  changedPaths: string[];
+  committedAtMs: number;
+}
+
+export function checkReleaseRecord(
+  raw: unknown,
+  ctx: {
+    tag: string; tagCommit: string; packageVersion: string; buildCommit: (sha: string) => BuildCommitFacts | null;
+    /** Defaults to "running under the bun test preload". Only there is a host-override record accepted. */
+    testMode?: boolean;
+  },
+  now = Date.now(),
+): T3OptF5Proof {
+  const version = ctx.tag.slice(1);
+  const path = `${RELEASE_PROOF_DIR}/${ctx.tag}.json`;
+  if (ctx.packageVersion !== version) fail(`package.json version '${ctx.packageVersion}' at the tag is not ${version}`);
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail(`${path} is not a JSON object`);
+  const release = (raw as Record<string, unknown>).release as Record<string, unknown> | undefined;
+  if (typeof release !== "object" || release === null) fail(`${path} has no release block; write it with t3-optf5-proof.ts record`);
+  if (release.version !== version) fail(`${path} release.version '${String(release.version)}' is not the tag's ${version}`);
+  refuseHostOverrideRecord(release, path, ctx.testMode ?? underTestPreload());
+  const build = String(release.gitCommit);
+  if (!COMMIT_RE.test(build)) fail(`${path} release.gitCommit '${build}' is not a full SHA`);
+  const facts = ctx.buildCommit(build);
+  if (!facts) fail(`proven build commit ${build} is not in this repository`);
+  if (!facts.isAncestor) fail(`proven build commit ${build} is not the tagged commit ${ctx.tagCommit} or its ancestor`);
+  // The host list is reviewed code, not part of a proof: a proof-only commit may not change it.
+  const outside = facts.changedPaths.filter((p) => !p.startsWith(`${RELEASE_PROOF_DIR}/`) || p === `${RELEASE_PROOF_DIR}/proof-hosts.json`);
+  if (outside.length > 0) {
+    fail(`tagged commit differs from the proven build ${build} outside ${RELEASE_PROOF_DIR}/: ${outside.slice(0, 5).join(", ")}`);
+  }
+  const buildMs = Date.parse(String(release.buildTimeUTC));
+  if (Number.isFinite(buildMs) && buildMs < facts.committedAtMs - MAX_FUTURE_SKEW_MS) {
+    fail(`release.buildTimeUTC ${String(release.buildTimeUTC)} is before its commit ${build} was made`);
+  }
+  return checkProof(
+    raw,
+    { gitCommit: build, buildTimeUTC: String(release.buildTimeUTC), bundleSha256: String(release.bundleSha256) },
+    now,
+  );
+}
+
+function git(repo: string, ...args: string[]) {
+  const r = Bun.spawnSync(["git", "-C", repo, ...args], { stdout: "pipe", stderr: "pipe", env: process.env });
+  return { ok: r.exitCode === 0, out: r.stdout.toString().trim() };
+}
+
+// The binding checks come before the pre-2.4.0 exemption, so an old-looking tag on a tree that
+// packs a gated version is refused. `--before-tag` (scripts/tag-voicebar-release.sh only) checks
+// HEAD as the tag-to-be; the workflow never passes it and then the tag must already be HEAD.
+function releaseGate(args: Map<string, string>) {
+  const tag = need(args, "--tag").replace(/^refs\/tags\//, "");
+  const repo = args.get("--repo") ?? process.cwd();
+  const applies = releaseGateApplies(tag);
+  const head = git(repo, "rev-parse", "HEAD").out;
+  const tagged = git(repo, "rev-parse", "--verify", "-q", `refs/tags/${tag}^{commit}`);
+  if (args.get("--before-tag") === "HEAD") {
+    if (tagged.ok) fail(`tag ${tag} already exists`);
+  } else if (!tagged.ok || tagged.out !== head) fail(`tag ${tag} does not resolve to the checked-out commit ${head}`);
+  const packageVersion = String(JSON.parse(readFileSync(join(repo, "package.json"), "utf8")).version);
+  if (packageVersion !== tag.slice(1)) {
+    fail(`package.json version '${packageVersion}' at ${tag} is not ${tag.slice(1)}: the package packed would not be the tagged release`);
+  }
+  if (!applies) {
+    console.log(`[t3-optf5-proof] release gate not applied: ${tag} is older than v${RELEASE_GATE_FROM.join(".")}`);
+    return;
+  }
+  const path = join(repo, RELEASE_PROOF_DIR, `${tag}.json`);
+  if (!existsSync(path)) fail(`${RELEASE_PROOF_DIR}/${tag}.json is missing: no installed-candidate T3 Option+F5 proof for this release`);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    fail(`${RELEASE_PROOF_DIR}/${tag}.json is not valid JSON`);
+  }
+  const p = checkReleaseRecord(raw, {
+    tag,
+    tagCommit: head,
+    packageVersion,
+    buildCommit: (sha) => {
+      if (!git(repo, "cat-file", "-e", `${sha}^{commit}`).ok) return null;
+      const changed = git(repo, "diff", "--name-only", "--no-renames", sha, head);
+      const committed = Number(git(repo, "show", "-s", "--format=%ct", sha).out) * 1000;
+      if (!changed.ok || !Number.isFinite(committed)) fail(`cannot read git facts for ${sha}`);
+      return {
+        isAncestor: git(repo, "merge-base", "--is-ancestor", sha, head).ok,
+        changedPaths: changed.out.split("\n").filter(Boolean),
+        committedAtMs: committed,
+      };
+    },
+  });
+  console.log(`[t3-optf5-proof] PASS: release gate ${tag}: proof for build ${p.gitCommit} (${p.t3Build}, ${p.timestamp})`);
 }
 
 // ---- artifact readers ------------------------------------------------------------------
@@ -322,17 +462,46 @@ interface ProofState {
   expectedTextSha256: string;
   // A count, not text: VoiceBar's selection_capture line logs the selection's UTF-16 length.
   expectedUtf16Count: number;
+  machine: ProofHost;
 }
 
 const RESIDENT_APP = "/Applications/VoiceBar.app";
 const RESIDENT_LOG = `${homedir()}/Library/Logs/voicelayer/voicebar-err.log`;
 const RESIDENT_HISTORY = "/tmp/voicelayer-history.json";
 const PATH_OVERRIDES = ["--app", "--voicebar-log", "--history-file"];
+const HOST_OVERRIDES = ["--host-model", "--host-chip"];
 
 // The bun test preload sets VOICELAYER_TEST_RUN_ROOT. Only there may the resident paths be
 // replaced by fixtures, and anything collected there is a "test" receipt the gate rejects.
 function underTestPreload(): boolean {
   return Boolean(process.env.VOICELAYER_TEST_RUN_ROOT);
+}
+
+// `record` marks a record whose host came from the test-only --host-model/--host-chip seam. Outside the
+// test preload (the hosted publish gate, promotion) such a record is refused, so setting the preload's
+// environment variable by hand on the wrong Mac cannot produce a record a release accepts.
+function refuseHostOverrideRecord(release: Record<string, unknown>, path: string, testMode: boolean): void {
+  if (release.hostOverride !== undefined && !testMode) {
+    fail(`${path} was recorded with a test-only host override; record it on an accepted proof host without --host-model/--host-chip`);
+  }
+}
+
+// This Mac's identity from sysctl. Only under the test preload may a test pass an explicit one;
+// there is no default identity. `run` (through start) and `record` refuse a Mac not in the list.
+function thisProofHost(args: Map<string, string>): ProofHost {
+  const given = HOST_OVERRIDES.filter((flag) => args.has(flag));
+  if (given.length > 0 && !underTestPreload()) fail(`${given.join(", ")} is test-only; the proof host is read from sysctl`);
+  const sysctl = (key: string) => {
+    const r = Bun.spawnSync(["sysctl", "-n", key], { stdout: "pipe", stderr: "pipe", env: process.env });
+    return r.exitCode === 0 ? r.stdout.toString().trim() : "";
+  };
+  const host = given.length > 0
+    ? { model: args.get("--host-model") ?? "", chip: args.get("--host-chip") ?? "" }
+    : { model: sysctl("hw.model"), chip: sysctl("machdep.cpu.brand_string") };
+  if (!isProofHost(host)) {
+    fail(`this Mac (${host.model || "unknown model"}, ${host.chip || "unknown chip"}) is not an accepted proof host in release-proofs/proof-hosts.json: run the proof on the M1`);
+  }
+  return host;
 }
 
 function start(args: Map<string, string>) {
@@ -341,6 +510,7 @@ function start(args: Map<string, string>) {
   if (overrides.length > 0 && !testMode) {
     fail(`path override ${overrides.join(", ")} is test-only; a release proof reads only the resident's own app, log and history`);
   }
+  const machine = thisProofHost(args);
   const app = args.get("--app") ?? RESIDENT_APP;
   const t3App = need(args, "--t3-app");
   const voicebarLog = args.get("--voicebar-log") ?? RESIDENT_LOG;
@@ -366,6 +536,7 @@ function start(args: Map<string, string>) {
     historyFile,
     expectedTextSha256: sha256(expected),
     expectedUtf16Count: expected.length,
+    machine,
   };
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
   console.log(`[t3-optf5-proof] armed: VoiceBar ${state.gitCommit}, ${state.t3Build}`);
@@ -456,6 +627,7 @@ function finish(args: Map<string, string>) {
     historyTextSha256: sha256(entry.text),
     speakTextCommandId: speakId,
     readError,
+    machine: state.machine,
   };
   writeFileSync(out, `${JSON.stringify(proof, null, 2)}\n`);
   if (proof.expectedTextSha256 !== proof.historyTextSha256) {
@@ -545,6 +717,10 @@ function check(args: Map<string, string>) {
   } catch {
     fail(`proof file is not valid JSON: ${path}`);
   }
+  const recorded = (raw as { release?: unknown } | null)?.release;
+  if (typeof recorded === "object" && recorded !== null) {
+    refuseHostOverrideRecord(recorded as Record<string, unknown>, path, underTestPreload());
+  }
   // The candidate's identity comes from the app being delivered, never from arguments.
   const app = need(args, "--app");
   const plist = `${app}/Contents/Info.plist`;
@@ -556,6 +732,56 @@ function check(args: Map<string, string>) {
   console.log(
     `[t3-optf5-proof] PASS: T3 Option+F5 proof matches candidate ${p.gitCommit} (${p.t3Build}, speak_text ${p.speakTextCommandId}, ${p.timestamp})`,
   );
+}
+
+// The committed release proof: `check` against the proven app, plus the identity it read from
+// that app, so a hosted runner without the app can re-run checkProof (publish.yml, R2).
+function record(args: Map<string, string>) {
+  thisProofHost(args);
+  const app = need(args, "--app");
+  const out = need(args, "--out");
+  check(args);
+  const plist = `${app}/Contents/Info.plist`;
+  const version = readPlistString(plist, "CFBundleShortVersionString");
+  const bundled = String(JSON.parse(readFileSync(`${app}/Contents/Resources/package.json`, "utf8")).version);
+  if (!version || version !== bundled) fail(`app version '${version}' does not equal its bundled package.json version '${bundled}'`);
+  if (resolve(out) !== resolve(RELEASE_PROOF_DIR, `v${version}.json`)) fail(`--out must be ${RELEASE_PROOF_DIR}/v${version}.json in the release checkout`);
+  const proof = JSON.parse(readFileSync(need(args, "--proof"), "utf8"));
+  const release = {
+    version,
+    gitCommit: readPlistString(plist, "GitCommit"),
+    buildTimeUTC: readPlistString(plist, "BuildTimeUTC"),
+    bundleSha256: bundleDigest(app),
+    // Present only when the host came from the test-only seam; a release never accepts it.
+    ...(HOST_OVERRIDES.some((flag) => args.has(flag)) ? { hostOverride: true } : {}),
+  };
+  mkdirSync(dirname(resolve(out)), { recursive: true }); // first record on a clean checkout
+  writeFileSync(out, `${JSON.stringify({ ...proof, release }, null, 2)}\n`);
+  console.log(`[t3-optf5-proof] recorded ${out}: commit only this file, then tag v${version} on that commit`);
+}
+
+// start, then wait (no keys sent) for the one Option+F5 the operator presses, then finish.
+// One background command for the lead; the operator only selects and presses.
+function run(args: Map<string, string>) {
+  start(args);
+  const state = JSON.parse(readFileSync(need(args, "--state"), "utf8")) as ProofState;
+  const deadline = state.startedAt + MAX_WINDOW_MS - 30_000;
+  while (Date.now() < deadline) {
+    Bun.sleepSync(1000);
+    let seen = false;
+    try {
+      seen = readFrom(state.voicebarLog, state.logOffset).includes("[VoiceBar][diag] selection_capture ")
+        && loadHistory(state.historyFile).some((e) => e.timestamp >= state.startedAt);
+    } catch {
+      // History is rewritten in place; a half-written file is read again next second.
+    }
+    if (seen) {
+      Bun.sleepSync(3000); // let a second, ambiguous press show up before finish judges the window
+      finish(args);
+      return;
+    }
+  }
+  fail("no Option+F5 capture with a new TTS history entry within the window; nothing recorded");
 }
 
 function need(args: Map<string, string>, flag: string): string {
@@ -575,9 +801,12 @@ function parseArgs(argv: string[]): Map<string, string> {
 
 const USAGE = `Usage:
   bun scripts/t3-optf5-proof.ts start  --state FILE --t3-app "/Applications/T3 Code (Alpha).app" --expected-text-file FILE
-                                       (--app/--voicebar-log/--history-file: test preload only)
+                                       (--app/--voicebar-log/--history-file/--host-model/--host-chip: test preload only)
   bun scripts/t3-optf5-proof.ts finish --state FILE --out PROOF.json
+  bun scripts/t3-optf5-proof.ts run    (start's arguments) --out PROOF.json   start, wait for the press, finish
   bun scripts/t3-optf5-proof.ts check  --proof PROOF.json --app VoiceBar.app
+  bun scripts/t3-optf5-proof.ts record --proof PROOF.json --app VoiceBar.app --out release-proofs/vX.Y.Z.json
+  bun scripts/t3-optf5-proof.ts release-gate --tag vX.Y.Z [--repo DIR] [--before-tag HEAD]   (publish.yml; --before-tag: tag-voicebar-release.sh)
   bun scripts/t3-optf5-proof.ts zip-matches-app --app VoiceBar.app --zip VoiceBar.zip
   bun scripts/t3-optf5-proof.ts bundle-digest --app VoiceBar.app`;
 
@@ -587,7 +816,10 @@ if (import.meta.main) {
     const args = parseArgs(rest);
     if (command === "start") start(args);
     else if (command === "finish") finish(args);
+    else if (command === "run") run(args);
     else if (command === "check") check(args);
+    else if (command === "record") record(args);
+    else if (command === "release-gate") releaseGate(args);
     else if (command === "zip-matches-app") zipCommand(args);
     else if (command === "bundle-digest") console.log(bundleDigest(need(args, "--app")));
     else {
@@ -596,7 +828,10 @@ if (import.meta.main) {
     }
   } catch (error) {
     if (!(error instanceof GateError)) throw error;
-    const prefix = command === "check" || command === "zip-matches-app" ? "REFUSED: T3 Option+F5 proof" : "FAIL";
+    const prefix =
+      command === "release-gate" ? "REFUSED: npm publish release gate"
+        : command === "check" || command === "record" || command === "zip-matches-app" ? "REFUSED: T3 Option+F5 proof"
+          : "FAIL";
     console.error(`[t3-optf5-proof] ${prefix}: ${error.message}`);
     process.exit(1);
   }

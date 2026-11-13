@@ -85,6 +85,8 @@ public enum NotchDismissReason: String, Equatable, Hashable, Sendable, CaseItera
     case emptied
     /// A notch menu (the microphone list, the bare-notch menu) asked for the spot.
     case menu
+    /// The user hid VoiceBar; no drawer intent survives Show.
+    case hidden
 }
 
 public enum NotchSurfaceEvent: Equatable, Hashable, Sendable {
@@ -206,21 +208,52 @@ public struct NotchSurfaceMachine: Equatable, Hashable, Sendable {
 @Observable
 public final class NotchSurfaceModel {
     public private(set) var machine = NotchSurfaceMachine()
+    /// Tab/focus request shared by app menu actions and the drawer's own controls.
+    public var settingsRequest: SettingsTabRequest?
     /// Every transition, in order (tests, the UIE2E host's receipts). Bounded.
+    public private(set) var hideGeneration = 0
+    /// Invalidates pointer gestures synchronously, before SwiftUI observes a dismissal.
+    public private(set) var dismissalGeneration = 0
     public private(set) var journal: [NotchSurfaceJournalEntry] = []
     @ObservationIgnored public var log: (String) -> Void = { NSLog("%@", $0) }
     private static let journalLimit = 64
+    /// C6 L2c (N16): the Settings drawer's remembered height, in rows (a size preference, not a surface state: the
+    /// machine and its TLA+ model are unchanged). It reopens at this height.
+    public private(set) var settingsRows: Int
+    @ObservationIgnored private let settingsRowsStore: NotchSettingsRowsStore
 
-    public init() {}
+    public init(settingsRowsStore: NotchSettingsRowsStore = .session) {
+        self.settingsRowsStore = settingsRowsStore
+        settingsRows = NotchSettingsDrawerPresentation.clampedRows(
+            settingsRowsStore.load() ?? NotchSettingsDrawerPresentation.minimumRows
+        )
+    }
+
+    /// The Settings grip was let go at `rows` (or VoiceOver stepped it): clamp, remember, and keep it.
+    public func setSettingsRows(_ rows: Int) {
+        let rows = NotchSettingsDrawerPresentation.clampedRows(rows)
+        guard rows != settingsRows else { return }
+        settingsRows = rows
+        settingsRowsStore.save(rows)
+        log("[VoiceBar] notch settings drawer rows \(rows)")
+    }
 
     public var drawer: NotchDrawer? { machine.drawer }
     public var state: NotchSurfaceState { machine.state }
     public var isDrawerOpen: Bool { machine.drawer != nil }
     public var historyDetent: NotchHistoryDetent { machine.historyDetent }
 
+    public func hide() {
+        send(.dismiss(.hidden))
+        hideGeneration &+= 1 // Also resets an in-progress pull with no open drawer yet.
+    }
+
     @discardableResult
     public func send(_ event: NotchSurfaceEvent) -> NotchSurfaceOutcome {
+        let wasOpen = isDrawerOpen
         let outcome = machine.send(event)
+        if case .dismiss = event { dismissalGeneration &+= 1 }
+        else if wasOpen, !isDrawerOpen { dismissalGeneration &+= 1 }
         switch outcome {
         case .unchanged:
             break

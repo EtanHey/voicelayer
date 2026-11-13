@@ -1,0 +1,581 @@
+{
+  "generated": "Synthetic layout-intent corpus; OLD outputs generated from f1eb3434 production rules",
+  "oldCommit": "f1eb34346431889eec8f26e0ff54ea2bef04fb67",
+  "commands": [
+    {
+      "input": "call the doctor new line email the landlord",
+      "old": "Call the doctor\nEmail the landlord"
+    },
+    {
+      "input": "call the doctor, new paragraph, email the landlord.",
+      "old": "Call the doctor\n\nEmail the landlord."
+    },
+    {
+      "input": "call the doctor. New line. email the landlord.",
+      "old": "Call the doctor\nEmail the landlord."
+    },
+    {
+      "input": "call the doctor new paragraph email the landlord new line file the report",
+      "old": "Call the doctor\n\nEmail the landlord\nFile the report"
+    },
+    {
+      "input": "call the doctor, new line. email the landlord.",
+      "old": "Call the doctor\nEmail the landlord."
+    },
+    {
+      "input": "check the logs new line restart the server",
+      "old": "Check the logs\nRestart the server"
+    },
+    {
+      "input": "check the logs, new paragraph, restart the server.",
+      "old": "Check the logs\n\nRestart the server."
+    },
+    {
+      "input": "check the logs. New line. restart the server.",
+      "old": "Check the logs\nRestart the server."
+    },
+    {
+      "input": "check the logs new paragraph restart the server new line file the report",
+      "old": "Check the logs\n\nRestart the server\nFile the report"
+    },
+    {
+      "input": "check the logs, new line. restart the server.",
+      "old": "Check the logs\nRestart the server."
+    },
+    {
+      "input": "fix the bug new line ship the patch",
+      "old": "Fix the bug\nShip the patch"
+    },
+    {
+      "input": "fix the bug, new paragraph, ship the patch.",
+      "old": "Fix the bug\n\nShip the patch."
+    },
+    {
+      "input": "fix the bug. New line. ship the patch.",
+      "old": "Fix the bug\nShip the patch."
+    },
+    {
+      "input": "fix the bug new paragraph ship the patch new line file the report",
+      "old": "Fix the bug\n\nShip the patch\nFile the report"
+    },
+    {
+      "input": "fix the bug, new line. ship the patch.",
+      "old": "Fix the bug\nShip the patch."
+    },
+    {
+      "input": "review my code new line merge the change",
+      "old": "Review my code\nMerge the change"
+    },
+    {
+      "input": "review my code, new paragraph, merge the change.",
+      "old": "Review my code\n\nMerge the change."
+    },
+    {
+      "input": "review my code. New line. merge the change.",
+      "old": "Review my code\nMerge the change."
+    },
+    {
+      "input": "review my code new paragraph merge the change new line file the report",
+      "old": "Review my code\n\nMerge the change\nFile the report"
+    },
+    {
+      "input": "review my code, new line. merge the change.",
+      "old": "Review my code\nMerge the change."
+    },
+    {
+      "input": "update your branch new line rerun the tests",
+      "old": "Update your branch\nRerun the tests"
+    },
+    {
+      "input": "update your branch, new paragraph, rerun the tests.",
+      "old": "Update your branch\n\nRerun the tests."
+    },
+    {
+      "input": "update your branch. New line. rerun the tests.",
+      "old": "Update your branch\nRerun the tests."
+    },
+    {
+      "input": "update your branch new paragraph rerun the tests new line file the report",
+      "old": "Update your branch\n\nRerun the tests\nFile the report"
+    },
+    {
+      "input": "update your branch, new line. rerun the tests.",
+      "old": "Update your branch\nRerun the tests."
+    },
+    {
+      "input": "see the diff new line write the summary",
+      "old": "See the diff\nWrite the summary"
+    },
+    {
+      "input": "see the diff, new paragraph, write the summary.",
+      "old": "See the diff\n\nWrite the summary."
+    },
+    {
+      "input": "see the diff. New line. write the summary.",
+      "old": "See the diff\nWrite the summary."
+    },
+    {
+      "input": "see the diff new paragraph write the summary new line file the report",
+      "old": "See the diff\n\nWrite the summary\nFile the report"
+    },
+    {
+      "input": "see the diff, new line. write the summary.",
+      "old": "See the diff\nWrite the summary."
+    },
+    {
+      "input": "open the ticket new line assign the owner",
+      "old": "Open the ticket\nAssign the owner"
+    },
+    {
+      "input": "open the ticket, new paragraph, assign the owner.",
+      "old": "Open the ticket\n\nAssign the owner."
+    },
+    {
+      "input": "open the ticket. New line. assign the owner.",
+      "old": "Open the ticket\nAssign the owner."
+    },
+    {
+      "input": "open the ticket new paragraph assign the owner new line file the report",
+      "old": "Open the ticket\n\nAssign the owner\nFile the report"
+    },
+    {
+      "input": "open the ticket, new line. assign the owner.",
+      "old": "Open the ticket\nAssign the owner."
+    },
+    {
+      "input": "save the file new line close the editor",
+      "old": "Save the file\nClose the editor"
+    },
+    {
+      "input": "save the file, new paragraph, close the editor.",
+      "old": "Save the file\n\nClose the editor."
+    },
+    {
+      "input": "save the file. New line. close the editor.",
+      "old": "Save the file\nClose the editor."
+    },
+    {
+      "input": "save the file new paragraph close the editor new line file the report",
+      "old": "Save the file\n\nClose the editor\nFile the report"
+    },
+    {
+      "input": "save the file, new line. close the editor.",
+      "old": "Save the file\nClose the editor."
+    },
+    {
+      "input": "send our invoice new line archive the receipt",
+      "old": "Send our invoice\nArchive the receipt"
+    },
+    {
+      "input": "send our invoice, new paragraph, archive the receipt.",
+      "old": "Send our invoice\n\nArchive the receipt."
+    },
+    {
+      "input": "send our invoice. New line. archive the receipt.",
+      "old": "Send our invoice\nArchive the receipt."
+    },
+    {
+      "input": "send our invoice new paragraph archive the receipt new line file the report",
+      "old": "Send our invoice\n\nArchive the receipt\nFile the report"
+    },
+    {
+      "input": "send our invoice, new line. archive the receipt.",
+      "old": "Send our invoice\nArchive the receipt."
+    },
+    {
+      "input": "move their meeting new line notify the team",
+      "old": "Move their meeting\nNotify the team"
+    },
+    {
+      "input": "move their meeting, new paragraph, notify the team.",
+      "old": "Move their meeting\n\nNotify the team."
+    },
+    {
+      "input": "move their meeting. New line. notify the team.",
+      "old": "Move their meeting\nNotify the team."
+    },
+    {
+      "input": "move their meeting new paragraph notify the team new line file the report",
+      "old": "Move their meeting\n\nNotify the team\nFile the report"
+    },
+    {
+      "input": "move their meeting, new line. notify the team.",
+      "old": "Move their meeting\nNotify the team."
+    },
+    {
+      "input": "call the doctor new line email the landlord new line pay the rent",
+      "old": "Call the doctor\nEmail the landlord\nPay the rent"
+    },
+    {
+      "input": "buy the milk new line buy the eggs",
+      "old": "Buy the milk\nBuy the eggs"
+    },
+    {
+      "input": "fix the bug new line ship it",
+      "old": "Fix the bug\nShip it"
+    },
+    {
+      "input": "I think that works new line next item",
+      "old": "I think that works\nNext item"
+    },
+    {
+      "input": "Hey, can you look at the PR new line and the second thing is the tests",
+      "old": "Hey, can you look at the PR\nAnd the second thing is the tests"
+    },
+    {
+      "input": "some notes new line more notes",
+      "old": "Some notes\nMore notes"
+    },
+    {
+      "input": "no comment new line next",
+      "old": "No comment\nNext"
+    },
+    {
+      "input": "every day new line repeat",
+      "old": "Every day\nRepeat"
+    },
+    {
+      "input": "I need to call the bank new line buy groceries new line pick up the kids",
+      "old": "I need to call the bank\nBuy groceries\nPick up the kids"
+    },
+    {
+      "input": "first point new line second point",
+      "old": "First point\nSecond point"
+    },
+    {
+      "input": "Hi Sam new line thanks for the help",
+      "old": "Hi Sam\nThanks for the help"
+    },
+    {
+      "input": "dear team new paragraph here is my report",
+      "old": "Dear team\n\nHere is my report"
+    },
+    {
+      "input": "items are new line apples new line pears",
+      "old": "Items are\nApples\nPears"
+    },
+    {
+      "input": "it was great new paragraph anyway",
+      "old": "It was great\n\nAnyway"
+    },
+    {
+      "input": "that's all new line cheers",
+      "old": "That's all\nCheers"
+    },
+    {
+      "input": "we need a very good plan new line ok",
+      "old": "We need a very good plan\nOk"
+    },
+    {
+      "input": "lots of bugs new line fix them",
+      "old": "Lots of bugs\nFix them"
+    },
+    {
+      "input": "Buy milk new line. Buy eggs.",
+      "old": "Buy milk\nBuy eggs."
+    },
+    {
+      "input": "Buy milk, new line. Buy eggs.",
+      "old": "Buy milk\nBuy eggs."
+    },
+    {
+      "input": "Buy milk. New line. Buy eggs.",
+      "old": "Buy milk\nBuy eggs."
+    },
+    {
+      "input": "Call the doctor new line, email the landlord.",
+      "old": "Call the doctor\nEmail the landlord."
+    },
+    {
+      "input": "Call the doctor. New line, email the landlord.",
+      "old": "Call the doctor\nEmail the landlord."
+    },
+    {
+      "input": "Okay, first, check the build. Second, new line, run the tests.",
+      "old": "Okay, first, check the build. Second\nRun the tests."
+    },
+    {
+      "input": "Write it on the next line new line thanks",
+      "old": "Write it on the next line\nThanks"
+    }
+  ],
+  "legacyCommands": [
+    {
+      "input": "Fix that, new line, then ship it.",
+      "old": "Fix that new line, then ship it."
+    }
+  ],
+  "nouns": [
+    {
+      "input": "There is an extra new line here?",
+      "old": "There is an extra\nHere?",
+      "expected": "There is an extra new line here?"
+    },
+    {
+      "input": "There is an extra new paragraph here?",
+      "old": "There is an extra\n\nHere?",
+      "expected": "There is an extra new paragraph here?"
+    },
+    {
+      "input": "There is an extra newline here?",
+      "old": "There is an extra newline here?",
+      "expected": "There is an extra newline here?"
+    },
+    {
+      "input": "There is an extra line break here?",
+      "old": "There is an extra line break here?",
+      "expected": "There is an extra line break here?"
+    },
+    {
+      "input": "The editor has a strange new line here.",
+      "old": "The editor has a strange\nHere.",
+      "expected": "The editor has a strange new line here."
+    },
+    {
+      "input": "The editor has a strange new paragraph here.",
+      "old": "The editor has a strange\n\nHere.",
+      "expected": "The editor has a strange new paragraph here."
+    },
+    {
+      "input": "The editor has a strange newline here.",
+      "old": "The editor has a strange newline here.",
+      "expected": "The editor has a strange newline here."
+    },
+    {
+      "input": "The editor has a strange line break here.",
+      "old": "The editor has a strange line break here.",
+      "expected": "The editor has a strange line break here."
+    },
+    {
+      "input": "The sample contains an unusual new line today.",
+      "old": "The sample contains an unusual\nToday.",
+      "expected": "The sample contains an unusual new line today."
+    },
+    {
+      "input": "The sample contains an unusual new paragraph today.",
+      "old": "The sample contains an unusual\n\nToday.",
+      "expected": "The sample contains an unusual new paragraph today."
+    },
+    {
+      "input": "The sample contains an unusual newline today.",
+      "old": "The sample contains an unusual newline today.",
+      "expected": "The sample contains an unusual newline today."
+    },
+    {
+      "input": "The sample contains an unusual line break today.",
+      "old": "The sample contains an unusual line break today.",
+      "expected": "The sample contains an unusual line break today."
+    },
+    {
+      "input": "The preview shows a visible new line there.",
+      "old": "The preview shows a visible\nThere.",
+      "expected": "The preview shows a visible new line there."
+    },
+    {
+      "input": "The preview shows a visible new paragraph there.",
+      "old": "The preview shows a visible\n\nThere.",
+      "expected": "The preview shows a visible new paragraph there."
+    },
+    {
+      "input": "The preview shows a visible newline there.",
+      "old": "The preview shows a visible newline there.",
+      "expected": "The preview shows a visible newline there."
+    },
+    {
+      "input": "The preview shows a visible line break there.",
+      "old": "The preview shows a visible line break there.",
+      "expected": "The preview shows a visible line break there."
+    },
+    {
+      "input": "The log reports an unexpected new line there.",
+      "old": "The log reports an unexpected\nThere.",
+      "expected": "The log reports an unexpected new line there."
+    },
+    {
+      "input": "The log reports an unexpected new paragraph there.",
+      "old": "The log reports an unexpected\n\nThere.",
+      "expected": "The log reports an unexpected new paragraph there."
+    },
+    {
+      "input": "The log reports an unexpected newline there.",
+      "old": "The log reports an unexpected newline there.",
+      "expected": "The log reports an unexpected newline there."
+    },
+    {
+      "input": "The log reports an unexpected line break there.",
+      "old": "The log reports an unexpected line break there.",
+      "expected": "The log reports an unexpected line break there."
+    },
+    {
+      "input": "This buffer is a blank new line.",
+      "old": "This buffer is a blank",
+      "expected": "This buffer is a blank new line."
+    },
+    {
+      "input": "This buffer is a blank new paragraph.",
+      "old": "This buffer is a blank",
+      "expected": "This buffer is a blank new paragraph."
+    },
+    {
+      "input": "This buffer is a blank newline.",
+      "old": "This buffer is a blank newline.",
+      "expected": "This buffer is a blank newline."
+    },
+    {
+      "input": "This buffer is a blank line break.",
+      "old": "This buffer is a blank line break.",
+      "expected": "This buffer is a blank line break."
+    },
+    {
+      "input": "The reviewer says it is a trailing new line?",
+      "old": "The reviewer says it is a trailing\n?",
+      "expected": "The reviewer says it is a trailing new line?"
+    },
+    {
+      "input": "The reviewer says it is a trailing new paragraph?",
+      "old": "The reviewer says it is a trailing\n\n?",
+      "expected": "The reviewer says it is a trailing new paragraph?"
+    },
+    {
+      "input": "The reviewer says it is a trailing newline?",
+      "old": "The reviewer says it is a trailing newline?",
+      "expected": "The reviewer says it is a trailing newline?"
+    },
+    {
+      "input": "The reviewer says it is a trailing line break?",
+      "old": "The reviewer says it is a trailing line break?",
+      "expected": "The reviewer says it is a trailing line break?"
+    },
+    {
+      "input": "We have an additional new line here.",
+      "old": "We have an additional\nHere.",
+      "expected": "We have an additional new line here."
+    },
+    {
+      "input": "We have an additional new paragraph here.",
+      "old": "We have an additional\n\nHere.",
+      "expected": "We have an additional new paragraph here."
+    },
+    {
+      "input": "We have an additional newline here.",
+      "old": "We have an additional newline here.",
+      "expected": "We have an additional newline here."
+    },
+    {
+      "input": "We have an additional line break here.",
+      "old": "We have an additional line break here.",
+      "expected": "We have an additional line break here."
+    },
+    {
+      "input": "With a missing new line the text is confusing.",
+      "old": "With a missing\nThe text is confusing.",
+      "expected": "With a missing new line the text is confusing."
+    },
+    {
+      "input": "With a missing new paragraph the text is confusing.",
+      "old": "With a missing\n\nThe text is confusing.",
+      "expected": "With a missing new paragraph the text is confusing."
+    },
+    {
+      "input": "With a missing newline the text is confusing.",
+      "old": "With a missing newline the text is confusing.",
+      "expected": "With a missing newline the text is confusing."
+    },
+    {
+      "input": "With a missing line break the text is confusing.",
+      "old": "With a missing line break the text is confusing.",
+      "expected": "With a missing line break the text is confusing."
+    },
+    {
+      "input": "We got a redundant new line here.",
+      "old": "We got a redundant\nHere.",
+      "expected": "We got a redundant new line here."
+    },
+    {
+      "input": "We got a redundant new paragraph here.",
+      "old": "We got a redundant\n\nHere.",
+      "expected": "We got a redundant new paragraph here."
+    },
+    {
+      "input": "We got a redundant newline here.",
+      "old": "We got a redundant newline here.",
+      "expected": "We got a redundant newline here."
+    },
+    {
+      "input": "We got a redundant line break here.",
+      "old": "We got a redundant line break here.",
+      "expected": "We got a redundant line break here."
+    },
+    {
+      "input": "The company's new line launched today.",
+      "old": "The company's\nLaunched today.",
+      "expected": "The company's new line launched today."
+    },
+    {
+      "input": "Their editor's new paragraph remains visible.",
+      "old": "Their editor's\n\nRemains visible.",
+      "expected": "Their editor's new paragraph remains visible."
+    },
+    {
+      "input": "The company’s new line launched today.",
+      "old": "The company’s\nLaunched today.",
+      "expected": "The company’s new line launched today."
+    },
+    {
+      "input": "The preview's new paragraph appears empty.",
+      "old": "The preview's\n\nAppears empty.",
+      "expected": "The preview's new paragraph appears empty."
+    },
+    {
+      "input": "We discussed 'new line' yesterday.",
+      "old": "We discussed '\n' yesterday.",
+      "expected": "We discussed 'new line' yesterday."
+    },
+    {
+      "input": "We discussed \"new paragraph\" yesterday.",
+      "old": "We discussed \"\n\n\" yesterday.",
+      "expected": "We discussed \"new paragraph\" yesterday."
+    },
+    {
+      "input": "We discussed “new line” yesterday.",
+      "old": "We discussed “\n” yesterday.",
+      "expected": "We discussed “new line” yesterday."
+    },
+    {
+      "input": "We discussed ‘new paragraph’ yesterday.",
+      "old": "We discussed ‘\n\n’ yesterday.",
+      "expected": "We discussed ‘new paragraph’ yesterday."
+    },
+    {
+      "input": "The formatter says it's trailing new line?",
+      "old": "The formatter says it's trailing\n?",
+      "expected": "The formatter says it's trailing new line?"
+    }
+  ],
+  "percent": [
+    {
+      "input": "that one percent",
+      "old": "That 1%"
+    },
+    {
+      "input": "this one percent of users",
+      "old": "This 1 percent of users"
+    },
+    {
+      "input": "the one percent",
+      "old": "The one%"
+    },
+    {
+      "input": "only one percent",
+      "old": "Only 1%"
+    },
+    {
+      "input": "that one per cent",
+      "old": "That 1 per cent"
+    },
+    {
+      "input": "that one %",
+      "old": "That 1%"
+    }
+  ]
+}

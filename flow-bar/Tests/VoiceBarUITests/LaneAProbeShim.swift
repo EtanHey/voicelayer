@@ -3,8 +3,10 @@
 /// Lane head: the dismissal is NotchDrawerDismissal (every reason closes the drawer).
 @MainActor
 enum LaneAProbeShim {
-    static func dismissal(onClose: @escaping () -> Void) -> AnyObject {
-        NotchDrawerDismissal { _ in onClose() }
+    static func dismissal(reason: NotchDismissReason? = nil, onClose: @escaping () -> Void) -> AnyObject {
+        NotchDrawerDismissal { received in
+            if reason == nil || received == reason { onClose() }
+        }
     }
     static func start(_ object: AnyObject) { (object as! NotchDrawerDismissal).start() }
     static func stop(_ object: AnyObject) { (object as! NotchDrawerDismissal).stop() }

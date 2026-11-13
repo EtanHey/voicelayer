@@ -77,7 +77,8 @@ public struct VoiceBarNotchMorphCanvasLayout: Equatable, Sendable {
     public static func resolve(
         for presentation: VoiceBarNotchPresentation
     ) -> VoiceBarNotchMorphCanvasLayout {
-        guard presentation.visualState != .idle else {
+        // C4 F4: an idle shell still collapsing from a read keeps the read's canvas until the hold releases.
+        guard presentation.visualState != .idle || presentation.holdsReadingCanvas else {
             return VoiceBarNotchMorphCanvasLayout(
                 canvasGeometry: presentation.geometry,
                 contentOffsetX: 0
@@ -137,7 +138,12 @@ extension VoiceBarNotchMorphCanvasLayout {
         // V6: History's window is the same whatever rows the handle settles on (`historyCanvasLowerSurfaceHeight`),
         // so dragging it never resizes the window under the pointer. The hit region stays the settled rows.
         // U5: likewise the teleprompter's window holds eight lines, so its handle never resizes the window either.
-        if presentation.visualState == .teleprompter {
+        // C7 L3 V10 (Etan's recording, 59/62/64 s): a read's compact state (hidden, or paused hidden) keeps the same
+        // eight-line canvas. With a shorter one the canvas and window shrank unanimated at once while the shell was
+        // still collapsing from the teleprompter, cutting the glass flat: a blank blur rectangle with square
+        // lower corners.
+        if presentation.visualState == .teleprompter
+            || presentation.visualState != .history && presentation.holdsReadingCanvas {
             return VoiceBarNotchContract.teleprompterLowerSurfaceHeight(lines: TeleprompterA.lineRange.upperBound)
         }
         guard presentation.visualState == .history else {

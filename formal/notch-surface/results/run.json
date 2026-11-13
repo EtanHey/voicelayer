@@ -14,9 +14,9 @@
     "formal/notch-surface/MutantHistoryOnlyDismiss.cfg": "ca9c87e7de7de588b8551441926ee05f944c2d5027bc4730703a5ca3109c3e7f",
     "formal/notch-surface/MutantRecordingClosesDrawer.cfg": "4352f0e2c1f17e99be5e8f0d239c24b81cc4a5f938b17f70cba0f28222e7c410",
     "formal/notch-surface/Fixed.cfg": "40cc0de75cda652284f32e5e3ac430a344f7a54c1598202aaa016e5956ea56d0",
-    "flow-bar/Sources/VoiceBarUI/NotchSurface.swift": "0d677ddf0829e3ca0c570e9b98a68d7cc672d7e06193d7873dc5feb6350a06d2",
-    "flow-bar/Sources/VoiceBarUI/NotchDrawerDismissal.swift": "c3b5e6d1db1da827df5084e91512ab32a0b08c082bbe8eadd68375ebd320c288",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "54675519a5d6076901d389ea8036ae6b97fe1558c0d344318e26b22e1ef52990",
+    "flow-bar/Sources/VoiceBarUI/NotchSurface.swift": "6832174c5cd26a5c417602ca6c4fa8175500785322dc40ceb85f5f877d1f1c3d",
+    "flow-bar/Sources/VoiceBarUI/NotchDrawerDismissal.swift": "f7e217d2cb5ab70bff9816c9860f0de52a25b0e32705e407dace64cddc1a6375",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "f549f6c96d60d0c52c73acc08739dd6d8bbb169a502f99aacf53e589e42ac4a8",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {

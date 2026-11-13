@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { writeFileSync } from "fs";
+import { createHash } from "crypto";
+import { buildRecordingProvenance } from "../recording-provenance";
+import { describe, it, expect, beforeAll, afterAll, spyOn } from "bun:test";
 import type { TranscriptSegment } from "../stt-transcript-alignment";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
@@ -353,7 +356,7 @@ usage: whisper-server [options]
         const startup = ensureServer(18994);
         await expect(startup).rejects.toThrow("whisper-server exited during startup (code 7)");
         await expect(startup).rejects.toThrow("WHISPER_STARTUP_EXIT");
-        await expect(startup).rejects.toThrow("fixture fatal load diagnostic");
+        await expect(startup).rejects.not.toThrow("fixture fatal load diagnostic");
         expect(performance.now() - started).toBeLessThan(5000);
         expect(whisperServerLaunchRecord()).toBe(null);
       } finally {
@@ -362,6 +365,94 @@ usage: whisper-server [options]
         __clearWhisperServerLaunchRecordForTests();
       }
     }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+    it("L11: warm-up reuses weight identity in a fresh daemon and invalidates changed weights", async () => {
+      const root = mkdtempSync(join(ownershipDir, "identity-"));
+      const model = join(root, "model.bin"); writeFileSync(model, "first model weights");
+      // The preload's isolation keys win over explicit child env overrides.
+      const cache = join(process.env.VOICELAYER_STATE_DIR!, "whisper-identities",
+        createHash("sha256").update(model).digest("hex") + ".json");
+      const launch = async (cacheRequired: boolean) => {
+        const child = Bun.spawn([process.execPath, "-e", `
+          import {spyOn} from "bun:test";
+          import * as identity from "./src/whisper-model-identity";
+          import {ensureServer,__setWhisperServerTestHooksForTests,__resetWhisperServerStateForTests,whisperServerLaunchRecord} from "./src/whisper-server";
+          if (${cacheRequired}) spyOn(identity,"hashWhisperWeights").mockImplementation(()=>{throw Error("unexpected full-model read")});
+          let healthy=false;
+          __setWhisperServerTestHooksForTests({findServerBinary:()=>"/synthetic/whisper-server",
+            isServerHealthy:async()=>healthy,findExternalWhisperServerPids:()=>[],findPortListenerPids:()=>[],
+            spawn:()=>{healthy=true;return {pid:process.pid,kill:()=>{},stderr:null}},residentLiveStack:()=>false});
+          await ensureServer(18994); console.log(JSON.stringify(whisperServerLaunchRecord()));
+          __resetWhisperServerStateForTests(null);
+        `], { env: { ...process.env, QA_VOICE_WHISPER_MODEL: model }, stdout: "pipe", stderr: "pipe" });
+        const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+        expect({code, error: code ? err : null}).toEqual({code:0,error:null});
+        return JSON.parse(out).modelSha256;
+      };
+      try {
+        const first = await launch(false);
+        expect(await launch(true)).toBe(first);
+        writeFileSync(model, "other model weights"); // Same size; ctime/mtime must invalidate.
+        const expected = createHash("sha256").update("other model weights").digest("hex");
+        expect(await launch(false)).toBe(expected);
+        writeFileSync(cache, "invalid cache");
+        expect(await launch(false)).toBe(expected);
+      } finally { rmSync(root, {recursive:true,force:true}); rmSync(cache, {force:true}); clearWhisperServerOwnership(18994); }
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+    it("L11: startup notice is bounded while full stderr stays in the log", async () => {
+      const diagnostic = "begin-diagnostic:" + "x".repeat(6000) + ":end-diagnostic";
+      const logs: string[] = [];
+      const log = spyOn(console, "error").mockImplementation((...parts) => { logs.push(parts.join(" ")); });
+      __setWhisperServerTestHooksForTests({
+        findServerBinary: () => process.execPath, findModel: () => "/synthetic/model.bin",
+        spawn: () => Bun.spawn([process.execPath, "-e", `console.error(${JSON.stringify(diagnostic)});setTimeout(()=>process.exit(7),50)`], {
+          env: process.env, stdout: "pipe", stderr: "pipe",
+        }), isServerHealthy: async () => false, findPortListenerPids: () => [],
+      });
+      try {
+        const error = await ensureServer(18994).catch(e => e as Error);
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain("WHISPER_STARTUP_EXIT");
+        expect((error as Error).message.length).toBeLessThan(200);
+        expect(logs.join("\n")).toContain(diagnostic);
+      } finally {
+        log.mockRestore(); __setWhisperServerTestHooksForTests({});
+        __resetWhisperServerStateForTests(null); __clearWhisperServerLaunchRecordForTests();
+      }
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+    it("L11 R2: healthy Whisper logs only a bounded stderr tail on exit", async () => {
+      let spawned = false;
+      let stream!: ReadableStreamDefaultController<Uint8Array>;
+      const exit = Promise.withResolvers<number>(), logs: string[] = [];
+      const log = spyOn(console, "error").mockImplementation((...parts) => { logs.push(parts.join(" ")); });
+      __setWhisperServerTestHooksForTests({
+        findServerBinary: () => "/fixture/whisper-server", findModel: () => "/fixture/model.bin",
+        spawn: () => {
+          spawned = true;
+          return { pid: 31338, exited: exit.promise, exitCode: null,
+            stderr: new ReadableStream({ start(c) { stream = c; } }), kill: () => exit.resolve(0) };
+        }, isServerHealthy: async () => spawned, findPortListenerPids: () => spawned ? [31338] : [],
+      });
+      try {
+        await ensureServer(18994);
+        for (let i = 0; i < 300; i++) stream.enqueue(new TextEncoder().encode(`request-diagnostic-${i}: ${"x".repeat(120)}\n`));
+        await Bun.sleep(0);
+        expect(logs.join("\n")).not.toContain("request-diagnostic-");
+        stream.enqueue(new TextEncoder().encode("final-exit-diagnostic\n")); stream.close(); exit.resolve(7);
+        await Bun.sleep(0);
+        const diagnostics = logs.filter(l => l.includes("stderr"));
+        expect(diagnostics.join("\n")).toContain("final-exit-diagnostic");
+        expect(diagnostics.join("\n")).not.toContain("request-diagnostic-0:");
+        expect(diagnostics.join("\n").length).toBeLessThan(4500);
+      } finally {
+        try { stream.close(); } catch {} exit.resolve(0);
+        stopServer(); log.mockRestore(); __setWhisperServerTestHooksForTests({});
+        __resetWhisperServerStateForTests(null); __clearWhisperServerLaunchRecordForTests();
+        clearWhisperServerOwnership(18994);
+      }
+    });
 
     it("allows a slow live child with benign and Core ML fallback stderr", async () => {
       let spawned = false, healthPolls = 0;
@@ -467,12 +558,13 @@ usage: whisper-server [options]
     it("still launches a bench port when the operator opts in explicitly", async () => {
       const previousAllow = process.env.VOICELAYER_ALLOW_LOCAL_BENCH;
       process.env.VOICELAYER_ALLOW_LOCAL_BENCH = "1";
+      let healthy = false;
       __setWhisperServerTestHooksForTests({
         findServerBinary: () => "/tmp/whisper-server",
         findModel: () => "/tmp/ggml-large-v3-turbo.bin",
         residentLiveStack: () => true,
-        spawn: () => ({ pid: 31337, stderr: null, kill: () => {}, exitCode: null }),
-        isServerHealthy: async () => true,
+        spawn: () => { healthy = true; return { pid: 31337, stderr: null, kill: () => {}, exitCode: null }; },
+        isServerHealthy: async () => healthy,
         findPortListenerPids: () => [31337],
         sleep: async () => {},
       });
@@ -683,10 +775,9 @@ usage: whisper-server [options]
       }
     }, SUBPROCESS_TEST_TIMEOUT_MS);
 
-    it("adopts an unidentified healthy occupant instead of refusing the port", async () => {
-      // Previously this threw "already occupied by a non-VoiceLayer process".
-      // A healthy occupant we cannot identify is still someone's live server:
-      // use it, do not refuse and do not kill it.
+    it("refuses an unidentified healthy occupant without killing it", async () => {
+      // Health alone cannot establish the configured model's identity.
+      // Leave the foreign server running but refuse to use it.
       let spawnCalls = 0;
       const killed: Array<{ pid: number; signal: string }> = [];
 
@@ -707,7 +798,7 @@ usage: whisper-server [options]
       });
 
       try {
-        await expect(ensureServer(18887)).resolves.toBe(18887);
+        await expect(ensureServer(18887)).rejects.toThrow("model identity unverified");
         expect(killed).toEqual([]);
         expect(spawnCalls).toBe(0);
       } finally {
@@ -946,33 +1037,56 @@ usage: whisper-server [options]
 
     it("preserves adopted model provenance without inventing missing effort", async () => {
       const fake = startFakeHealthyServer();
+      const savedModel = process.env.QA_VOICE_WHISPER_MODEL;
+      const model = join(ownershipDir, "legacy-model.bin");
+      writeFileSync(model, "fixture weights");
+      writeFileSync(`${model}.sha256`, "a".repeat(64));
+      process.env.QA_VOICE_WHISPER_MODEL = model;
       writeWhisperServerOwnership(fake.port, {
         pid: process.pid,
         owner_pid: process.pid,
         started_at: "2026-09-05T18:40:00.000Z",
         binary: "/opt/homebrew/bin/whisper-server",
-        args: ["/opt/homebrew/bin/whisper-server", "-m", FAKE_MODEL],
-        model_path: FAKE_MODEL,
+        args: ["/opt/homebrew/bin/whisper-server", "-m", model],
+        model_path: model,
         performance_effort: "invalid",
         acceleration_mode: "metal",
       });
       __setWhisperServerTestHooksForTests({
-        findModel: () => FAKE_MODEL,
         findPortListenerPids: () => [process.pid],
       });
 
       try {
         await expect(ensureServer(fake.port)).resolves.toBe(fake.port);
-        expect(whisperServerLaunchRecord()?.modelPath).toBe(FAKE_MODEL);
+        expect(whisperServerLaunchRecord()?.modelPath).toBe(model);
         expect(whisperServerLaunchRecord()?.performanceEffort).toBeNull();
+        expect(buildRecordingProvenance({ backend: "whisper-server", languageMode: "auto",
+          probe: { machine: () => ({ host: null, chip: null, status: "pending" }),
+            whisperCppVersion: () => ({ version: null, source: "pending" }) } }).whisper_model_sha256).toBeNull();
       } finally {
+        if (savedModel === undefined) delete process.env.QA_VOICE_WHISPER_MODEL;
+        else process.env.QA_VOICE_WHISPER_MODEL = savedModel;
         resetWhisperServerModule();
         clearWhisperServerOwnership(fake.port);
         fake.stop();
       }
     });
 
-    it("adopts a healthy server with no ownership record rather than killing it", async () => {
+    it("L11: refuses unknown model identity without killing a healthy foreign server", async () => {
+      const fake = startFakeHealthyServer(); const signals: unknown[] = [];
+      __setWhisperServerTestHooksForTests({
+        findModel: () => FAKE_MODEL, findPortListenerPids: () => [777001],
+        killExternalPid: (...args) => { signals.push(args); },
+        spawn: () => { throw Error("must not launch"); },
+      });
+      try {
+        await expect(ensureServer(fake.port)).rejects.toThrow("Whisper server model identity unverified");
+        expect(signals).toEqual([]); expect(await fake.alive()).toBe(true);
+        expect(whisperServerLaunchRecord()).toBeNull();
+      } finally { resetWhisperServerModule(); fake.stop(); }
+    });
+
+    it("refuses a healthy server with no ownership record without killing it", async () => {
       const fake = startFakeHealthyServer();
       const killed: Array<{ pid: number; signal: string }> = [];
       let spawnCalls = 0;
@@ -993,7 +1107,7 @@ usage: whisper-server [options]
       });
 
       try {
-        await expect(ensureServer(fake.port)).resolves.toBe(fake.port);
+        await expect(ensureServer(fake.port)).rejects.toThrow("model identity unverified");
         expect(killed).toEqual([]);
         expect(spawnCalls).toBe(0);
         expect(await fake.alive()).toBe(true);
@@ -1006,7 +1120,7 @@ usage: whisper-server [options]
       }
     });
 
-    it("adopts a server whose ownership record names a dead pid", async () => {
+    it("refuses a server whose ownership record names a dead pid", async () => {
       const fake = startFakeHealthyServer();
       const killed: Array<{ pid: number; signal: string }> = [];
 
@@ -1037,7 +1151,7 @@ usage: whisper-server [options]
       });
 
       try {
-        await expect(ensureServer(fake.port)).resolves.toBe(fake.port);
+        await expect(ensureServer(fake.port)).rejects.toThrow("model identity unverified");
         expect(killed).toEqual([]);
         expect(await fake.alive()).toBe(true);
         expect(whisperServerLaunchRecord()).toBeNull();
@@ -1048,7 +1162,7 @@ usage: whisper-server [options]
       }
     });
 
-    it("records a flag mismatch on the adopted server instead of killing it", async () => {
+    it("refuses a different model on the adopted server without killing it", async () => {
       const fake = startFakeHealthyServer();
       const killed: Array<{ pid: number; signal: string }> = [];
 
@@ -1079,13 +1193,10 @@ usage: whisper-server [options]
       });
 
       try {
-        await expect(ensureServer(fake.port)).resolves.toBe(fake.port);
+        await expect(ensureServer(fake.port)).rejects.toThrow(FAKE_MODEL);
+        await expect(ensureServer(fake.port)).rejects.toThrow("/tmp/ggml-base.en.bin");
         expect(killed).toEqual([]);
         expect(await fake.alive()).toBe(true);
-        const record = whisperServerLaunchRecord();
-        expect(record?.adopted).toBe(true);
-        expect(record?.flagsMatch).toBe(false);
-        expect(record?.modelPath).toBe("/tmp/ggml-base.en.bin");
       } finally {
         resetWhisperServerModule();
         clearWhisperServerOwnership(fake.port);
@@ -1641,6 +1752,7 @@ usage: whisper-server [options]
       // timeout there keeps the ordinary retry even while another is adopted.
       const originalFetch = globalThis.fetch;
       const attemptedUrls: string[] = [];
+      let healthy = false;
 
       // @ts-ignore - test double
       globalThis.fetch = async (
@@ -1662,8 +1774,8 @@ usage: whisper-server [options]
           inferenceTimeoutMs: () => 10,
           findServerBinary: () => "/tmp/whisper-server",
           findModel: () => "/tmp/ggml-large-v3-turbo.bin",
-          spawn: () => ({ pid: 124, stderr: null, kill: () => {} }),
-          isServerHealthy: async () => true,
+          spawn: () => { healthy = true; return { pid: 124, stderr: null, kill: () => {} }; },
+          isServerHealthy: async () => healthy,
           sleep: async () => {},
           startupTimeoutMs: 25,
         });

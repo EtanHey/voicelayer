@@ -148,6 +148,10 @@ final class LaneGFormalConformanceTests: XCTestCase {
         var errors = Dictionary(uniqueKeysWithValues: ["Current", "FixedProjection", "FixedText", "N1", "N2", "N3", "N4", "N5", "N6", "WingBounds", "Resident", "N3NoticeBand"].map { ($0, [String]()) })
         var heights: [Int: CGFloat] = [:]
         let resident = VoiceBarNotchPresentationModel()
+        // Adaptation point (C4 F4): the corpus compares settled states. The resident model holds the reading canvas
+        // 0.6 s past a read's end so the collapse is never cut; settle that hold at once here (ReadingFollowupsL3Tests
+        // pins the timing itself), or one speaking row would leak its canvas into every later row.
+        resident.scheduleReadingCanvasRelease = { _, release in release() }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         for row in corpus.rows {
             let input = try input(row)
@@ -179,7 +183,8 @@ final class LaneGFormalConformanceTests: XCTestCase {
                 recordingLeadingWingWidth: feed.geometry.leadingWingWidth, recordingTrailingWingWidth: feed.geometry.trailingWingWidth,
                 teleprompterLeadingWingWidth: input.mode == .speaking ? feed.geometry.leadingWingWidth : nil,
                 teleprompterTrailingWingWidth: feed.visualState == .teleprompter ? feed.geometry.trailingWingWidth : nil,
-                keepsIdleExpanded: input.mode == .idle && !input.isCollapsed, transientNoteWidth: p.transientNoteWidth, feedback: p.feedback)
+                keepsIdleExpanded: input.mode == .idle && !input.isCollapsed, transientNoteWidth: p.transientNoteWidth, feedback: p.feedback,
+                holdsReadingCanvas: feed.holdsReadingCanvas)
             if resident.presentation != p { errors["Resident"]!.append(tag) }
             if p.geometry.leadingWingWidth > 132 || p.geometry.trailingWingWidth > 132 { errors["WingBounds"]!.append(tag) }
             if row.policy == "Current" {

@@ -428,6 +428,7 @@ public final class VoiceState {
                 if selectionCaptureInFlight { selectionCaptureCancelled = true }
             }
             if mode == .disconnected {
+                previousReadPresentation = nil
                 invalidateSelectionSpeechIdentity()
                 clearReadQueue()
             } else if mode != .speaking, !keepsSelectionReadThroughCapture {
@@ -778,6 +779,13 @@ public final class VoiceState {
 
     public var isPlaybackPaused: Bool {
         mode == .speaking && parkedRead != nil
+    }
+
+    /// C7 L3 (R893 P2): which read is on screen, for presentation state that belongs to one read (teleprompter
+    /// browsing). A long read keeps its id across chunks; otherwise the logical read epoch, which pause and resume
+    /// keep and a new utterance advances, even when the new read's text is identical.
+    public var teleprompterReadIdentity: String {
+        playbackLongReadID.map { "long:\($0)" } ?? "read:\(logicalReadEpoch)"
     }
 
     /// 2.4 Lane A (QA row 4): a read the user paused is parked while a dictation's own feedback ("Typed") holds the
@@ -1470,8 +1478,8 @@ public final class VoiceState {
     }
 
     /// Current playback owns only its acknowledged identity, never other pending submissions.
-    private func clearCurrentSelectionReadIdentity(advanceEpoch: Bool = false) {
-        if let id = selectionReadRequestID {
+    private func clearCurrentSelectionReadIdentity(advanceEpoch: Bool = false, retireCurrent: Bool = true) {
+        if retireCurrent, let id = selectionReadRequestID {
             retireSelectionRequest(id)
             if selectionSpeechRequestID == id {
                 selectionSpeechRequestID = nil
@@ -1510,6 +1518,7 @@ public final class VoiceState {
     }
 
     private func stopSelectionRead() {
+        supersedePendingSpeechSeek()
         invalidateSelectionSpeechIdentity()
         clearReadQueue()
         // BARE-STOP: a read stop is speech-scoped; it must never land on a dictation take that just opened.
@@ -1550,6 +1559,7 @@ public final class VoiceState {
     /// shown for, so a double press or a press racing auto-advance is a daemon no-op.
     public func skipToNextRead() {
         guard mode == .speaking || mode == .idle, let current = readQueueCurrentRequestID else { return }
+        supersedePendingSpeechSeek()
         if readQueueCount == 0 {
             invalidateSelectionSpeechIdentity()
             clearReadQueue()
@@ -2289,6 +2299,7 @@ public final class VoiceState {
     }
 
     public func stop(physicalPress: Bool = false) {
+        supersedePendingSpeechSeek()
         if let deferred = deferredBarRecording {
             switch deferred {
             case .queued(var request):
@@ -2377,6 +2388,7 @@ public final class VoiceState {
     }
 
     public func cancel(bypassingProcessingGuard: Bool = false) {
+        supersedePendingSpeechSeek()
         if mode == .speaking, showsReadingProcessingSpinner {
             sendCommand?(["cmd": "stop", "id": UUID().uuidString])
             return
@@ -2540,13 +2552,27 @@ public final class VoiceState {
         sendIntent(command: .replay, payload: ["cmd": "replay"])
     }
 
+    public var historyRetranscriptionAvailability: HistoryRetranscriptionAvailability {
+        MainActor.assumeIsolated {
+            if !isConnected { return .unavailable("VoiceLayer is disconnected") }
+            if nativeUpdateGate?.permitsNewVoice() == false { return .unavailable("An update owns VoiceBar") }
+            if hideDisabledReason != nil || pendingRecoveredTranscriptionPaste {
+                return .unavailable("Finish or cancel the current take and re-transcription first")
+            }
+            if mode == .speaking || isPlaybackPaused || isPlaybackPreparing || isAskCapture || historyPlayback.isVoiceBusy {
+                return .unavailable("Finish speech or Ask before re-transcribing")
+            }
+            if mode != .idle { return .unavailable("Recover VoiceBar before re-transcribing") }
+            return .available
+        }
+    }
+
     public func canRetranscribeLatestCapture(hasLatestCapture: Bool) -> Bool {
-        hasLatestCapture && mode != .recording && mode != .transcribing &&
-            !pendingRecoveredTranscriptionPaste && !isHistoryRetranscriptionPending
+        hasLatestCapture && historyRetranscriptionAvailability.isEnabled
     }
 
     public func retranscribeLastCapture() {
-        guard !pendingRecoveredTranscriptionPaste else { return }
+        guard historyRetranscriptionAvailability.isEnabled else { return }
         pendingRecoveredTranscriptionPaste = true
         sendIntent(
             command: .retranscribeLast,
@@ -2555,6 +2581,7 @@ public final class VoiceState {
     }
 
     public func retranscribeHistoryEntry(recordingPath: String) {
+        guard historyRetranscriptionAvailability.isEnabled else { return }
         let trimmedPath = recordingPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPath.isEmpty else { return }
         let id = UUID().uuidString
@@ -2575,19 +2602,32 @@ public final class VoiceState {
     /// When the hide ends ("Hidden until HH:MM"); nil while shown, or when the caller gave no end time.
     public private(set) var hiddenUntil: Date?
 
+    /// formal/control-availability MicDefault/MicReorder/MicMove/MicVisibleFirst: capture owns preferences.
+    public var microphonePriorityDisabledReason: String? {
+        mode == .recording || captureLive || isRecordingHandoffPending || pendingIntent?.command == .record
+            ? "Finish recording to change microphones" : nil
+    }
+
+    public static let hideUnfinishedTakeReason = "Finish or cancel this take before hiding VoiceBar."
+
+    public var hideDisabledReason: String? {
+        let unfinished = mode == .recording || mode == .transcribing || captureLive || isRecordingHandoffPending ||
+            isRecordingDrainPending || pendingIntent?.command == .record || deferredBarRecording != nil ||
+            deferredRecordingTakeID != nil || microphoneTakeID != nil || processingTakeCount > 0 ||
+            isHistoryRetranscriptionPending
+        return unfinished ? Self.hideUnfinishedTakeReason : nil
+    }
+
     public func snooze(until: Date? = nil) {
+        guard hideDisabledReason == nil else { return }
         isHidden = true
         hiddenUntil = until
         if deferredBarRecording != nil { cancel() }
         // QUEUE1b (lead ruling): Hide ends the user read chain on both sides; nothing resumes later.
         let hasWaitingReads = readQueueCurrentRequestID != nil
         switch mode {
-        case .recording, .transcribing:
-            var payload: [String: Any] = ["cmd": "cancel"]
-            if hasWaitingReads { payload["discard_read_queue"] = true }
-            sendIntent(command: .cancel, payload: payload, trackPending: false)
         case .speaking:
-            // BARE-STOP: Hide over speech stops speech only; a capture it means to end goes through cancel above.
+            // Hide over speech stops speech only; unfinished capture refuses Hide above.
             sendIntent(command: .stop, payload: ["cmd": "stop", "scope": "speech"], trackPending: false)
         default:
             if hasWaitingReads { sendIntent(command: .stop, payload: ["cmd": "stop", "scope": "speech"], trackPending: false) }
@@ -2657,7 +2697,7 @@ public final class VoiceState {
     }
 
     public var isTeleprompterScrubSeekable: Bool {
-        isTeleprompterPlaybackReady || (isTeleprompterReadback && retainedReadbackID != nil &&
+        (isTeleprompterPlaybackReady && !isPlaybackPaused) || (isTeleprompterReadback && retainedReadbackID != nil &&
             (retainedPlaybackDurationMilliseconds ?? 0) > 0)
     }
 
@@ -2677,6 +2717,11 @@ public final class VoiceState {
 
     /// U5: the daemon's word table for the utterance on screen (nil from a daemon without word timing).
     public private(set) var speechWords: SpeechWordTable?
+    /// Only timing owned by the read on screen can suppress its unavailable notice.
+    var currentSpeechTiming: SpeechWordTable? {
+        speechWords?.utteranceID == currentUtteranceID ? speechWords : nil
+    }
+
     /// U5: Teleprompter A lines (3–8) from its handle; app session only (SPEC open question 4).
     /// Lane B: the lines the read on screen wraps to at the current column (nil until the teleprompter measured it).
     public private(set) var teleprompterTextLineCount: Int?
@@ -2703,12 +2748,88 @@ public final class VoiceState {
     /// Playback-only: a word click names the utterance it was drawn from, never the latest one.
     public func seekSpeechWord(utteranceID: String, wordIndex: Int) {
         guard mode == .speaking, !isPlaybackPaused, speechWords?.utteranceID == utteranceID, wordIndex >= 0 else { return }
+        // C7 L3 V09: a long read is timed chunk by chunk as it synthesizes, and the daemon refuses a word it has not
+        // timed yet. A click on such a word of the read on screen (C4 F3: also before the first chunk) waits for its
+        // timing. C4 F1: it waits only `pendingSpeechSeekWindow`; a timing that arrives later never moves the voice.
+        if let table = speechWords, !table.isTimed(wordIndex) {
+            let tokens = teleprompterText.map(TeleprompterContentModel.displayTokens) ?? []
+            let pending = PendingSpeechSeek(utteranceID: utteranceID, wordIndex: wordIndex,
+                                            text: tokens.indices.contains(wordIndex) ? tokens[wordIndex] : nil,
+                                            readEpoch: logicalReadEpoch, clickedAt: playbackAmplitudeClock(),
+                                            serial: nextPendingSpeechSeekSerial())
+            pendingSpeechSeek = pending
+            schedulePendingSpeechSeekExpiry(Self.pendingSpeechSeekWindow) { [weak self] in
+                guard let self, self.pendingSpeechSeek?.serial == pending.serial else { return }
+                self.pendingSpeechSeek = nil
+            }
+            return
+        }
+        pendingSpeechSeek = nil
         sendCommand?(["cmd": "speech_seek", "utteranceId": utteranceID, "wordIndex": wordIndex,
                       "id": UUID().uuidString])
     }
 
+    /// C4 F1: how long a click on a word not yet timed may wait for its timing. Synthesis normally times the next
+    /// chunk well inside this; anything later would move the voice seconds after the click, so it is dropped.
+    public static let pendingSpeechSeekWindow: TimeInterval = 1.5
+
+    /// Arms a waiting click's expiry. Tests replace this to run an old expiry at a chosen moment.
+    @ObservationIgnored public var schedulePendingSpeechSeekExpiry: (TimeInterval, @escaping () -> Void) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    /// The display token a click is waiting on (drawn as pending), or nil.
+    public var pendingSpeechSeekWordIndex: Int? { pendingSpeechSeek?.wordIndex }
+
+    /// C7 L3 V09: a click on a word of the read on screen that the daemon has not timed yet.
+    private struct PendingSpeechSeek {
+        let utteranceID: String
+        let wordIndex: Int
+        /// The display token clicked; the timing that arrives must be for this same word.
+        let text: String?
+        let readEpoch: Int
+        /// `playbackAmplitudeClock` at the click.
+        let clickedAt: TimeInterval
+        let serial: Int
+    }
+    private var pendingSpeechSeek: PendingSpeechSeek?
+    /// Sol R902 P2: never reset, so each click's expiry is fenced to that click alone. A serial derived from the
+    /// pending item restarted at 1 after a retirement, letting an old expiry clear a newer click (even on a new read).
+    @ObservationIgnored private var pendingSpeechSeekSerials = 0
+    private func nextPendingSpeechSeekSerial() -> Int {
+        pendingSpeechSeekSerials &+= 1
+        return pendingSpeechSeekSerials
+    }
+
+    /// Sol R900 P2: a queued word click is the user's intent only until they navigate again. Any newer explicit
+    /// playback navigation (a scrub, pause/resume, a speed change, skip, previous read, stop or cancel) retires it,
+    /// so a timing that lands afterwards never drags the voice back to the old word. Another word click replaces it,
+    /// and a new read drops it (R902 P3).
+    private func supersedePendingSpeechSeek() {
+        pendingSpeechSeek = nil
+    }
+
+    /// Sends a pending click once its word is timed: same read, still playing, same word, inside the window.
+    /// Anything else drops it.
+    private func firePendingSpeechSeekIfTimed() {
+        guard let pending = pendingSpeechSeek else { return }
+        guard pending.readEpoch == logicalReadEpoch, mode == .speaking, !isPlaybackPaused,
+              playbackAmplitudeClock() - pending.clickedAt <= Self.pendingSpeechSeekWindow,
+              let table = speechWords, table.utteranceID == pending.utteranceID else {
+            pendingSpeechSeek = nil
+            return
+        }
+        guard table.isTimed(pending.wordIndex) else { return }
+        pendingSpeechSeek = nil
+        guard pending.text == nil || table.words[pending.wordIndex]?.text == pending.text else { return }
+        sendCommand?(["cmd": "speech_seek", "utteranceId": pending.utteranceID, "wordIndex": pending.wordIndex,
+                      "id": UUID().uuidString])
+    }
+
     public func seek(offsetMs: Int) {
-        guard mode == .speaking || isTeleprompterReadback, offsetMs >= 0 else { return }
+        guard mode == .speaking || isTeleprompterReadback, offsetMs >= 0,
+              mode != .speaking || !isPlaybackPaused else { return }
+        supersedePendingSpeechSeek()
         var command: [String: Any] = ["cmd": "seek", "offset_ms": offsetMs]
         if isTeleprompterReadback {
             guard let retainedReadbackID else { showConfirmation("Replay prefix audio unavailable"); return }
@@ -2742,6 +2863,7 @@ public final class VoiceState {
 
     public func stopSpeechDuringCapture() {
         guard isCaptureSettlementPending, parkedRead != nil else { return }
+        supersedePendingSpeechSeek()
         sendCommand?(["cmd": "stop", "scope": "speech", "id": UUID().uuidString])
         clearCurrentSelectionReadIdentity()
         parkedRead = nil
@@ -2760,6 +2882,7 @@ public final class VoiceState {
     @discardableResult
     private func togglePlaybackPause(sendsElapsed: Bool) -> String? {
         guard mode == .speaking, let sendCommand else { return nil }
+        supersedePendingSpeechSeek()
         let id = UUID().uuidString
         var command: [String: Any] = ["id": id]
         let scope = parkedRead.map { ($0.playbackID, $0.generation) } ?? (currentPlayback?.id, currentPlayback?.generation)
@@ -2889,6 +3012,8 @@ public final class VoiceState {
         guard playbackID == currentPlayback.id else { return false }
         return generation.map { $0 >= currentPlayback.generation } ?? true
     }
+
+    private var previousReadPresentation: (id: String, generation: Int, borrower: String, request: String?, read: ReadSnapshot)?
 
     /// CLICK2: why `ownsPlaybackEvent` refused an event, in allowlisted words.
     private func playbackEventDropReason(_ event: [String: Any]) -> String {
@@ -3118,6 +3243,7 @@ public final class VoiceState {
         guard let sendCommand else { return nil }
         let id = UUID().uuidString
         let next = Self.nextPlaybackSpeed(after: playbackSpeed)
+        supersedePendingSpeechSeek()
         playbackSpeed = next
         sendCommand(["cmd": "set_playback_speed", "speed": next, "id": id])
         return id
@@ -3131,6 +3257,7 @@ public final class VoiceState {
             showConfirmation("No previous read")
             return nil
         }
+        supersedePendingSpeechSeek()
         let id = UUID().uuidString
         sendCommand(["cmd": "previous_read", "id": id])
         return id
@@ -3654,6 +3781,30 @@ public final class VoiceState {
                 }
                 if idleSource == "recording" { refreshModelsBusy() }
             case "speaking":
+                let previousHold = event["previous_read_hold"] as? [String: Any]
+                let heldID = previousHold?["playback_id"] as? String
+                let heldGeneration = previousHold?["generation"] as? Int
+                let lendsPresentation = mode == .speaking && heldID != nil
+                    && ((currentPlayback != nil && heldID == currentPlayback?.id)
+                        || (currentUtteranceID != nil && previousHold?["utterance_id"] as? String == currentUtteranceID))
+                    && heldGeneration.map { $0 > 0 && $0 >= (currentPlayback?.generation ?? 0) } == true
+                let previousReturn = event["previous_read_return"] as? [String: Any]
+                if let previousReturn {
+                    // The saved loan survives Stop/legacy idle, but never a superseding presentation.
+                    guard let held = previousReadPresentation, mode == .speaking || mode == .idle,
+                          mode == .idle || currentPlayback?.id == held.borrower,
+                          previousReturn["from_playback_id"] as? String == held.borrower,
+                          previousReturn["pause_owner"] as? String == "user",
+                          let offset = previousReturn["offset_ms"] as? Int, offset >= 0,
+                          event["playback_id"] as? String == held.id,
+                          event["request_id"] as? String == held.request,
+                          let generation = event["generation"] as? Int, generation >= held.generation else {
+                        logSpeakingDrop(event, reason: "wrong-return-owner")
+                        return
+                    }
+                    // Optimistic Stop can retire this unended loan; only its exact return reactivates it.
+                    if let request = held.request { selectionRetiredRequestIDs.removeAll { $0 == request } }
+                }
                 let requestID = event["request_id"] as? String
                 if let requestID, selectionRetiredRequestIDs.contains(requestID) {
                     logSpeakingDrop(event, reason: "retired-request")
@@ -3667,6 +3818,12 @@ public final class VoiceState {
                 if let submission, submission.order < selectionReceiptOrder {
                     logSpeakingDrop(event, reason: "older-receipt")
                     return
+                }
+                if lendsPresentation, let heldID, let heldGeneration, let borrower = event["playback_id"] as? String {
+                    previousReadPresentation = (heldID, heldGeneration, borrower, selectionReadRequestID, currentReadSnapshot())
+                } else if previousReturn == nil, let held = previousReadPresentation,
+                          event["playback_id"] as? String != held.borrower, event["preserves_paused_read"] as? Bool != true {
+                    previousReadPresentation = nil
                 }
                 if event["preserves_paused_read"] as? Bool != true { askParkedRead = nil }
                 if let submission {
@@ -3690,7 +3847,7 @@ public final class VoiceState {
                 }
                 if readID == nil || readID != selectionReadID || (requestID != nil && requestID != selectionReadRequestID) {
                     if requestID != selectionReadRequestID {
-                        clearCurrentSelectionReadIdentity(advanceEpoch: false)
+                        clearCurrentSelectionReadIdentity(advanceEpoch: false, retireCurrent: !lendsPresentation)
                     }
                     // A different read supersedes this capture, without becoming a user Stop.
                     if !acknowledgesSubmission, selectionCaptureInFlight { selectionCaptureCancelled = true }
@@ -3725,7 +3882,10 @@ public final class VoiceState {
                     && edgeUtteranceID == currentUtteranceID && playbackStartedAt != nil && !isPlaybackPreparing
                 // Only a daemon that reports its player's position also marks its re-anchors; an older one's seek
                 // edges carry no `reanchor`, so the guard never refuses them.
+                // C4 F7: an edge at another speed is never stale: keeping the old clock would run the highlight at the
+                // old rate over audio at the new one, landing clicks and the highlight on neighbouring words.
                 let keepsClock = continuesRead && daemonReportsPosition && event["reanchor"] == nil
+                    && Self.playbackRate(event["playback_rate"]) == playbackRate
                     && ((event["playback_offset_ms"] as? NSNumber)?.intValue).map { $0 < shownPosition - 300 } == true
                 if keepsClock { logDiagnostic("stale_speaking_edge_clock_kept", details: ["shown_ms": String(shownPosition)]) }
                 let keptClock = keepsClock ? (startedAt: playbackStartedAt, start: playbackChunkStartMilliseconds,
@@ -3734,6 +3894,8 @@ public final class VoiceState {
                 if mode != .speaking || edgeUtteranceID != currentUtteranceID ||
                     (edgeUtteranceID == nil && (event["playback_id"] as? String) != currentPlayback?.id) {
                     logicalReadEpoch += 1
+                    // Sol R902 P3: a waiting click belongs to the read it was made on; the new read never shows it.
+                    supersedePendingSpeechSeek()
                 }
                 currentUtteranceID = edgeUtteranceID
                 resetAudioLevels()
@@ -3780,6 +3942,10 @@ public final class VoiceState {
                 }
                 playbackAmplitudeEnvelope = playbackAmplitude
                 playbackAmplitudeStartedAt = playbackAmplitude.map { _ in playbackStart }
+                // X1-34 (C6 L3): Hide is independent of Pause, so resuming the same parked player keeps a teleprompter
+                // the eye hid ("reading playing hidden"). Any other read starts shown. Read before the clears below.
+                let keepsHiddenOnResume = isTeleprompterDismissed && parkedRead?.playbackID != nil &&
+                    parkedRead?.playbackID == event["playback_id"] as? String
                 clearRetainedTeleprompter()
                 // A speaking event precedes the fresh subtitle payload. Do not let
                 // timings from the previous utterance animate a similar new one.
@@ -3790,10 +3956,16 @@ public final class VoiceState {
                     let stored = playbackTimelineChunks[playbackChunkStartMilliseconds]
                     wordBoundaries = stored?.text == event["text"] as? String ? stored?.words ?? [] : []
                 }
+                if previousReturn != nil, let held = previousReadPresentation,
+                   held.id == event["playback_id"] as? String {
+                    restoreLongReadDocument(held.read.document)
+                    speechWords = held.read.speechWords
+                    previousReadPresentation = nil
+                }
                 updateLongReadDocument(longRead, readbackID: playbackReadbackID,
                                        chunkText: event["text"] as? String ?? "", displayValue: event["display"])
                 mode = .speaking
-                isTeleprompterDismissed = false
+                isTeleprompterDismissed = keepsHiddenOnResume
                 // Every speaking edge is the daemon playing: the resumed read or its replacement.
                 retireParkedRead()
                 currentPlayback = (event["playback_id"] as? String).flatMap { id in
@@ -3821,6 +3993,13 @@ public final class VoiceState {
                 }
                 canReplay = true
                 hotkeyPhase = .idle
+                if let previousReturn {
+                    var pause = event
+                    pause["state"] = "paused"
+                    pause["offset_ms"] = previousReturn["offset_ms"]
+                    pause["pause_owner"] = previousReturn["pause_owner"]
+                    handlePlaybackStateEvent(pause)
+                }
                 onModeChange?(.speaking)
                 expandFromCollapse()
             case "recording":
@@ -4088,6 +4267,7 @@ public final class VoiceState {
 
         case "speech_words":
             if var table = speechWords, table.apply(event) { speechWords = table }
+            firePendingSpeechSeekIfTimed()
 
         case "subtitle":
             // Old daemons' missing/mistyped words are a no-op. Indexed payloads
@@ -5903,6 +6083,7 @@ public final class VoiceState {
     ) {
         // Speech-only retirement; recorder intent payloads and stop/cancel bodies stay unchanged.
         if retiresSelections, command == .stop || command == .cancel { invalidateSelectionSpeechIdentity() }
+        if command == .stop || command == .cancel { supersedePendingSpeechSeek() }
         let id = UUID().uuidString
         var payloadWithID = payload
         payloadWithID["id"] = id

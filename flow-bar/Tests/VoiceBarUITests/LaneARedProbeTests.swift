@@ -48,10 +48,15 @@ final class LaneARedProbeTests: XCTestCase {
     func testProbeEscapeDeliveredToVoiceBarClosesHistory() throws {
         _ = NSApplication.shared
         var closes = 0
-        let dismissal = LaneAProbeShim.dismissal { closes += 1 }
+        let dismissal = LaneAProbeShim.dismissal(reason: .escape) { closes += 1 }
         let settings = window([.titled])
         defer { settings.close(); LaneAProbeShim.stop(dismissal) }
         LaneAProbeShim.start(dismissal)
+        // An outside click is a different dismissal, even if it arrives while this Escape probe drains events.
+        let unrelatedClick = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .leftMouseDown, location: NSPoint(x: 10, y: 10), modifierFlags: [], timestamp: 0,
+            windowNumber: settings.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 1))
+        NSApp.postEvent(unrelatedClick, atStart: false)
         let escape = try XCTUnwrap(NSEvent.keyEvent(
             with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: settings.windowNumber,
             context: nil, characters: "\u{1B}", charactersIgnoringModifiers: "\u{1B}", isARepeat: false, keyCode: 53))

@@ -5,8 +5,9 @@ import XCTest
 
 /// 2.3 U2, one test per wing state of the 3-wings mock, run in the test host: the real `BarView` inside the real
 /// non-activating `FloatingPillPanel`, offscreen. Events go to the panel with `sendEvent`, so nothing is posted to
-/// the system and the pointer never moves. Each test checks that both wings stay at the fixed 73.5 pt, that the
-/// right wing never holds more than two controls, and that the first click on every control dispatches its
+/// the system and the pointer never moves. Each test checks that both wings stay at the fixed 73.5 pt (T1/T5: reading has
+/// its transport and recording-style wings; a PTT recording's left wing is the three-control 99.5 pt, Stop · Pause · ✕), that the right
+/// wing never holds more than two controls, and that the first click on every control dispatches its
 /// action once while the panel stays non-key and the frontmost app stays put (PILL1).
 ///
 /// The interaction configurations mirror `AppDelegate.notchInteractionConfiguration` (pinned to the same values
@@ -119,12 +120,11 @@ final class WingsU2HostTests: XCTestCase {
             configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
         )
         XCTAssertEqual(host.layout.presentation.visualState, .recording)
-        // 2.3 N1: the right wing hugs the time, the microphone and the level meter; it holds no control. Recording
-        // pause: Pause takes the third left-wing slot, as Lock does on a VAD take, so the left wing is the
-        // three-control width.
+        // Pause takes the third left-wing slot, as Lock does on a VAD take. C7-W: both wings take the time/meter
+        // wing's width (102 pt, wider than the three controls' 99.5); the right wing still holds no control.
         assertFixedWings(host, leading: 3, trailing: 0,
                          trailingWidth: VoiceBarNotchContract.recordingTrailingWingWidth,
-                         leadingWidth: VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl)
+                         leadingWidth: VoiceBarNotchContract.recordingTrailingWingWidth)
         // From the core outward: Cancel, then Pause, then Stop.
         firstClick(host, control: 0)
         XCTAssertEqual(host.router.calls, ["cancel"])
@@ -137,22 +137,27 @@ final class WingsU2HostTests: XCTestCase {
         XCTAssertEqual(host.router.calls, ["cancel", "stop"], "Stop stays reachable beside Pause")
     }
 
-    func testTranscribingKeepsHistoryAndSettingsLiveWithoutAThirdControl() {
+    /// c9-P (Etan, 2026-11-12): while transcribing the band keeps the recording wings and the right wing is the
+    /// rippling meter, so it holds no control; the microphone control stays live on the left (0510 N9). History and
+    /// Settings come back with the launcher (the drawer pull reaches them meanwhile, as while recording).
+    func testTranscribingKeepsTheRecordingWingsWithTheMeterRightAndOnlyTheMicrophoneLive() {
         let state = makeState()
         state.handleEvent(["type": "state", "state": "transcribing"])
         let callbacks = Callbacks()
         let host = makeHost(
             state: state,
-            configuration: VoiceBarNotchInteractionConfiguration(trailingControlCountFromCore: 2),
+            configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 1),
             callbacks: callbacks
         )
         XCTAssertEqual(host.layout.presentation.visualState, .compactStatus)
-        assertFixedWings(host, leading: 0, trailing: 2)
-        firstClick(host, control: 1)
-        XCTAssertEqual(callbacks.calls, ["settings"])
+        let wing = VoiceBarPresentation.transcribingWingWidth(visibleCoreOcclusionInset: 0)
+        XCTAssertEqual(wing, VoiceBarNotchContract.recordingTrailingWingWidth)
+        assertFixedWings(host, leading: 1, trailing: 0, trailingWidth: wing, leadingWidth: wing)
         firstClick(host, control: 0)
         drainMain()
-        XCTAssertTrue(hasTooltip(host, "Close history"))
+        XCTAssertEqual(callbacks.calls, ["microphones"], "the chevron still opens the microphone list")
+        XCTAssertFalse(hasTooltip(host, "History"))
+        XCTAssertFalse(hasTooltip(host, "Settings"))
         XCTAssertEqual(host.router.calls, [], "the spinner is not a control and nothing cancels the take")
     }
 
@@ -165,7 +170,7 @@ final class WingsU2HostTests: XCTestCase {
         state.sendCommand = { if let cmd = $0["cmd"] as? String { sent.append(cmd) } }
         let host = makeHost(state: state, configuration: BarViewClickabilityTests.readingConfiguration(trailingFromOuter: 2))
         XCTAssertEqual(host.layout.presentation.visualState, .compactStatus)
-        assertFixedWings(host, leading: 4, trailing: 2, trailingWidth: VoiceBarNotchContract.recordingTrailingWingWidth,
+        assertFixedWings(host, leading: 4, trailing: 2, trailingWidth: VoiceBarPresentation.readingTransportWingWidth,
                          leadingWidth: VoiceBarPresentation.readingTransportWingWidth)
         assertDrawnControlsSitOnTheirHitRects(host, ["Next read", "Pause speech", "Previous read", "Playback speed",
                                                      "Stop speaking", "Show teleprompter"])
@@ -179,6 +184,8 @@ final class WingsU2HostTests: XCTestCase {
         XCTAssertFalse(state.isTeleprompterDismissed, "the eye shows the teleprompter again")
     }
 
+    /// X1-32/X1-34 (C6 L3): paused hidden keeps the eye one pitch inside the terminal, which is an X ("Close read")
+    /// that ends the read through Stop's route.
     func testReadingAloudPausedIsPlayLeftTimeAndStopRight() {
         let state = makeSpeakingState()
         state.handleEvent(["type": "playback_state", "state": "paused", "playback_id": "p-1", "generation": 2,
@@ -186,11 +193,11 @@ final class WingsU2HostTests: XCTestCase {
         state.dismissTeleprompter()
         var sent: [String] = []
         state.sendCommand = { if let cmd = $0["cmd"] as? String { sent.append(cmd) } }
-        let host = makeHost(state: state, configuration: BarViewClickabilityTests.readingConfiguration(trailingFromOuter: 1))
-        assertFixedWings(host, leading: 4, trailing: 1, trailingWidth: VoiceBarNotchContract.recordingTrailingWingWidth,
+        let host = makeHost(state: state, configuration: BarViewClickabilityTests.readingConfiguration(trailingFromOuter: 2))
+        assertFixedWings(host, leading: 4, trailing: 2, trailingWidth: VoiceBarPresentation.readingTransportWingWidth,
                          leadingWidth: VoiceBarPresentation.readingTransportWingWidth)
         assertDrawnControlsSitOnTheirHitRects(host, ["Next read", "Resume speech", "Previous read", "Playback speed",
-                                                     "Stop speaking"])
+                                                     "Close read", "Show teleprompter"])
         firstClick(host, control: BarViewClickabilityTests.pauseIndex)
         XCTAssertEqual(sent, ["resume"])
         firstClick(host, control: BarViewClickabilityTests.compactStopIndex)
@@ -213,7 +220,7 @@ final class WingsU2HostTests: XCTestCase {
         XCTAssertEqual(host.layout.presentation.visualState, .teleprompter)
         let geometry = host.layout.presentation.geometry
         XCTAssertEqual(geometry.leadingWingWidth, VoiceBarPresentation.readingTransportWingWidth, accuracy: 0.001)
-        XCTAssertEqual(geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth, accuracy: 0.001)
+        XCTAssertEqual(geometry.trailingWingWidth, VoiceBarPresentation.readingTransportWingWidth, accuracy: 0.001)
         let pause = host.controlRects[BarViewClickabilityTests.pauseIndex]
         let point = NSPoint(x: pause.midX, y: pause.midY)
         guard let target = host.host.hitTest(point), let down = event(.leftMouseDown, at: point, in: host.panel) else {

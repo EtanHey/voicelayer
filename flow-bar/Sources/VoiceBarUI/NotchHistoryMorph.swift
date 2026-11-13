@@ -70,12 +70,15 @@ public enum NotchHistoryMorph {
     public static let pullResponse: Double = springResponse
     public static let pullDampingFraction: Double = springDampingFraction
 
-    /// History's window below the 32 pt band: seven rows plus the transient-note reserve, or the 12-row panel,
-    /// whichever is taller (578 pt; the window stays 610 pt, inside the 640 pt narrow-display guard). An extended
-    /// panel and a note share this space; the shell never draws past it.
+    /// The drawer family's window below the 32 pt band (History and the Settings drawer share it, so swapping them
+    /// never resizes it): the collapsed rows plus the transient-note reserve (528 pt), the expanded rows, or C6 L2c
+    /// (N16) the tallest Settings drawer with room under its last row (560 pt), whichever is tallest. The panel is
+    /// 609 pt, inside the 640 pt narrow-display guard. An extended drawer and a note share this space; the shell
+    /// never draws past it.
     public static var historyCanvasLowerSurfaceHeight: CGFloat {
         max(lowerSurfaceHeight(rows: CGFloat(visibleRows)) + VoiceBarNotchContract.transientNoteCanvasReserve,
-            lowerSurfaceHeight(rows: CGFloat(maximumRows)))
+            lowerSurfaceHeight(rows: CGFloat(maximumRows)),
+            NotchSettingsDrawerPresentation.tallestCanvasLowerSurfaceHeight)
     }
 
     /// How far the handle may extend: never past the rows there are to show (no empty rows), never past 8.
@@ -83,12 +86,16 @@ public enum NotchHistoryMorph {
         max(visibleRows, min(maximumRows, entryCount))
     }
 
+    /// How far past either end the handle's rows may stretch, in rows.
+    public static let rubberBandRows: CGFloat = 0.6
+
     /// The mock's handle drag: rows follow the pointer and stretch with resistance past either end (at most
-    /// 0.6 of a row), so the handle never hits a wall.
-    public static func rowsRubberBand(_ rows: CGFloat, maximum: Int) -> CGFloat {
-        let low = CGFloat(visibleRows), high = CGFloat(maximum)
-        if rows > high { return high + (1 - 1 / (1 + (rows - high) * 0.5)) * 0.6 }
-        if rows < low { return low - (1 - 1 / (1 + (low - rows) * 0.5)) * 0.6 }
+    /// 0.6 of a row), so the handle never hits a wall. `minimum` is the drawer's lowest resting rows (History's six,
+    /// the Settings drawer's eight).
+    public static func rowsRubberBand(_ rows: CGFloat, maximum: Int, minimum: Int = visibleRows) -> CGFloat {
+        let low = CGFloat(minimum), high = CGFloat(maximum)
+        if rows > high { return high + (1 - 1 / (1 + (rows - high) * 0.5)) * rubberBandRows }
+        if rows < low { return low - (1 - 1 / (1 + (low - rows) * 0.5)) * rubberBandRows }
         return rows
     }
 
@@ -97,9 +104,11 @@ public enum NotchHistoryMorph {
     /// pointer climbed, then close on release). The rows stay at six and the panel closes with the pointer: its open
     /// progress falls by one row's travel for every row the pointer climbs. `openTravel` is the panel's close travel
     /// (open height minus the 32 pt band).
-    public static func handleDrag(rawRows: CGFloat, maximum: Int, openTravel: CGFloat) -> (rows: CGFloat, progress: CGFloat) {
-        let low = CGFloat(visibleRows)
-        guard rawRows < low else { return (rowsRubberBand(rawRows, maximum: maximum), 1) }
+    public static func handleDrag(
+        rawRows: CGFloat, maximum: Int, openTravel: CGFloat, minimum: Int = visibleRows
+    ) -> (rows: CGFloat, progress: CGFloat) {
+        let low = CGFloat(minimum)
+        guard rawRows < low else { return (rowsRubberBand(rawRows, maximum: maximum, minimum: minimum), 1) }
         return (low, max(0, 1 - (low - rawRows) * rowHeight / max(1, openTravel)))
     }
 
@@ -110,6 +119,11 @@ public enum NotchHistoryMorph {
     /// past zero rows; the old `rawRows > 0` guard refused exactly that release, so the panel stayed open.
     public static func handleClosesHistory(rawRows: CGFloat) -> Bool {
         rawRows <= handleCloseRows
+    }
+
+    /// C6 L2c (N16): the same release rule for any drawer's grip: 1.25 rows above its lowest resting rows closes it.
+    public static func handleCloses(rawRows: CGFloat, minimum: Int) -> Bool {
+        rawRows <= CGFloat(minimum) - (CGFloat(visibleRows) - handleCloseRows)
     }
 
     /// Where a released handle settles: the nearer detent (6 collapsed, or the expanded rows), never between.
@@ -131,6 +145,9 @@ public enum NotchHistoryMorph {
 
     /// A press that moves less than this is a click, never a drag.
     public static let dragSlop: CGFloat = 3
+    /// C7-W: a press on the recording wing that travels no further than this is a click (a dab), not a pull. Measured
+    /// on the M1: flicks of 16 pt and more already open History; 10 pt and less did nothing.
+    public static let wingClickTravel: CGFloat = 10
     /// Etan, QA 0510 N5: the first sample past the slop hands the panel over with no displacement (Codex R2) only
     /// while it is within this distance of the press. Travel beyond it is pointer motion the panel catches up on, so
     /// a quick flick whose second sample lands 40 pt away moves the panel like a slow drag over the same distance.
@@ -201,6 +218,11 @@ public enum NotchHistoryMorph {
         (pow(2 * Double.pi / response, 2), 4 * Double.pi * dampingFraction / response)
     }
 
+    /// A critically damped close must start toward zero, without enough speed to cross it.
+    public static func closingVelocity(from progress: CGFloat, velocity: Double) -> Double {
+        min(0, max(-2 * Double.pi / closeResponse * Double(max(0, progress)), velocity))
+    }
+
     /// The spring toward `open`. `velocity` is in progress per second (a flick's release speed); SwiftUI's
     /// initial velocity is relative to the distance still to travel, so it is converted here. Interpolating
     /// springs merge with the one already running and keep its velocity, which is what makes every morph
@@ -214,7 +236,8 @@ public enum NotchHistoryMorph {
             ? springCoefficients(response: openResponse, dampingFraction: openDampingFraction)
             : springCoefficients(response: closeResponse, dampingFraction: closeDampingFraction)
         let distance = Double((opening ? 1 : 0) - progress)
-        let relative = abs(distance) > 0.001 ? velocity / distance : 0
+        let speed = opening ? velocity : closingVelocity(from: progress, velocity: velocity)
+        let relative = abs(distance) > 0.001 ? speed / distance : 0
         return .interpolatingSpring(
             mass: 1,
             stiffness: coefficients.stiffness,
@@ -264,7 +287,8 @@ public struct NotchHistorySpringFlight: Equatable {
         let coefficients = NotchHistoryMorph.springCoefficients(response: response, dampingFraction: dampingFraction)
         self.from = from
         self.to = to
-        self.velocity = velocity
+        self.velocity = to == 0 && dampingFraction == 1
+            ? NotchHistoryMorph.closingVelocity(from: from, velocity: velocity) : velocity
         self.start = start
         self.stiffness = coefficients.stiffness
         self.damping = coefficients.damping

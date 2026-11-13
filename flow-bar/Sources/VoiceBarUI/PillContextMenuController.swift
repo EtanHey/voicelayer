@@ -53,6 +53,7 @@ public final class PillContextMenuController: NSObject {
     public var onOpenSettings: () -> Void = {}
     public var onSnooze: () -> Void = {}
     public var onUnsnooze: () -> Void = {}
+    public var hideDisabledReasonProvider: () -> String? = { nil }
     public var isSnoozedProvider: () -> Bool = { false }
     /// Opens Settings › General › Microphone priority. There is no direct device pick here (D2).
     public var onChangeMicrophone: () -> Void = {}
@@ -60,6 +61,7 @@ public final class PillContextMenuController: NSObject {
     public var onPasteLastTranscript: () -> Void = {}
     public var onCopyLastTranscript: () -> Void = {}
     public var canRetranscribeLatestProvider: () -> Bool = { false }
+    public var retranscribeLatestDisabledReasonProvider: () -> String? = { nil }
     public var onRetranscribeLatest: () -> Void = {}
     public var onPasteTranscript: (String) -> Void = { _ in }
     /// 2.3 U2: the microphones the notch picker lists, in priority order (connected and visible only).
@@ -95,6 +97,8 @@ public final class PillContextMenuController: NSObject {
                 action: #selector(handleSnooze),
                 keyEquivalent: ""
             )
+            snoozeItem.isEnabled = hideDisabledReasonProvider() == nil
+            snoozeItem.toolTip = hideDisabledReasonProvider()
             snoozeItem.target = self
             menu.addItem(snoozeItem)
         }
@@ -131,6 +135,8 @@ public final class PillContextMenuController: NSObject {
         )
         retranscribeItem.target = self
         retranscribeItem.isEnabled = canRetranscribeLatestProvider()
+        retranscribeItem.toolTip = retranscribeLatestDisabledReasonProvider()
+        retranscribeItem.setAccessibilityHelp(retranscribeLatestDisabledReasonProvider())
         menu.addItem(retranscribeItem)
 
         menu.addItem(.separator())
@@ -187,11 +193,13 @@ public final class PillContextMenuController: NSObject {
             ("Paste last transcript", #selector(handlePasteLastTranscript), Self.isPasteEnabled(transcript: transcriptProvider())),
             ("Settings…", #selector(handleOpenSettings), true),
             (isSnoozedProvider() ? "Show VoiceBar" : "Hide notch for 1 hour",
-             isSnoozedProvider() ? #selector(handleUnsnooze) : #selector(handleSnooze), true),
+             isSnoozedProvider() ? #selector(handleUnsnooze) : #selector(handleSnooze),
+             isSnoozedProvider() || hideDisabledReasonProvider() == nil),
         ] {
             let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
             item.target = self
             item.isEnabled = enabled
+            if action == #selector(handleSnooze) { item.toolTip = hideDisabledReasonProvider() }
         }
         // macOS appends its own Quit; adding another would duplicate the Dock command.
         menu.insertItem(.separator(), at: 2)
@@ -207,6 +215,8 @@ public final class PillContextMenuController: NSObject {
         let again = NSMenuItem(title: "Transcribe latest again", action: #selector(handleRetranscribeLatest), keyEquivalent: "")
         again.target = self
         again.isEnabled = canRetranscribeLatestProvider()
+        again.toolTip = retranscribeLatestDisabledReasonProvider()
+        again.setAccessibilityHelp(retranscribeLatestDisabledReasonProvider())
         menu.insertItem(again, at: 2)
         menu.item(withTitle: "Settings…")?.keyEquivalent = ","
         menu.item(withTitle: "Hide notch for 1 hour")?.title = "Hide for 1 hour"

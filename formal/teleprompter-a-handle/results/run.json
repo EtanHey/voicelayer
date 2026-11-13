@@ -11,11 +11,11 @@
     "formal/teleprompter-a-handle/CancelLeakMutant.cfg": "ccfc8339c139f5ef7e5c50e447d7744d31844728408550fa2a18482583016e72",
     "formal/teleprompter-a-handle/SharedHoldMutant.cfg": "0df4e5079fac548275daac98617538f9af9918c8d48e1c3a5e217fa231d7a608",
     "formal/teleprompter-a-handle/Fixed.cfg": "345e0359af8c9fd7590f585ac5d34a10b4756e97913448c95d52afee7dbf2f2e",
-    "flow-bar/Sources/VoiceBarUI/TeleprompterAView.swift": "fa63b8ebc8c110393b382037c544959e260e4a0f81b99b6b1341237707600f2c",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "54675519a5d6076901d389ea8036ae6b97fe1558c0d344318e26b22e1ef52990",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "18c9e0266e20670b4bf9f5898135ae387a6a6970b03d34a460472805ad37742f",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchMorphPrototype.swift": "04c646c9f9cf9e2ee47079a733d65ec4ba8a35ebaadc11f3a2a86f763a7ce39a",
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "941c3f976c22b29b697a7b80ea49e5aa0e7e51aaca7d09396c2513c4b104a5a5",
+    "flow-bar/Sources/VoiceBarUI/TeleprompterAView.swift": "ba647066912d5c16b6639401b3c5b8eec28b050cbe0ef9fa86123c13dfbc199f",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "f549f6c96d60d0c52c73acc08739dd6d8bbb169a502f99aacf53e589e42ac4a8",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "ee03f20787938b45941009a94c05272833ce0d1e22273953194e43e333da56a1",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchMorphPrototype.swift": "ab82a5c3187d0e2b1616c7b76e22073253d3b5c713380c7b81fe784682f6c5b7",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "42dab7fa42799b377cd70d25b89d708acf2380e9c153f4d964db0db7c44cc7d5",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {

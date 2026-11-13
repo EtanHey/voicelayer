@@ -23,9 +23,9 @@
     "formal/ptt-silence-timeout/NoRenewalMutant.cfg": "8086bcbf5f618d61bab9ba9946a7009d172548f64f5d7deff4a5b8b8846c05fd",
     "formal/ptt-silence-timeout/AppendWhilePausedMutant.cfg": "703863d43d6decfc4cedd9455c98c8593c749b9bc32f70193913edbc9a2893c2",
     "formal/ptt-silence-timeout/Fixed.cfg": "e31cf7a878a931cee158e890f87c6ea42673471eb986e7838e199ee1351284bf",
-    "src/input.ts": "53e3d3185cdb3cfd42f46568a96d310feaf8e1e4453a967012fcfeebffb0d5c4",
-    "src/__tests__/input-durability.test.ts": "82dd8fb57771d70bd905471a84de242baeb89e1edea257948d781a94c92c28ae",
-    "src/socket-handlers.ts": "6c443098c3ff03a5150ab4c002e7d765e82f2174d69a3e3755c8d3cbb5a3a077",
+    "src/input.ts": "960fd73619662d1b7b62bdf1f3a14e7b86291880f6e884bf8829f2c7ffbc8e0a",
+    "src/__tests__/input-durability.test.ts": "8a26277cd46d4ffa1a6d08c5f0a016e365db69c831785e550a13716e4df09bcf",
+    "src/socket-handlers.ts": "ba966df991db38969594868381323d6b383c8eeabac71c5d9bf11130d39885fe",
     "src/f5-capture.ts": "3eb13a5ba0640038a0f611ebae5b1b79762f013de4762fd97abf51268ead7924",
     "src/recording-pause.ts": "210914f612dcf9363f33a6175809ef2563118cd89efdb1490b653225ad2251be",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
@@ -115,8 +115,8 @@
       "kind": "temporal",
       "target": "SettlesAfterSilence",
       "status": "EXPECTED_FAIL",
-      "generated": 453205,
-      "distinct": 84910
+      "generated": 464474,
+      "distinct": 86763
     },
     "NoRenewalMutant": {
       "role": "mutant",

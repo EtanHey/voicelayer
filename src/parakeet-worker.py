@@ -40,7 +40,66 @@ def read_pcm(path):
     return pcm, frames
 
 
-def decode(model, mx, np, path):
+SAMPLE_RATE = 16000
+CHUNK_SECONDS = 30.0
+OVERLAP_SECONDS = 2.0
+# A final window this short is never decoded alone. Measured on real takes
+# (c8 T1): 3-4 s final windows returned zero tokens where the whole-take decode
+# heard 9-12, and the merge kept the earlier chunk, silently losing the last words.
+MIN_FINAL_CHUNK_SECONDS = 12.5
+
+
+def chunk_plan(frames, rate=SAMPLE_RATE):
+    """Sample windows for one decode: mlx-audio's 30 s / 2 s boundaries, except
+    that a final remainder under MIN_FINAL_CHUNK_SECONDS extends the previous
+    window to the end of the input (at most 40.5 s) instead of standing alone.
+    Every frame stays covered, every overlap stays 2 s; no audio is dropped."""
+    size, overlap = int(CHUNK_SECONDS * rate), int(OVERLAP_SECONDS * rate)
+    if frames <= size:
+        return [(0, frames)]
+    windows = []
+    for start in range(0, frames, size - overlap):
+        end = min(start + size, frames)
+        windows.append((start, end))
+        if end == frames:
+            break
+    if len(windows) > 1 and windows[-1][1] - windows[-1][0] < int(MIN_FINAL_CHUNK_SECONDS * rate):
+        windows.pop()
+        windows[-1] = (windows[-1][0], frames)
+    return windows
+
+
+def generate_planned(model, mx, audio, frames, chunk_callback, alignment=None):
+    """The non-streaming chunk loop of mlx-audio 0.6.3 Model.generate, run over
+    chunk_plan windows. Same dtype, mel, decode, offset and (bridged) merges."""
+    if alignment is None:
+        from mlx_audio.stt.models.nemo import alignment
+    if audio.dtype != mx.bfloat16:
+        audio = audio.astype(mx.bfloat16)
+    tokens = []
+    for start, end in chunk_plan(frames):
+        chunk_callback(end, frames)
+        result = model.decode(model._log_mel_spectrogram(audio[start:end]))[0]
+        offset = start / SAMPLE_RATE
+        window = []
+        for sentence in result.sentences:
+            for token in sentence.tokens:
+                token.start += offset
+                token.end = token.start + token.duration
+                window.append(token)
+        if not tokens:
+            tokens = window
+            continue
+        try:
+            tokens = alignment.merge_longest_contiguous(tokens, window, overlap_duration=OVERLAP_SECONDS)
+        except RuntimeError:
+            tokens = alignment.merge_longest_common_subsequence(tokens, window, overlap_duration=OVERLAP_SECONDS)
+    result = alignment.sentences_to_result(alignment.tokens_to_sentences(tokens))
+    mx.clear_cache()
+    return result
+
+
+def decode(model, mx, np, path, alignment=None):
     pcm, frames = read_pcm(path)
     audio = mx.array(np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0)
     progress = []
@@ -52,8 +111,11 @@ def decode(model, mx, np, path):
 
     mx.synchronize()
     start = time.monotonic()
-    result = model.generate(audio, chunk_duration=30.0, overlap_duration=2.0,
-                            stream=False, verbose=False, chunk_callback=chunk)
+    if frames <= int(CHUNK_SECONDS * SAMPLE_RATE):
+        result = model.generate(audio, chunk_duration=CHUNK_SECONDS, overlap_duration=OVERLAP_SECONDS,
+                                stream=False, verbose=False, chunk_callback=chunk)
+    else:
+        result = generate_planned(model, mx, audio, frames, chunk, alignment)
     mx.synchronize()
     # Callback is before decode; only a returned final result makes it complete.
     covered = progress[-1] if progress else (frames if frames <= 30 * 16000 else 0)

@@ -3,8 +3,8 @@
   "kind": "temporal",
   "target": "QueuedCaptureStarts",
   "status": "EXPECTED_FAIL",
-  "generated": 112894,
-  "distinct": 39697,
+  "generated": 114007,
+  "distinct": 39967,
   "trace": [
     "s = [ stage |-> [A |-> \"fresh\", B |-> \"fresh\"],\n  event |-> \"init\",\n  target |-> \"none\",\n  capable |-> [A |-> FALSE, B |-> FALSE],\n  age |-> [A |-> 0, B |-> 0],\n  readable |-> [A |-> TRUE, B |-> TRUE],\n  matches |-> [A |-> TRUE, B |-> TRUE],\n  focusSame |-> TRUE,\n  guard |-> \"none\",\n  cooldown |-> 0,\n  expected |-> \"none\",\n  escapedGuarded |-> TRUE,\n  notice |-> FALSE,\n  captureReleased |-> TRUE ]",
     "s = [ stage |-> [A |-> \"fresh\", B |-> \"fresh\"],\n  event |-> \"focus-change\",\n  target |-> \"none\",\n  capable |-> [A |-> FALSE, B |-> FALSE],\n  age |-> [A |-> 0, B |-> 0],\n  readable |-> [A |-> TRUE, B |-> TRUE],\n  matches |-> [A |-> TRUE, B |-> TRUE],\n  focusSame |-> FALSE,\n  guard |-> \"none\",\n  cooldown |-> 0,\n  expected |-> \"none\",\n  escapedGuarded |-> TRUE,\n  notice |-> FALSE,\n  captureReleased |-> TRUE ]",
@@ -16,6 +16,6 @@
     "s = [ stage |-> [A |-> \"captured\", B |-> \"waiting\"],\n  event |-> \"tick\",\n  target |-> \"none\",\n  capable |-> [A |-> FALSE, B |-> TRUE],\n  age |-> [A |-> 0, B |-> 0],\n  readable |-> [A |-> TRUE, B |-> TRUE],\n  matches |-> [A |-> TRUE, B |-> TRUE],\n  focusSame |-> FALSE,\n  guard |-> \"A\",\n  cooldown |-> 1,\n  expected |-> \"none\",\n  escapedGuarded |-> TRUE,\n  notice |-> TRUE,\n  captureReleased |-> TRUE ]",
     "s = [ stage |-> [A |-> \"captured\", B |-> \"waiting\"],\n  event |-> \"tick\",\n  target |-> \"none\",\n  capable |-> [A |-> FALSE, B |-> TRUE],\n  age |-> [A |-> 0, B |-> 0],\n  readable |-> [A |-> TRUE, B |-> TRUE],\n  matches |-> [A |-> TRUE, B |-> TRUE],\n  focusSame |-> FALSE,\n  guard |-> \"A\",\n  cooldown |-> 0,\n  expected |-> \"none\",\n  escapedGuarded |-> TRUE,\n  notice |-> TRUE,\n  captureReleased |-> TRUE ]",
     "s = [ stage |-> [A |-> \"cancelled\", B |-> \"waiting\"],\n  event |-> \"click\",\n  target |-> \"A\",\n  capable |-> [A |-> FALSE, B |-> TRUE],\n  age |-> [A |-> 0, B |-> 0],\n  readable |-> [A |-> TRUE, B |-> TRUE],\n  matches |-> [A |-> TRUE, B |-> TRUE],\n  focusSame |-> FALSE,\n  guard |-> \"none\",\n  cooldown |-> 0,\n  expected |-> \"none\",\n  escapedGuarded |-> TRUE,\n  notice |-> TRUE,\n  captureReleased |-> TRUE ]",
-    "Finished checking temporal properties in 00s at 2026-11-10 17:21:31"
+    "Finished checking temporal properties in 00s at 2026-11-12 07:49:40"
   ]
 }

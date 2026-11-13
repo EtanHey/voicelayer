@@ -965,18 +965,24 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertFalse(state.isCollapsed)
     }
 
-    func testSnoozeClearsActiveRecordingAudioLevel() throws {
+    func testSnoozePreservesActiveRecordingAudioUntilTheTakeEnds() throws {
         let state = VoiceState()
-        state.handleEvent([
-            "type": "state",
-            "state": "recording",
-            "mode": "vad",
-        ])
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.handleEvent(["type": "state", "state": "recording", "mode": "vad"])
         state.setLocalRecordingLevel(0.5)
         _ = try XCTUnwrap(state.audioLevel)
 
         state.snooze()
 
+        XCTAssertFalse(state.isHidden)
+        XCTAssertEqual(state.mode, .recording)
+        XCTAssertEqual(try XCTUnwrap(state.audioLevel), 0.5, accuracy: 0.001)
+        XCTAssertTrue(commands.isEmpty, "Refused Hide must not cancel or stop the take")
+
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        state.snooze()
+        XCTAssertTrue(state.isHidden)
         XCTAssertEqual(state.mode, .disconnected)
         XCTAssertNil(state.audioLevel)
     }
@@ -1596,15 +1602,24 @@ final class VoiceStatePasteTests: XCTestCase {
         )
     }
 
-    func testSnoozeClearsRemoteOwnershipBeforeNextPttPaste() {
+    func testSnoozePreservesRemoteOwnershipUntilCompletionBeforeNextPttPaste() {
         let state = makeRemoteOwnedRecordingState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
 
         state.snooze()
 
-        XCTAssertFalse(
-            state.remoteOwnedRecordingForTesting,
-            "Snoozing must end remote capture ownership"
-        )
+        XCTAssertFalse(state.isHidden)
+        XCTAssertEqual(state.mode, .recording)
+        XCTAssertTrue(state.remoteOwnedRecordingForTesting,
+                      "Refused Hide must preserve the remote capture ownership gate")
+        XCTAssertTrue(commands.isEmpty, "Refused Hide must not send cancel or stop")
+
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        XCTAssertFalse(state.remoteOwnedRecordingForTesting,
+                       "Authoritative recording completion ends capture ownership")
+        state.snooze()
+        XCTAssertTrue(state.isHidden)
         state.unsnooze()
         assertNextPttPastes(state, text: "dictation after snooze")
     }
@@ -1733,6 +1748,7 @@ final class VoiceStatePasteTests: XCTestCase {
         state.setConnectionStatus(true)
         var retranscribeCommand: [String: Any]?
         var pastedTexts: [String] = []
+        state.isConnected = true // The request fixture has a connected daemon.
         state.sendCommand = { command in
             if command["cmd"] as? String == "retranscribe_last" {
                 retranscribeCommand = command
@@ -1770,6 +1786,7 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertTrue(state.remoteOwnedRecordingForTesting)
         var retranscribeCommand: [String: Any]?
         var pastedTexts: [String] = []
+        state.isConnected = true // The request fixture has a connected daemon.
         state.sendCommand = { command in
             if command["cmd"] as? String == "retranscribe_last" {
                 retranscribeCommand = command

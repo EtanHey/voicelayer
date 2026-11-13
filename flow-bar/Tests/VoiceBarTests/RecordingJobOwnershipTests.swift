@@ -567,11 +567,13 @@ final class RecordingJobOwnershipTests: XCTestCase {
             let event: [String: Any] = ["type": "transcription", "take_id": id, "job_kind": "live", "delivery_id": id, "text": text]
             state.handleEvent(event); state.handleEvent(event)
             XCTAssertEqual(TerminalPasteTargets.isTerminal(bundle), terminal)
+            XCTAssertEqual(state.latestReusableTranscript, "whole fu…\nשלום", "History keeps the complete words and internal line break")
             if terminal {
-                XCTAssertEqual(typed, [bundle == "com.cmuxterm.app" ? "whole fu…\nשלום" : "whole fu… שלום"], bundle)
+                // The 2.3 terminal contract keeps cmux's composer newlines and folds other terminals' breaks.
+                let delivered = bundle == "com.cmuxterm.app" ? "whole fu…\nשלום" : "whole fu… שלום"
+                XCTAssertEqual(typed, [delivered], bundle)
                 XCTAssertEqual(ax, [], "A terminal must never use AX insertion")
             } else {
-                // Native non-terminal targets retain the original AX text.
                 XCTAssertEqual(typed, [], bundle)
                 XCTAssertEqual(ax, [text], bundle)
             }

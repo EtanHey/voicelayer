@@ -11,6 +11,20 @@ final class NotchHistoryMorphTests: XCTestCase {
     // MARK: Morph B values
 
     /// 2.4 Lane A (Etan: "one spring, no multi-stage"): open, close and the handle share one critically damped spring.
+    func test0449ClosingFlightNeverMovesBackOrOvershootsAfterAReversal() {
+        for speed in [-80.0, -8, 0, 8, 80] {
+            let flight = NotchHistorySpringFlight(from: 0.8, to: 0, velocity: speed, start: 0,
+                response: NotchHistoryMorph.closeResponse, dampingFraction: NotchHistoryMorph.closeDampingFraction)
+            var previous: CGFloat = 0.8
+            for frame in 1 ... 120 {
+                let value = flight.value(at: Double(frame) / 120)
+                XCTAssertLessThanOrEqual(value, previous + 0.000001, "[0449] no motion back toward open")
+                XCTAssertGreaterThanOrEqual(value, 0, "[0449] no overshoot through closed")
+                previous = value
+            }
+        }
+    }
+
     func testTheSpringsAndRadiiAreMorphBs() {
         XCTAssertEqual(NotchHistoryMorph.openResponse, 0.4)
         XCTAssertEqual(NotchHistoryMorph.openDampingFraction, 1.0)
@@ -125,11 +139,17 @@ final class NotchHistoryMorphTests: XCTestCase {
         }
     }
 
-    func testOnlyLauncherAndHistoryHandOffWithoutASecondSpring() {
+    /// X4 J3: every band a drawer opens over (launcher, recording, compact status) hands off to the History morph
+    /// without a second spring; the teleprompter (which closes the drawer) still morphs.
+    func testDrawerBandsAndHistoryHandOffWithoutASecondSpring() {
         typealias View = VoiceBarNotchView<EmptyView, EmptyView, EmptyView>
         XCTAssertTrue(View.isHistoryPair(.hoverLauncher, .history))
         XCTAssertTrue(View.isHistoryPair(.history, .hoverLauncher))
-        XCTAssertFalse(View.isHistoryPair(.history, .recording), "recording still morphs from History as before")
+        XCTAssertTrue(View.isHistoryPair(.history, .recording), "[X4 J3] a drawer closing over a recording")
+        XCTAssertTrue(View.isHistoryPair(.recording, .history), "[X4 J3] a drawer opening over a recording")
+        XCTAssertTrue(View.isHistoryPair(.history, .compactStatus), "[X4 J3] a drawer closing over Typed")
+        XCTAssertFalse(View.isHistoryPair(.history, .teleprompter), "agent speech still morphs from History")
+        XCTAssertFalse(View.isHistoryPair(.recording, .compactStatus))
         XCTAssertFalse(View.isHistoryPair(.history, .history))
         XCTAssertFalse(View.isHistoryPair(nil, .history))
     }

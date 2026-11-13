@@ -148,7 +148,9 @@ final class NotchStatusFeedbackTests: XCTestCase {
                     compactStatusTrailingWingWidth: p.geometry.trailingWingWidth,
                     recordingLeadingWingWidth: p.geometry.leadingWingWidth,
                     recordingTrailingWingWidth: p.geometry.trailingWingWidth,
-                    coreWidth: core, transientNoteWidth: p.transientNoteWidth, feedback: p.feedback)
+                    coreWidth: core, transientNoteWidth: p.transientNoteWidth, feedback: p.feedback,
+                    // C7 L3 V10: the resident model carries the read's canvas hold, as VoiceBarApp passes it.
+                    holdsReadingCanvas: p.holdsReadingCanvas)
                 XCTAssertEqual(model.presentation, p)
             }
         }

@@ -48,10 +48,8 @@ enum SettingsRowClippingGuard {
         }
     }
 
-    /// V12, checked on rendered pixels: each text that publishes `SettingsTextAuditKey` is cropped out of the real
-    /// render at its laid-out frame and compared with `Text(…).lineLimit(2).truncationMode(.tail)` drawn alone at the
-    /// same width. A one-line clip, an ellipsis before line 2, head truncation, a third line, or a horizontal crop by
-    /// an ancestor all change the ink, so they are reported; an empty array means every text matched.
+    /// Compare each audited text with a full, untruncated reference at the exact rendered width. This catches
+    /// missing lines and horizontal crops, while allowing the complete wrapping required in both Settings surfaces.
     static func violations(in view: some View, width: CGFloat) -> [String] {
         let box = AuditBox()
         let root = view.frame(width: width).fixedSize(horizontal: false, vertical: true)
@@ -67,13 +65,13 @@ enum SettingsRowClippingGuard {
             guard CGRect(origin: .zero, size: size).insetBy(dx: -0.5, dy: -0.5).contains(entry.frame) else {
                 return "\(label) lies outside the row (\(entry.frame))"
             }
-            let reference = Text(entry.text).font(entry.font).lineLimit(2).truncationMode(.tail)
+            let reference = Text(entry.text).font(entry.font).lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(width: entry.frame.width, alignment: .topLeading)
                 .foregroundStyle(Color.black)
             let referenceHeight = NSHostingView(rootView: reference).fittingSize.height
             if abs(referenceHeight - entry.frame.height) > 1.5 {
-                return "\(label) is \(Int(entry.frame.height)) pt tall; two unclipped lines need \(Int(referenceHeight)) pt"
+                return "\(label) is \(Int(entry.frame.height)) pt tall; full copy needs \(Int(referenceHeight)) pt"
             }
             guard let drawn = try? render(reference, size: entry.frame.size, appearance: NSAppearance(named: .aqua)!)
             else { return "\(label) reference render failed" }
@@ -84,7 +82,7 @@ enum SettingsRowClippingGuard {
             let unmatched = mine.unmatched(against: theirs) + theirs.unmatched(against: mine)
             let allowed = max(12, theirs.inked / 12)
             return unmatched > allowed
-                ? "\(label) rendering differs from two-line tail truncation (\(unmatched) px, allowed \(allowed))" : nil
+                ? "\(label) rendering differs from full untruncated copy (\(unmatched) px, allowed \(allowed))" : nil
         }
     }
 

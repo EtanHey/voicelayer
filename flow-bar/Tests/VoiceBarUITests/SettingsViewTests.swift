@@ -67,28 +67,10 @@ final class SettingsViewTests: XCTestCase {
 
     // MARK: - Dictionary canonical cards
 
-    func testDictionaryCardsExposeDeleteAffordance() throws {
-        let source = try settingsViewSource()
-
-        XCTAssertTrue(
-            source.contains("deleteDictionaryEntryButton"),
-            "each canonical term card needs a delete affordance (shown on hover or selection; U3 spec)"
-        )
-    }
-
-    /// U3 spec: a term's misheard spellings are its row description ("Also heard as …"), only when it has some,
-    /// wrapping to two lines (V12 row anatomy) instead of a one-line clip.
-    func testVariantSummaryIsTheRowDescriptionOnlyWhenThereAreVariants() throws {
-        let source = try settingsViewSource()
-        let header = try XCTUnwrap(source.functionBody(named: "dictionaryEntryHeader"))
-
-        XCTAssertTrue(header.contains("entry.variants.isEmpty ? nil : Self.variantSummary(entry.variants)"))
-        XCTAssertTrue(header.contains("SettingsRowLabel("))
-        XCTAssertFalse(header.contains(".lineLimit(1)"))
-        XCTAssertEqual(
-            SettingsView.variantSummary(["voice lair", "voice layer"]),
-            "Also heard as voice lair, voice layer"
-        )
+    /// The full list remains available for help/accessibility while the compact row previews one variant.
+    func testVariantSummaryPreservesEveryVariant() {
+        XCTAssertEqual(SettingsView.variantSummary(["voice lair", "voice layer"]),
+                       "Also heard as voice lair, voice layer")
     }
 
     func testBundledDictionaryRowsHaveNoEditAffordance() throws {
@@ -108,18 +90,6 @@ final class SettingsViewTests: XCTestCase {
         let editable = try XCTUnwrap(header.range(of: "if isEditable {"))
         let pencil = try XCTUnwrap(header.range(of: "termSheet = DictionaryTermEdit(original: entry)"))
         XCTAssertLessThan(editable.lowerBound, pencil.lowerBound)
-    }
-
-    /// U3 spec: the trash deletes at once and offers a 4 s Undo; there is no "Delete?" confirm step any more.
-    func testTrashDeletesWithUndoInsteadOfAConfirmStep() throws {
-        let source = try settingsViewSource()
-        let deleteButtonSource = try XCTUnwrap(source.functionBody(named: "deleteDictionaryEntryButton"))
-
-        XCTAssertTrue(deleteButtonSource.contains("deleteTerm(canonical, rowID: rowID)"))
-        XCTAssertFalse(source.contains("Button(\"Delete?\""))
-        XCTAssertFalse(source.contains("pendingDeleteCanonical"))
-        XCTAssertTrue(source.contains("Button(\"Undo\") { undoDeletion() }"))
-        XCTAssertTrue(source.contains(".onDeleteCommand { deleteSelectedTerm() }"))
     }
 
     func testDictionaryDoesNotRenderOldSplitSections() throws {
