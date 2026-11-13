@@ -1,8 +1,9 @@
 # Band replay
 
-A separate `band` binary, sharing no Dictionary state. Replay-only: it cannot
-connect to VoiceBar, record, play audio, type, or paste. Button presses print
-intent JSON and retain it in view state; they do not execute commands.
+A separate `band` binary, sharing no Dictionary state. Replay and explicit
+socket modes cannot record, play audio, type, or paste.
+Replay button presses print intent JSON and retain it in view state; they do
+not execute commands. Socket mode omits the inactive Pause/Stop controls.
 
 From `rune-bar/` (put build output in this worktree's ignored `.build.noindex`):
 
@@ -15,8 +16,8 @@ CARGO_TARGET_DIR="$PWD/../.build.noindex/rune-target" cargo run --locked --bin b
 
 The `t` field is the replay envelope's monotonic seconds; other fields use the
 existing socket protocol. The reducer folds from the beginning on every sample,
-so reverse seeks and separate runs produce the same state. Production socket
-connection and incremental reduction are later slices. PTT exposes Pause;
+so reverse seeks and separate runs produce the same state. The explicit socket
+mode below uses incremental reduction. Replay PTT exposes Pause;
 the protocol has no separate locked-take event, so this slice uses `mode: ptt`.
 The timer starts at the first audio-level event, retaining 0:00 during open.
 A final transcription shows Typed for 1.2 seconds without displaying its text.
@@ -51,9 +52,12 @@ server; connecting to resident VoiceBar is gated on a lead-approved observer
 protocol and lifecycle proof. It is not a usable live VoiceBar integration yet.
 
 Reads block without idle polling. Reconnect starts at 250 ms, doubles to 5 s,
-and resets after connection. Lines are bounded to 64 KiB; oversized lines are
-counted once and discarded through their newline. Malformed/unknown lines are
-counted and skipped. Disconnect fades the last take out over 150 ms; reconnect
+and resets on a valid event, so immediate EOF or garbage does not reset it.
+Lines are bounded to 4 MiB, matching the Swift framer; oversized lines are
+counted once and discarded through their newline (or EOF). Malformed/unknown
+lines are counted and skipped. Only the first skipped line per connection is
+logged, with its byte count and no content. Disconnect fades the last take out
+over 150 ms; reconnect
 never restores a stale take without new events. `Band::apply(event, local_time)`
 retains bounded view state without replay history; `advance` updates animation
 time without replaying events. Replay seeking calls the same `apply` method.
@@ -62,3 +66,11 @@ Proofs: `cargo test --locked` from `rune-bar/`; release idle probe:
 `python3 tests/idle-socket.py ../.build.noindex/rune-target/release/band` after
 `cargo build --release --locked --bin band`. The probe binds only its own short
 worktree socket and uses a temporary HOME under the worktree.
+
+The independent oracle in `tests/golden.rs` compares seven replays at 661 frames
+each, with reduced motion off/on, against the original 61d019d2 fold. Regenerate
+with `python3 scripts/generate-band-golden.py`: it exports that commit's `band.rs`
+under `.build.noindex`, compiles a temporary test using the shared tree dumper,
+and writes `docs/replays/band-golden.sha256`. The temporary test is removed.
+The level-exit and late-event fixtures cover nonzero exit RMS and events after
+Typed expiry. The older apply-vs-apply test is supplemental, not the oracle.

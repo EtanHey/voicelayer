@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-pub const MAX_LINE: usize = 64 * 1024;
+pub const MAX_LINE: usize = 4 * 1024 * 1024;
 #[derive(Debug)]
 pub enum Message {
     Event(Value),
@@ -44,21 +44,30 @@ impl Client {
                     if c.stopped {
                         break;
                     }
-                    c.stream = stream.try_clone().ok();
-                    drop(c);
-                    delay = Duration::from_millis(250);
-                    let mut framer = Framer::default();
-                    let mut bytes = [0; 8192];
-                    loop {
-                        match stream.read(&mut bytes) {
-                            Ok(0) => break,
-                            Ok(n) => framer.push(&bytes[..n], &mut receive),
-                            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                            Err(_) => break,
+                    // A shutdown handle is mandatory before entering a blocking read.
+                    if !retain_shutdown_handle(&mut c, || stream.try_clone()) {
+                        drop(c);
+                    } else {
+                        drop(c);
+                        let mut framer = Framer::default();
+                        let mut bytes = [0; 8192];
+                        loop {
+                            match stream.read(&mut bytes) {
+                                Ok(0) => break,
+                                Ok(n) => framer.push(&bytes[..n], &mut |message| {
+                                    if matches!(message, Message::Event(_)) {
+                                        delay = Duration::from_millis(250);
+                                    }
+                                    receive(message);
+                                }),
+                                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                                Err(_) => break,
+                            }
                         }
+                        framer.finish(&mut receive, &mut log_skipped);
+                        lock.lock().unwrap().stream = None;
+                        receive(Message::Disconnected);
                     }
-                    lock.lock().unwrap().stream = None;
-                    receive(Message::Disconnected);
                 }
                 if lock.lock().unwrap().stopped {
                     break;
@@ -93,32 +102,120 @@ impl Drop for Client {
         }
     }
 }
+fn retain_shutdown_handle(c: &mut Control, clone: impl FnOnce() -> io::Result<UnixStream>) -> bool {
+    match clone() {
+        Ok(stream) => {
+            c.stream = Some(stream);
+            true
+        }
+        Err(_) => false,
+    }
+}
+fn log_skipped(bytes: usize) {
+    eprintln!("band: skipped line bytes={bytes}");
+}
 #[derive(Default)]
 struct Framer {
     pending: Vec<u8>,
+    bytes: usize,
     dropping: bool,
+    logged: bool,
 }
 impl Framer {
     fn push(&mut self, bytes: &[u8], receive: &mut impl FnMut(Message)) {
+        self.push_with_log(bytes, receive, &mut log_skipped);
+    }
+    fn finish(&mut self, receive: &mut impl FnMut(Message), log: &mut impl FnMut(usize)) {
+        if self.dropping {
+            receive(Message::Skipped);
+            self.log_once(log);
+        }
+        self.pending.clear();
+        self.bytes = 0;
+        self.dropping = false;
+    }
+    fn log_once(&mut self, log: &mut impl FnMut(usize)) {
+        if !self.logged {
+            log(self.bytes);
+            self.logged = true;
+        }
+    }
+    fn push_with_log(
+        &mut self,
+        bytes: &[u8],
+        receive: &mut impl FnMut(Message),
+        log: &mut impl FnMut(usize),
+    ) {
         for &b in bytes {
             if b == b'\n' {
-                if !self.dropping && !self.pending.is_empty() {
+                if self.dropping {
+                    self.finish(receive, log);
+                    continue;
+                }
+                if !self.pending.is_empty() {
                     let event = serde_json::from_slice::<Value>(&self.pending)
                         .ok()
                         .filter(valid);
-                    receive(event.map(Message::Event).unwrap_or(Message::Skipped));
+                    if let Some(event) = event {
+                        receive(Message::Event(event));
+                    } else {
+                        receive(Message::Skipped);
+                        self.log_once(log);
+                    }
                 }
                 self.pending.clear();
-                self.dropping = false;
-            } else if !self.dropping {
-                if self.pending.len() == MAX_LINE {
-                    self.pending.clear();
-                    self.dropping = true;
-                    receive(Message::Skipped);
-                } else {
-                    self.pending.push(b);
+                self.bytes = 0;
+            } else {
+                self.bytes = self.bytes.saturating_add(1);
+                if !self.dropping {
+                    if self.pending.len() == MAX_LINE {
+                        self.pending.clear();
+                        self.dropping = true;
+                    } else {
+                        self.pending.push(b);
+                    }
                 }
             }
+        }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn clone_failure_refuses_blocking_read() {
+        let mut c = Control::default();
+        assert!(!retain_shutdown_handle(&mut c, || Err(io::Error::other(
+            "injected"
+        ))));
+        assert!(c.stream.is_none());
+        let (a, _b) = UnixStream::pair().unwrap();
+        assert!(retain_shutdown_handle(&mut c, || a.try_clone()));
+        assert!(c.stream.is_some());
+    }
+    #[test]
+    fn logs_only_byte_count_once_per_connection_and_bounds_storage() {
+        for _connection in 0..2 {
+            let mut f = Framer::default();
+            let mut messages = vec![];
+            let mut counts = vec![];
+            for _line in 0..2 {
+                f.push_with_log(
+                    &vec![b'x'; MAX_LINE + 17],
+                    &mut |m| messages.push(m),
+                    &mut |n| counts.push(n),
+                );
+                assert!(f.pending.len() <= MAX_LINE);
+                f.push_with_log(b"\n", &mut |m| messages.push(m), &mut |n| counts.push(n));
+            }
+            assert_eq!(counts, vec![MAX_LINE + 17]);
+            assert_eq!(
+                messages
+                    .iter()
+                    .filter(|m| matches!(m, Message::Skipped))
+                    .count(),
+                2
+            );
         }
     }
 }

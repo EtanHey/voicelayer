@@ -292,3 +292,102 @@ fn absent_server_backoff_doubles_and_caps_at_five_seconds() {
     );
     assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 0);
 }
+
+#[test]
+fn line_cap_matches_swift_framer() {
+    assert_eq!(voicebar_rune::socket::MAX_LINE, 4 * 1024 * 1024);
+}
+
+#[test]
+fn large_transcription_and_over_cap_valid_json() {
+    let temp = Temp::new();
+    let listener = UnixListener::bind(temp.socket()).unwrap();
+    let (tx, rx) = mpsc::channel();
+    let client = Client::start(temp.socket(), move |m| {
+        let _ = tx.send(m);
+    });
+    let (mut peer, _) = listener.accept().unwrap();
+    writeln!(
+        peer,
+        "{}",
+        json!({"type":"transcription", "text":"a".repeat(100 * 1024)})
+    )
+    .unwrap();
+    let mut band = Band::new(Replay(vec![]), 185., false);
+    band.receive(rx.recv_timeout(Duration::from_secs(2)).unwrap(), 0.);
+    assert_eq!(band.mode, Mode::Typed);
+    let oversized = json!({"type":"transcription", "text":"a".repeat(4 * 1024 * 1024)});
+    for _ in 0..2 {
+        writeln!(peer, "{oversized}").unwrap();
+    }
+    writeln!(peer, "{}", json!({"type":"state", "state":"recording"})).unwrap();
+    for _ in 0..3 {
+        band.receive(rx.recv_timeout(Duration::from_secs(2)).unwrap(), 1.);
+    }
+    assert_eq!(band.skipped_lines, 2);
+    assert_eq!(band.mode, Mode::Recording);
+    drop(client);
+}
+
+#[test]
+fn disconnect_preserves_idle_exit_fade() {
+    let mut band = Band::new(Replay(vec![]), 185., false);
+    band.apply(&json!({"type":"state", "state":"recording"}), 0.);
+    band.apply(&json!({"type":"audio_level", "rms":0.8}), 0.1);
+    band.apply(&json!({"type":"state", "state":"idle"}), 1.);
+    band.disconnect(1.05);
+    assert!(band.exit_from.is_some());
+    assert_eq!(band.since, 1.);
+    assert!(band.input_active());
+    band.advance(1.16);
+    assert!(!band.input_active());
+}
+
+#[test]
+fn live_controls_are_absent_including_exit_snapshot() {
+    let mut band = Band::new(Replay(vec![]), 185., false);
+    band.live = true;
+    band.apply(
+        &json!({"type":"state", "state":"recording", "mode":"ptt"}),
+        0.,
+    );
+    let mut r = rt(band);
+    for t in [0.5, 1.01] {
+        if t > 1. {
+            r.state.apply(&json!({"type":"state", "state":"idle"}), 1.);
+        }
+        tree(&mut r, t, false);
+        assert!(
+            !r.elements()
+                .iter()
+                .any(|e| matches!(e.key.as_deref(), Some("Stop" | "Pause")))
+        );
+        assert!(r.state.intents.is_empty());
+    }
+}
+
+#[test]
+fn immediate_eof_backoff_only_resets_on_valid_event() {
+    let temp = Temp::new();
+    let listener = UnixListener::bind(temp.socket()).unwrap();
+    let (tx, rx) = mpsc::channel();
+    let client = Client::start(temp.socket(), move |m| {
+        let _ = tx.send(m);
+    });
+    for (valid, millis) in [(false, 250), (false, 500), (false, 1000), (true, 250)] {
+        let (mut peer, _) = listener.accept().unwrap();
+        if valid {
+            writeln!(peer, "{{\"type\":\"state\",\"state\":\"idle\"}}").unwrap();
+        } else {
+            peer.write_all(b"garbage\n").unwrap();
+        }
+        drop(peer);
+        loop {
+            if let Message::Retrying(d) = rx.recv_timeout(Duration::from_secs(2)).unwrap() {
+                assert_eq!(d, Duration::from_millis(millis));
+                break;
+            }
+        }
+    }
+    drop(client);
+}

@@ -117,6 +117,7 @@ impl Band {
     fn snapshot(&self) -> Self {
         let mut s = Self::new(Replay(vec![]), self.notch, self.reduced);
         s.now = self.now;
+        s.live = self.live;
         s.safe_top = self.safe_top;
         s.mode = self.mode.clone();
         s.logical_mode = self.logical_mode.clone();
@@ -259,6 +260,10 @@ impl Band {
         }
     }
     pub fn disconnect(&mut self, t: f64) {
+        if self.mode == Mode::Idle {
+            self.advance(t);
+            return;
+        }
         let mut outgoing = self.snapshot();
         outgoing.now = t;
         self.exit_from = (self.mode != Mode::Idle).then(|| Box::new(outgoing));
@@ -352,6 +357,9 @@ fn blue() -> Color {
     }
 }
 fn controls(root: El, s: &Band, core: f32, alpha: f32) -> El {
+    if s.live {
+        return root;
+    }
     let root =
         root.child(button("Stop", "■", core - if s.locked { 64. } else { 32. }).opacity(alpha));
     if s.locked {

@@ -1,0 +1,5 @@
+{"t":0,"type":"state","state":"recording"}
+{"t":0.2,"type":"audio_level","rms":0.5}
+{"t":1,"type":"transcription","partial":false}
+{"t":3,"type":"state","state":"idle"}
+{"t":3.1,"type":"queue","depth":2}

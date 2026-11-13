@@ -50,18 +50,8 @@ fn main() {
         });
         let mut state = Band::new(Replay(vec![]), 185., false);
         let start = std::time::Instant::now();
-        loop {
-            let message = if state.input_active() {
-                rx.recv_timeout(std::time::Duration::from_millis(16)).ok()
-            } else {
-                rx.recv().ok()
-            };
-            let now = start.elapsed().as_secs_f64();
-            if let Some(m) = message {
-                state.receive(m, now);
-            }
-            state.advance(now);
-        }
+        receive_headless(rx, &mut state, start);
+        return;
     }
     let s = initial();
     if s.live && headless() {
@@ -147,4 +137,46 @@ fn screen_geometry() -> (f32, f32, f32) {
 #[cfg(not(target_os = "macos"))]
 fn screen_geometry() -> (f32, f32, f32) {
     (1512., 0., 0.)
+}
+
+// Channel closure is terminal in both animated and idle receive modes.
+fn receive_headless(
+    rx: std::sync::mpsc::Receiver<voicebar_rune::socket::Message>,
+    state: &mut Band,
+    start: std::time::Instant,
+) {
+    use std::sync::mpsc::RecvTimeoutError;
+    loop {
+        let result = if state.input_active() {
+            rx.recv_timeout(std::time::Duration::from_millis(16))
+        } else {
+            rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
+        };
+        let message = match result {
+            Ok(m) => Some(m),
+            Err(RecvTimeoutError::Timeout) => None,
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
+        let now = start.elapsed().as_secs_f64();
+        if let Some(m) = message {
+            state.receive(m, now);
+        }
+        state.advance(now);
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn closed_worker_channel_exits_idle_and_active_loops() {
+        for active in [false, true] {
+            let (tx, rx) = std::sync::mpsc::channel();
+            drop(tx);
+            let mut state = Band::new(Replay(vec![]), 185., false);
+            if active {
+                state.apply(&serde_json::json!({"type":"state","state":"recording"}), 0.);
+            }
+            receive_headless(rx, &mut state, std::time::Instant::now());
+        }
+    }
 }
