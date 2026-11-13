@@ -1,6 +1,6 @@
 import { finishSyntheticCapture, settleRecordingJobs } from "./setup/recording-jobs-fixture";
 import { deferredFixture as deferred } from "./long-read-fixture-barriers";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { handleSocketCommand } from "../socket-handlers";
 import * as input from "../input";
 import * as booking from "../session-booking";
@@ -25,21 +25,16 @@ describe("socket residency command", () => {
   // These tests never choose a recognizer, so they must not depend on what an earlier test file left in
   // recognizer-state's module variables. Hosted runs failed 18 of them with "select-whisper-first" when
   // "parakeet" was still the effective recognizer (2026-11-13, twice). Every test here sees Whisper
-  // selected. beforeAll starts from that leaked state on purpose, so the pin cannot rot; afterAll puts
-  // back what it found.
-  let ambientEffective: recognizer.Recognizer | null = null;
-  beforeAll(() => {
-    ambientEffective = recognizer.readRecognizerStatus().effective;
-    recognizer.noteRecognizerEffective("parakeet");
-  });
-  afterAll(() => {
-    recognizer.noteRecognizerEffective(ambientEffective);
-  });
+  // selected through a spy; the shared module state itself is never touched from this file.
   beforeEach(() => {
     const real = recognizer.readRecognizerStatus;
     spies.push(spyOn(recognizer, "readRecognizerStatus").mockImplementation(
       () => ({ ...real(), desired: "whisper", effective: null }),
     ));
+  });
+
+  test("sees Whisper selected whatever earlier test files left behind", () => {
+    expect(recognizer.readRecognizerStatus()).toMatchObject({ desired: "whisper", effective: null });
   });
 
   afterEach(() => {
