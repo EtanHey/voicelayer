@@ -55,6 +55,34 @@ describe("a dictionary command stays its own token", () => {
     expect(clean("then run slash zephyr sweep slash quill.")).toBe("Then run /zephyr-sweep /quill.");
   });
 
+  // Round 2 (Codex P1): no placeholder is put in the text, so characters the
+  // recognizer already wrote are never turned into a command or leaked.
+  it("leaves private-use characters next to a command untouched", () => {
+    expect(clean("keep \uE400\uE500\uE401 and \uF900 here, you just slash quill."))
+      .toBe("Keep \uE400\uE500\uE401 and \uF900 here, you just /quill.");
+    expect(clean("you just slash quill \uE400\uE500\uE401.")).toBe("You just /quill \uE400\uE500\uE401.");
+  });
+
+  it("keeps several thousand protected commands correct", () => {
+    const many = (sentence: string) => Array.from({ length: 5200 }, () => sentence).join(" ");
+    expect(clean(many("run slash quill."))).toBe(many("Run /quill."));
+  }, 30_000);
+
+  // Lead ruling (Codex P2): a slash run made only of dictionary commands is
+  // commands, even though the same sounds could be read as a path.
+  it("reads a run made only of dictionary commands as commands", () => {
+    expectControl();
+    expect(clean("run slash quill slash zephyr sweep")).toBe("Run /quill /zephyr-sweep");
+  });
+
+  // Codex P2 (provenance): text matching, so a "/quill" the recognizer wrote
+  // itself is protected exactly like one the dictionary produced.
+  it("protects a literal /quill the recognizer wrote, like a dictionary one", () => {
+    expectControl();
+    expect(clean("you just /quill.")).toBe("You just /quill.");
+    expect(clean("open src/quill/index now.")).toBe("Open src/quill/index now.");
+  });
+
   // Literal outputs captured on origin/test/2.4-candidate-1110c (dac5f577).
   it("keeps paths, joiners and URLs byte-identical to the candidate", () => {
     expectControl();

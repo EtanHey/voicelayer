@@ -1378,56 +1378,79 @@ function isAllowedSpokenListRewrite(
 
 // A slash command ("you just /compact.") is a standalone token. Polish may
 // wrap it in or follow it with sentence punctuation, but may not glue, split,
-// re-space, re-case, drop, add or reorder command occurrences.
+// re-space, re-case, drop, add or reorder standalone command occurrences.
 const SLASH_COMMAND_OPENERS = `("“‘'`;
-const SLASH_COMMAND_TOKEN = new RegExp(
-  `(?<=^|\\s|[${SLASH_COMMAND_OPENERS}])\\/[A-Za-z0-9][A-Za-z0-9-]*(?=[.,!?;:)"”’']*(?:$|\\s))`,
-  "gu",
-);
 const SLASH_COMMAND_RUN = /\/[A-Za-z0-9][A-Za-z0-9-]*/gu;
 
 type SlashCommandOccurrence = { token: string; left: string; rightOk: boolean };
 
+/** Index left of a command after skipping a run of opening punctuation. */
+function slashCommandLeftIndex(text: string, index: number): number {
+  let at = index;
+  while (at > 0 && SLASH_COMMAND_OPENERS.includes(text[at - 1])) at -= 1;
+  return at;
+}
+
 /**
  * The boundary left of a command, skipping a run of opening punctuation:
  * "start" (text or line), "space" (exactly one space after a non-space), or
- * "other" (glued, or more than one space).
+ * "other" (more than one space or a tab).
  */
 function slashCommandLeftBoundary(text: string, index: number): string {
-  let at = index;
-  while (at > 0 && SLASH_COMMAND_OPENERS.includes(text[at - 1])) at -= 1;
+  const at = slashCommandLeftIndex(text, index);
   if (at === 0 || text[at - 1] === "\n") return "start";
   if (text[at - 1] === " " && at >= 2 && !/\s/u.test(text[at - 2])) return "space";
   return "other";
 }
 
-function slashCommandOccurrences(text: string, tokens: ReadonlySet<string>): SlashCommandOccurrence[] {
-  const occurrences: SlashCommandOccurrence[] = [];
-  for (const match of text.matchAll(SLASH_COMMAND_RUN)) {
-    if (!tokens.has(match[0])) continue;
-    occurrences.push({
-      token: match[0],
-      left: slashCommandLeftBoundary(text, match.index),
-      rightOk: /^[.,!?;:)"”’']*(?:$|\s)/u.test(text.slice(match.index + match[0].length)),
-    });
-  }
-  return occurrences;
+/** A "/word" run is standalone when start, a line break or whitespace (after opening punctuation) sits left of it. */
+function isStandaloneSlashRun(text: string, index: number): boolean {
+  const at = slashCommandLeftIndex(text, index);
+  return at === 0 || /\s/u.test(text[at - 1]);
+}
+
+function slashCommandRuns(text: string) {
+  return [...text.matchAll(SLASH_COMMAND_RUN)].map((match) => ({
+    token: match[0],
+    index: match.index,
+    standalone: isStandaloneSlashRun(text, match.index),
+  }));
+}
+
+function standaloneSlashCommands(text: string): SlashCommandOccurrence[] {
+  return slashCommandRuns(text).filter((run) => run.standalone).map((run) => ({
+    token: run.token,
+    left: slashCommandLeftBoundary(text, run.index),
+    rightOk: /^[.,!?;:)"”’']*(?:$|\s)/u.test(text.slice(run.index + run.token.length)),
+  }));
 }
 
 /** Exported for tests. */
 export function changedSlashCommandTokens(cleanedText: string, candidate: string): boolean {
-  const commands = new Set(cleanedText.match(SLASH_COMMAND_TOKEN) ?? []);
-  if (!commands.size) return false;
-  // Every maximal "/word" run spelling one of those commands, in both texts: a
-  // glued or re-cased command spells something else and goes missing, and the
-  // same command used inside a path is compared too, so unchanged text passes.
-  const cleaned = slashCommandOccurrences(cleanedText, commands);
-  const polished = slashCommandOccurrences(candidate, commands);
-  if (polished.length !== cleaned.length) return true;
-  return cleaned.some((occurrence, index) => {
-    const other = polished[index];
-    return other.token !== occurrence.token || other.left !== occurrence.left || other.rightOk !== occurrence.rightOk;
-  });
+  // Standalone occurrences in both texts must match one for one, so an added,
+  // dropped, glued, split or re-spaced command is caught; "/quill" inside a
+  // path such as "src/quill/index" is not a command and is not compared.
+  // The one addition allowed is polish joining a spaced slash the cleaned text
+  // left ("do / what's new" -> "do /whats-new"), one per spaced slash it removed.
+  const cleaned = standaloneSlashCommands(cleanedText);
+  const polished = standaloneSlashCommands(candidate);
+  const spacedSlashes = (text: string) => text.match(/(?:^|\s)\/\s/gu)?.length ?? 0;
+  let allowed = Math.max(0, spacedSlashes(cleanedText) - spacedSlashes(candidate));
+  let next = 0;
+  for (const other of polished) {
+    const occurrence = cleaned[next];
+    if (occurrence && other.token === occurrence.token && other.left === occurrence.left && other.rightOk === occurrence.rightOk) {
+      next += 1;
+    } else if (--allowed < 0) {
+      return true;
+    }
+  }
+  if (next !== cleaned.length) return true;
+  // Separately: a command glued into more path-like runs than the cleaned text had.
+  const commands = new Set(cleaned.map((occurrence) => occurrence.token));
+  const glued = (text: string, token: string) =>
+    slashCommandRuns(text).filter((run) => !run.standalone && run.token === token).length;
+  return [...commands].some((token) => glued(candidate, token) > glued(cleanedText, token));
 }
 
 function validatePolishCandidate(

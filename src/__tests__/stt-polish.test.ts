@@ -1605,6 +1605,16 @@ describe("stt-polish", () => {
       expect(result.text).toBe(cleanedText);
     });
   }
+  // Round 2 (Codex P3s): standalone occurrences of both texts are compared.
+  it("flags a standalone command polish added", () => {
+    expect(sttPolish.changedSlashCommandTokens("Run /quill now.", "Run /quill /other now.")).toBe(true);
+    expect(sttPolish.changedSlashCommandTokens("Run the tests now.", "Run /other the tests now.")).toBe(true);
+    expect(sttPolish.changedSlashCommandTokens("Also, do / what's new.", "Also, do /whats-new.")).toBe(false);
+  });
+  it("ignores a change inside a path when the standalone command is untouched", () => {
+    expect(sttPolish.changedSlashCommandTokens("See src/quill/index, then run /quill.", "See src/quill, then run /quill.")).toBe(false);
+    expect(sttPolish.changedSlashCommandTokens("Run /quill now.", "Run /quill now and/quill.")).toBe(true);
+  });
   it("accepts a slash command wrapped in a run of opening punctuation", async () => {
     const result = await polishCommand("Run /quill now.", "Run ((/quill)) now.");
     expect(result.status, result.error ?? "").not.toBe("rejected");

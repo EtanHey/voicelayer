@@ -667,8 +667,7 @@ export function cleanupTranscriptionText(
   );
   // A command his dictionary produced ("you just /compact.") stays its own
   // token: the path pass would glue it to the word before ("just/compact.").
-  const commands = protectDictionaryCommands(normalized, dictionarySlashCommands(snapshot));
-  const pathNormalized = commands.restore(normalizePathTokens(commands.text));
+  const pathNormalized = normalizePathsAroundDictionaryCommands(normalized, dictionarySlashCommands(snapshot));
   const sentenceCased = normalizeSentenceStarts(pathNormalized);
   // Must run LAST: after the canonical-term pass folds "voice layer Codex"
   // into the camelCase agent token, and after auto-cap/sentence-start so the
@@ -683,18 +682,22 @@ function dictionarySlashCommands(snapshot: LoadedVocabularySnapshot | null): str
 }
 
 /**
- * Hide dictionary commands from the path pass. The whole run ("/a /b") is
- * decided first: every segment must be a dictionary command, followed by the
- * end, whitespace (not before another slash) or sentence punctuation, and the
- * token before the run must not be part of a path ("src/", "a/b", "/ x",
- * "~", "x.ts"). Anything else is a path and keeps today's output.
+ * Run the path pass on everything except runs of dictionary commands, which
+ * are copied through untouched (no placeholder is ever put in the text).
+ *
+ * Contract (lead ruling from Etan: "if I say /large-plan, that should just
+ * output /large-plan"): a slash run made only of the user's dictionary
+ * commands is commands, each its own token with one space between, even when
+ * the same sounds could be read as a path. Any run with a non-command segment,
+ * or directly after a path-like token ("src/", "a/b", "/ x", "~", "x.ts"), is
+ * a path and keeps today's bytes. The whole run is decided before splitting.
+ * A token equal to one of the user's dictionary commands is protected whether
+ * the dictionary or the recognizer wrote it: the stages between the alias pass
+ * (inside applyRules) and here rewrite the text, so occurrence offsets are not
+ * carried.
  */
-function protectDictionaryCommands(
-  text: string,
-  commands: readonly string[],
-): { text: string; restore: (value: string) => string } {
-  const unchanged = { text, restore: (value: string) => value };
-  if (!commands.length || !text.includes("/")) return unchanged;
+function normalizePathsAroundDictionaryCommands(text: string, commands: readonly string[]): string {
+  if (!commands.length || !text.includes("/")) return normalizePathTokens(text);
   const names = [...new Set(commands)].sort((a, b) => b.length - a.length)
     .map((command) => command.slice(1));
   const name = `\\/(?:${names.join("|")})(?![A-Za-z0-9_~/-]|\\.(?!\\s|$))`;
@@ -702,19 +705,38 @@ function protectDictionaryCommands(
     `(^|\\s)(${name}(?:[ \\t]+${name})*)(?=$|\\s(?![ \\t]*\\/)|[.,!?;:](?=\\s|$))`,
     "gu",
   );
-  const tokens: string[] = [];
-  const hidden = text.replace(pattern, (match, before: string, run: string, offset: number) => {
-    const preceding = text.slice(0, offset + before.length);
-    if (/(?:\S*[\/~]\S*|\/\s*[A-Za-z0-9._~-]+|\S*\.[A-Za-z0-9]+)\s+$/u.test(preceding)) return match;
-    tokens.push(run);
-    return `${before}\uE400${String.fromCodePoint(0xE500 + tokens.length - 1)}\uE401`;
-  });
-  if (!tokens.length) return unchanged;
-  return {
-    text: hidden,
-    restore: (value) => value.replace(/\uE400([\uE500-\uF8FF])\uE401/gu, (_m, mark: string) =>
-      tokens[mark.codePointAt(0)! - 0xE500] ?? _m),
-  };
+  const parts: string[] = [];
+  let cursor = 0;
+  for (const match of text.matchAll(pattern)) {
+    const start = match.index + match[1].length;
+    if (followsPathToken(text, start)) continue;
+    // Sentence punctuation right after a command is copied as is, so the next
+    // chunk starts where the path pass would have seen a non-path boundary.
+    const rest = text.slice(cursor, start);
+    const lead = cursor > 0 && /^[.,!?;:]/u.test(rest) ? 1 : 0;
+    parts.push(rest.slice(0, lead), normalizePathTokens(rest.slice(lead)), match[2]);
+    cursor = start + match[2].length;
+  }
+  if (!parts.length) return normalizePathTokens(text);
+  const rest = text.slice(cursor);
+  const lead = /^[.,!?;:]/u.test(rest) ? 1 : 0;
+  parts.push(rest.slice(0, lead), normalizePathTokens(rest.slice(lead)));
+  return parts.join("");
+}
+
+/** The token before `start` ends a path: it has "/" or "~", a dot extension, or follows a spaced "/". */
+function followsPathToken(text: string, start: number): boolean {
+  let end = start;
+  while (end > 0 && /\s/u.test(text[end - 1])) end -= 1;
+  if (end === start) return false;
+  let begin = end;
+  while (begin > 0 && !/\s/u.test(text[begin - 1])) begin -= 1;
+  const token = text.slice(begin, end);
+  if (!token) return false;
+  if (/[\/~]/u.test(token) || /\.[A-Za-z0-9]+$/u.test(token)) return true;
+  let before = begin;
+  while (before > 0 && /\s/u.test(text[before - 1])) before -= 1;
+  return /^[A-Za-z0-9._~-]+$/u.test(token) && before > 0 && text[before - 1] === "/";
 }
 
 function isAggressiveFillerRemovalEnabled(env: STTCleanupEnv): boolean {
