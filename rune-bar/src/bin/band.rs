@@ -34,6 +34,7 @@ fn headless() -> bool {
 fn main() {
     let s = initial();
     let size = (s.width(), HEIGHT);
+    let keep_regions = s.keep_regions;
     let spec = AppSpec {
         poll: Some(poll),
         ..AppSpec::new("VoiceBar · Band replay", size, initial, view)
@@ -67,7 +68,7 @@ fn main() {
     );
     let handle = overlay.clone();
     overlay.update(move |s, _| s.overlay = Some(handle));
-    if !initial().keep_regions {
+    if !keep_regions {
         overlay.set_input(OverlayInput::None);
     }
     overlay.show();

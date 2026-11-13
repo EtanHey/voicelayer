@@ -85,10 +85,10 @@ fn choreography_travels_monotonically_and_finishes_left() {
 #[test]
 fn reduce_motion_keeps_every_shared_element_x_stationary() {
     let mut rt = runtime(true);
-    at(&mut rt, 6.);
+    at(&mut rt, 5.9);
     let baseline = rt.elements();
     for i in 1..=72 {
-        at(&mut rt, 6. + i as f64 / 60.);
+        at(&mut rt, 5.9 + i as f64 / 60.);
         for e in rt.elements() {
             if let Some(old) = baseline.iter().find(|b| b.key == e.key && b.key.is_some()) {
                 assert_eq!(old.rect[0], e.rect[0], "{:?}", e.key);
@@ -106,7 +106,13 @@ fn all_hit_rectangles_are_inside_drawn_shapes() {
                 rt.elements().iter().any(|e| e.fill.a == 1.
                     && matches!(
                         e.key.as_deref(),
-                        Some("band" | "band-surface" | "left-wing" | "right-wing")
+                        Some(
+                            "band"
+                                | "band-surface"
+                                | "recording-surface"
+                                | "left-wing"
+                                | "right-wing"
+                        )
                     )
                     && h[0] >= e.rect[0]
                     && h[1] >= e.rect[1]

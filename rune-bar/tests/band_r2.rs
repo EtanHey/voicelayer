@@ -74,15 +74,30 @@ fn dots_controls_opacity_ring_and_containment() {
             let mut r = rt(reduced, fast);
             let mut previous: Vec<rune::ElementInfo> = vec![];
             for i in 0..=100 {
-                at(&mut r, 6. + i as f64 / 60.);
+                at(&mut r, 5.9 + i as f64 / 60.);
                 let es = r.elements();
+                // Missing keyed paint is opacity zero, including removals.
+                for key in es.iter().chain(&previous).filter_map(|e| e.key.as_ref()) {
+                    let visible = |items: &[rune::ElementInfo]| {
+                        items
+                            .iter()
+                            .find(|e| e.key.as_ref() == Some(key))
+                            .map(|e| {
+                                if e.fill.a > 0. || e.text.is_some() {
+                                    e.opacity
+                                } else {
+                                    0.
+                                }
+                            })
+                            .unwrap_or(0.)
+                    };
+                    assert!(
+                        (visible(&es) - visible(&previous)).abs() <= 0.5 || previous.is_empty(),
+                        "opacity {key} at {i}"
+                    );
+                }
                 for e in &es {
                     if let Some(old) = previous.iter().find(|p| p.key == e.key && e.key.is_some()) {
-                        assert!(
-                            (e.opacity - old.opacity).abs() <= 0.5,
-                            "opacity {:?}",
-                            e.key
-                        );
                         if reduced {
                             assert_eq!(e.rect[0], old.rect[0], "moving {:?}", e.key);
                         }
@@ -97,11 +112,13 @@ fn dots_controls_opacity_ring_and_containment() {
                             Some(
                                 "band"
                                     | "band-surface"
+                                    | "recording-surface"
                                     | "left-wing"
                                     | "right-wing"
                                     | "notch-occlusion"
                             )
                         ) && e.fill.a == 1.
+                            && e.opacity + 0.001 >= d.opacity
                             && inside(d.rect, e.rect)),
                         "floating {:?} at {i}",
                         d.rect
@@ -124,7 +141,7 @@ fn dots_controls_opacity_ring_and_containment() {
                         );
                     }
                 }
-                if !fast && i == 27 && !reduced {
+                if !fast && i == 33 && !reduced {
                     let sig = es
                         .iter()
                         .find(|e| e.key.as_deref() == Some("signal"))

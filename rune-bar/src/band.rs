@@ -41,6 +41,8 @@ pub struct Band {
     pub notch: f32,
     pub safe_top: f32,
     pub transcribing_since: Option<f64>,
+    pub exit_from: Option<Box<Band>>,
+    pub recoverable_since: Option<f64>,
     pub overlay: Option<OverlayHandle<Band>>,
     pub keep_regions: bool,
     pub reduced: bool,
@@ -64,6 +66,8 @@ impl Band {
             notch,
             safe_top: 32.,
             transcribing_since: None,
+            exit_from: None,
+            recoverable_since: None,
             overlay: None,
             keep_regions: false,
             reduced,
@@ -122,7 +126,21 @@ impl Band {
                         continue;
                     }
                     if mode != self.mode {
+                        if mode == Mode::Idle
+                            && matches!(self.mode, Mode::Recording | Mode::Transcribing)
+                            && !e["recording_jobs"]
+                                .as_array()
+                                .is_some_and(|jobs| jobs.iter().any(|j| j["phase"] == "processing"))
+                        {
+                            let mut outgoing = self.clone();
+                            outgoing.now = t;
+                            outgoing.exit_from = None;
+                            self.exit_from = Some(Box::new(outgoing));
+                        } else {
+                            self.exit_from = None;
+                        }
                         if mode == Mode::Recording {
+                            self.recoverable_since = None;
                             self.first_level = None;
                             self.rms = 0.;
                             self.transcribing_since = None;
@@ -168,6 +186,18 @@ impl Band {
                     if e["source"] == "playback" || e["source"] == "seek" {
                         continue;
                     }
+                    if e["recoverable"] == true
+                        && matches!(self.mode, Mode::Recording | Mode::Transcribing)
+                    {
+                        self.recoverable_since = Some(t);
+                        self.message = e["message"]
+                            .as_str()
+                            .unwrap_or("Try again")
+                            .chars()
+                            .take(24)
+                            .collect();
+                        continue;
+                    }
                     self.transcribing_since = None;
                     self.mode = Mode::Error;
                     self.since = t;
@@ -185,6 +215,9 @@ impl Band {
         if matches!(self.mode, Mode::Typed | Mode::Error) && now - self.since >= 1.2 {
             self.mode = Mode::Idle;
         }
+    }
+    pub fn input_active(&self) -> bool {
+        self.mode != Mode::Idle || self.exit_from.is_some() && self.now - self.since < 0.15
     }
     pub fn timer(&self) -> String {
         let s = self
@@ -295,6 +328,12 @@ pub fn view(s: &Band, _cx: &mut Cx<Band>) -> El {
         Color::BLACK,
     ));
     if s.mode == Mode::Idle {
+        if let Some(old) = &s.exit_from {
+            let alpha = 1. - ease(((s.now - s.since) / 0.15) as f32);
+            if alpha > 0.001 {
+                return root.child(el().opacity(alpha).child(view(old, _cx)));
+            }
+        }
         return root;
     }
     if s.mode == Mode::Typed || s.mode == Mode::Error {
@@ -321,9 +360,24 @@ pub fn view(s: &Band, _cx: &mut Cx<Band>) -> El {
         return root
             .child(shape("band-surface", 8., 0., right - 8., HEIGHT, Color::BLACK).opacity(exit))
             .child(
-                shape("left-wing", 8., 0., core - 8., HEIGHT, Color::BLACK)
-                    .radius(0.)
-                    .opacity(exit),
+                shape(
+                    "left-wing",
+                    if s.reduced {
+                        core - if s.locked { 72. } else { 40. }
+                    } else {
+                        8.
+                    },
+                    0.,
+                    if s.reduced {
+                        if s.locked { 72. } else { 40. }
+                    } else {
+                        core - 8.
+                    },
+                    HEIGHT,
+                    Color::TRANSPARENT,
+                )
+                .radius(0.)
+                .opacity(exit),
             )
             .child(feedback(s, core, enter * exit));
     }
@@ -333,7 +387,7 @@ pub fn view(s: &Band, _cx: &mut Cx<Band>) -> El {
     let wing_start = core - if s.locked { 72. } else { 40. };
     let left = if trans {
         if s.reduced {
-            8.
+            wing_start
         } else {
             wing_start + (8. - wing_start) * ease(age / 0.1)
         }
@@ -359,14 +413,38 @@ pub fn view(s: &Band, _cx: &mut Cx<Band>) -> El {
         // Never shrink past the visible signal; its fast middle is occluded by the notch.
         (112. * (1. - ease((age - 0.1) / 0.22))).max((x + 28. - right).clamp(0., 112.))
     };
-    root = root.child(shape(
-        "band-surface",
-        left,
-        0.,
-        right + right_width - left,
-        HEIGHT,
-        Color::BLACK,
-    ));
+    root = root.child(
+        shape(
+            "band-surface",
+            if s.reduced { 8. } else { left },
+            0.,
+            right + if s.reduced { 0. } else { right_width } - if s.reduced { 8. } else { left },
+            HEIGHT,
+            Color::BLACK,
+        )
+        .opacity(if s.reduced {
+            if trans { ease(age / 0.15) } else { 0. }
+        } else {
+            1.
+        }),
+    );
+    if s.reduced && (!trans || age < 0.3) {
+        root = root.child(
+            shape(
+                "recording-surface",
+                wing_start,
+                0.,
+                right - wing_start,
+                HEIGHT,
+                Color::BLACK,
+            )
+            .opacity(if trans {
+                1. - ease((age - 0.15) / 0.15)
+            } else {
+                1.
+            }),
+        );
+    }
     root = root.child(
         shape(
             "left-wing",
@@ -378,15 +456,17 @@ pub fn view(s: &Band, _cx: &mut Cx<Band>) -> El {
         )
         .radius(0.),
     );
-    if trans && s.reduced && age < 0.3 {
+    if s.reduced && (!trans || age < 0.3) {
         // Outgoing bars fade before the stationary opaque wing starts its own fade.
         root = root.child(
-            shape("right-wing", right - 8., 0., 120., HEIGHT, Color::BLACK)
-                .radius(0.)
-                .opacity(1. - ease((age - 0.15) / 0.15)),
+            shape("right-wing", right - 8., 0., 120., HEIGHT, Color::BLACK).opacity(if trans {
+                1. - ease((age - 0.15) / 0.15)
+            } else {
+                1.
+            }),
         );
     }
-    if right_width > 0.01 {
+    if !s.reduced && right_width > 0.01 {
         root = root.child(
             shape(
                 "right-wing",
@@ -396,29 +476,44 @@ pub fn view(s: &Band, _cx: &mut Cx<Band>) -> El {
                 HEIGHT,
                 Color::TRANSPARENT,
             )
-            .radius(0.),
+            .radius(0.)
+            .opacity((right_width / 112.).clamp(0., 1.)),
         );
     }
     if !trans || control_alpha > 0.001 {
         root = controls(root, s, core, control_alpha).child(timer(s, right, control_alpha));
     }
     if !trans {
-        let mut waveform = el()
-            .key("waveform")
-            .absolute(right + 10., 10.)
-            .size(52., 24.);
+        let mut waveform = el().key("signal").absolute(right + 9.5, 8.).size(52., 28.);
         for i in 0..9 {
             let h = bar_height(s, i, s.now);
             waveform = waveform.child(
                 shape(
-                    &format!("wave-{i}"),
-                    i as f32 * 6.,
-                    12. - h / 2.,
+                    &format!("dot-0-{i}"),
+                    i as f32 * 6. + 0.5,
+                    14. - h / 2.,
                     3.,
                     h,
                     red(),
                 )
                 .matched(format!("signal-0-{i}")),
+            );
+        }
+        root = root.child(
+            el().key("waveform")
+                .opacity(0.)
+                .absolute(right + 10., 10.)
+                .size(52., 24.),
+        );
+        if let Some(t) = s.recoverable_since {
+            // Keep the take and controls; put the note above the signal, outside the hardware notch.
+            root = root.child(
+                text(&s.message)
+                    .key("recoverable-note")
+                    .absolute(right + 8., 0.)
+                    .font(TextStyle::new(8., 500.))
+                    .color(Color::WHITE)
+                    .opacity(ease(((s.now - t) / 0.1) as f32)),
             );
         }
         return root.child(waveform);
@@ -466,7 +561,8 @@ pub fn view(s: &Band, _cx: &mut Cx<Band>) -> El {
             .size(52., 28.)
             .opacity(alpha * s.content_alpha);
         for i in 0..9 {
-            let angle = i as f32 * std::f32::consts::TAU / 9.
+            let base = i as f32 * std::f32::consts::TAU / 9.;
+            let angle = base
                 + if s.reduced {
                     0.
                 } else {
@@ -494,12 +590,23 @@ pub fn view(s: &Band, _cx: &mut Cx<Band>) -> El {
                     color,
                 )
                 .matched(format!("signal-{side}-{i}"))
-                .opacity(1. - spin * (0.35 - 0.35 * angle.cos())),
+                .opacity(1. - spin * (0.35 - 0.35 * base.cos())),
             );
         }
         root = root.child(group);
     }
-    root.child(shape("notch-occlusion", core, 0., n, HEIGHT, Color::BLACK).radius(0.))
+    root.child(
+        shape(
+            "notch-occlusion",
+            core,
+            0.,
+            n,
+            s.safe_top.min(HEIGHT),
+            Color::BLACK,
+        )
+        .radius(0.)
+        .opacity(ease(age / 0.1) * s.content_alpha),
+    )
 }
 fn bar_height(s: &Band, i: usize, t: f64) -> f32 {
     3. + s.rms * 19. * (0.35 + 0.65 * (i as f32 * 1.7 + t as f32 * 5.).sin().abs())
@@ -517,12 +624,13 @@ fn feedback(s: &Band, core: f32, alpha: f32) -> El {
     .opacity(alpha)
 }
 pub fn poll(s: &mut Band, clock: f64, tx: &mut Tx) -> bool {
+    let active = s.input_active();
     let before = (s.mode.clone(), s.timer(), s.rms, s.now, s.since);
     s.sample(clock);
     let changed = before.0 != s.mode;
-    if changed && !s.keep_regions {
+    if active != s.input_active() && !s.keep_regions {
         if let Some(handle) = &s.overlay {
-            handle.set_input(if s.mode == Mode::Idle {
+            handle.set_input(if !s.input_active() {
                 OverlayInput::None
             } else {
                 OverlayInput::Regions
@@ -539,7 +647,8 @@ pub fn poll(s: &mut Band, clock: f64, tx: &mut Tx) -> bool {
         .map(|t| (t + 0.45).max(s.since) + 0.12)
         .unwrap_or(s.since);
     let feedback_moving = feedback && (clock < feedback_enter + 0.12 || clock > s.since + 1.05);
-    let animated = s.mode == Mode::Transcribing
+    let animated = (s.mode == Mode::Idle && s.input_active())
+        || s.mode == Mode::Transcribing
         || (s.mode == Mode::Recording && s.rms > 0.)
         || feedback_moving;
     let mut deadline = future;
@@ -560,5 +669,8 @@ pub fn poll(s: &mut Band, clock: f64, tx: &mut Tx) -> bool {
     if let Some(t) = deadline {
         tx.wake_at(t);
     }
-    changed || before.1 != s.timer() || (animated && before.3 != clock)
+    (active != s.input_active())
+        || changed
+        || before.1 != s.timer()
+        || (animated && before.3 != clock)
 }
