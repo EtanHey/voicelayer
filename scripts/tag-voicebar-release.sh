@@ -45,13 +45,33 @@ case "$gate_out" in
   *) refuse "the release gate did not pass $tag: $gate_out" ;;
 esac
 
-git tag -a "$tag" -m "VoiceLayer $tag" HEAD
-# Confirm with the exact command the workflow runs; never leave a tag the workflow would refuse.
-if ! "$bun" scripts/t3-optf5-proof.ts release-gate --tag "$tag" --repo "$root" >/dev/null; then
-  git tag -d "$tag" >/dev/null
-  refuse "the workflow's form of the gate refused the new tag; it was deleted"
-fi
+# From here until the last line succeeds, any failure or interruption deletes the tag again, so a
+# failed run leaves no tag behind. (A SIGKILL or power loss cannot be caught: if this script did
+# not print its final "created" line, check `git tag -l` and delete the tag by hand.)
+tag_created=0
+cleanup_tag() {
+  status=$?
+  if [ "$tag_created" -eq 1 ]; then
+    if git tag -d "$tag" >/dev/null 2>&1; then
+      echo "[tag-voicebar-release] REFUSED: failed after creating $tag; the tag was deleted" >&2
+    else
+      echo "[tag-voicebar-release] REFUSED: failed after creating $tag AND could not delete it: run 'git tag -d $tag'" >&2
+    fi
+  fi
+  exit "$status"
+}
+trap cleanup_tag EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
-echo "[tag-voicebar-release] created annotated tag $tag at $(git rev-parse HEAD) (local only, NOT pushed)"
+git tag -a "$tag" -m "VoiceLayer $tag" HEAD
+tag_created=1
+# Confirm with the exact command the workflow runs; never leave a tag the workflow would refuse.
+"$bun" scripts/t3-optf5-proof.ts release-gate --tag "$tag" --repo "$root" >/dev/null \
+  || { echo "[tag-voicebar-release] the workflow's form of the gate refused the new tag" >&2; exit 1; }
+
+head_sha="$(git rev-parse HEAD)"
+echo "[tag-voicebar-release] created annotated tag $tag at $head_sha (local only, NOT pushed)"
 echo "[tag-voicebar-release] pushing it publishes to npm; when you mean to, run:"
 echo "  git push origin $tag"
+tag_created=0
