@@ -1584,6 +1584,31 @@ describe("stt-polish", () => {
     });
   }
 
+  // Lane c11-T6: a list the rules stage made from "So number one, … Number
+  // two, … And number three, …" may not be merged back or renumbered by polish.
+  for (const [name, candidate] of [
+    ["merged back into prose", "We need a plan. So we fix the tap. We bump the cask. And we ship the release."],
+    ["renumbered", "We need a plan.\n1. So we fix the tap.\n2. We bump the cask.\n2. And we ship the release."],
+    ["two items merged into one", "We need a plan.\n1. So we fix the tap.\n2. We bump the cask and we ship the release."],
+  ] as const) {
+    it(`rejects a rules-made number list ${name}`, async () => {
+      const rawText = "We need a plan. So number one, we fix the tap. Number two, we bump the cask. And number three, we ship the release.";
+      const cleanedText = "We need a plan.\n1. So we fix the tap.\n2. We bump the cask.\n3. And we ship the release.";
+      server = createMockPolishServer(() => ({ text: candidate }));
+      const result = await polishTranscriptionText({
+        rawText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+      expect(result.status).toBe("rejected");
+      expect(result.text).toBe(cleanedText);
+    });
+  }
+
   it("rejects a numbered list that deletes spoken First and Second", async () => {
     const cleanedText = "First, verify the recording state before release. Second, inspect the transcript before sending it.";
     const candidate = "1. Verify the recording state before release.\n2. Inspect the transcript before sending it.";
