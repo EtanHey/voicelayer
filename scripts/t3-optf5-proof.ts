@@ -191,7 +191,11 @@ export interface BuildCommitFacts {
 
 export function checkReleaseRecord(
   raw: unknown,
-  ctx: { tag: string; tagCommit: string; packageVersion: string; buildCommit: (sha: string) => BuildCommitFacts | null },
+  ctx: {
+    tag: string; tagCommit: string; packageVersion: string; buildCommit: (sha: string) => BuildCommitFacts | null;
+    /** Defaults to "running under the bun test preload". Only there is a host-override record accepted. */
+    testMode?: boolean;
+  },
   now = Date.now(),
 ): T3OptF5Proof {
   const version = ctx.tag.slice(1);
@@ -201,6 +205,7 @@ export function checkReleaseRecord(
   const release = (raw as Record<string, unknown>).release as Record<string, unknown> | undefined;
   if (typeof release !== "object" || release === null) fail(`${path} has no release block; write it with t3-optf5-proof.ts record`);
   if (release.version !== version) fail(`${path} release.version '${String(release.version)}' is not the tag's ${version}`);
+  refuseHostOverrideRecord(release, path, ctx.testMode ?? underTestPreload());
   const build = String(release.gitCommit);
   if (!COMMIT_RE.test(build)) fail(`${path} release.gitCommit '${build}' is not a full SHA`);
   const facts = ctx.buildCommit(build);
@@ -472,6 +477,15 @@ function underTestPreload(): boolean {
   return Boolean(process.env.VOICELAYER_TEST_RUN_ROOT);
 }
 
+// `record` marks a record whose host came from the test-only --host-model/--host-chip seam. Outside the
+// test preload (the hosted publish gate, promotion) such a record is refused, so setting the preload's
+// environment variable by hand on the wrong Mac cannot produce a record a release accepts.
+function refuseHostOverrideRecord(release: Record<string, unknown>, path: string, testMode: boolean): void {
+  if (release.hostOverride !== undefined && !testMode) {
+    fail(`${path} was recorded with a test-only host override; record it on an accepted proof host without --host-model/--host-chip`);
+  }
+}
+
 // This Mac's identity from sysctl. Only under the test preload may a test pass an explicit one;
 // there is no default identity. `run` (through start) and `record` refuse a Mac not in the list.
 function thisProofHost(args: Map<string, string>): ProofHost {
@@ -703,6 +717,10 @@ function check(args: Map<string, string>) {
   } catch {
     fail(`proof file is not valid JSON: ${path}`);
   }
+  const recorded = (raw as { release?: unknown } | null)?.release;
+  if (typeof recorded === "object" && recorded !== null) {
+    refuseHostOverrideRecord(recorded as Record<string, unknown>, path, underTestPreload());
+  }
   // The candidate's identity comes from the app being delivered, never from arguments.
   const app = need(args, "--app");
   const plist = `${app}/Contents/Info.plist`;
@@ -734,6 +752,8 @@ function record(args: Map<string, string>) {
     gitCommit: readPlistString(plist, "GitCommit"),
     buildTimeUTC: readPlistString(plist, "BuildTimeUTC"),
     bundleSha256: bundleDigest(app),
+    // Present only when the host came from the test-only seam; a release never accepts it.
+    ...(HOST_OVERRIDES.some((flag) => args.has(flag)) ? { hostOverride: true } : {}),
   };
   mkdirSync(dirname(resolve(out)), { recursive: true }); // first record on a clean checkout
   writeFileSync(out, `${JSON.stringify({ ...proof, release }, null, 2)}\n`);

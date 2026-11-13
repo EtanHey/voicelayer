@@ -58,6 +58,14 @@ describe("release gate rule (checkReleaseRecord)", () => {
     expect(gate(recordFor(), { ...descendant, changedPaths: ["release-proofs/v2.4.0.json", "release-proofs/proof-hosts.json"] })).toThrow("proof-hosts.json");
   });
 
+  test("R3 (Codex r2): a record made through the test-only host seam is refused outside the test preload", () => {
+    const overridden = recordFor({}, { hostOverride: true });
+    const ctx = { tag: "v2.4.0", tagCommit: TAG_COMMIT, packageVersion: "2.4.0", buildCommit: () => descendant };
+    expect(() => checkReleaseRecord(overridden, { ...ctx, testMode: false })).toThrow("test-only host override");
+    expect(checkReleaseRecord(overridden, { ...ctx, testMode: true }).gitCommit).toBe(BUILD);
+    expect(checkReleaseRecord(recordFor(), { ...ctx, testMode: false }).gitCommit).toBe(BUILD); // a real record is unaffected
+  });
+
   test("R3: a record whose machine is missing or not an accepted proof host refuses", () => {
     expect(gate(recordFor({ machine: undefined }))).toThrow("not an accepted proof host");
     expect(gate(recordFor({ machine: { model: "Mac14,2", chip: "Apple M2" } }))).toThrow("not an accepted proof host");
@@ -288,7 +296,8 @@ describe("record writes the committed proof from the proven app", () => {
     expect(rec.stderr.toString()).toBe("");
     expect(rec.exitCode).toBe(0);
     const written = JSON.parse(readFileSync(join(dir, "release-proofs", "v2.4.0.json"), "utf8"));
-    expect(written.release).toEqual({ version: "2.4.0", gitCommit: build, buildTimeUTC: BUILD_TIME, bundleSha256: bundleDigest(app) });
+    // The fixture's host came from the test-only seam, so the record says so.
+    expect(written.release).toEqual({ version: "2.4.0", gitCommit: build, buildTimeUTC: BUILD_TIME, bundleSha256: bundleDigest(app), hostOverride: true });
     expect(cli("check", "--proof", join(dir, "release-proofs", "v2.4.0.json"), "--app", app).exitCode).toBe(0);
 
     commitAll("release proof");
