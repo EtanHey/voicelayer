@@ -6,6 +6,7 @@ import { appendFile, mkdir } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import { isProseOne } from "./rules-engine";
+import { guardPolishQuestionMarks } from "./stt-polish-question-marks";
 import { NDJSONByteFramer } from "./ndjson-byte-framer";
 import { SocketOutboundQueue } from "./socket-outbound-queue";
 
@@ -1553,7 +1554,33 @@ function applyPolishCandidate(
       retried,
     );
   }
-  return buildResult(candidateText, candidateText, "applied", undefined, retried);
+  return buildResult(guardedPolishText(cleanedText, candidateText), candidateText, "applied", undefined, retried);
+}
+
+/**
+ * Polish may not turn a statement into a question (log lines carry no text).
+ * Applied results only. Any failure delivers the accepted polish unchanged.
+ * Exported for the isolation test, which injects a throwing guard.
+ */
+export function guardedPolishText(
+  cleanedText: string,
+  polishedText: string,
+  guard = guardPolishQuestionMarks,
+): string {
+  try {
+    const guarded = guard(cleanedText, polishedText);
+    if (guarded.demoted > 0) {
+      console.error(`[voicelayer] ${JSON.stringify({ event: "polish_question_mark_demoted", count: guarded.demoted })}`);
+    }
+    return guarded.text;
+  } catch {
+    try {
+      console.error(`[voicelayer] ${JSON.stringify({ event: "polish_question_mark_guard_error" })}`);
+    } catch {
+      // Logging failed too; the accepted polish is still delivered.
+    }
+    return polishedText;
+  }
 }
 
 function getPolishHealthEndpoint(endpoint: string): string {
@@ -2033,7 +2060,7 @@ async function polishTranscriptionTextReady(input: STTPolishInput, startedAt = p
       );
       const retryReason =
         result.status === "applied" &&
-        !result.changed &&
+        result.polishedText === input.cleanedText &&
         shouldRetryNoopPolish(input.cleanedText)
           ? "noop"
           : shouldRetryRejectedPolish(input.cleanedText, result)
@@ -2073,7 +2100,7 @@ async function polishTranscriptionTextReady(input: STTPolishInput, startedAt = p
               );
               if (
                 latestResult.status !== "applied" ||
-                latestResult.changed ||
+                latestResult.polishedText !== input.cleanedText ||
                 !shouldRetryNoopPolish(input.cleanedText)
               ) {
                 writePolishLog(

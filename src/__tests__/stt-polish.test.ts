@@ -14,6 +14,8 @@ import {
 } from "../stt-polish";
 import * as sttPolish from "../stt-polish";
 import * as polishServerManager from "../stt-polish-server";
+import { guardPolishQuestionMarks } from "../stt-polish-question-marks";
+import * as questionMarkGuard from "../stt-polish-question-marks";
 import { finalizeTranscriptionResultForSurface } from "../input";
 
 let TEST_DIR = "";
@@ -3182,5 +3184,347 @@ describe("stt-polish system prompt — false starts and retractions are KEPT", (
       expect(text).toContain("every supplied word, fragment, and repetition in order");
       expect(text).not.toContain("safe dictation cleanup");
     }
+  });
+});
+
+// Lane T9 (reported 2026-11-13): polish keeps every "?" it writes except on a
+// statement or request that only contains a question clause. Synthetic only.
+describe("stt-polish terminal question marks", () => {
+  let server: MockPolishServer | null = null;
+
+  beforeEach(() => {
+    TEST_DIR = mkdtempSync(join(tmpdir(), "voicelayer-polish-qm-"));
+    TEST_SOCKET = testSocket("q.sock");
+    TEST_LOG = join(TEST_DIR, "polish.jsonl");
+  });
+
+  afterEach(async () => {
+    server?.stop();
+    server = null;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    if (TEST_SOCKET) rmSync(TEST_SOCKET, { force: true });
+    if (TEST_DIR) rmSync(TEST_DIR, { recursive: true, force: true });
+    TEST_DIR = "";
+    TEST_SOCKET = "";
+  });
+
+  const words = (text: string) =>
+    (text.toLowerCase().match(/[\p{L}\p{N}'’]+/gu) ?? []).sort();
+
+  async function polishWith(cleanedText: string, candidate: string) {
+    server?.stop();
+    server = createMockPolishServer(() => ({ text: candidate }));
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+      const events = errors.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.includes("polish_question_mark"));
+      return { result, events };
+    } finally {
+      errors.mockRestore();
+    }
+  }
+
+  const demotedOnce = ['[voicelayer] {"event":"polish_question_mark_demoted","count":1}'];
+
+  // [cleaned text with the recognizer's ".", polish candidate, delivered]. The
+  // same cleaned text without that statement evidence keeps the "?".
+  const statements: Array<[string, string, string]> = [
+    [
+      "i'm not sure which crate it is but anyway.",
+      "I'm not sure which crate it is, but anyway?",
+      "I'm not sure which crate it is, but anyway.",
+    ],
+    ["so i don't know what happened.", "So I don't know what happened?", "So I don't know what happened."],
+    [
+      "not sure where the config lives but yeah.",
+      "Not sure where the config lives, but yeah?",
+      "Not sure where the config lives, but yeah.",
+    ],
+    [
+      "we're not quite sure which branch has it.",
+      "We're not quite sure which branch has it?",
+      "We're not quite sure which branch has it.",
+    ],
+    [
+      "i have no idea who changed the setting.",
+      "I have no idea who changed the setting?",
+      "I have no idea who changed the setting.",
+    ],
+    ["i wonder if that works!", "I wonder if that works?", "I wonder if that works!"],
+    [
+      "i was wondering how the cache gets warmed but yeah.",
+      "I was wondering how the cache gets warmed, but yeah?",
+      "I was wondering how the cache gets warmed, but yeah.",
+    ],
+    ["i dunno if it shipped.", "I dunno if it shipped?", "I dunno if it shipped."],
+    ["tell me when it lands.", "Tell me when it lands?", "Tell me when it lands."],
+    ["okay let me know what you think.", "Okay, let me know what you think?", "Okay, let me know what you think."],
+    ["explain how the retry budget works.", "Explain how the retry budget works?", "Explain how the retry budget works."],
+    ["check whether the tests still pass.", "Check whether the tests still pass?", "Check whether the tests still pass."],
+    [
+      "actually show me how the parser handles dashes.",
+      "Actually, show me how the parser handles dashes?",
+      "Actually, show me how the parser handles dashes.",
+    ],
+    ["find out who owns the release.", "Find out who owns the release?", "Find out who owns the release."],
+    [
+      "we shipped the fix yesterday. do you want the notes. i'm not really sure which build it was but yeah.",
+      "We shipped the fix yesterday. Do you want the notes? I'm not really sure which build it was, but yeah?",
+      "We shipped the fix yesterday. Do you want the notes? I'm not really sure which build it was, but yeah.",
+    ],
+  ];
+  const noEvidence = ["", ","];
+
+  it.each(statements.map((row, index) => [...row, noEvidence[index % noEvidence.length]!] as const))(
+    "demotes a frame's ? on the recognizer's statement mark, keeps it without one: %s",
+    async (cleanedText, candidate, expected, unmarked) => {
+      const { result, events } = await polishWith(cleanedText, candidate);
+      expect(result).toMatchObject({ status: "applied", text: expected, polishedText: candidate });
+      expect(words(result.text)).toEqual(words(candidate));
+      expect(words(result.text)).toEqual(words(cleanedText));
+      expect(events).toEqual(demotedOnce);
+      const kept = await polishWith(cleanedText.replace(/[.!]$/u, unmarked), candidate);
+      expect(kept.result).toMatchObject({ status: "applied", text: candidate });
+      expect(kept.events).toEqual([]);
+    },
+  );
+
+  // [cleaned text, polish candidate]: every "?" here stays.
+  const questions: Array<[string, string]> = [
+    ["i don't know is it.", "I don't know is it?"],
+    ["i don't know do you.", "I don't know do you?"],
+    ["tell me did it land.", "Tell me did it land?"],
+    ["i am not sure is it merged.", "I am not sure is it merged?"],
+    ["i don't know should we wait.", "I don't know should we wait?"],
+    ["tell me will it ship.", "Tell me will it ship?"],
+    ["i wonder can you check the logs.", "I wonder can you check the logs?"],
+    ["done and everything is merged.", "Done and everything is merged?"],
+    ["chrome translation.", "Chrome translation?"],
+    ["you already pushed the branch.", "You already pushed the branch?"],
+    ["i should merge it now.", "I should merge it now?"],
+    ["i'm not sure is it merged.", "I'm not sure, is it merged?"],
+    ["i don't know right.", "I don't know, right?"],
+    ["i don't know right.", "I don't know right?"],
+    ["i don't know no.", "I don't know, no?"],
+    ["i'm not sure which one it is?", "I'm not sure which one it is?"],
+    ["tell me did it land.", "Tell me, did it land?"],
+    ["let me know is that okay.", "Let me know — is that okay?"],
+    ["i wonder or should we wait.", "I wonder, or should we wait?"],
+    ["i can't tell where are we on the rollout.", "I can't tell where are we on the rollout?"],
+    ["i'm not sure about the flag you want it on.", "I'm not sure about the flag — you want it on?"],
+    ["did your build finish.", "Did your build finish?"],
+    ["what happened to the build.", "What happened to the build?"],
+    ["it works doesn't it.", "It works, doesn't it?"],
+    ["so is it ready.", "So, is it ready?"],
+    ["can you tell me what happened.", "Can you tell me what happened?"],
+    // Known-limit pins: any recognizer ? bypasses alignment for the whole take.
+    ['i\'m not sure "it works"?', 'I\'m not sure "it works"?'],
+    ["i'm not sure it works? uh.", "I'm not sure it works, uh?"],
+    ["i don't know where it went. i don't know where it went?", "I don't know where it went? I don't know where it went?"],
+    ["i'm not sure which build? it was.", "I'm not sure which build it was?"],
+  ];
+
+  // Every keep case carries a demotable control in the same text, so a guard
+  // that does nothing fails these tests as surely as a guard that demotes all.
+  const control = {
+    cleaned: "i'm not sure which crate it is but anyway.",
+    candidate: "I'm not sure which crate it is, but anyway?",
+    expected: "I'm not sure which crate it is, but anyway.",
+  };
+
+  it.each(questions)("keeps a ? the guard cannot prove was invented: %s", async (cleanedText, candidate) => {
+    const { result, events } = await polishWith(
+      `${cleanedText} ${control.cleaned}`,
+      `${candidate} ${control.candidate}`,
+    );
+    expect(result).toMatchObject({ status: "applied", text: `${candidate} ${cleanedText.includes("?") ? control.candidate : control.expected}` });
+    expect(words(result.text)).toEqual(words(`${cleanedText} ${control.cleaned}`));
+    expect(events).toEqual(cleanedText.includes("?") ? [] : demotedOnce);
+  });
+
+  it.each(["?", "？"])("keeps a recognizer %s when polish moves it", (mark) => {
+    const cleaned = `Did it land${mark} I'm not sure it worked.`;
+    const candidate = "Did it land. I'm not sure it worked?";
+    expect(guardPolishQuestionMarks(cleaned, candidate)).toEqual({ text: candidate, demoted: 0 });
+  });
+
+  it("does not retry HTTP polish after demoting its only edit", async () => {
+    const cleanedText = "I'm not sure which crate we carried to the storage room last week.";
+    const candidate = cleanedText.replace(/\.$/u, "?");
+    let requests = 0;
+    const http = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (request) => {
+        if (new URL(request.url).pathname === "/v1/models") return Response.json({ data: [] });
+        requests++;
+        return Response.json({ choices: [{ message: { content: candidate } }] });
+      },
+    });
+    try {
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${http.port}/v1/chat/completions`,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+      expect(requests).toBe(1);
+      expect(result).toMatchObject({ status: "applied", text: cleanedText, polishedText: candidate, changed: false, retried: false });
+    } finally {
+      http.stop(true);
+    }
+  });
+
+  it("keeps moved and added marks when the recognizer supplied a question mark", () => {
+    const cleaned = "Did it land? I'm not sure it worked.";
+    const candidate = "Did it land. I'm not sure it worked? Is it ready?";
+    expect(guardPolishQuestionMarks(cleaned, candidate)).toEqual({ text: candidate, demoted: 0 });
+  });
+
+  it("keeps a later added mark when an earlier question remains", () => {
+    const cleaned = "Did it land? I'm not sure it worked.";
+    const candidate = "Did it land? I'm not sure it worked?";
+    expect(guardPolishQuestionMarks(cleaned, candidate).text).toBe(candidate);
+  });
+
+  it.each([
+    ["I'm not sure which one it is.", "I'm not sure which one it is?", "I'm not sure which one it is."],
+    ["Is it ready.", "Is it ready?", "Is it ready?"],
+    ["אני לא בטוח שזה עובד.", "אני לא בטוח שזה עובד?", "אני לא בטוח שזה עובד?"],
+    ["האם זה עובד.", "האם זה עובד?", "האם זה עובד?"],
+  ])("preserves words and applies the conservative rule: %s", (cleaned, candidate, expected) => {
+    const result = guardPolishQuestionMarks(cleaned, candidate);
+    expect(result.text).toBe(expected);
+    expect(words(result.text)).toEqual(words(candidate));
+  });
+
+  it("keeps a recognizer ? that polish moved from an earlier sentence", async () => {
+    const cleanedText = `did it land? i'm not sure which build it was. ${control.cleaned}`;
+    const candidate = `Did it land. I'm not sure which build it was? ${control.candidate}`;
+    const { result, events } = await polishWith(cleanedText, candidate);
+    expect(result).toMatchObject({ status: "applied", text: candidate });
+    expect(events).toEqual([]);
+  });
+
+  it.each([
+    ['tell me what you think of "the plan"!', 'Tell me what you think of "the plan?"', 'Tell me what you think of "the plan!"'],
+    ['tell me what you think of "the plan"!', 'Tell me what you think of "the plan"?', 'Tell me what you think of "the plan"!'],
+  ])("reads the cleaned mark past a closer and writes it where polish put the ?: %s", async (cleanedText, candidate, expected) => {
+    const { result, events } = await polishWith(cleanedText, candidate);
+    expect(result).toMatchObject({ status: "applied", text: expected });
+    expect(events).toEqual(demotedOnce);
+  });
+
+  // Known limit, not a goal: wh-word + noun + inversion is still demoted.
+  it.each([
+    ["Let me know what time is it.", "Let me know what time is it?"],
+    ["I'm not sure which one is it.", "I'm not sure which one is it?"],
+  ])("known limit: wh-word plus noun plus inversion: %s", (cleaned, candidate) => {
+    expect(guardPolishQuestionMarks(cleaned, candidate)).toEqual({ text: cleaned, demoted: 1 });
+  });
+
+  // ?-free counterparts reach alignment rather than the whole-take bypass.
+  // The repeated sentence pins the duplicate-span rule: ambiguity keeps both marks.
+  it.each([
+    ['i\'m not sure "it works".', 'I\'m not sure "it works"?', 'I\'m not sure "it works".'],
+    ["i'm not sure it works. uh.", "I'm not sure it works, uh?", "I'm not sure it works, uh."],
+    ["i don't know where it went. i don't know where it went.", "I don't know where it went? I don't know where it went?", "I don't know where it went? I don't know where it went?"],
+    ["i'm not sure which build. it was.", "I'm not sure which build it was?", "I'm not sure which build it was."],
+    ["tell me which shelf you prefer but anyway.", "Tell me which shelf you prefer, but anyway?", "Tell me which shelf you prefer, but anyway."],
+  ])("aligns without a recognizer question mark: %s", (cleaned, candidate, expected) => {
+    const guarded = guardPolishQuestionMarks(cleaned, candidate);
+    expect(guarded).toEqual({ text: expected, demoted: expected === candidate ? 0 : 1 });
+    expect(words(guarded.text)).toEqual(words(candidate));
+  });
+
+  it("returns a polish that changed nothing byte-identical", async () => {
+    const cleanedText = "I'm not sure which crate it is, but anyway.";
+    const unchanged = await polishWith(cleanedText, cleanedText);
+    expect(unchanged.result).toMatchObject({ status: "applied", text: cleanedText, changed: false });
+    expect(unchanged.events).toEqual([]);
+    const repaired = await polishWith(control.cleaned, control.candidate);
+    expect(repaired.result.text).toBe(control.expected);
+  });
+
+  it("returns a polish whose question marks all stay byte-identical", async () => {
+    const cleanedText = "we shipped it do you want the notes it landed on main.";
+    const candidate = "We shipped it. Do you want the notes? It landed on main?";
+    const kept = await polishWith(cleanedText, candidate);
+    expect(kept.result.text).toBe(candidate);
+    expect(kept.events).toEqual([]);
+    const repaired = await polishWith(`${cleanedText} ${control.cleaned}`, `${candidate} ${control.candidate}`);
+    expect(repaired.result.text).toBe(`${candidate} ${control.expected}`);
+  });
+
+  it.each(["", "."])("does not guard a rejected candidate's projected punctuation: terminal %s", async (terminal) => {
+    const cleanedText =
+      `we merged the fix yesterday and the tests are green now i'm not sure which crate it is but anyway${terminal}`;
+    const candidate =
+      "We merged the patch yesterday, and the tests are green now. I'm not sure which crate it is, but anyway?";
+    // Projection never overwrites the recognizer's existing terminal period.
+    // A throwing spy makes this fail if the guard is called on rejection.
+    const guard = spyOn(questionMarkGuard, "guardPolishQuestionMarks").mockImplementation(() => {
+      throw new Error("rejected candidate reached the question-mark guard");
+    });
+    try {
+      const { result, events } = await polishWith(cleanedText, candidate);
+      expect(result.status).toBe("rejected");
+      expect(result.text.endsWith(`but anyway${terminal || "?"}`)).toBe(true);
+      expect(words(result.text)).toEqual(words(cleanedText));
+      expect(events).toEqual([]);
+      expect(guard).not.toHaveBeenCalled();
+    } finally {
+      guard.mockRestore();
+    }
+  });
+
+  it("delivers the accepted polish unchanged when the guard throws, logging no text", () => {
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const delivered = sttPolish.guardedPolishText(control.cleaned, control.candidate, () => {
+        throw new Error(control.candidate);
+      });
+      expect(delivered).toBe(control.candidate);
+      expect(errors.mock.calls.map((call) => String(call[0]))).toEqual([
+        '[voicelayer] {"event":"polish_question_mark_guard_error"}',
+      ]);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it("leaves a recognizer ? that polish turned into a full stop alone, and then demotes nothing", async () => {
+    // The dropped "?" may be the one polish wrote on the control sentence.
+    const candidate = `The build is green, right. ${control.candidate}`;
+    const { result, events } = await polishWith(`the build is green right? ${control.cleaned}`, candidate);
+    expect(result).toMatchObject({ status: "applied", text: candidate });
+    expect(events).toEqual([]);
+  });
+
+  // Shapes the validator rejects before the guard runs, checked on the guard itself.
+  it.each([
+    ["tell me when it lands —", "Tell me when it lands?", "Tell me when it lands?"],
+    ["tell me when it lands…", "Tell me when it lands?", "Tell me when it lands?"],
+    ["tell me when it lands...", "Tell me when it lands?", "Tell me when it lands?"],
+    ["tell me um when it lands, uh.", "Tell me when it lands?", "Tell me when it lands."],
+    ["i'm not sure. tell me when it lands.", "I'm not sure, tell me when it lands?", "I'm not sure, tell me when it lands."],
+  ])("guard: %s -> %s", (cleanedText, candidate, expected) => {
+    expect(guardPolishQuestionMarks(cleanedText, candidate)).toEqual({
+      text: expected,
+      demoted: expected === candidate ? 0 : 1,
+    });
   });
 });
