@@ -79,6 +79,18 @@ fn recoverable_error_keeps_take_and_transcribes_normally() {
 {"t":5,"type":"error","message":"Microphone note","recoverable":true,"show_during_bar_recording":true}
 {"t":6,"type":"state","state":"transcribing"}"#,
     );
+    r.poll = Some(poll);
+    r.frame(0.);
+    for _ in 0..306 {
+        r.frame(1. / 60.);
+    }
+    assert!(
+        r.elements()
+            .iter()
+            .any(|e| e.text.as_deref() == Some("Microphone note")),
+        "scheduled replay failed to redraw recoverable note"
+    );
+    r.poll = None;
     at(&mut r, 5.1);
     assert_eq!(r.state.mode, Mode::Recording);
     assert_eq!(r.state.since, 2.);

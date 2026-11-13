@@ -625,6 +625,7 @@ fn feedback(s: &Band, core: f32, alpha: f32) -> El {
 }
 pub fn poll(s: &mut Band, clock: f64, tx: &mut Tx) -> bool {
     let active = s.input_active();
+    let note = (s.recoverable_since, s.message.clone());
     let before = (s.mode.clone(), s.timer(), s.rms, s.now, s.since);
     s.sample(clock);
     let changed = before.0 != s.mode;
@@ -647,7 +648,10 @@ pub fn poll(s: &mut Band, clock: f64, tx: &mut Tx) -> bool {
         .map(|t| (t + 0.45).max(s.since) + 0.12)
         .unwrap_or(s.since);
     let feedback_moving = feedback && (clock < feedback_enter + 0.12 || clock > s.since + 1.05);
-    let animated = (s.mode == Mode::Idle && s.input_active())
+    let animated = s
+        .recoverable_since
+        .is_some_and(|t| clock >= t && clock < t + 0.1)
+        || (s.mode == Mode::Idle && s.input_active())
         || s.mode == Mode::Transcribing
         || (s.mode == Mode::Recording && s.rms > 0.)
         || feedback_moving;
@@ -670,6 +674,7 @@ pub fn poll(s: &mut Band, clock: f64, tx: &mut Tx) -> bool {
         tx.wake_at(t);
     }
     (active != s.input_active())
+        || note != (s.recoverable_since, s.message.clone())
         || changed
         || before.1 != s.timer()
         || (animated && before.3 != clock)
