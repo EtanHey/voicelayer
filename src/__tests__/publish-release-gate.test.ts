@@ -17,6 +17,8 @@ const BUILD_TIME = "2026-10-18T01:10:14Z";
 const COMMITTED = "2026-10-18T01:00:00Z";
 const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
 const BUNDLE = sha256("bundle");
+const M1_HOST = { model: "MacBookPro18,3", chip: "Apple M1 Pro" }; // release-proofs/proof-hosts.json
+const HOST_ARGS = ["--host-model", M1_HOST.model, "--host-chip", M1_HOST.chip]; // test-only seam
 
 function recordFor(overrides: Record<string, unknown> = {}, release: Record<string, unknown> = {}) {
   return {
@@ -32,6 +34,7 @@ function recordFor(overrides: Record<string, unknown> = {}, release: Record<stri
     historyTextSha256: sha256("p"),
     speakTextCommandId: "73C05ACC-9C3D-432A-BEE4-A6F6B662954F",
     readError: false,
+    machine: M1_HOST,
     ...overrides,
     release: { version: "2.4.0", gitCommit: BUILD, buildTimeUTC: BUILD_TIME, bundleSha256: BUNDLE, ...release },
   };
@@ -52,6 +55,12 @@ describe("release gate rule (checkReleaseRecord)", () => {
     expect(gate(recordFor(), { ...descendant, isAncestor: false })).toThrow("ancestor");
     expect(gate(recordFor(), { ...descendant, changedPaths: ["release-proofs/v2.4.0.json", "src/tts.ts"] })).toThrow("src/tts.ts");
     expect(gate(recordFor({ gitCommit: TAG_COMMIT }))).toThrow("GitCommit");
+    expect(gate(recordFor(), { ...descendant, changedPaths: ["release-proofs/v2.4.0.json", "release-proofs/proof-hosts.json"] })).toThrow("proof-hosts.json");
+  });
+
+  test("R3: a record whose machine is missing or not an accepted proof host refuses", () => {
+    expect(gate(recordFor({ machine: undefined }))).toThrow("not an accepted proof host");
+    expect(gate(recordFor({ machine: { model: "Mac14,2", chip: "Apple M2" } }))).toThrow("not an accepted proof host");
   });
 
   test("wrong bundle hash refuses", () => {
@@ -123,6 +132,8 @@ function buildRepo(version = "2.4.0", withGate = false) {
     mkdirSync(join(dir, ".github", "workflows"), { recursive: true });
     writeFileSync(join(dir, "scripts", "t3-optf5-proof.ts"), readFileSync(proofScript));
     writeFileSync(join(dir, ".github", "workflows", "publish.yml"), readFileSync(join(repoRoot, ".github", "workflows", "publish.yml")));
+    mkdirSync(join(dir, "release-proofs"));
+    writeFileSync(join(dir, "release-proofs", "proof-hosts.json"), readFileSync(join(repoRoot, "release-proofs", "proof-hosts.json")));
   }
   mkdirSync(join(dir, "src"));
   writeFileSync(join(dir, "src", "tts.ts"), "export {};\n");
@@ -266,11 +277,14 @@ describe("record writes the committed proof from the proven app", () => {
 
     const cli = (...args: string[]) =>
       Bun.spawnSync([process.execPath, proofScript, ...args], { cwd: dir, stdout: "pipe", stderr: "pipe", env: process.env });
-    const wrongOut = cli("record", "--proof", proofPath, "--app", app, "--out", "proof.json");
+    const wrongHost = cli("record", "--proof", proofPath, "--app", app, "--out", "release-proofs/v2.4.0.json", "--host-model", "Mac14,2", "--host-chip", "Apple M2");
+    expect(wrongHost.exitCode).toBe(1);
+    expect(wrongHost.stderr.toString()).toContain("this Mac (Mac14,2, Apple M2) is not an accepted proof host");
+    const wrongOut = cli("record", "--proof", proofPath, "--app", app, "--out", "proof.json", ...HOST_ARGS);
     expect(wrongOut.exitCode).toBe(1);
     expect(wrongOut.stderr.toString()).toContain("--out must be release-proofs/v2.4.0.json");
     expect(existsSync(join(dir, "release-proofs"))).toBe(false); // a clean checkout has no release-proofs/ yet
-    const rec = cli("record", "--proof", proofPath, "--app", app, "--out", "release-proofs/v2.4.0.json");
+    const rec = cli("record", "--proof", proofPath, "--app", app, "--out", "release-proofs/v2.4.0.json", ...HOST_ARGS);
     expect(rec.stderr.toString()).toBe("");
     expect(rec.exitCode).toBe(0);
     const written = JSON.parse(readFileSync(join(dir, "release-proofs", "v2.4.0.json"), "utf8"));

@@ -104,6 +104,7 @@ The gate refuses, with a non-zero exit and a message naming the problem, when:
 - `expectedTextSha256` differs from `historyTextSha256`;
 - the evidence-excerpt hashes are missing, `speakTextCommandId` is not a UUID, `t3Build` is
   empty, or `readError` is not exactly `false`.
+- its `machine` is missing or not in `release-proofs/proof-hosts.json`.
 
 ## Where the proof runs: the M1
 
@@ -122,6 +123,13 @@ notarized candidate bundle as the M4, so the bundle digest it proves is the one 
   No microphone is used: Option+F5 reads a selection aloud.
 - System output is muted by Etan (the proof needs the TTS history entry, not sound).
 - T3 Code on the M1 is `/Applications/T3 Code (Nightly).app` (`com.t3tools.t3code`).
+- The proof host is checked, not assumed: `run` (through `start`) and `record` refuse unless
+  this Mac's `sysctl -n hw.model` and `sysctl -n machdep.cpu.brand_string` are listed in
+  `release-proofs/proof-hosts.json` (today only the M1: `MacBookPro18,3`, `Apple M1 Pro`). The
+  proof carries that `machine`, and every verifier (`check`, promotion, the publish gate)
+  refuses a proof whose `machine` is missing or not listed. A proof-only release commit may
+  not change the list. This stops a proof made on the wrong Mac by mistake; it is not
+  attestation (the values are self-reported).
 
 **Steps an agent does alone:**
 

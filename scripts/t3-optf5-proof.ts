@@ -68,6 +68,26 @@ export interface T3OptF5Proof {
   historyTextSha256: string;
   speakTextCommandId: string;
   readError: boolean;
+  // The Mac that collected it (R3): hardware model identifier and chip, never serial, host or
+  // user. It must be in release-proofs/proof-hosts.json. A guard against the wrong Mac by
+  // mistake, not attestation: the values are self-reported.
+  machine: ProofHost;
+}
+
+export interface ProofHost {
+  model: string;
+  chip: string;
+}
+
+// Read beside this script, so the publish gate uses the tagged tree's list and promote its own.
+export const PROOF_HOSTS_FILE = join(import.meta.dir, "..", "release-proofs", "proof-hosts.json");
+
+export function isProofHost(machine: unknown, hostsFile = PROOF_HOSTS_FILE): machine is ProofHost {
+  const m = machine as Partial<ProofHost> | null;
+  if (typeof m?.model !== "string" || typeof m?.chip !== "string") return false;
+  if (!existsSync(hostsFile)) fail(`${hostsFile} is missing: no accepted proof hosts`);
+  const hosts = (JSON.parse(readFileSync(hostsFile, "utf8")) as { hosts: ProofHost[] }).hosts;
+  return hosts.some((h) => h.model === m.model && h.chip === m.chip);
 }
 
 class GateError extends Error {}
@@ -97,6 +117,9 @@ export function checkProof(
   if (p.schema !== PROOF_SCHEMA) fail(`proof schema is '${String(p.schema)}', expected '${PROOF_SCHEMA}'`);
   if (p.receipt !== "release") {
     fail(`proof receipt is '${String(p.receipt)}', not a release receipt: only a collection from the resident's real log and history counts`);
+  }
+  if (!isProofHost(p.machine)) {
+    fail(`proof machine ${JSON.stringify(p.machine ?? null)} is missing or not an accepted proof host in release-proofs/proof-hosts.json: the proof runs on the M1`);
   }
   if (typeof p.bundleSha256 !== "string" || !SHA_RE.test(p.bundleSha256)) fail("proof bundleSha256 is not a lowercase sha256");
   if (p.bundleSha256 !== candidate.bundleSha256) {
@@ -183,7 +206,8 @@ export function checkReleaseRecord(
   const facts = ctx.buildCommit(build);
   if (!facts) fail(`proven build commit ${build} is not in this repository`);
   if (!facts.isAncestor) fail(`proven build commit ${build} is not the tagged commit ${ctx.tagCommit} or its ancestor`);
-  const outside = facts.changedPaths.filter((p) => !p.startsWith(`${RELEASE_PROOF_DIR}/`));
+  // The host list is reviewed code, not part of a proof: a proof-only commit may not change it.
+  const outside = facts.changedPaths.filter((p) => !p.startsWith(`${RELEASE_PROOF_DIR}/`) || p === `${RELEASE_PROOF_DIR}/proof-hosts.json`);
   if (outside.length > 0) {
     fail(`tagged commit differs from the proven build ${build} outside ${RELEASE_PROOF_DIR}/: ${outside.slice(0, 5).join(", ")}`);
   }
@@ -433,17 +457,37 @@ interface ProofState {
   expectedTextSha256: string;
   // A count, not text: VoiceBar's selection_capture line logs the selection's UTF-16 length.
   expectedUtf16Count: number;
+  machine: ProofHost;
 }
 
 const RESIDENT_APP = "/Applications/VoiceBar.app";
 const RESIDENT_LOG = `${homedir()}/Library/Logs/voicelayer/voicebar-err.log`;
 const RESIDENT_HISTORY = "/tmp/voicelayer-history.json";
 const PATH_OVERRIDES = ["--app", "--voicebar-log", "--history-file"];
+const HOST_OVERRIDES = ["--host-model", "--host-chip"];
 
 // The bun test preload sets VOICELAYER_TEST_RUN_ROOT. Only there may the resident paths be
 // replaced by fixtures, and anything collected there is a "test" receipt the gate rejects.
 function underTestPreload(): boolean {
   return Boolean(process.env.VOICELAYER_TEST_RUN_ROOT);
+}
+
+// This Mac's identity from sysctl. Only under the test preload may a test pass an explicit one;
+// there is no default identity. `run` (through start) and `record` refuse a Mac not in the list.
+function thisProofHost(args: Map<string, string>): ProofHost {
+  const given = HOST_OVERRIDES.filter((flag) => args.has(flag));
+  if (given.length > 0 && !underTestPreload()) fail(`${given.join(", ")} is test-only; the proof host is read from sysctl`);
+  const sysctl = (key: string) => {
+    const r = Bun.spawnSync(["sysctl", "-n", key], { stdout: "pipe", stderr: "pipe", env: process.env });
+    return r.exitCode === 0 ? r.stdout.toString().trim() : "";
+  };
+  const host = given.length > 0
+    ? { model: args.get("--host-model") ?? "", chip: args.get("--host-chip") ?? "" }
+    : { model: sysctl("hw.model"), chip: sysctl("machdep.cpu.brand_string") };
+  if (!isProofHost(host)) {
+    fail(`this Mac (${host.model || "unknown model"}, ${host.chip || "unknown chip"}) is not an accepted proof host in release-proofs/proof-hosts.json: run the proof on the M1`);
+  }
+  return host;
 }
 
 function start(args: Map<string, string>) {
@@ -452,6 +496,7 @@ function start(args: Map<string, string>) {
   if (overrides.length > 0 && !testMode) {
     fail(`path override ${overrides.join(", ")} is test-only; a release proof reads only the resident's own app, log and history`);
   }
+  const machine = thisProofHost(args);
   const app = args.get("--app") ?? RESIDENT_APP;
   const t3App = need(args, "--t3-app");
   const voicebarLog = args.get("--voicebar-log") ?? RESIDENT_LOG;
@@ -477,6 +522,7 @@ function start(args: Map<string, string>) {
     historyFile,
     expectedTextSha256: sha256(expected),
     expectedUtf16Count: expected.length,
+    machine,
   };
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
   console.log(`[t3-optf5-proof] armed: VoiceBar ${state.gitCommit}, ${state.t3Build}`);
@@ -567,6 +613,7 @@ function finish(args: Map<string, string>) {
     historyTextSha256: sha256(entry.text),
     speakTextCommandId: speakId,
     readError,
+    machine: state.machine,
   };
   writeFileSync(out, `${JSON.stringify(proof, null, 2)}\n`);
   if (proof.expectedTextSha256 !== proof.historyTextSha256) {
@@ -672,6 +719,7 @@ function check(args: Map<string, string>) {
 // The committed release proof: `check` against the proven app, plus the identity it read from
 // that app, so a hosted runner without the app can re-run checkProof (publish.yml, R2).
 function record(args: Map<string, string>) {
+  thisProofHost(args);
   const app = need(args, "--app");
   const out = need(args, "--out");
   check(args);
@@ -733,7 +781,7 @@ function parseArgs(argv: string[]): Map<string, string> {
 
 const USAGE = `Usage:
   bun scripts/t3-optf5-proof.ts start  --state FILE --t3-app "/Applications/T3 Code (Alpha).app" --expected-text-file FILE
-                                       (--app/--voicebar-log/--history-file: test preload only)
+                                       (--app/--voicebar-log/--history-file/--host-model/--host-chip: test preload only)
   bun scripts/t3-optf5-proof.ts finish --state FILE --out PROOF.json
   bun scripts/t3-optf5-proof.ts run    (start's arguments) --out PROOF.json   start, wait for the press, finish
   bun scripts/t3-optf5-proof.ts check  --proof PROOF.json --app VoiceBar.app
