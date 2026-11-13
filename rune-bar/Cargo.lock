@@ -3446,6 +3446,8 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "voicebar-rune"
 version = "0.1.0"
 dependencies = [
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
  "rune",
  "rune-kit",
  "serde",

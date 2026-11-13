@@ -1,0 +1,3 @@
+{"t": 2, "type": "state", "state": "recording", "source": "recording", "mode": "ptt"}
+{"t": 6, "type": "state", "state": "transcribing", "source": "recording", "mode": "ptt"}
+{"t": 6.7, "type": "state", "state": "idle", "source": "recording", "mode": "ptt"}
