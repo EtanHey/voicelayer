@@ -1,0 +1,8 @@
+{"t":0,"type":"state","state":"idle"}
+{"t":2,"type":"state","state":"recording","mode":"ptt"}
+{"t":3,"type":"audio_level","rms":0.62}
+{"t":4,"type":"audio_level","rms":0.86}
+{"t":5,"type":"audio_level","rms":0.43}
+{"t":6,"type":"state","state":"transcribing"}
+{"t":8,"type":"transcription","text":"Neutral fixture sentence."}
+{"t":10,"type":"state","state":"idle"}
