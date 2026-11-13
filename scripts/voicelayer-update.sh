@@ -374,6 +374,7 @@ print_plan() {
             ;;
         *)
             log "  3. + $app_update (refresh the tap, detect drift, adopt with --force instead of a destructive upgrade)"
+            log "     download: before VoiceBar stops"
             ;;
     esac
     log "     upgrade $VOICEBAR_FORMULA_NAME if the formula is installed and behind"
@@ -835,6 +836,75 @@ verify_voicebar_stack() {
     log "GREEN: this Mac is canonical at ${offered:-$app_version}."
 }
 
+# Refresh and cache before the gate drains voice work. This deliberately does
+# not use bcs_tap_update: that mutation helper requires a committed lease.
+bcs_preflight_tap_refresh() {
+    local tap="$1" repo
+    [[ -n "$tap" ]] || return 0
+    repo="$(bcs_tap_repo_path "$tap")" || { err "Cannot resolve tap $tap; refusing update before stopping VoiceBar."; return 1; }
+    if [[ -d "$repo/.git" ]]; then
+        run_cmd git -C "$repo" pull --ff-only origin "$VOICEBAR_CASK_TAP_BRANCH"
+    else
+        preflight_brew tap "$tap"
+    fi
+}
+
+preflight_brew() {
+    local brew_bin
+    brew_bin="$(bcs_brew_bin)" || return 1
+    run_cmd env HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1 "$brew_bin" "$@"
+}
+
+preflight_cask_download() {
+    local tap repo offered installed formula formula_offer
+    if ! bcs_brew_bin >/dev/null 2>&1 && bcs_caller_simulates_commands; then
+        log "no Homebrew; simulating preflight"
+        return 0
+    fi
+    tap="$(bcs_cask_tap "$VOICEBAR_CASK_NAME")"
+    bcs_preflight_tap_refresh "$tap" || { err "Tap refresh failed; refusing update before stopping VoiceBar."; return 1; }
+    repo="$(bcs_tap_repo_path "$tap")" || { err "Cannot resolve tap $tap; refusing update before stopping VoiceBar."; return 1; }
+    offered="$(bcs_tap_offered_version "$VOICEBAR_CASK_NAME")"
+    installed="$(bcs_app_bundle_version "$VOICEBAR_CANONICAL_APP")"
+    if [[ -z "$offered" ]]; then
+        err "Cannot read offered cask version from $repo; refusing update."
+        return 1
+    fi
+    if [[ -z "$installed" && -e "$VOICEBAR_CANONICAL_APP" ]]; then
+        err "Cannot read installed VoiceBar version; refusing update before stopping VoiceBar."
+        return 1
+    fi
+    if [[ -n "$installed" ]]; then
+        # Fail closed on versions that cannot be ordered numerically.
+        if ! python3 - "$offered" "$installed" <<'PYVERSION'
+import re, sys
+try:
+    def version(s):
+        if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", s): raise ValueError(s)
+        return tuple(map(int, s.split('.')))
+    a, b = map(version, sys.argv[1:])
+    n = max(len(a), len(b))
+    sys.exit(0 if a + (0,) * (n-len(a)) >= b + (0,) * (n-len(b)) else 1)
+except ValueError:
+    sys.exit(2)
+PYVERSION
+        then
+            err "Tap $repo is behind or has an unorderable version: offered $offered, installed $installed; refusing update."
+            return 1
+        fi
+    fi
+    preflight_brew fetch --cask "$VOICEBAR_CASK_NAME" || { err "Cask fetch failed; refusing update before stopping VoiceBar."; return 1; }
+    formula="$(bcs_formula_version "$VOICEBAR_FORMULA_NAME")" || { err "Cannot read installed formula version; refusing update before stopping VoiceBar."; return 1; }
+    if [[ -n "$formula" ]]; then
+        formula_offer="$(formula_offered_version)" || { err "Cannot read offered formula version; refusing update before stopping VoiceBar."; return 1; }
+        [[ -n "$formula_offer" ]] || { err "Cannot read offered formula version; refusing update before stopping VoiceBar."; return 1; }
+        if [[ "$formula" != "$formula_offer" ]]; then
+            preflight_brew fetch --formula "$VOICEBAR_FORMULA_NAME" || { err "Formula fetch failed; refusing update before stopping VoiceBar."; return 1; }
+        fi
+    fi
+    export VOICELAYER_UPDATE_PREFETCHED_CASK_VERSION="$offered"
+}
+
 main() {
     parse_args "$@"
     validate_args
@@ -868,6 +938,10 @@ main() {
             fi
             ;;
     esac
+
+    if [[ "$(voicebar_app_update_mode)" = cask-sync && -z "${VOICELAYER_INSTALL_OPERATION:-}" ]]; then
+        preflight_cask_download || return 1
+    fi
 
     if [[ "$DRY_RUN_COMMANDS" != "1" ]]; then
         vl_update_gate "$PACKAGE_ROOT" bash "$SCRIPT_DIR/voicelayer-update.sh" "$@" || return 1

@@ -436,6 +436,11 @@ bcs_sync_cask() {
     app_version="$(bcs_app_bundle_version "$app_path")"
     offered="$(bcs_tap_offered_version "$token")"
 
+    if [[ -n "${VOICELAYER_UPDATE_PREFETCHED_CASK_VERSION:-}" && "$offered" != "$VOICELAYER_UPDATE_PREFETCHED_CASK_VERSION" ]]; then
+        bcs_err "Prefetched version $VOICELAYER_UPDATE_PREFETCHED_CASK_VERSION differs from offered version ${offered:-unknown}; nothing installed."
+        return 1
+    fi
+
     # AIDEV-NOTE: a tapped token with no readable offer means the tap is missing,
     # half-cloned, or renamed. Without it the post-condition below is skipped and
     # bcs_sync_cask returns 0 having verified nothing -- a silent green on exactly
