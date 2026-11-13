@@ -1,0 +1,19 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>VoiceLayer typed-delivery fixture</title>
+<style>
+body{font:14px -apple-system,sans-serif;margin:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+section{border:1px solid #999;padding:8px}h2{font-size:13px;margin:0 0 6px}
+.ed,textarea{min-height:140px;width:100%;box-sizing:border-box;border:1px solid #ccc;padding:6px;white-space:pre-wrap}
+.ProseMirror{outline:none;min-height:130px}
+/* Copied from T3 Code apps/web/src/index.css: how the composer paints list markers (what AX reads). */
+.composer-tiptap ul{padding-inline-start:1.25rem;list-style-type:disc}
+.composer-tiptap ol{padding-inline-start:max(1.25rem,3ch);list-style-type:decimal}
+.composer-tiptap ol > li[data-marker]::marker{content:attr(data-marker) " "}
+</style></head><body>
+<section><h2>t3-rich (T3 Code composer list code)</h2><div class="ed" id="t3-rich"></div></section>
+<section><h2>t3-plain (T3 Code plain-text list continuation)</h2><textarea id="t3-plain"></textarea></section>
+<section><h2>tiptap-stock (Tiptap 3 StarterKit)</h2><div class="ed" id="tiptap-stock"></div></section>
+<section><h2>contenteditable (Chromium native)</h2><div class="ed" id="contenteditable" contenteditable="true"></div></section>
+<section><h2>textarea (plain)</h2><textarea id="textarea"></textarea></section>
+<script src="editors.js"></script>
+</body></html>

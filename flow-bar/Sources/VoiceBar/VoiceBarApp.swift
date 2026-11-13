@@ -1696,34 +1696,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             NSLog("[VoiceBar] typeText: failed to create CGEventSource")
             return false
         }
-        guard let events = SynthesizedKeyEvents.events(
-            for: SynthesizedTyping.keystrokes(for: text),
-            source: source
-        ) else {
-            NSLog("[VoiceBar] typeText: failed to create CGEvent")
-            return false
+        let post: ([SynthesizedKeystroke]) -> GuardedTypingResult = { plan in
+            guard let events = SynthesizedKeyEvents.events(for: plan, source: source) else {
+                NSLog("[VoiceBar] typeText: failed to create CGEvent")
+                return .failed
+            }
+            for event in events {
+                event.post(tap: .cghidEventTap)
+            }
+            return .posted
         }
-        for event in events {
-            event.post(tap: .cghidEventTap)
+        let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        guard let frontPID, let env = listAwareEnvironment(pid: frontPID, post: post) else {
+            return post(SynthesizedTyping.keystrokes(for: text)) == .posted
         }
-        return true
+        return ListAwareTyping.deliver(text, env: env) == .posted
+    }
+
+    /// Readback environment for list-aware typing (lane T7), or nil where the old single batch stays:
+    /// terminals (their own route; cmux's composers do not continue lists) and secure input.
+    private static func listAwareEnvironment(pid: pid_t, post: @escaping ([SynthesizedKeystroke]) -> GuardedTypingResult) -> ListAwareTyping.Environment? {
+        guard !IsSecureEventInputEnabled(),
+              !TerminalPasteTargets.isTerminal(NSRunningApplication(processIdentifier: pid)?.bundleIdentifier)
+        else { return nil }
+        let sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
+        return ListAwareTyping.Environment(
+            readValue: ListAwareTyping.focusedValueReader(pid: pid, sleep: sleep),
+            post: post,
+            sleep: sleep,
+            now: { ProcessInfo.processInfo.systemUptime },
+            log: { NSLog("[VoiceBar] typeText %@", $0) }
+        )
     }
 
     private static func typeTextGuarded(_ text: String, expectedPID: pid_t, matchesCapturedTarget: () -> Bool = { true }, postToTarget: Bool = false) -> GuardedTypingResult {
         guard isAccessibilityTrusted(prompt: false),
               let source = CGEventSource(stateID: .hidSystemState) else { return .failed }
-        return SynthesizedKeyEvents.postGuardedBatch(
-            expectedPID: expectedPID,
-            buildEvents: {
-                SynthesizedKeyEvents.events(for: SynthesizedTyping.keystrokes(for: text), source: source)
-            },
-            frontmostPID: { NSWorkspace.shared.frontmostApplication?.processIdentifier },
-            matchesCapturedTarget: matchesCapturedTarget,
-            postEvent: { event in
-                if postToTarget { event.postToPid(expectedPID) }
-                else { event.post(tap: .cghidEventTap) }
+        // Every batch, including each list-aware segment, passes the same final PID/target guard.
+        // Delivery is synchronous, so the guard closure never outlives this call.
+        return withoutActuallyEscaping(matchesCapturedTarget) { matchesCapturedTarget in
+            let post: ([SynthesizedKeystroke]) -> GuardedTypingResult = { plan in
+                SynthesizedKeyEvents.postGuardedBatch(
+                    expectedPID: expectedPID,
+                    buildEvents: { SynthesizedKeyEvents.events(for: plan, source: source) },
+                    frontmostPID: { NSWorkspace.shared.frontmostApplication?.processIdentifier },
+                    matchesCapturedTarget: matchesCapturedTarget,
+                    postEvent: { event in
+                        if postToTarget { event.postToPid(expectedPID) }
+                        else { event.post(tap: .cghidEventTap) }
+                    }
+                )
             }
-        )
+            guard let env = listAwareEnvironment(pid: expectedPID, post: post) else {
+                return post(SynthesizedTyping.keystrokes(for: text))
+            }
+            return ListAwareTyping.deliver(text, env: env)
+        }
     }
 
     private static func isAccessibilityTrusted(prompt: Bool) -> Bool {
