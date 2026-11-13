@@ -1,6 +1,6 @@
 import { finishSyntheticCapture, settleRecordingJobs } from "./setup/recording-jobs-fixture";
 import { deferredFixture as deferred } from "./long-read-fixture-barriers";
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { handleSocketCommand } from "../socket-handlers";
 import * as input from "../input";
 import * as booking from "../session-booking";
@@ -10,6 +10,7 @@ import * as model from "../model-status";
 import { whisperLifecycleGate } from "../whisper-lifecycle-gate";
 import { reserveStandardVoiceOperation } from "../voice-operation-reservation";
 import * as performance from "../whisper-performance";
+import * as recognizer from "../recognizer-state";
 
 describe("socket residency command", () => {
   const spies: Array<ReturnType<typeof spyOn>> = [];
@@ -20,6 +21,26 @@ describe("socket residency command", () => {
     configured_effort: "accurate" as const,
     active_effort: null,
   };
+
+  // These tests never choose a recognizer, so they must not depend on what an earlier test file left in
+  // recognizer-state's module variables. Hosted runs failed 18 of them with "select-whisper-first" when
+  // "parakeet" was still the effective recognizer (2026-11-13, twice). Every test here sees Whisper
+  // selected. beforeAll starts from that leaked state on purpose, so the pin cannot rot; afterAll puts
+  // back what it found.
+  let ambientEffective: recognizer.Recognizer | null = null;
+  beforeAll(() => {
+    ambientEffective = recognizer.readRecognizerStatus().effective;
+    recognizer.noteRecognizerEffective("parakeet");
+  });
+  afterAll(() => {
+    recognizer.noteRecognizerEffective(ambientEffective);
+  });
+  beforeEach(() => {
+    const real = recognizer.readRecognizerStatus;
+    spies.push(spyOn(recognizer, "readRecognizerStatus").mockImplementation(
+      () => ({ ...real(), desired: "whisper", effective: null }),
+    ));
+  });
 
   afterEach(() => {
     for (const spy of spies.splice(0)) spy.mockRestore();
