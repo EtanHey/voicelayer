@@ -1376,6 +1376,23 @@ function isAllowedSpokenListRewrite(
   return normalizedSimilarity(cleanedText, candidate) >= SPOKEN_LIST_SIMILARITY_FLOOR;
 }
 
+// A spoken slash command ("you just /compact.") is a standalone token: it
+// starts the text or follows whitespace and ends at whitespace, sentence
+// punctuation or the end. Polish may not glue, split, re-case or chain it.
+const SLASH_COMMAND_TOKEN = /(?<=^|\s)\/[A-Za-z0-9][A-Za-z0-9-]*(?=$|\s|[.,!?;:](?=\s|$))/gu;
+
+function changedSlashCommandTokens(cleanedText: string, candidate: string): boolean {
+  const counts = new Map<string, number>();
+  for (const token of cleanedText.match(SLASH_COMMAND_TOKEN) ?? []) {
+    counts.set(token, (counts.get(token) ?? 0) + 1);
+  }
+  if (!counts.size) return false;
+  for (const token of candidate.match(SLASH_COMMAND_TOKEN) ?? []) {
+    if (counts.has(token)) counts.set(token, counts.get(token)! - 1);
+  }
+  return [...counts.values()].some((left) => left > 0);
+}
+
 function validatePolishCandidate(
   cleanedText: string,
   polishedText: string,
@@ -1433,6 +1450,9 @@ function validatePolishCandidate(
   }
   if (changedProtectedTokens(cleanedText, candidate) && !allowedSpokenListRewrite) {
     return POLISH_REJECTION_REASONS.PROTECTED_TOKENS_CHANGED;
+  }
+  if (changedSlashCommandTokens(cleanedText, candidate)) {
+    return "polish response changed a slash command";
   }
 
   const cleanedChars = cleanedText.trim().length;

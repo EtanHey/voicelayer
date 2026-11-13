@@ -290,8 +290,23 @@ function getSlashCommandRoots(env: STTCleanupEnv): string[] {
       .filter(Boolean);
   }
   requireIsolatedOverride(env, "QA_VOICE_STT_COMMANDS_DIR");
-  return [join(homedir(), ".claude", "commands")];
+  // Directory names only, read-only, never logged. Plugin skills are left out:
+  // Claude Code spells them "plugin:skill", which a folder name cannot give.
+  return [
+    join(homedir(), ".claude", "commands"),
+    join(homedir(), ".claude", "skills"),
+    join(homedir(), ".codex", "skills"),
+  ];
 }
+
+// Public built-in commands every user of these harnesses can type. Each one is
+// listed in the Claude Code commands reference
+// (https://code.claude.com/docs/en/commands, checked 2026-11-13). Personal
+// command and skill names are read at runtime, never bundled.
+const BUNDLED_HARNESS_SLASH_COMMANDS = [
+  "/clear", "/compact", "/config", "/fast", "/help", "/init", "/loop",
+  "/mcp", "/model", "/resume", "/review",
+] as const;
 
 function commandNameFromMarkdownEntry(name: string): string | null {
   if (!name || name.startsWith(".")) return null;
@@ -437,6 +452,7 @@ function collectSlashCommands(
   for (const command of loadInstalledSlashCommands(env)) {
     commands.add(command);
   }
+  for (const command of BUNDLED_HARNESS_SLASH_COMMANDS) commands.add(command);
   return [...commands].sort();
 }
 
@@ -665,13 +681,54 @@ export function cleanupTranscriptionText(
       ...Object.fromEntries((snapshot?.entries ?? []).filter((entry) => entry.cleanup_spelling).map((entry) => [entry.canonical, entry.cleanup_spelling!])),
     }),
   );
-  const pathNormalized = normalizePathTokens(normalized);
+  // A spoken command ("you just slash compact.") is its own token: the path
+  // pass below would glue it to the word before ("just/compact.").
+  const commandTokens = protectSlashCommandTokens(
+    normalized,
+    collectSlashCommands(env, snapshot?.promptTerms),
+  );
+  const pathNormalized = normalizePathTokens(commandTokens.text);
   const sentenceCased = normalizeSentenceStarts(pathNormalized);
   // Must run LAST: after the canonical-term pass folds "voice layer Codex"
   // into the camelCase agent token, and after auto-cap/sentence-start so the
   // re-emitted lowercase flags are never re-uppercased downstream.
-  const flagNormalized = normalizeAgentSpawnFlags(sentenceCased);
+  const flagNormalized = commandTokens.restore(normalizeAgentSpawnFlags(sentenceCased));
   return isMeaningfulTranscription(flagNormalized) ? flagNormalized : "";
+}
+
+/**
+ * Hide known command tokens from the path pass. A token is a known command
+ * that starts the text or a line or follows whitespace, and ends the text or
+ * is followed by whitespace or sentence punctuation. Commands in a row
+ * ("/a /b") stay one space apart. A command that continues into a path
+ * ("src /config / index") is not a token, so paths normalize as before.
+ */
+function protectSlashCommandTokens(
+  text: string,
+  commands: readonly string[],
+): { text: string; restore: (value: string) => string } {
+  const names = commands
+    .filter((command) => /^\/[A-Za-z0-9][A-Za-z0-9-]*$/u.test(command))
+    .sort((a, b) => b.length - a.length)
+    .map((command) => command.slice(1));
+  if (!names.length || !text.includes("/")) return { text, restore: (value) => value };
+  const name = `\\/(?:${names.join("|")})(?![A-Za-z0-9-])`;
+  const pattern = new RegExp(
+    `(^|[ \\t\\n])(${name}(?:[ \\t]+${name})*)(?=$|[ \\t\\n](?![ \\t]*\\/)|[.,!?;:](?=\\s|$))`,
+    "gu",
+  );
+  const tokens: string[] = [];
+  const protectedText = text.replace(pattern, (_match, before: string, run: string) => {
+    tokens.push(run);
+    return `${before}\uE400${String.fromCodePoint(0xE500 + tokens.length - 1)}\uE401`;
+  });
+  return {
+    text: protectedText,
+    restore: (value) => tokens.reduce(
+      (result, token, index) => result.split(`\uE400${String.fromCodePoint(0xE500 + index)}\uE401`).join(token),
+      value,
+    ),
+  };
 }
 
 function isAggressiveFillerRemovalEnabled(env: STTCleanupEnv): boolean {

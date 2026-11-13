@@ -1584,6 +1584,33 @@ describe("stt-polish", () => {
     });
   }
 
+  // Lane c11-T8: polish may not glue, split, re-space or recapitalise a
+  // spoken slash command the cleanup stage produced.
+  for (const [name, candidate] of [
+    ["glued to the word before", "And to tidy up, you just/compact."],
+    ["split by a space", "And to tidy up, you just / compact."],
+    ["capitalised", "And to tidy up, you just /Compact."],
+    ["two commands joined into a path", "Run /zephyr-sweep/quill now."],
+  ] as const) {
+    it(`rejects a slash command ${name}`, async () => {
+      const cleanedText = name === "two commands joined into a path"
+        ? "Run /zephyr-sweep /quill now."
+        : "And to tidy up, you just /compact.";
+      server = createMockPolishServer(() => ({ text: candidate }));
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+      expect(result.status).toBe("rejected");
+      expect(result.text).toBe(cleanedText);
+    });
+  }
+
   it("rejects a numbered list that deletes spoken First and Second", async () => {
     const cleanedText = "First, verify the recording state before release. Second, inspect the transcript before sending it.";
     const candidate = "1. Verify the recording state before release.\n2. Inspect the transcript before sending it.";
