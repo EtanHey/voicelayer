@@ -376,6 +376,7 @@ print_plan() {
             log "  3. + $app_update (refresh the tap, detect drift, adopt with --force instead of a destructive upgrade)"
             ;;
     esac
+    log "     download: before VoiceBar stops"
     log "     upgrade $VOICEBAR_FORMULA_NAME if the formula is installed and behind"
     log "  4. create/update $VENV_DIR and pull the Qwen3 model if missing"
     log "     $(qwen3_model_step_plan)"
@@ -835,6 +836,66 @@ verify_voicebar_stack() {
     log "GREEN: this Mac is canonical at ${offered:-$app_version}."
 }
 
+# Refresh and cache before the gate drains voice work. This deliberately does
+# not use bcs_tap_update: that mutation helper requires a committed lease.
+bcs_preflight_tap_refresh() {
+    local tap="$1" repo
+    [[ -n "$tap" ]] || return 0
+    repo="$(bcs_tap_repo_path "$tap")" || return 1
+    if [[ -d "$repo/.git" ]]; then
+        run_cmd git -C "$repo" pull --ff-only origin "$VOICEBAR_CASK_TAP_BRANCH"
+    else
+        preflight_brew tap "$tap"
+    fi
+}
+
+preflight_brew() {
+    local brew_bin
+    brew_bin="$(bcs_brew_bin)" || return 1
+    run_cmd env HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1 "$brew_bin" "$@"
+}
+
+preflight_cask_download() {
+    local tap repo offered installed formula formula_offer
+    tap="$(bcs_cask_tap "$VOICEBAR_CASK_NAME")"
+    bcs_preflight_tap_refresh "$tap" || return 1
+    repo="$(bcs_tap_repo_path "$tap")" || return 1
+    offered="$(bcs_tap_offered_version "$VOICEBAR_CASK_NAME")"
+    installed="$(bcs_app_bundle_version "$VOICEBAR_CANONICAL_APP")"
+    if [[ -z "$offered" ]]; then
+        err "Cannot read offered cask version from $repo; refusing update."
+        return 1
+    fi
+    if [[ -n "$installed" ]]; then
+        # Fail closed on versions that cannot be ordered numerically.
+        if ! python3 - "$offered" "$installed" <<'PYVERSION'
+import re, sys
+try:
+    def version(s):
+        if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", s): raise ValueError(s)
+        return tuple(map(int, s.split('.')))
+    a, b = map(version, sys.argv[1:])
+    n = max(len(a), len(b))
+    sys.exit(0 if a + (0,) * (n-len(a)) >= b + (0,) * (n-len(b)) else 1)
+except ValueError:
+    sys.exit(2)
+PYVERSION
+        then
+            err "Tap $repo is behind or has an unorderable version: offered $offered, installed $installed; refusing update."
+            return 1
+        fi
+    fi
+    preflight_brew fetch --cask "$VOICEBAR_CASK_NAME" || { err "Cask fetch failed; refusing update before stopping VoiceBar."; return 1; }
+    formula="$(bcs_formula_version "$VOICEBAR_FORMULA_NAME")" || return 1
+    if [[ -n "$formula" ]]; then
+        formula_offer="$(formula_offered_version)" || return 1
+        [[ -n "$formula_offer" ]] || return 1
+        if [[ "$formula" != "$formula_offer" ]]; then
+            preflight_brew fetch --formula "$VOICEBAR_FORMULA_NAME" || { err "Formula fetch failed; refusing update before stopping VoiceBar."; return 1; }
+        fi
+    fi
+}
+
 main() {
     parse_args "$@"
     validate_args
@@ -868,6 +929,10 @@ main() {
             fi
             ;;
     esac
+
+    if [[ "$(voicebar_app_update_mode)" = cask-sync && -z "${VOICELAYER_INSTALL_OPERATION:-}" ]]; then
+        preflight_cask_download || return 1
+    fi
 
     if [[ "$DRY_RUN_COMMANDS" != "1" ]]; then
         vl_update_gate "$PACKAGE_ROOT" bash "$SCRIPT_DIR/voicelayer-update.sh" "$@" || return 1
