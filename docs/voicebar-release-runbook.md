@@ -38,9 +38,9 @@ the real app by `record` and again by promotion, which must be given the committ
 
 1. **Build the candidate.** `scripts/release-voicebar.sh --skip-tap-check`. It prints the
    zip sha256. Do NOT tag yet.
-2. **Install exactly that build on the MBP** and relaunch VoiceBar. Install it from that
-   `VoiceBar.zip` or app, not through the cask: the cask is what reaches users, so it cannot
-   come first. Confirm with
+2. **Install exactly that build on the M1** (see "Where the proof runs: the M1"). Install it
+   from that `VoiceBar.zip` or app through the M1's update gate, not through the cask: the
+   cask is what reaches users, so it cannot come first. Confirm with
    `scripts/voicelayer-deploy-check.sh` → `DEPLOYED`.
 3. **Produce the proof** (below), with output muted.
 4. **Record, commit, tag.** In a checkout at the build commit:
@@ -93,6 +93,54 @@ The gate refuses, with a non-zero exit and a message naming the problem, when:
 - the evidence-excerpt hashes are missing, `speakTextCommandId` is not a UUID, `t3Build` is
   empty, or `readError` is not exactly `false`.
 
+## Where the proof runs: the M1
+
+The proof runs on the M1 Pro, never on Etan's daily Mac (R3). The M1 runs the same signed,
+notarized candidate bundle as the M4, so the bundle digest it proves is the one users get.
+
+**Preconditions (all checked by the lead before anyone is asked to press):**
+
+- The candidate is installed at `/Applications/VoiceBar.app` through the M1's update gate
+  (`src/update-gate-installer.ts COMMAND`, the way candidates 9 and 10 were installed), only
+  at idle: no take, no read, no `rec`. Never rsync or unzip into `/Applications` by hand and
+  never touch the cask. The installer relaunches VoiceBar through launchd, so VoiceBar and its
+  daemon start after the bundle was written, which `start` requires.
+- `scripts/voicelayer-deploy-check.sh` → `DEPLOYED`; exactly one VoiceBar.
+- VoiceBar has Accessibility and Input Monitoring on the M1 (General shows no broken step).
+  No microphone is used: Option+F5 reads a selection aloud.
+- System output is muted by Etan (the proof needs the TTS history entry, not sound).
+- T3 Code on the M1 is `/Applications/T3 Code (Nightly).app` (`com.t3tools.t3code`).
+
+**Steps an agent does alone:**
+
+1. Write the synthetic paragraph to `docs.local/<release>/synthetic.txt` (one short, plain,
+   public sentence) and make it render in an assistant message of a T3 thread on the M1 (for
+   example, the lead answers with exactly that sentence).
+2. Start the collector as ONE background command (it sends no keys and ends by itself):
+   ```bash
+   bun scripts/t3-optf5-proof.ts run \
+     --state docs.local/<release>/t3-proof-state.json \
+     --t3-app "/Applications/T3 Code (Nightly).app" \
+     --expected-text-file docs.local/<release>/synthetic.txt \
+     --out docs.local/<release>/t3-optf5-proof.json
+   ```
+   `run` is `start`, then a wait of up to 9.5 minutes for one `selection_capture` and one new
+   TTS history entry, then `finish`. The proof is written to
+   `docs.local/<release>/t3-optf5-proof.json`; exit 0 is PASS.
+3. After PASS: `record`, commit, tag (Order, step 4).
+
+**The steps that need Etan (one sitting at the M1, about 3 minutes):**
+
+- **Relaunch T3 Code on the M1** (step 0 below, T3AX1). Agents never quit T3 Code, and every
+  agent thread on the M1, the lead's included, runs inside that T3, so this happens only when
+  the lead reports every M1 turn idle. Threads survive the relaunch.
+- **The press:** with output muted, select the synthetic paragraph in the rendered assistant
+  message and press Option+F5 once, within 9 minutes of the lead starting `run`.
+
+Agents do not synthesize the selection or the key: computer use is allowed only on the
+agent browser, and a script cannot open a T3 thread. A remote press over Screen Sharing is
+not proven to reach the F5 relay; use the M1's own keyboard.
+
 ## Producing the proof
 
 The helper reads the resident's real artifacts only. It never presses keys: the operator, or
@@ -109,7 +157,7 @@ a harness that sends a real CGEvent, does the Option+F5.
    ```bash
    bun scripts/t3-optf5-proof.ts start \
      --state docs.local/<release>/t3-proof-state.json \
-     --t3-app "/Applications/T3 Code (Alpha).app" \
+     --t3-app "/Applications/T3 Code (Nightly).app" \
      --expected-text-file docs.local/<release>/synthetic.txt
    ```
    This records:

@@ -681,6 +681,30 @@ function record(args: Map<string, string>) {
   console.log(`[t3-optf5-proof] recorded ${out}: commit only this file, then tag v${version} on that commit`);
 }
 
+// start, then wait (no keys sent) for the one Option+F5 the operator presses, then finish.
+// One background command for the lead; the operator only selects and presses.
+function run(args: Map<string, string>) {
+  start(args);
+  const state = JSON.parse(readFileSync(need(args, "--state"), "utf8")) as ProofState;
+  const deadline = state.startedAt + MAX_WINDOW_MS - 30_000;
+  while (Date.now() < deadline) {
+    Bun.sleepSync(1000);
+    let seen = false;
+    try {
+      seen = readFrom(state.voicebarLog, state.logOffset).includes("[VoiceBar][diag] selection_capture ")
+        && loadHistory(state.historyFile).some((e) => e.timestamp >= state.startedAt);
+    } catch {
+      // History is rewritten in place; a half-written file is read again next second.
+    }
+    if (seen) {
+      Bun.sleepSync(3000); // let a second, ambiguous press show up before finish judges the window
+      finish(args);
+      return;
+    }
+  }
+  fail("no Option+F5 capture with a new TTS history entry within the window; nothing recorded");
+}
+
 function need(args: Map<string, string>, flag: string): string {
   const value = args.get(flag);
   if (!value) fail(`${flag} is required`);
@@ -700,6 +724,7 @@ const USAGE = `Usage:
   bun scripts/t3-optf5-proof.ts start  --state FILE --t3-app "/Applications/T3 Code (Alpha).app" --expected-text-file FILE
                                        (--app/--voicebar-log/--history-file: test preload only)
   bun scripts/t3-optf5-proof.ts finish --state FILE --out PROOF.json
+  bun scripts/t3-optf5-proof.ts run    (start's arguments) --out PROOF.json   start, wait for the press, finish
   bun scripts/t3-optf5-proof.ts check  --proof PROOF.json --app VoiceBar.app
   bun scripts/t3-optf5-proof.ts record --proof PROOF.json --app VoiceBar.app --out release-proofs/vX.Y.Z.json
   bun scripts/t3-optf5-proof.ts release-gate --tag vX.Y.Z [--repo DIR]   (publish.yml)
@@ -712,6 +737,7 @@ if (import.meta.main) {
     const args = parseArgs(rest);
     if (command === "start") start(args);
     else if (command === "finish") finish(args);
+    else if (command === "run") run(args);
     else if (command === "check") check(args);
     else if (command === "record") record(args);
     else if (command === "release-gate") releaseGate(args);

@@ -884,6 +884,25 @@ describe("t3-optf5-proof producer reads the installed app's real artifacts", () 
     expect(gate.code).toBe(0);
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
+  // R3: `run` is start, a wait that sends no keys, then finish, so the lead starts one background
+  // command and the operator's only job is the press.
+  test("run arms, waits for the operator's one press, and writes the same proof finish would", async () => {
+    const f = producerFixture();
+    const child = Bun.spawn([
+      process.execPath, proofScript, "run",
+      "--state", f.state, "--out", f.out,
+      "--app", f.installed, "--t3-app", f.t3,
+      "--voicebar-log", f.log, "--history-file", f.history, "--expected-text-file", f.expected,
+    ], { stdout: "pipe", stderr: "pipe", env: { ...process.env, TZ: "Etc/UTC" } });
+    const deadline = Date.now() + 5_000;
+    while (!existsSync(f.state) && Date.now() < deadline) sleepSync(50);
+    expect(existsSync(f.out)).toBe(false);
+    simulateKeypress(f);
+    expect(await child.exited).toBe(0);
+    expect(await new Response(child.stderr).text()).toBe("");
+    expect(JSON.parse(readFileSync(f.out, "utf8"))).toMatchObject({ speakTextCommandId: UUID, receipt: "test", readError: false });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
   test("the producer's proof refuses a candidate with equal plist identity but different contents", () => {
     const f = producerFixture();
     expect(start(f).code).toBe(0);
