@@ -434,3 +434,4 @@ pub fn view(s: &Dictionary, cx: &mut Cx<Dictionary>) -> El {
 
 pub mod band;
 pub mod history;
+pub mod socket;

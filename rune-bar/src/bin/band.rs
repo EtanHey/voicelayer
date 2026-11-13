@@ -14,14 +14,23 @@ fn initial() -> Band {
         eprintln!("band: {message}");
         std::process::exit(2)
     };
-    let path = arg("--replay").unwrap_or_else(|| fail("requires --replay FILE".into()));
-    let source = std::fs::read_to_string(path).unwrap_or_else(|e| fail(e.to_string()));
-    let replay = Replay::parse(&source).unwrap_or_else(|e| fail(e));
+    let replay = if arg("--socket").is_some() {
+        if arg("--replay").is_some() {
+            fail("choose --socket or --replay".into());
+        }
+        Replay(vec![])
+    } else {
+        let path = arg("--replay")
+            .unwrap_or_else(|| fail("requires --replay FILE or --socket PATH".into()));
+        let source = std::fs::read_to_string(path).unwrap_or_else(|e| fail(e.to_string()));
+        Replay::parse(&source).unwrap_or_else(|e| fail(e))
+    };
     let mut state = Band::new(
         replay,
         number("--notch-width", screen_geometry().1).max(0.),
         std::env::args().any(|s| s == "--reduce-motion"),
     );
+    state.live = arg("--socket").is_some();
     state.safe_top = number("--safe-top", screen_geometry().2).max(0.);
     state.system_motion = !headless();
     state.keep_regions = std::env::var("VOICELAYER_RUNE_KEEP_REGIONS").as_deref() == Ok("1");
@@ -32,7 +41,33 @@ fn headless() -> bool {
         .any(|s| ["--snap", "--tree", "--out", "--trace", "--frames"].contains(&s.as_str()))
 }
 fn main() {
+    // Headless receiving mode for the isolated release CPU probe. No window/GPU.
+    if std::env::args().any(|s| s == "--headless-live") {
+        let path = arg("--socket").expect("--headless-live requires --socket PATH");
+        let (tx, rx) = std::sync::mpsc::sync_channel(64);
+        let _client = voicebar_rune::socket::Client::start(path.into(), move |m| {
+            let _ = tx.send(m);
+        });
+        let mut state = Band::new(Replay(vec![]), 185., false);
+        let start = std::time::Instant::now();
+        loop {
+            let message = if state.input_active() {
+                rx.recv_timeout(std::time::Duration::from_millis(16)).ok()
+            } else {
+                rx.recv().ok()
+            };
+            let now = start.elapsed().as_secs_f64();
+            if let Some(m) = message {
+                state.receive(m, now);
+            }
+            state.advance(now);
+        }
+    }
     let s = initial();
+    if s.live && headless() {
+        eprintln!("band: --socket uses native mode or --headless-live, not replay tooling");
+        std::process::exit(2);
+    }
     let size = (s.width(), HEIGHT);
     let keep_regions = s.keep_regions;
     let spec = AppSpec {
@@ -71,6 +106,15 @@ fn main() {
     if !keep_regions {
         overlay.set_input(OverlayInput::None);
     }
+    let _client = arg("--socket").map(|path| {
+        let handle = overlay.clone();
+        voicebar_rune::socket::Client::start(path.into(), move |m| {
+            handle.update(move |s, tx| {
+                s.receive(m, tx.clock());
+                tx.wake_at(tx.clock());
+            });
+        })
+    });
     overlay.show();
     rune::run_windows_with(RunOptions { accessory: true }, move |_| {
         vec![WindowSpec::from_app("host", app).boxed()]

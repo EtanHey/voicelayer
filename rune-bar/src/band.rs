@@ -1,4 +1,4 @@
-//! Replay-only notch band. No IPC, audio, capture or delivery dependencies.
+//! Pure band state and view. Socket transport never records, plays or delivers input.
 use rune::*;
 use serde_json::Value;
 
@@ -38,6 +38,9 @@ pub enum Mode {
 pub struct Band {
     pub replay: Replay,
     pub now: f64,
+    pub live: bool,
+    pub skipped_lines: u64,
+    logical_mode: Mode,
     pub notch: f32,
     pub safe_top: f32,
     pub transcribing_since: Option<f64>,
@@ -63,6 +66,9 @@ impl Band {
         Self {
             replay,
             now: 0.,
+            live: false,
+            skipped_lines: 0,
+            logical_mode: Mode::Idle,
             notch,
             safe_top: 32.,
             transcribing_since: None,
@@ -88,130 +94,185 @@ impl Band {
         self.notch.max(48.) + 2. * WING + 16.
     }
     pub fn sample(&mut self, now: f64) {
-        // NOTE: Replay refolds/clones the log for deterministic seeking. The live socket
-        // slice must use an incremental fold; never port this O(n) per-frame loop.
-        let replay = self.replay.clone();
-        let intents = self.intents.clone();
-        let system_motion = self.system_motion;
-        let (safe_top, overlay, keep_regions) =
-            (self.safe_top, self.overlay.clone(), self.keep_regions);
-        *self = Self::new(replay, self.notch, self.reduced);
-        self.system_motion = system_motion;
-        self.safe_top = safe_top;
+        let events = self.replay.clone();
+        let (overlay, intents) = (self.overlay.clone(), std::mem::take(&mut self.intents));
+        let (safe_top, keep_regions, system_motion) =
+            (self.safe_top, self.keep_regions, self.system_motion);
+        *self = Self::new(events.clone(), self.notch, self.reduced);
         self.overlay = overlay;
-        self.keep_regions = keep_regions;
         self.intents = intents;
-        self.now = now;
-        for e in self
-            .replay
+        self.safe_top = safe_top;
+        self.keep_regions = keep_regions;
+        self.system_motion = system_motion;
+        for e in events
             .0
-            .clone()
             .iter()
             .take_while(|e| e["t"].as_f64().unwrap() <= now)
         {
-            let t = e["t"].as_f64().unwrap();
-            match e["type"].as_str().unwrap_or("") {
-                "state" => {
-                    let mode = match e["state"].as_str() {
-                        Some("recording") => Mode::Recording,
-                        Some("transcribing") => Mode::Transcribing,
-                        Some("idle") => Mode::Idle,
-                        _ => continue,
-                    };
+            self.apply(e, e["t"].as_f64().unwrap());
+        }
+        self.advance(now);
+    }
+    // A bounded snapshot: never clones a replay log, previous exit, or intent history.
+    fn snapshot(&self) -> Self {
+        let mut s = Self::new(Replay(vec![]), self.notch, self.reduced);
+        s.now = self.now;
+        s.safe_top = self.safe_top;
+        s.mode = self.mode.clone();
+        s.logical_mode = self.logical_mode.clone();
+        s.since = self.since;
+        s.first_level = self.first_level;
+        s.rms = self.rms;
+        s.locked = self.locked;
+        s.paused = self.paused;
+        s.message = self.message.clone();
+        s.transcribing_since = self.transcribing_since;
+        s.recoverable_since = self.recoverable_since;
+        s.queue = self.queue;
+        s
+    }
+    /// Incremental fold, constant retained state; t is local monotonic receive time.
+    pub fn apply(&mut self, e: &Value, t: f64) {
+        self.mode = self.logical_mode.clone();
+        self.now = t;
+        match e["type"].as_str().unwrap_or("") {
+            "state" => {
+                let mode = match e["state"].as_str() {
+                    Some("recording") => Mode::Recording,
+                    Some("transcribing") => Mode::Transcribing,
+                    Some("idle") => Mode::Idle,
+                    _ => return,
+                };
+                if mode == Mode::Idle
+                    && ((e["source"] == "playback"
+                        && matches!(self.mode, Mode::Recording | Mode::Transcribing))
+                        || matches!(self.mode, Mode::Typed | Mode::Error))
+                {
+                    self.logical_mode = self.mode.clone();
+                    return;
+                }
+                if mode != self.mode {
                     if mode == Mode::Idle
-                        && ((e["source"] == "playback"
-                            && matches!(self.mode, Mode::Recording | Mode::Transcribing))
-                            || matches!(self.mode, Mode::Typed | Mode::Error))
+                        && matches!(self.mode, Mode::Recording | Mode::Transcribing)
+                        && !e["recording_jobs"]
+                            .as_array()
+                            .is_some_and(|jobs| jobs.iter().any(|j| j["phase"] == "processing"))
                     {
-                        continue;
+                        let mut outgoing = self.snapshot();
+                        outgoing.now = t;
+                        outgoing.exit_from = None;
+                        self.exit_from = Some(Box::new(outgoing));
+                    } else {
+                        self.exit_from = None;
                     }
-                    if mode != self.mode {
-                        if mode == Mode::Idle
-                            && matches!(self.mode, Mode::Recording | Mode::Transcribing)
-                            && !e["recording_jobs"]
-                                .as_array()
-                                .is_some_and(|jobs| jobs.iter().any(|j| j["phase"] == "processing"))
-                        {
-                            let mut outgoing = self.clone();
-                            outgoing.now = t;
-                            outgoing.exit_from = None;
-                            self.exit_from = Some(Box::new(outgoing));
-                        } else {
-                            self.exit_from = None;
-                        }
-                        if mode == Mode::Recording {
-                            self.recoverable_since = None;
-                            self.first_level = None;
-                            self.rms = 0.;
-                            self.transcribing_since = None;
-                        }
-                        if mode == Mode::Transcribing {
-                            self.transcribing_since = Some(t);
-                        }
-                        self.since = t;
-                        self.mode = mode;
-                    }
-                    if self.mode == Mode::Recording {
-                        self.locked = e["mode"] == "ptt"; // ptt is the protocol's locked capture mode
-                    } else if self.mode == Mode::Idle {
+                    if mode == Mode::Recording {
+                        self.recoverable_since = None;
                         self.first_level = None;
                         self.rms = 0.;
+                        self.transcribing_since = None;
                     }
-                    if e["recording_jobs"]
-                        .as_array()
-                        .is_some_and(|jobs| jobs.iter().any(|j| j["phase"] == "processing"))
-                        && self.mode == Mode::Idle
-                    {
-                        self.mode = Mode::Transcribing;
+                    if mode == Mode::Transcribing {
                         self.transcribing_since = Some(t);
-                        self.since = t;
                     }
+                    self.since = t;
+                    self.mode = mode;
                 }
-                "audio_level" if self.mode == Mode::Recording => {
-                    self.first_level.get_or_insert(t);
-                    self.rms = e["rms"].as_f64().unwrap_or(0.).clamp(0., 1.) as f32;
+                if self.mode == Mode::Recording {
+                    self.locked = e["mode"] == "ptt"; // ptt is the protocol's locked capture mode
+                } else if self.mode == Mode::Idle {
+                    self.first_level = None;
+                    self.rms = 0.;
                 }
-                "transcription_status" => {
-                    if self.mode != Mode::Transcribing {
-                        self.mode = Mode::Transcribing;
-                        self.transcribing_since = Some(t);
-                        self.since = t;
-                    }
-                }
-                "transcription" if e["partial"] != true => {
-                    self.mode = Mode::Typed;
+                if e["recording_jobs"]
+                    .as_array()
+                    .is_some_and(|jobs| jobs.iter().any(|j| j["phase"] == "processing"))
+                    && self.mode == Mode::Idle
+                {
+                    self.mode = Mode::Transcribing;
+                    self.transcribing_since = Some(t);
                     self.since = t;
                 }
-                "error" => {
-                    if e["source"] == "playback" || e["source"] == "seek" {
-                        continue;
-                    }
-                    if e["recoverable"] == true
-                        && matches!(self.mode, Mode::Recording | Mode::Transcribing)
-                    {
-                        self.recoverable_since = Some(t);
-                        self.message = e["message"]
-                            .as_str()
-                            .unwrap_or("Try again")
-                            .chars()
-                            .take(24)
-                            .collect();
-                        continue;
-                    }
-                    self.transcribing_since = None;
-                    self.mode = Mode::Error;
+            }
+            "audio_level" if self.mode == Mode::Recording => {
+                self.first_level.get_or_insert(t);
+                self.rms = e["rms"].as_f64().unwrap_or(0.).clamp(0., 1.) as f32;
+            }
+            "transcription_status" => {
+                if self.mode != Mode::Transcribing {
+                    self.mode = Mode::Transcribing;
+                    self.transcribing_since = Some(t);
                     self.since = t;
+                }
+            }
+            "transcription" if e["partial"] != true => {
+                self.mode = Mode::Typed;
+                self.since = t;
+            }
+            "error" => {
+                if e["source"] == "playback" || e["source"] == "seek" {
+                    self.logical_mode = self.mode.clone();
+                    return;
+                }
+                if e["recoverable"] == true
+                    && matches!(self.mode, Mode::Recording | Mode::Transcribing)
+                {
+                    self.recoverable_since = Some(t);
                     self.message = e["message"]
                         .as_str()
                         .unwrap_or("Try again")
                         .chars()
                         .take(24)
                         .collect();
+                    self.logical_mode = self.mode.clone();
+                    return;
                 }
-                "queue" => self.queue = e["depth"].as_u64().unwrap_or(0),
-                _ => {}
+                self.transcribing_since = None;
+                self.mode = Mode::Error;
+                self.since = t;
+                self.message = e["message"]
+                    .as_str()
+                    .unwrap_or("Try again")
+                    .chars()
+                    .take(24)
+                    .collect();
+            }
+            "queue" => self.queue = e["depth"].as_u64().unwrap_or(0),
+            _ => {}
+        }
+        self.logical_mode = self.mode.clone();
+    }
+    pub fn receive(&mut self, message: crate::socket::Message, t: f64) {
+        match message {
+            crate::socket::Message::Event(e) => self.apply(&e, t),
+            crate::socket::Message::Skipped => self.skipped_lines += 1,
+            crate::socket::Message::Disconnected => self.disconnect(t),
+            crate::socket::Message::Retrying(_) => {}
+        }
+        if !self.keep_regions {
+            if let Some(handle) = &self.overlay {
+                handle.set_input(if self.input_active() {
+                    OverlayInput::Regions
+                } else {
+                    OverlayInput::None
+                });
             }
         }
+    }
+    pub fn disconnect(&mut self, t: f64) {
+        let mut outgoing = self.snapshot();
+        outgoing.now = t;
+        self.exit_from = (self.mode != Mode::Idle).then(|| Box::new(outgoing));
+        self.mode = Mode::Idle;
+        self.logical_mode = Mode::Idle;
+        self.since = t;
+        self.first_level = None;
+        self.rms = 0.;
+        self.recoverable_since = None;
+        self.advance(t);
+    }
+    pub fn advance(&mut self, now: f64) {
+        self.now = now;
+        self.mode = self.logical_mode.clone();
         if matches!(self.mode, Mode::Typed | Mode::Error) && now - self.since >= 1.2 {
             self.mode = Mode::Idle;
         }
@@ -627,7 +688,11 @@ pub fn poll(s: &mut Band, clock: f64, tx: &mut Tx) -> bool {
     let active = s.input_active();
     let note = (s.recoverable_since, s.message.clone());
     let before = (s.mode.clone(), s.timer(), s.rms, s.now, s.since);
-    s.sample(clock);
+    if s.live {
+        s.advance(clock);
+    } else {
+        s.sample(clock);
+    }
     let changed = before.0 != s.mode;
     if active != s.input_active() && !s.keep_regions {
         if let Some(handle) = &s.overlay {
