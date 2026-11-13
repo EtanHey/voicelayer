@@ -207,7 +207,7 @@ fn section(title: &str, dark: bool) -> El {
     text(title)
         .font(rune::tok::type_::LABEL)
         .color(rune::tok::theme(dark).text_secondary)
-        .pt(12.0)
+
 }
 fn lock(var: &Option<String>, dark: bool) -> El {
     if let Some(var) = var {
@@ -251,9 +251,11 @@ fn choice(
             s.open = None;
         })
         .build(k, overlays)
+        .h(36.0).fill(k.c.bg_base).border(1.0,k.c.border_base).radius(6.0)
         .key(c)
 }
-// Keep headers attached to their rows while extra drawer height separates groups.
+pub const GROUP_GAP: f32 = 24.0;
+// Groups stay together; additional drawer height remains below the form.
 struct Form {
     groups: Vec<El>,
     current: El,
@@ -284,12 +286,8 @@ impl Form {
         if self.populated {
             self.groups.push(self.current);
         }
-        col()
-            .w_full()
-            .h_full()
-            .min_h(360.0)
-            .justify_between()
-            .children(self.groups)
+        col().key("form-groups").w_full().gap(GROUP_GAP)
+            .children(self.groups.into_iter().enumerate().map(|(i,g)| g.key(format!("group-{i}"))))
     }
 }
 fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) -> El {
@@ -495,34 +493,17 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
     }
     // Rows remain grouped at the top; the footer follows the drawer's bottom.
     let footer = if tab == 0 {
-        row()
-            .w_full()
-            .center_y()
-            .child(value(v.version.as_deref(), dark).grow(1.0))
-            .child(button("Copy", "copy-diagnostics".into(), k))
-    } else if tab == 3 {
-        row()
-            .w_full()
-            .child(button("Preview", "speech-preview".into(), k))
-    } else {
-        row().w_full().child(value(Some("Read-only"), dark))
-    };
-    col()
-        .w_full()
-        .h_full()
-        .padding(20.0)
-        .child(
-            col()
-                .w_full()
-                .grow(1.0)
-                .min_h(0.0)
-                .scroll(ScrollSpec {
-                    stick_bottom: false,
-                })
-                .child(content.build()),
-        )
-        .child(footer.key("panel-last-row").h(40.0))
+        row().w_full().h(48.0).center_y().border_sides([1.0,0.0,0.0,0.0],k.c.border_base)
+            .child(tag(&v.version.as_ref().map(|v|format!("Version {v}")).unwrap_or_else(||"Unavailable here".into()),dark).grow(1.0))
+            .child(button("Copy diagnostics", "copy-diagnostics".into(), k)).key("panel-last-row")
+    } else { el() };
+    col().w_full().h_full().padding(20.0).child(
+        col().w_full().max_w(560.0).h_full().child(
+            col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom:false }).child(content.build())
+        ).child(footer)
+    ).items_center()
 }
+
 pub fn view(s: &Settings, cx: &mut Cx<Settings>) -> El {
     let dark = cx.system_dark();
     let reduce = s.reduce_motion || cx.system_reduced_motion();
@@ -558,7 +539,7 @@ pub fn view(s: &Settings, cx: &mut Cx<Settings>) -> El {
             s.height = r[3];
         })
         .child(
-            SegmentedControl::new(&TABS, Some(s.tab))
+            col().w_full().px(12.0).child(SegmentedControl::new(&TABS, Some(s.tab))
                 .width(None)
                 .on_pick(|s: &mut Settings, i, _| s.select_tab(i))
                 .build(&k)
@@ -573,8 +554,9 @@ pub fn view(s: &Settings, cx: &mut Cx<Settings>) -> El {
                         true
                     }
                     _ => false,
-                }),
+                })),
         )
+        .child(el().key("tab-hairline").w_full().h(1.0).fill(k.c.border_base))
         .child(
             col()
                 .key("pager")

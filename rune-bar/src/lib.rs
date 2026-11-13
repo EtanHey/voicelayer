@@ -402,12 +402,12 @@ pub fn embedded<S: DictionaryHost>(s: &Dictionary, cx: &mut Cx<S>) -> El {
         .padding(24.0)
         .gap(16.0)
         .child(
-            text("Dictionary")
+            if S::hosted() { el() } else { text("Dictionary")
                 .font(rune::TextStyle {
                     size: 24.0,
                     ..rune::tok::type_::TITLE
                 })
-                .color(t.text),
+                .color(t.text) },
         )
         .child(
             row()
