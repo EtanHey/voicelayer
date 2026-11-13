@@ -403,6 +403,18 @@ describe("scripts/tag-voicebar-release.sh", () => {
     expect(tags()).toBe("");
   });
 
+  test("Codex r2: a run that fails after creating the tag leaves no tag behind", () => {
+    provenRepo();
+    // stdout is closed, so the first line the script prints after `git tag` fails under `set -e`.
+    const r = Bun.spawnSync(["bash", "-c", 'bash "$0" "$1" >&-', tagScript, "2.4.0"], {
+      cwd: dir, stdout: "pipe", stderr: "pipe",
+      env: { ...gitEnv, BUN: process.execPath, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "tag.gpgSign", GIT_CONFIG_VALUE_0: "false" },
+    });
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toContain("failed after creating v2.4.0; the tag was deleted");
+    expect(git("tag", "-l", "v2.4.0").trim()).toBe("");
+  });
+
   test("refuses when the tag already exists", () => {
     provenRepo();
     git("tag", "v2.4.0");
