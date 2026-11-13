@@ -23,10 +23,11 @@ public protocol AudioLevelMonitoringEngine {
 /// test that forgot to opened the microphone on every suite run (#906). The refusal is loud: the default reporter
 /// raises, which XCTest records as that test's failure.
 enum RealMicrophoneMeterGuard {
-    /// Same test-process detection as `NotchHistoryArchiveStore.readsRealArchive`.
+    /// True only where XCTest itself is loaded or the process is the `xctest` runner. Deliberately NOT the
+    /// `XCTestConfigurationFilePath` environment variable: a child process can inherit it, and an app launched
+    /// from a test runner must keep its real meter (Codex review of #909, claim 3).
     static let runsInsideTests: Bool =
         NSClassFromString("XCTestCase") != nil
-            || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
             || ProcessInfo.processInfo.processName == "xctest"
 
     static let refusal =
