@@ -665,7 +665,8 @@ export function cleanupTranscriptionText(
       ...Object.fromEntries((snapshot?.entries ?? []).filter((entry) => entry.cleanup_spelling).map((entry) => [entry.canonical, entry.cleanup_spelling!])),
     }),
   );
-  const pathNormalized = normalizePathTokens(normalized);
+  const commands = new Set(Object.values(aliases).filter((value) => /^\/[A-Za-z0-9][A-Za-z0-9-]*$/.test(value)));
+  const pathNormalized = normalizePathTokens(normalized, commands);
   const sentenceCased = normalizeSentenceStarts(pathNormalized);
   // Must run LAST: after the canonical-term pass folds "voice layer Codex"
   // into the camelCase agent token, and after auto-cap/sentence-start so the
@@ -715,17 +716,38 @@ function normalizeConversationalOne(text: string): string {
     .replace(/\b(other)\s+1\b/giu, "$1 one");
 }
 
-export function normalizePathTokens(text: string): string {
+export function getSTTDictionaryCommands(env: STTCleanupEnv = process.env): ReadonlySet<string> {
+  return new Set(Object.values(buildRuntimeAliases(env, loadVocabularySnapshot(env)))
+    .filter((value) => /^\/[A-Za-z0-9][A-Za-z0-9-]*$/.test(value)));
+}
+
+// Sticky scanning consumes each command once per join, without suffix slicing.
+function joinPathSeparators(text: string, commands: ReadonlySet<string>): string {
+  const command = /\/[A-Za-z0-9][A-Za-z0-9-]*/uy;
+  const isCommand = (index: number): boolean => {
+    if (!commands.size || (index > 0 && !/\s/u.test(text[index - 1]))) return false;
+    command.lastIndex = index;
+    const match = command.exec(text);
+    return !!match && commands.has(match[0]) &&
+      (command.lastIndex === text.length || /[\s.,;:!?]/u.test(text[command.lastIndex]));
+  };
+  text = text.replace(/\s*\/\s*/gu, (match, offset: number) =>
+    isCommand(offset + match.indexOf("/")) ? match : "/");
+  return text.replace(/\s*-\s*/gu, (match, offset: number) => {
+    // A hyphen may own the whitespace before the next slash in this same join.
+    const trailing = match.match(/\s+$/u)?.[0] ?? "";
+    return "-" + (trailing && isCommand(offset + match.length) ? trailing : "");
+  });
+}
+
+export function normalizePathTokens(text: string, commands: ReadonlySet<string> = new Set()): string {
   let result = text.replace(
     /\b(in|at|under|inside)\s+-\s*,\s+is it\s+(?=~\s*\/)/giu,
     (_match, preposition: string) => `${preposition} `,
   );
 
   result = result.replace(/~\s*\/[^,;!?]*/gu, (match) =>
-    match
-      .replace(/\s*\/\s*/g, "/")
-      .replace(/\s*-\s*/g, "-")
-      .toLowerCase(),
+    joinPathSeparators(match, commands).toLowerCase(),
   );
 
   result = replacePathTokenSpans(result, (match) => {
@@ -733,10 +755,7 @@ export function normalizePathTokens(text: string): string {
       if (/^[A-Za-z]+\s+\/\s*[A-Za-z0-9-]+$/u.test(match.trim())) {
         return match;
       }
-      return match
-        .replace(/\s*\/\s*/g, "/")
-        .replace(/\s*-\s*/g, "-")
-        .toLowerCase();
+      return joinPathSeparators(match, commands).toLowerCase();
   });
 
   return result;
