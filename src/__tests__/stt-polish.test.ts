@@ -1584,6 +1584,33 @@ describe("stt-polish", () => {
     });
   }
 
+  // Lane c11-T8a: polish may not glue a command the cleanup stage kept
+  // standalone; wrapping it in punctuation stays allowed.
+  const polishCommand = async (cleanedText: string, candidate: string) => {
+    server = createMockPolishServer(() => ({ text: candidate }));
+    return polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: { QA_VOICE_STT_POLISH: "on", QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET, QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG },
+    });
+  };
+  for (const [name, cleanedText, candidate] of [
+    ["glued to the word before", "And to tidy up, you just /zephyr-sweep.", "And to tidy up, you just/zephyr-sweep."],
+    ["joined to the next command", "Then run /zephyr-sweep /quill.", "Then run /zephyr-sweep/quill."],
+    ["re-spaced with a double space", "Run /quill now.", "Run  /quill now."],
+  ] as const) {
+    it(`rejects a slash command ${name}`, async () => {
+      const result = await polishCommand(cleanedText, candidate);
+      expect(result.status).toBe("rejected");
+      expect(result.text).toBe(cleanedText);
+    });
+  }
+  it("accepts a slash command wrapped in a run of opening punctuation", async () => {
+    const result = await polishCommand("Run /quill now.", "Run ((/quill)) now.");
+    expect(result.status, result.error ?? "").not.toBe("rejected");
+    expect(result.text).toBe("Run ((/quill)) now.");
+  });
+
   it("rejects a numbered list that deletes spoken First and Second", async () => {
     const cleanedText = "First, verify the recording state before release. Second, inspect the transcript before sending it.";
     const candidate = "1. Verify the recording state before release.\n2. Inspect the transcript before sending it.";

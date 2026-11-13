@@ -665,13 +665,56 @@ export function cleanupTranscriptionText(
       ...Object.fromEntries((snapshot?.entries ?? []).filter((entry) => entry.cleanup_spelling).map((entry) => [entry.canonical, entry.cleanup_spelling!])),
     }),
   );
-  const pathNormalized = normalizePathTokens(normalized);
+  // A command his dictionary produced ("you just /compact.") stays its own
+  // token: the path pass would glue it to the word before ("just/compact.").
+  const commands = protectDictionaryCommands(normalized, dictionarySlashCommands(snapshot));
+  const pathNormalized = commands.restore(normalizePathTokens(commands.text));
   const sentenceCased = normalizeSentenceStarts(pathNormalized);
   // Must run LAST: after the canonical-term pass folds "voice layer Codex"
   // into the camelCase agent token, and after auto-cap/sentence-start so the
   // re-emitted lowercase flags are never re-uppercased downstream.
   const flagNormalized = normalizeAgentSpawnFlags(sentenceCased);
   return isMeaningfulTranscription(flagNormalized) ? flagNormalized : "";
+}
+
+function dictionarySlashCommands(snapshot: LoadedVocabularySnapshot | null): string[] {
+  const values = [...(snapshot?.promptTerms ?? []), ...Object.values(snapshot?.aliases ?? {})];
+  return values.map((value) => value.trim()).filter((value) => /^\/[A-Za-z0-9][A-Za-z0-9-]*$/u.test(value));
+}
+
+/**
+ * Hide dictionary commands from the path pass. The whole run ("/a /b") is
+ * decided first: every segment must be a dictionary command, followed by the
+ * end, whitespace (not before another slash) or sentence punctuation, and the
+ * token before the run must not be part of a path ("src/", "a/b", "/ x",
+ * "~", "x.ts"). Anything else is a path and keeps today's output.
+ */
+function protectDictionaryCommands(
+  text: string,
+  commands: readonly string[],
+): { text: string; restore: (value: string) => string } {
+  const unchanged = { text, restore: (value: string) => value };
+  if (!commands.length || !text.includes("/")) return unchanged;
+  const names = [...new Set(commands)].sort((a, b) => b.length - a.length)
+    .map((command) => command.slice(1));
+  const name = `\\/(?:${names.join("|")})(?![A-Za-z0-9_~/-]|\\.(?!\\s|$))`;
+  const pattern = new RegExp(
+    `(^|\\s)(${name}(?:[ \\t]+${name})*)(?=$|\\s(?![ \\t]*\\/)|[.,!?;:](?=\\s|$))`,
+    "gu",
+  );
+  const tokens: string[] = [];
+  const hidden = text.replace(pattern, (match, before: string, run: string, offset: number) => {
+    const preceding = text.slice(0, offset + before.length);
+    if (/(?:\S*[\/~]\S*|\/\s*[A-Za-z0-9._~-]+|\S*\.[A-Za-z0-9]+)\s+$/u.test(preceding)) return match;
+    tokens.push(run);
+    return `${before}\uE400${String.fromCodePoint(0xE500 + tokens.length - 1)}\uE401`;
+  });
+  if (!tokens.length) return unchanged;
+  return {
+    text: hidden,
+    restore: (value) => value.replace(/\uE400([\uE500-\uF8FF])\uE401/gu, (_m, mark: string) =>
+      tokens[mark.codePointAt(0)! - 0xE500] ?? _m),
+  };
 }
 
 function isAggressiveFillerRemovalEnabled(env: STTCleanupEnv): boolean {
