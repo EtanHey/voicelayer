@@ -750,7 +750,7 @@ export type SocketCommand =
   | SpeakTextCommand
   | ReadNextCommand
   | { cmd: "history_playback_ready"; id: string }
-  | { cmd: "dictation_delivered"; id?: string; take_id: string; delivery_id: string; outcome?: "unverified" | "not_inserted" }
+  | { cmd: "dictation_delivered"; id?: string; take_id: string; delivery_id: string; outcome?: "unverified" | "not_inserted" | "partial" }
   | StopCommand
   | CancelCommand
   | ReplayCommand
@@ -1028,7 +1028,8 @@ export function parseCommand(line: string): SocketCommand | null {
       case "dictation_delivered":
         if (typeof parsed.take_id !== "string" || !parsed.take_id || parsed.take_id.length > 256 ||
             typeof parsed.delivery_id !== "string" || !parsed.delivery_id || parsed.delivery_id.length > 256) return null;
-        if (parsed.outcome !== undefined && parsed.outcome !== "unverified" && parsed.outcome !== "not_inserted") return null;
+        if (parsed.outcome !== undefined && parsed.outcome !== "unverified" && parsed.outcome !== "not_inserted" &&
+          parsed.outcome !== "partial") return null;
         return { cmd: "dictation_delivered", take_id: parsed.take_id, delivery_id: parsed.delivery_id,
           ...(parsed.outcome !== undefined ? { outcome: parsed.outcome } : {}) };
       case "history_playback_ready":

@@ -11,10 +11,18 @@ enum PasteRecoveryFeedback {
     static let notInserted = "Not pasted\nIn History"
     static let unverified = "Unverified\nIn History"
     static let partial = "Part pasted\nHistory: full"
+    /// Typed delivery stopped part-way: the start is in the first app, the rest was not typed (lane T7 r2).
+    static let partiallyTyped = "Part typed\nRest not typed"
+
+    /// History's note for a partly typed delivery: what went in, that the rest did not, and what Shift+F5 does.
+    static func partiallyTypedNote(typed: Int, total: Int) -> String {
+        "Part typed: the first \(typed) of \(total) characters went in, the rest was not typed. "
+            + "Shift+F5 types the whole text again; full text kept in History"
+    }
 
     static func contains(_ text: String?) -> Bool {
         guard let text else { return false }
-        return [notInserted, unverified, partial].contains(text)
+        return [notInserted, unverified, partial, partiallyTyped].contains(text)
     }
 }
 

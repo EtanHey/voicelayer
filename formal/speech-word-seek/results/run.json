@@ -15,10 +15,10 @@
     "src/tts.ts": "d955005599c2a2e4cf565ce4c6ee4365d1d2ee80c42b3645de1840ddd9825e2e",
     "src/tts/speech-words.ts": "65aee12e0d17659ed044c418edef306ca3f679c913fda08a09339f7006bdddf5",
     "src/__tests__/speech-words.test.ts": "ae10c21b242fe47d3930bffa974c00032cbe4e5e373aa314eb52a6ea25cf0d78",
-    "src/socket-protocol.ts": "8329b558d26dd6f9f85b784552056698563193b9078a749a0597513d3e3681d2",
+    "src/socket-protocol.ts": "ad9690e278fb7082152658bb1371fc890ee8e687c02ef7790739a9c65d1299c5",
     "src/socket-handlers.ts": "ba966df991db38969594868381323d6b383c8eeabac71c5d9bf11130d39885fe",
     "src/__tests__/tts-long-read-runtime.test.ts": "5cc72db55a287ed312626bcc17e57b321bdb33c381799890ae7cd558befee368",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "58f90e0459215e2a128ff849611a20795c5b34c172ffa850f50d1ba6bc72736c",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "7766dce12c307785e5611a3350cb6f7f00a24b999d092c0f0d74235099581edc",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {

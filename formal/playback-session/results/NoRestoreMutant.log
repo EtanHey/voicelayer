@@ -3,8 +3,8 @@
   "kind": "temporal",
   "target": "ParkedEventuallyReleased",
   "status": "EXPECTED_FAIL",
-  "generated": 136990,
-  "distinct": 46513,
+  "generated": 136797,
+  "distinct": 46433,
   "trace": [
     "/\\ cWord = 0\n/\\ cur = <<0, 0>>\n/\\ askFound = 0\n/\\ prep = {}\n/\\ mic = FALSE\n/\\ mark = <<9, 9>>\n/\\ resumedAt = <<9, 9>>\n/\\ tele = 0\n/\\ retReplay = 0\n/\\ pausedAt = <<9, 9>>\n/\\ restoring = 0\n/\\ recorder = FALSE\n/\\ restored = 0\n/\\ cOwner = 0\n/\\ exiting = {}\n/\\ cPhase = \"idle\"\n/\\ asks = 0\n/\\ seekTo = <<0, 0>>\n/\\ notice = FALSE\n/\\ st = <<\"queued\", \"queued\">>\n/\\ optq = {}\n/\\ parked = 0\n/\\ lost = FALSE\n/\\ parkedFrom = \"none\"\n/\\ players = {}\n/\\ prevHeld = 0\n/\\ ask = \"none\"",
     "/\\ cWord = 0\n/\\ cur = <<0, 0>>\n/\\ askFound = 0\n/\\ prep = {1}\n/\\ mic = FALSE\n/\\ mark = <<9, 9>>\n/\\ resumedAt = <<9, 9>>\n/\\ tele = 0\n/\\ retReplay = 0\n/\\ pausedAt = <<9, 9>>\n/\\ restoring = 0\n/\\ recorder = FALSE\n/\\ restored = 0\n/\\ cOwner = 0\n/\\ exiting = {}\n/\\ cPhase = \"idle\"\n/\\ asks = 0\n/\\ seekTo = <<0, 0>>\n/\\ notice = FALSE\n/\\ st = <<\"preparing\", \"queued\">>\n/\\ optq = {}\n/\\ parked = 0\n/\\ lost = FALSE\n/\\ parkedFrom = \"none\"\n/\\ players = {}\n/\\ prevHeld = 0\n/\\ ask = \"none\"",
@@ -17,6 +17,6 @@
     "/\\ cWord = 0\n/\\ cur = <<0, 0>>\n/\\ askFound = 1\n/\\ prep = {1}\n/\\ mic = FALSE\n/\\ mark = <<0, 0>>\n/\\ resumedAt = <<9, 9>>\n/\\ tele = 0\n/\\ retReplay = 0\n/\\ pausedAt = <<0, 0>>\n/\\ restoring = 0\n/\\ recorder = FALSE\n/\\ restored = 0\n/\\ cOwner = 0\n/\\ exiting = {}\n/\\ cPhase = \"idle\"\n/\\ asks = 1\n/\\ seekTo = <<0, 0>>\n/\\ notice = TRUE\n/\\ st = <<\"parked\", \"queued\">>\n/\\ optq = {}\n/\\ parked = 1\n/\\ lost = FALSE\n/\\ parkedFrom = \"playing\"\n/\\ players = {}\n/\\ prevHeld = 2\n/\\ ask = \"waiting\"",
     "/\\ cWord = 0\n/\\ cur = <<0, 0>>\n/\\ askFound = 1\n/\\ prep = {}\n/\\ mic = FALSE\n/\\ mark = <<0, 0>>\n/\\ resumedAt = <<9, 9>>\n/\\ tele = 0\n/\\ retReplay = 0\n/\\ pausedAt = <<0, 0>>\n/\\ restoring = 0\n/\\ recorder = FALSE\n/\\ restored = 0\n/\\ cOwner = 0\n/\\ exiting = {}\n/\\ cPhase = \"idle\"\n/\\ asks = 1\n/\\ seekTo = <<0, 0>>\n/\\ notice = TRUE\n/\\ st = <<\"parked\", \"queued\">>\n/\\ optq = {}\n/\\ parked = 1\n/\\ lost = FALSE\n/\\ parkedFrom = \"playing\"\n/\\ players = {}\n/\\ prevHeld = 2\n/\\ ask = \"waiting\"",
     "/\\ cWord = 0\n/\\ cur = <<0, 0>>\n/\\ askFound = 1\n/\\ prep = {}\n/\\ mic = FALSE\n/\\ mark = <<0, 0>>\n/\\ resumedAt = <<9, 9>>\n/\\ tele = 0\n/\\ retReplay = 0\n/\\ pausedAt = <<0, 0>>\n/\\ restoring = 0\n/\\ recorder = FALSE\n/\\ restored = 0\n/\\ cOwner = 0\n/\\ exiting = {}\n/\\ cPhase = \"idle\"\n/\\ asks = 1\n/\\ seekTo = <<0, 0>>\n/\\ notice = TRUE\n/\\ st = <<\"parked\", \"queued\">>\n/\\ optq = {}\n/\\ parked = 1\n/\\ lost = FALSE\n/\\ parkedFrom = \"playing\"\n/\\ players = {}\n/\\ prevHeld = 2\n/\\ ask = \"closing\"",
-    "Finished checking temporal properties in 00s at 2026-11-12 02:06:30"
+    "Finished checking temporal properties in 00s at 2026-11-13 04:17:38"
   ]
 }

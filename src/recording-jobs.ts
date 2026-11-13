@@ -6,13 +6,16 @@ import { broadcast } from "./socket-client";
 import type { SocketEvent, TranscriptionEvent } from "./socket-protocol";
 import { getEffectiveRecordingState, hasConversationCaptureFence, setRecordingState, type RecordingState } from "./recording-state";
 
+/** A VoiceBar delivery receipt's outcome; absent means delivered. "partial": typing stopped part-way (lane T7). */
+export type DictationDeliveryOutcome = "unverified" | "not_inserted" | "partial";
+
 const ownership = new AsyncLocalStorage<RecordingTake<string>>();
 const exitProofs = new WeakMap<RecordingTake<string>, Promise<void>>();
 const deliveryOptions = new WeakMap<RecordingTake<string>, { expectsAck: boolean; timeoutMs: number }>();
 /** BARE-STOP: live takes whose client named them (VoiceBar). Their mic admission is scoped, so an id-less stop spares it. */
 const clientNamedTakes = new WeakSet<RecordingTake<string>>();
 let newestCapture: RecordingTake<string> | undefined;
-const pendingDeliveries = new Map<string, { event: TranscriptionEvent; resolve: () => void; mark: (outcome: "unverified" | "not_inserted") => void }>();
+const pendingDeliveries = new Map<string, { event: TranscriptionEvent; resolve: () => void; mark: (outcome: DictationDeliveryOutcome) => void }>();
 const queue = new RecordingTakeQueue<string>(publishRecordingJobs);
 
 export function recordingJobsSnapshot() {
@@ -153,7 +156,7 @@ export function broadcastInputEvent(event: SocketEvent): void {
   }
 }
 
-export async function deliverInputTranscription(event: TranscriptionEvent, markOutcome: (outcome: "unverified" | "not_inserted") => void = () => {}): Promise<void> {
+export async function deliverInputTranscription(event: TranscriptionEvent, markOutcome: (outcome: DictationDeliveryOutcome) => void = () => {}): Promise<void> {
   const take = ownership.getStore();
   if (!take) { broadcast(event); return; }
   if (take.signal.aborted) return;
@@ -179,7 +182,7 @@ export async function deliverInputTranscription(event: TranscriptionEvent, markO
   });
 }
 
-export function acknowledgeDictationDelivery(takeId: string, deliveryId: string, outcome?: "unverified" | "not_inserted"): boolean {
+export function acknowledgeDictationDelivery(takeId: string, deliveryId: string, outcome?: DictationDeliveryOutcome): boolean {
   if (takeId !== deliveryId) return false;
   const delivery = pendingDeliveries.get(takeId);
   if (!delivery) return false;

@@ -313,6 +313,14 @@ describe("recording job runtime (isolated fake recorder, never real mic)", () =>
     expect(parseCommand(JSON.stringify({ cmd: "dictation_delivered", take_id: "a", delivery_id: "a" }))).toMatchObject({ cmd: "dictation_delivered" });
     expect(parseCommand(JSON.stringify({ cmd: "dictation_delivered", take_id: "a" }))).toBeNull();
   });
+
+  it("accepts a partial delivery receipt as its own outcome (lane T7 round 2)", () => {
+    for (const outcome of ["partial", "not_inserted", "unverified"] as const) {
+      expect(parseCommand(JSON.stringify({ cmd: "dictation_delivered", take_id: "a", delivery_id: "a", outcome })))
+        .toEqual({ cmd: "dictation_delivered", take_id: "a", delivery_id: "a", outcome });
+    }
+    expect(parseCommand(JSON.stringify({ cmd: "dictation_delivered", take_id: "a", delivery_id: "a", outcome: "inserted" }))).toBeNull();
+  });
 });
 
 it("R2 waits for unowned recorder exit before processing", async () => {

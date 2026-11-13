@@ -22,8 +22,9 @@ if args.count == 3, args[1] == "--bridge" {
         try? acks.close()
     }
     let sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
+    let target = ListAwareTyping.Target(pid: pid, frontmostPID: { pid }) // batches replay over CDP, not to the front app
     let env = ListAwareTyping.Environment(
-        readValue: ListAwareTyping.focusedValueReader(pid: pid, sleep: sleep),
+        readValue: target.makeReader(sleep: sleep),
         post: { plan in
             let steps: [[String: String]] = plan.map {
                 switch $0 { case let .text(s): return ["t": "text", "s": s]; case .newline: return ["t": "newline"] }
@@ -33,6 +34,7 @@ if args.count == 3, args[1] == "--bridge" {
             waitAck()
             return .posted
         },
+        targetUnchanged: target.isUnchanged,
         sleep: sleep,
         now: { ProcessInfo.processInfo.systemUptime },
         log: { FileHandle.standardError.write(Data("[list-aware] \($0)\n".utf8)) }

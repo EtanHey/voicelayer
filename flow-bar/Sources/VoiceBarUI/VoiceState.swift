@@ -26,7 +26,12 @@ public enum VoiceMode: String, CaseIterable {
     case disconnected
 }
 
-public enum GuardedTypingResult: Equatable { case posted, focusChanged, failed }
+public enum GuardedTypingResult: Equatable {
+    case posted, focusChanged, failed
+    /// A segmented (list-aware) delivery stopped after its first batch: `delivered` is in the target,
+    /// `remaining` was not typed; together they are the whole text (lane T7 round 2).
+    case partial(delivered: String, remaining: String)
+}
 
 public struct SelectionCaptureResult: Equatable {
     public enum Outcome: String {
@@ -291,6 +296,9 @@ private enum VoicePasteOutcome: Equatable {
     case unverified
     case typed
     case partial
+    /// Typed delivery stopped part-way (the target changed between list segments): `typed` of `total`
+    /// characters went in, the rest was not typed.
+    case partiallyTyped(typed: Int, total: Int)
     case failed(String)
 }
 
@@ -1342,10 +1350,14 @@ public final class VoiceState {
     public var textTypingHandler: (_ text: String) -> Bool = { _ in false }
 
     /// Production installs a batch builder with a final PID check. Nil preserves the legacy
-    /// injection seam for tests/embedders; manual routes always use textTypingHandler directly.
+    /// injection seam for tests/embedders; manual routes use typedDeliveryHandler, else textTypingHandler.
     public var ownedTextTypingHandler: ((_ text: String, _ expectedPID: pid_t, _ matches: () -> Bool) -> GuardedTypingResult)?
 
     public var guardedTextTypingHandler: ((_ text: String, _ expectedPID: pid_t) -> GuardedTypingResult)?
+
+    /// Production's manual typed route (Shift+F5 / re-paste) with its outcome, so a list-aware delivery that
+    /// stops part-way reports `.partial`. Nil keeps the legacy Bool seam `textTypingHandler`.
+    public var typedDeliveryHandler: ((_ text: String) -> GuardedTypingResult)?
 
     /// Test seam for Accessibility permission checks.
     public var accessibilityTrustChecker: (_ prompt: Bool) -> Bool = { _ in false }
@@ -5737,21 +5749,42 @@ public final class VoiceState {
                         "terminalNewlinesFolded": boolString(isTerminalTarget && deliveredText != TerminalPasteTargets.strippingSingleTrailingNewline(text)),
                     ])
                     let typed: Bool
+                    // A batch refused before anything went in is "not inserted"; one refused after a list
+                    // segment already went in is partial and says so (lane T7 round 2). Shift+F5 then
+                    // types the whole text again, as before: the partial note tells the user.
+                    func stopped(_ result: GuardedTypingResult) {
+                        if case let .partial(delivered, remaining) = result {
+                            logDiagnostic("paste_typing_partial", details: [
+                                "plan": String(describing: plan),
+                                "targetApp": pasteTargetBundleID,
+                                "typedLength": String(delivered.count),
+                                "remainingLength": String(remaining.count),
+                            ])
+                            finishPasteConfirmation(
+                                outcome: .partiallyTyped(typed: delivered.count, total: delivered.count + remaining.count),
+                                text: text, operationID: operationID)
+                        } else {
+                            finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
+                        }
+                    }
                     if let ownedTarget, let ownedTextTypingHandler {
                         let matches = { [weak self] in self?.ownedTargetIsCurrent(ownedTarget) == true }
                         switch ownedTextTypingHandler(deliveredText, pasteTarget.processIdentifier, matches) {
                         case .posted: typed = true
                         case .failed: typed = false
-                        case .focusChanged:
-                            finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID); return
+                        case let result: stopped(result); return
                         }
                     } else if (plan == .autoPaste || allowAXInsertion), let guardedTextTypingHandler {
                         switch guardedTextTypingHandler(deliveredText, pasteTarget.processIdentifier) {
                         case .posted: typed = true
                         case .failed: typed = false
-                        case .focusChanged:
-                            finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
-                            return
+                        case let result: stopped(result); return
+                        }
+                    } else if let typedDeliveryHandler {
+                        switch typedDeliveryHandler(deliveredText) {
+                        case .posted: typed = true
+                        case .failed: typed = false
+                        case let result: stopped(result); return
                         }
                     } else {
                         typed = textTypingHandler(deliveredText)
@@ -5971,16 +6004,21 @@ public final class VoiceState {
                 case .insertedAtCursor: .insertedAtCursor
                 case .pasted: .pasted
                 case .notInserted: .notInserted
-                case .unverified, .partial: .unverified
+                case .unverified, .partial, .partiallyTyped: .unverified
                 case .typed: .typed
                 case .failed: .failed
                 }
             }
             if outcome == .notInserted { noteOwnedDelivery(path: delivery.path, text: delivery.text, note: refusalNote) }
             if outcome == .unverified { noteOwnedDelivery(path: delivery.path, text: delivery.text, note: PasteRecoveryFeedback.unverified) }
+            if case let .partiallyTyped(typed, total) = outcome {
+                noteOwnedDelivery(path: delivery.path, text: delivery.text,
+                                  note: PasteRecoveryFeedback.partiallyTypedNote(typed: typed, total: total))
+            }
             var receipt: [String: Any] = ["cmd": "dictation_delivered", "take_id": delivery.takeID, "delivery_id": delivery.deliveryID]
             if outcome == .notInserted { receipt["outcome"] = "not_inserted" }
             if outcome == .unverified { receipt["outcome"] = "unverified" }
+            if case .partiallyTyped = outcome { receipt["outcome"] = "partial" }
             sendCommand?(receipt)
             if microphoneTakeID == nil {
                 let message: String = switch outcome {
@@ -5989,6 +6027,7 @@ public final class VoiceState {
                 case .notInserted: refusalNote
                 case .unverified: PasteRecoveryFeedback.unverified
                 case .partial: PasteRecoveryFeedback.partial
+                case .partiallyTyped: PasteRecoveryFeedback.partiallyTyped
                 case let .failed(message): Self.failureMessageWithRetryHint(message)
                 }
                 showConfirmation(message, duration: 5.0)
@@ -6000,7 +6039,7 @@ public final class VoiceState {
             case .insertedAtCursor: .insertedAtCursor
             case .pasted: .pasted
             case .notInserted: .notInserted
-            case .unverified, .partial: .unverified
+            case .unverified, .partial, .partiallyTyped: .unverified
             case .typed: .typed
             case .failed: .failed
             }
@@ -6031,6 +6070,8 @@ public final class VoiceState {
             )
         case .partial:
             showConfirmation(PasteRecoveryFeedback.partial, duration: 5.0)
+        case .partiallyTyped:
+            showConfirmation(PasteRecoveryFeedback.partiallyTyped, duration: 5.0)
         case let .failed(message):
             showConfirmation(Self.failureMessageWithRetryHint(message), duration: 4.0)
         }
@@ -6041,7 +6082,7 @@ public final class VoiceState {
             switch outcome {
             case .insertedAtCursor, .pasted, .unverified, .typed:
                 showConfirmation(notice, duration: Self.micDisconnectNoticeSeconds)
-            case .notInserted, .partial, .failed:
+            case .notInserted, .partial, .partiallyTyped, .failed:
                 break
             }
         }

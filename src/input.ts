@@ -3977,7 +3977,9 @@ export async function waitForInput(
         if (archivedRecordingPath) {
           updateArchivedRecordingMetadata(join(archivedRecordingPath, "audio.wav"), metadata => {
             metadata.delivery_status = outcome;
-            metadata.delivery_note = outcome === "not_inserted" ? "Not pasted: target changed" : "Paste unverified. Text kept in History.";
+            metadata.delivery_note = outcome === "not_inserted" ? "Not pasted: target changed"
+              : outcome === "partial" ? "Part typed: the target changed part-way, the rest was not typed. Text kept in History."
+              : "Paste unverified. Text kept in History.";
           });
           broadcast({ type: "archive_metadata_updated", recording_path: join(archivedRecordingPath, "audio.wav") });
         }

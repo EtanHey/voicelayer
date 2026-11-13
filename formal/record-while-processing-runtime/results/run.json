@@ -23,10 +23,10 @@
     "formal/record-while-processing-runtime/RejectDrainMutant.cfg": "133926cae90a9cf941ebd298b20769b0f34b102b1611fc4e3b4b3351fb1de22b",
     "formal/record-while-processing-runtime/FocusStealMutant.cfg": "bdba630660a9dc9b238919771e70634506ff8393cd878c2a814241eb2ca1a8fd",
     "formal/record-while-processing-runtime/Fixed.cfg": "100335967423506e9e265e1629777937f1770e14f25c8ebc84f389baa37de3c1",
-    "src/recording-jobs.ts": "b93de1bd6033ad59ec273c768a47317538b5f50dc482d088303422d40c134b6a",
+    "src/recording-jobs.ts": "4aa53f7463ec77dc59d3e5c8b302b0b8589d2e256de239db7487fb80a4c3c375",
     "src/recording-take-queue.ts": "781306092e4ed6b22eedff048023059867f26682b98ad0bd470f11484621bb7b",
     "src/socket-handlers.ts": "ba966df991db38969594868381323d6b383c8eeabac71c5d9bf11130d39885fe",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "58f90e0459215e2a128ff849611a20795c5b34c172ffa850f50d1ba6bc72736c",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "7766dce12c307785e5611a3350cb6f7f00a24b999d092c0f0d74235099581edc",
     "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift": "40894bfe33de588427cd42f5a0417804079ff139489a29fd377c4ba904ba27fc",
     "flow-bar/Sources/VoiceBar/SynthesizedKeyEvents.swift": "b580e09f10dcad78e683b2e76a8d01c4309256a1222ee235eab4cc3431a2a368",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
@@ -116,8 +116,8 @@
       "kind": "temporal",
       "target": "NoStaleGuard",
       "status": "EXPECTED_FAIL",
-      "generated": 175860,
-      "distinct": 58964
+      "generated": 172669,
+      "distinct": 58017
     },
     "RetargetMutant": {
       "role": "mutant",
@@ -156,16 +156,16 @@
       "kind": "temporal",
       "target": "DeliveryAckBound",
       "status": "EXPECTED_FAIL",
-      "generated": 109302,
-      "distinct": 39141
+      "generated": 105182,
+      "distinct": 37980
     },
     "StallMutant": {
       "role": "mutant",
       "kind": "temporal",
       "target": "ProcessingSettles",
       "status": "EXPECTED_FAIL",
-      "generated": 105813,
-      "distinct": 32139
+      "generated": 97770,
+      "distinct": 30718
     },
     "FailedMicMutant": {
       "role": "mutant",
@@ -212,8 +212,8 @@
       "kind": "temporal",
       "target": "QueuedCaptureStarts",
       "status": "EXPECTED_FAIL",
-      "generated": 114007,
-      "distinct": 39967
+      "generated": 110922,
+      "distinct": 39202
     }
   }
 }

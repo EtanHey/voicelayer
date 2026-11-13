@@ -445,6 +445,52 @@ final class VoiceStatePasteTests: XCTestCase {
         }
     }
 
+    // MARK: Lane T7 round 2: partial typed delivery
+
+    private static let listText = "Here's a list:\n1. Buy milk\n2. Call the plumber"
+    private static let listPartial = GuardedTypingResult.partial(
+        delivered: "Here's a list:\n1. Buy milk\n", remaining: "2. Call the plumber")
+
+    /// Automatic guarded route stops part-way: partial feedback, never "Not pasted"; Shift+F5 afterwards types the
+    /// WHOLE transcript again (the exact remaining-only re-paste was not built) and the note says so.
+    func testGuardedPartialShowsItsOwnFeedbackAndShiftF5RetypesTheWholeText() {
+        let state = deliveryState(bundleIdentifier: "com.t3tools.t3code")
+        state.chromiumFamilyAppDetector = { _ in true }
+        state.guardedTextTypingHandler = { text, _ in
+            XCTAssertEqual(text, Self.listText)
+            return Self.listPartial
+        }
+        var manual: [String] = []
+        state.typedDeliveryHandler = { manual.append($0); return .posted }
+        state.textTypingHandler = { _ in XCTFail("production installs typedDeliveryHandler"); return false }
+        state.pasteboardWriter = { _ in XCTFail("Keep clipboard") }
+        state.record()
+        state.handleEvent(["type": "transcription", "text": Self.listText])
+        XCTAssertEqual(state.confirmationText, PasteRecoveryFeedback.partiallyTyped)
+        XCTAssertNotEqual(state.confirmationText, PasteRecoveryFeedback.notInserted)
+        XCTAssertEqual(state.latestDictationInsertionStatus, .unverified)
+        XCTAssertEqual(state.latestReusableTranscript, Self.listText)
+        XCTAssertTrue(PasteRecoveryFeedback.partiallyTypedNote(typed: 27, total: 46).contains("Shift+F5 types the whole text again"))
+
+        state.repasteLastTranscript(source: "shift_f5")
+        XCTAssertEqual(manual, [Self.listText], "Shift+F5 after a partial types the whole text, as before")
+        XCTAssertEqual(state.confirmationText, PasteDeliveryFeedback.typed)
+    }
+
+    /// Manual route (Shift+F5) stopping part-way reports partial too, instead of "Typed".
+    func testManualRouteStoppedPartWayReportsPartial() {
+        let state = deliveryState(bundleIdentifier: "com.t3tools.t3code")
+        state.chromiumFamilyAppDetector = { _ in true }
+        var manual: [String] = []
+        state.typedDeliveryHandler = { manual.append($0); return Self.listPartial }
+        state.textTypingHandler = { _ in XCTFail("production installs typedDeliveryHandler"); return false }
+        state.pasteboardWriter = { _ in XCTFail("Keep clipboard") }
+        state.repasteTranscript(Self.listText, source: "shift_f5")
+        XCTAssertEqual(manual, [Self.listText])
+        XCTAssertEqual(state.confirmationText, PasteRecoveryFeedback.partiallyTyped)
+        XCTAssertTrue(TwoLineStatusFeedback.contains(state.confirmationText))
+    }
+
     func testSettingsHistoryPossibleWriteNeverFallsThroughEvenWithEditableEligibility() {
         for result: DictationInsertionResult in [.notApplied, .appliedUnverified, .partiallyApplied, .verified] {
             for started in [true, false] {

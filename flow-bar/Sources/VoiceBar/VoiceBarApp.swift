@@ -1606,6 +1606,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             Self.simulatePaste()
         }
         voiceState.textTypingHandler = { text in
+            Self.typeText(text) == .posted
+        }
+        voiceState.typedDeliveryHandler = { text in
             Self.typeText(text)
         }
         voiceState.guardedTextTypingHandler = { text, pid in
@@ -1687,14 +1690,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// `SynthesizedTyping`; the events themselves are `SynthesizedKeyEvents`.
     /// Requires Accessibility.
     @discardableResult
-    private static func typeText(_ text: String) -> Bool {
+    private static func typeText(_ text: String) -> GuardedTypingResult {
         guard isAccessibilityTrusted(prompt: false) else {
             NSLog("[VoiceBar] typeText: Accessibility not granted")
-            return false
+            return .failed
         }
         guard let source = CGEventSource(stateID: .hidSystemState) else {
             NSLog("[VoiceBar] typeText: failed to create CGEventSource")
-            return false
+            return .failed
         }
         let post: ([SynthesizedKeystroke]) -> GuardedTypingResult = { plan in
             guard let events = SynthesizedKeyEvents.events(for: plan, source: source) else {
@@ -1706,23 +1709,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             }
             return .posted
         }
+        // The manual route (Shift+F5 / re-paste) keeps today's unguarded single batch for text without a list
+        // break. A segmented delivery captures the frontmost PID and its focused element here, and every
+        // segment after the first must still find both before it posts (ListAwareTyping.Target).
         let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         guard let frontPID, let env = listAwareEnvironment(pid: frontPID, post: post) else {
-            return post(SynthesizedTyping.keystrokes(for: text)) == .posted
+            return post(SynthesizedTyping.keystrokes(for: text))
         }
-        return ListAwareTyping.deliver(text, env: env) == .posted
+        return ListAwareTyping.deliver(text, env: env)
     }
 
     /// Readback environment for list-aware typing (lane T7), or nil where the old single batch stays:
-    /// terminals (their own route; cmux's composers do not continue lists) and secure input.
+    /// terminals (their own route; cmux's composers do not continue lists) and secure input. Reads run on the
+    /// readback queue under one deadline; the segment guard runs here, on main, right before each post.
     private static func listAwareEnvironment(pid: pid_t, post: @escaping ([SynthesizedKeystroke]) -> GuardedTypingResult) -> ListAwareTyping.Environment? {
         guard !IsSecureEventInputEnabled(),
               !TerminalPasteTargets.isTerminal(NSRunningApplication(processIdentifier: pid)?.bundleIdentifier)
         else { return nil }
         let sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
+        let target = ListAwareTyping.Target(pid: pid)
         return ListAwareTyping.Environment(
-            readValue: ListAwareTyping.focusedValueReader(pid: pid, sleep: sleep),
+            readValue: target.makeReader(sleep: sleep),
             post: post,
+            targetUnchanged: { !IsSecureEventInputEnabled() && target.isUnchanged() },
             sleep: sleep,
             now: { ProcessInfo.processInfo.systemUptime },
             log: { NSLog("[VoiceBar] typeText %@", $0) }
@@ -1732,7 +1741,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private static func typeTextGuarded(_ text: String, expectedPID: pid_t, matchesCapturedTarget: () -> Bool = { true }, postToTarget: Bool = false) -> GuardedTypingResult {
         guard isAccessibilityTrusted(prompt: false),
               let source = CGEventSource(stateID: .hidSystemState) else { return .failed }
-        // Every batch, including each list-aware segment, passes the same final PID/target guard.
+        // Every batch, including each list-aware segment, passes the same final PID/target guard; segments
+        // after the first also pass the list-aware focused-element guard (listAwareEnvironment).
         // Delivery is synchronous, so the guard closure never outlives this call.
         return withoutActuallyEscaping(matchesCapturedTarget) { matchesCapturedTarget in
             let post: ([SynthesizedKeystroke]) -> GuardedTypingResult = { plan in

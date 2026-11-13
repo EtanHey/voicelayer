@@ -12,7 +12,7 @@ final class PasteFeedbackLayoutTests: XCTestCase {
             .clipboardChanged, .nothingSelected, .copyTimedOut, .copyEmpty, .copyFailed,
         ]
         return [PasteRecoveryFeedback.notInserted, PasteRecoveryFeedback.unverified,
-                PasteRecoveryFeedback.partial, MicDisconnectFeedback.pill(atMs: 42400)] + selectionFailures.map { result in
+                PasteRecoveryFeedback.partial, PasteRecoveryFeedback.partiallyTyped, MicDisconnectFeedback.pill(atMs: 42400)] + selectionFailures.map { result in
             let state = VoiceState()
             state.sendCommand = { _ in XCTFail("Capture failure must send no commands") }
             state.selectionTextCaptureHandler = { $0(result) }
@@ -113,7 +113,7 @@ final class PasteFeedbackLayoutTests: XCTestCase {
             checked += 1
             throw XCTSkip("Synthetic OCR capability skip")
         }) { error in XCTAssertTrue(error is XCTSkip) }
-        XCTAssertEqual(checked, 108, "A skip must preserve all screen/message/queue/appearance renders")
+        XCTAssertEqual(checked, 120, "A skip must preserve all screen/message/queue/appearance renders") // 10 messages x 12 (T7 r2 added "Part typed")
     }
 
     private func contrastFixture(range: Int) throws -> CGImage {

@@ -189,6 +189,38 @@ final class RecordingJobOwnershipTests: XCTestCase {
         XCTAssertEqual(commands.last?["delivery_id"] as? String, id)
     }
 
+    /// Lane T7 round 2: an owned list delivery that stopped part-way reports "partial" (not not_inserted,
+    /// not delivered), with its own pill and History note, and keeps the full transcript.
+    func testOwnedListDeliveryStoppedPartWayReportsItsOwnPartialReceipt() throws {
+        let state = makeState(), app = FakeApp("com.t3tools.t3code", 11001)
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.frontmostAppProvider = { app }
+        state.targetAppActivator = { _ in }
+        state.pasteScheduler = { _, work in work() }
+        let text = "Here's a list:\n1. Buy milk\n2. Call the plumber"
+        state.ownedTextTypingHandler = { typed, _, _ in
+            XCTAssertEqual(typed, text)
+            return .partial(delivered: "Here's a list:\n1. Buy milk\n", remaining: "2. Call the plumber")
+        }
+        state.record(pressToTalk: true)
+        let id = try XCTUnwrap(commands.last?["take_id"] as? String)
+        micOpened(state, id: id, jobs: [(id, "live", "capturing")])
+        snapshot(state, jobs: [(id, "live", "processing")])
+        state.handleEvent(["type": "transcription", "take_id": id, "job_kind": "live", "delivery_id": id, "text": text])
+        let receipt = try XCTUnwrap(commands.last { $0["cmd"] as? String == "dictation_delivered" })
+        XCTAssertEqual(receipt["take_id"] as? String, id)
+        XCTAssertEqual(receipt["outcome"] as? String, "partial")
+        XCTAssertEqual(state.confirmationText, PasteRecoveryFeedback.partiallyTyped)
+        XCTAssertNotEqual(state.latestDictationInsertionStatus, .notInserted)
+        XCTAssertNotEqual(state.latestDictationInsertionStatus, .typed)
+        XCTAssertEqual(state.latestReusableTranscript, text)
+        let note = try XCTUnwrap(state.recentTranscriptionEntries.first { $0.text == text }?.deliveryNote)
+        XCTAssertEqual(note, PasteRecoveryFeedback.partiallyTypedNote(typed: 27, total: 46))
+        XCTAssertTrue(note.contains("the rest was not typed"))
+        XCTAssertTrue(note.contains("Shift+F5 types the whole text again"))
+    }
+
     @MainActor func testEscapeChoosesNewestQueuedTakeAndGuardsWhenAnotherTakeIsShown() async throws {
         let state = makeState()
         state.processingCancellationTickDuration = .milliseconds(1)
