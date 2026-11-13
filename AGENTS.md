@@ -152,8 +152,10 @@ paths in both test roots.
 - `.github/workflows/publish.yml` triggers on `push: tags: ['v*']`. Pushing the tag publishes.
 - From `v2.4.0` on, its first step refuses the tag unless `release-proofs/<tag>.json` (the
   installed-candidate T3 Option+F5 proof, written by `t3-optf5-proof.ts record`) is committed on
-  the proven build or a proof-only descendant. Tag only after the proof
-  (`docs/voicebar-release-runbook.md`). No bypass.
+  the proven build or a proof-only descendant. The gate binds every tag whose tree contains it.
+  A `v*` tag on a tree without the gate is not stopped by this workflow. So create tags only with
+  `scripts/tag-voicebar-release.sh <version>` (it never pushes; pushing the tag publishes).
+  Procedure: `docs/voicebar-release-runbook.md`.
 - It uses **npm Trusted Publishing (OIDC)** — there is **no `NPM_TOKEN` secret and none is needed**.
   `id-token: write` lets npm exchange the GitHub OIDC token for a short-lived publish token.
 - Do **not** run `npm publish` by hand, and do **not** report a release blocked on npm credentials.
