@@ -18,25 +18,80 @@ public protocol AudioLevelMonitoringEngine {
     func stop()
 }
 
-private final class AVAudioLevelMonitoringEngine: AudioLevelMonitoringEngine {
-    private let engine = AVAudioEngine()
+/// The real meter engine opens this Mac's microphone input, so it refuses to work inside a test process: a test
+/// must inject a fake (`AudioLevelMonitor(engine:)`, `configureAudioLevelMonitoringForTesting`). Until 2026-11-13 a
+/// test that forgot to opened the microphone on every suite run (#906). The refusal is loud: the default reporter
+/// raises, which XCTest records as that test's failure.
+enum RealMicrophoneMeterGuard {
+    /// True only where XCTest itself is loaded or the process is a test runner (`xctest`, or SwiftPM's
+    /// `swiftpm-testing-helper`, which runs Swift Testing suites and need not load XCTest). Deliberately NOT the
+    /// `XCTestConfigurationFilePath` environment variable: a child process can inherit it, and an app launched
+    /// from a test runner must keep its real meter (Codex review of #909, claim 3).
+    static let runsInsideTests: Bool =
+        NSClassFromString("XCTestCase") != nil
+            || ["xctest", "swiftpm-testing-helper"].contains(ProcessInfo.processInfo.processName)
+
+    static let refusal =
+        "AudioLevelMonitor: the real AVAudioEngine meter refuses to start inside a test process. Inject a fake engine."
+
+    /// Test seam: what "inside a test process" means, and how a refusal is reported.
+    static var isTestProcess: () -> Bool = { runsInsideTests }
+    static var report: (String) -> Void = { reason in
+        NSException(name: .internalInconsistencyException, reason: reason).raise()
+    }
+}
+
+struct RealMicrophoneMeterRefused: Error {}
+
+final class AVAudioLevelMonitoringEngine: AudioLevelMonitoringEngine {
+    /// Built on first real use only, so a refused engine never touches the audio device.
+    private(set) var didBuildEngine = false
+    private lazy var engine: AVAudioEngine = {
+        didBuildEngine = true
+        return AVAudioEngine()
+    }()
     private lazy var inputNode = AVAudioLevelMonitoringInputNode(node: engine.inputNode)
+    private var didReportRefusal = false
+
+    /// True inside a test process; reports the refusal once per engine.
+    private var refuses: Bool {
+        guard RealMicrophoneMeterGuard.isTestProcess() else { return false }
+        if !didReportRefusal {
+            didReportRefusal = true
+            RealMicrophoneMeterGuard.report(RealMicrophoneMeterGuard.refusal)
+        }
+        return true
+    }
 
     var monitoringInputNode: AudioLevelMonitoringInputNode {
-        inputNode
+        refuses ? RefusedAudioLevelMonitoringInputNode() : inputNode
     }
 
     func prepare() {
+        guard !refuses else { return }
         engine.prepare()
     }
 
     func start() throws {
+        guard !refuses else { throw RealMicrophoneMeterRefused() }
         try engine.start()
     }
 
     func stop() {
+        guard didBuildEngine else { return }
         engine.stop()
     }
+}
+
+/// Stands in for the input node of a refused real engine: no format, no tap, no device.
+private struct RefusedAudioLevelMonitoringInputNode: AudioLevelMonitoringInputNode {
+    func inputFormat() -> AVAudioFormat? { nil }
+    func installTap(
+        bufferSize _: AVAudioFrameCount,
+        format _: AVAudioFormat?,
+        block _: @escaping (AVAudioPCMBuffer, AVAudioTime) -> Void
+    ) {}
+    func removeTap() {}
 }
 
 private final class AVAudioLevelMonitoringInputNode: AudioLevelMonitoringInputNode {
