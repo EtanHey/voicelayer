@@ -1,0 +1,69 @@
+[
+  {
+    "canonical": "Full Stack",
+    "variants": [
+      "פול סטאק"
+    ]
+  },
+  {
+    "canonical": "Front-end",
+    "variants": [
+      "פרונט-אנד"
+    ]
+  },
+  {
+    "canonical": "Front",
+    "variants": [
+      "פרונט"
+    ]
+  },
+  {
+    "canonical": "Back-end",
+    "variants": [
+      "בקאנד",
+      "בק'אנד"
+    ]
+  },
+  {
+    "canonical": "Back",
+    "variants": [
+      "בק"
+    ]
+  },
+  {
+    "canonical": "Go",
+    "variants": [
+      "גאו"
+    ]
+  },
+  {
+    "canonical": "Figma",
+    "variants": [
+      "פיגמה"
+    ]
+  },
+  {
+    "canonical": "React Native",
+    "variants": [
+      "ריאקט נייטיב"
+    ]
+  },
+  {
+    "canonical": "Svelte",
+    "variants": [
+      "סו ולט"
+    ]
+  },
+  {
+    "canonical": "Bubble",
+    "variants": [
+      "בבל"
+    ]
+  },
+  {
+    "canonical": "Kubernetes",
+    "variants": [
+      "קוברנטיס"
+    ]
+  }
+]
