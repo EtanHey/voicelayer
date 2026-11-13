@@ -1,0 +1,118 @@
+{
+  "module": "ListDelivery",
+  "sources": [
+    "formal/list-delivery/check.sh",
+    "formal/list-delivery/README.md",
+    "formal/tlc_support.py",
+    "formal/tlc.lock.json"
+  ],
+  "checks": {
+    "Async": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Silent": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Plain": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Serialized": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "CheckAwaitPost": {
+      "role": "mutant",
+      "target": "NoPostToChangedApp",
+      "kind": "invariant"
+    },
+    "MainWait": {
+      "role": "mutant",
+      "target": "MainNeverWaits",
+      "kind": "invariant"
+    },
+    "Stale": {
+      "role": "mutant",
+      "target": "NoSegmentWithoutFreshCheck",
+      "kind": "invariant"
+    },
+    "FirstUnguarded": {
+      "role": "mutant",
+      "target": "NoPostToChangedApp",
+      "kind": "invariant"
+    },
+    "FallbackUnguarded": {
+      "role": "mutant",
+      "target": "NoPostToChangedApp",
+      "kind": "invariant"
+    },
+    "NoDeadline": {
+      "role": "mutant",
+      "target": "BoundedDelivery",
+      "kind": "temporal"
+    },
+    "DropUnknown": {
+      "role": "mutant",
+      "target": "NoLostCharacter",
+      "kind": "invariant"
+    },
+    "PreBreak": {
+      "role": "mutant",
+      "target": "NoLostCharacter",
+      "kind": "invariant"
+    },
+    "TwoReceipts": {
+      "role": "mutant",
+      "target": "ExactlyOneOutcome",
+      "kind": "invariant"
+    },
+    "NoQuitReceipt": {
+      "role": "mutant",
+      "target": "ExactlyOneOutcome",
+      "kind": "invariant"
+    },
+    "PartialPosted": {
+      "role": "mutant",
+      "target": "ExactlyOneOutcome",
+      "kind": "invariant"
+    },
+    "PlainList": {
+      "role": "mutant",
+      "target": "PlainTextUntouched",
+      "kind": "invariant"
+    },
+    "DrainWorker": {
+      "role": "mutant",
+      "target": "DrainBounded",
+      "kind": "invariant"
+    },
+    "BlockRecording": {
+      "role": "mutant",
+      "target": "RecordingNeverBlocked",
+      "kind": "invariant"
+    },
+    "DropSlow": {
+      "role": "mutant",
+      "target": "OnlyDoubledMarkerWhenSlow",
+      "kind": "invariant"
+    }
+  },
+  "acceptance": [
+    "NoPostToChangedApp",
+    "NoSegmentWithoutFreshCheck",
+    "MainNeverWaits",
+    "BoundedDelivery",
+    "NoLostCharacter",
+    "OnlyDoubledMarkerWhenSlow",
+    "PlainTextUntouched",
+    "ExactlyOneOutcome",
+    "RecordingNeverBlocked",
+    "DrainBounded"
+  ]
+}

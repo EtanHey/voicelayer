@@ -1,0 +1,226 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/list-delivery/ListDelivery.tla": "2424f85b6d073e5a3f2bf6fdc40e7b1cba4b5c19d4fcc9f686ee34f1e189ae71",
+    "formal/list-delivery/checks.json": "a47011883a25e79c4dbd707a165c1a9d38b7c4da6f0cd20bce8a1ac69f16aaf5",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
+    "formal/list-delivery/Silent.cfg": "d575d3eb7d0c1b9e125767267074b4b46750600075c031ab85312d93175b385b",
+    "formal/list-delivery/Serialized.cfg": "317cf16d7e096b57142d39410535896242e5c0c87868ce755ae8de9db66bf653",
+    "formal/list-delivery/FallbackUnguarded.cfg": "2df72894f2c7668f601f0a5ebcc9032a11e92c7aac6344219fedd48c610776d9",
+    "formal/list-delivery/PlainList.cfg": "10d6e4128abd4dbc597e1c5bf7660bc03b2f92c9975a9a9c5ba5d225555a020f",
+    "formal/list-delivery/NoQuitReceipt.cfg": "900afbfb273cfab488439b5a5ca229c74d93868e6d728e5f9155dae933bd1870",
+    "formal/list-delivery/FirstUnguarded.cfg": "49928c3461a5282617f85c468b3dbd2bd9cd2bfe2e66f886d84fca98bde19bc7",
+    "formal/list-delivery/Async.cfg": "07ef885b72b23f9493c5035f3a9f5976486fb5122abc0c599f6aba1b795b0f97",
+    "formal/list-delivery/TwoReceipts.cfg": "a6f8681128e1a9797dd23455520cbebad4eb0675e0bef11b5abcdc508fe5276d",
+    "formal/list-delivery/CheckAwaitPost.cfg": "f4888dd3f392e6fa8248bffb75ee743e62117d231ec2e0679bc40efc944f41d9",
+    "formal/list-delivery/PreBreak.cfg": "c70679fa5366755aea5612c23a54eacdcf76232a5ac1e6e2a904aad40a24f978",
+    "formal/list-delivery/Plain.cfg": "0cb9b4824e88045e770ee3b05440a779d38d54459ff22aefea7a785df6c7c03b",
+    "formal/list-delivery/NoDeadline.cfg": "b18427e5f2f2ad12219faa510e42135edd9458c4bd10d63f5b41a6b7151fd03e",
+    "formal/list-delivery/BlockRecording.cfg": "fba0a0639c8163b94f084de1cf1375dacfba293c121a74605a0cbb0928a216a5",
+    "formal/list-delivery/DropSlow.cfg": "b2d3ca14c91348abd46a42a774ae9cf4a4b5f84c36bbfd8b91830de2093cf56b",
+    "formal/list-delivery/Stale.cfg": "f25f76cb519493362d7cc41bf6f643d9b473e9ea9bfb7484d599d4dd3dcf8888",
+    "formal/list-delivery/MainWait.cfg": "386fc27123de531d691d915592f24479af31b339de61b8f386e0eb26b3aeee28",
+    "formal/list-delivery/DrainWorker.cfg": "deaf66427067af31828aebecb3135b106b0f7e1a8469ac11890d16a5d59c8c95",
+    "formal/list-delivery/DropUnknown.cfg": "ef487f79e476a540f860302b3d691b7e7dac16e6f630f9f1edf94cc1e59b3323",
+    "formal/list-delivery/PartialPosted.cfg": "f6db735b18a6ed6da84052ecbd8e3a07354a1b6009821a51af1fedb79fb3b49c",
+    "formal/list-delivery/check.sh": "4864496b21f4edb9293be442fae78c38c5dcf1b96f40bf538b5ac5ffd5b1b0fd",
+    "formal/list-delivery/README.md": "98ca0306a2aebe0a65dcfebee99681cc5a4e76a8062f1a1259be1656cb79c601",
+    "formal/tlc_support.py": "8c5dad35602a3a631acc61b07ed2246eeb40ef2b3a6b3a9c72c5b207c95386ec",
+    "formal/tlc.lock.json": "3e37914f1398c6073444c37c6c8df70eb3030c14d269e808791e1d1b25467d34",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
+  },
+  "mutants": {
+    "NoPostToChangedApp": [
+      "CheckAwaitPost",
+      "FirstUnguarded",
+      "FallbackUnguarded"
+    ],
+    "NoSegmentWithoutFreshCheck": [
+      "Stale"
+    ],
+    "MainNeverWaits": [
+      "MainWait"
+    ],
+    "BoundedDelivery": [
+      "NoDeadline"
+    ],
+    "NoLostCharacter": [
+      "DropUnknown",
+      "PreBreak"
+    ],
+    "OnlyDoubledMarkerWhenSlow": [
+      "DropSlow"
+    ],
+    "PlainTextUntouched": [
+      "PlainList"
+    ],
+    "ExactlyOneOutcome": [
+      "TwoReceipts",
+      "NoQuitReceipt",
+      "PartialPosted"
+    ],
+    "RecordingNeverBlocked": [
+      "BlockRecording"
+    ],
+    "DrainBounded": [
+      "DrainWorker"
+    ]
+  },
+  "graphHashes": {},
+  "checks": {
+    "Async": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 1352049,
+      "distinct": 117056
+    },
+    "Silent": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 9873,
+      "distinct": 896
+    },
+    "Plain": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 8385,
+      "distinct": 768
+    },
+    "Serialized": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 6823617,
+      "distinct": 589248
+    },
+    "CheckAwaitPost": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoPostToChangedApp",
+      "status": "EXPECTED_FAIL",
+      "generated": 2032,
+      "distinct": 490
+    },
+    "MainWait": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "MainNeverWaits",
+      "status": "EXPECTED_FAIL",
+      "generated": 2,
+      "distinct": 2
+    },
+    "Stale": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoSegmentWithoutFreshCheck",
+      "status": "EXPECTED_FAIL",
+      "generated": 3774,
+      "distinct": 755
+    },
+    "FirstUnguarded": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoPostToChangedApp",
+      "status": "EXPECTED_FAIL",
+      "generated": 2068,
+      "distinct": 490
+    },
+    "FallbackUnguarded": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoPostToChangedApp",
+      "status": "EXPECTED_FAIL",
+      "generated": 180940,
+      "distinct": 20380
+    },
+    "NoDeadline": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "BoundedDelivery",
+      "status": "EXPECTED_FAIL",
+      "generated": 6489,
+      "distinct": 576
+    },
+    "DropUnknown": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoLostCharacter",
+      "status": "EXPECTED_FAIL",
+      "generated": 141107,
+      "distinct": 15153
+    },
+    "PreBreak": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoLostCharacter",
+      "status": "EXPECTED_FAIL",
+      "generated": 141153,
+      "distinct": 15195
+    },
+    "TwoReceipts": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ExactlyOneOutcome",
+      "status": "EXPECTED_FAIL",
+      "generated": 14,
+      "distinct": 11
+    },
+    "NoQuitReceipt": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ExactlyOneOutcome",
+      "status": "EXPECTED_FAIL",
+      "generated": 14,
+      "distinct": 11
+    },
+    "PartialPosted": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ExactlyOneOutcome",
+      "status": "EXPECTED_FAIL",
+      "generated": 19199,
+      "distinct": 2914
+    },
+    "PlainList": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "PlainTextUntouched",
+      "status": "EXPECTED_FAIL",
+      "generated": 16,
+      "distinct": 15
+    },
+    "DrainWorker": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "DrainBounded",
+      "status": "EXPECTED_FAIL",
+      "generated": 30,
+      "distinct": 26
+    },
+    "BlockRecording": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "RecordingNeverBlocked",
+      "status": "EXPECTED_FAIL",
+      "generated": null,
+      "distinct": null
+    },
+    "DropSlow": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "OnlyDoubledMarkerWhenSlow",
+      "status": "EXPECTED_FAIL",
+      "generated": 141107,
+      "distinct": 15153
+    }
+  }
+}
