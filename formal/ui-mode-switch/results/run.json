@@ -1,0 +1,99 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/ui-mode-switch/UIModeSwitch.tla": "55d6a6688c16c415c58873dc1976ee4e57cd726f5b5f87be53af7e00a2af9dae",
+    "formal/ui-mode-switch/checks.json": "bc6d9f6c1db3442723bf0f9db23abf1bbfa602a569049f7daaa9e1cb72521dc9",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
+    "formal/ui-mode-switch/MutantSwiftAlwaysCreated.cfg": "b7db7da562de4f8ca8cf1c77e5302538a1a961b0051ba2d85b5b066323cc8b46",
+    "formal/ui-mode-switch/MutantHotSwitch.cfg": "7475caca77467c15e242378e5e48b69e9c22fe2821eba035a5bddf18f101ea13",
+    "formal/ui-mode-switch/MutantLazySwiftFallbackStuck.cfg": "f63cb4e67318d91381a3ff7f9f8fcd9d9f9b710ec217c485d84ed96ca9824259",
+    "formal/ui-mode-switch/MutantLazySwiftFallback.cfg": "d66cc9a44da763e300dafc9ceda11e66e0bace0f169e8810a70e93fcc8e8fe68",
+    "formal/ui-mode-switch/MutantHotSwitchBoth.cfg": "f68b9146e9b8aa60eb54898c51850d81485beacc0666825e494ae72ea609951f",
+    "formal/ui-mode-switch/MutantNoStopOnQuit.cfg": "49f6e9c9fcb8ca85bbd79f0b931987f55620b60619218b9c321d35bfa9d4f598",
+    "formal/ui-mode-switch/Fixed.cfg": "6cab1f563cce12a524715a47f59f712b4c4421bf0b80303a0bf42c64c76b0005",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
+  },
+  "mutants": {
+    "NeverBoth": [
+      "MutantHotSwitchBoth"
+    ],
+    "InactiveNeverExists": [
+      "MutantSwiftAlwaysCreated"
+    ],
+    "ModeSetOnce": [
+      "MutantHotSwitch"
+    ],
+    "NoOrphanChild": [
+      "MutantNoStopOnQuit"
+    ],
+    "NoFallbackDrawing": [
+      "MutantLazySwiftFallback"
+    ],
+    "CrashRecovers": [
+      "MutantLazySwiftFallbackStuck"
+    ]
+  },
+  "graphHashes": {
+    "Fixed": "153fceef9be1d5588006d5fee3c444404fb998c16420010162248968f9193fd0"
+  },
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 130,
+      "distinct": 46
+    },
+    "MutantHotSwitch": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ModeSetOnce",
+      "status": "EXPECTED_FAIL",
+      "generated": 41,
+      "distinct": 24
+    },
+    "MutantLazySwiftFallback": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoFallbackDrawing",
+      "status": "EXPECTED_FAIL",
+      "generated": 30,
+      "distinct": 20
+    },
+    "MutantNoStopOnQuit": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoOrphanChild",
+      "status": "EXPECTED_FAIL",
+      "generated": 40,
+      "distinct": 24
+    },
+    "MutantSwiftAlwaysCreated": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "InactiveNeverExists",
+      "status": "EXPECTED_FAIL",
+      "generated": 7,
+      "distinct": 5
+    },
+    "MutantHotSwitchBoth": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NeverBoth",
+      "status": "EXPECTED_FAIL",
+      "generated": 66,
+      "distinct": 34
+    },
+    "MutantLazySwiftFallbackStuck": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "CrashRecovers",
+      "status": "EXPECTED_FAIL",
+      "generated": 88,
+      "distinct": 34
+    }
+  }
+}

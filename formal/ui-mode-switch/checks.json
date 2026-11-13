@@ -1,0 +1,51 @@
+{
+  "module": "UIModeSwitch",
+  "sourceBaseline": "7d13b6203b1fa70f3d652c127769246d9a8b1b0a",
+  "sources": [],
+  "sourceScope": "Pre-implementation contract only; no product sources. Runner automatically hashes the model, configs, manifest and shared receipt helpers.",
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "MutantHotSwitch": {
+      "role": "mutant",
+      "target": "ModeSetOnce",
+      "kind": "invariant"
+    },
+    "MutantLazySwiftFallback": {
+      "role": "mutant",
+      "target": "NoFallbackDrawing",
+      "kind": "invariant"
+    },
+    "MutantNoStopOnQuit": {
+      "role": "mutant",
+      "target": "NoOrphanChild",
+      "kind": "invariant"
+    },
+    "MutantSwiftAlwaysCreated": {
+      "role": "mutant",
+      "target": "InactiveNeverExists",
+      "kind": "invariant"
+    },
+    "MutantHotSwitchBoth": {
+      "role": "mutant",
+      "target": "NeverBoth",
+      "kind": "invariant"
+    },
+    "MutantLazySwiftFallbackStuck": {
+      "role": "mutant",
+      "target": "CrashRecovers",
+      "kind": "temporal"
+    }
+  },
+  "acceptance": [
+    "NeverBoth",
+    "InactiveNeverExists",
+    "ModeSetOnce",
+    "NoOrphanChild",
+    "NoFallbackDrawing",
+    "CrashRecovers"
+  ]
+}
