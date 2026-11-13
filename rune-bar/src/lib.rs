@@ -214,7 +214,7 @@ static MORE: rune::Icon = rune::Icon {
     view: 24.0,
     body: r#"<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>"#,
 };
-fn term_row(s: &Dictionary, group: usize, index: usize, dark: bool) -> El {
+fn term_row<S: DictionaryHost>(s: &Dictionary, group: usize, index: usize, dark: bool) -> El {
     let k = Kit::neutral(dark);
     let t = rune::tok::theme(dark);
     let e = &s.entries(group)[index];
@@ -247,20 +247,34 @@ fn term_row(s: &Dictionary, group: usize, index: usize, dark: bool) -> El {
                 .label("Term actions")
                 .variant(IconButtonVariant::Ghost)
                 .expanded(s.open_menu.as_ref() == Some(&id))
-                .on_press(move |s: &mut Dictionary| {
-                    s.open_menu = if s.open_menu.as_ref() == Some(&menu_id) {
-                        None
-                    } else {
-                        Some(menu_id.clone())
-                    };
+                .on_press(move |host: &mut S| {
+                    let s = host.dictionary_mut();
+                    {
+                        s.open_menu = if s.open_menu.as_ref() == Some(&menu_id) {
+                            None
+                        } else {
+                            Some(menu_id.clone())
+                        };
+                    }
                 })
                 .build(&k)
                 .key("menu"),
         )
         .open(s.open_menu.as_ref() == Some(&id))
-        .item(MenuItem::new("Copy").disabled(true))
-        .item(MenuItem::new("Delete").disabled(true))
-        .on_close(|s: &mut Dictionary| s.open_menu = None)
+        .item(
+            MenuItem::new("Copy")
+                .disabled(!S::hosted())
+                .on_select(|s: &mut S| s.dictionary_intent("copy-term")),
+        )
+        .item(
+            MenuItem::new("Delete")
+                .disabled(!S::hosted())
+                .on_select(|s: &mut S| s.dictionary_intent("delete-term")),
+        )
+        .on_close(|host: &mut S| {
+            let s = host.dictionary_mut();
+            s.open_menu = None
+        })
         .build(&k, &mut overlays);
     row()
         .key(&id)
@@ -281,20 +295,42 @@ fn term_row(s: &Dictionary, group: usize, index: usize, dark: bool) -> El {
         })
         .hover(t.hover)
         .focusable(true)
-        .on_press(move |s: &mut Dictionary| s.selected = Some(id.clone()))
+        .on_press(move |host: &mut S| {
+            let s = host.dictionary_mut();
+            s.selected = Some(id.clone())
+        })
         .child(labels)
         .child(
             IconButton::new(&PENCIL)
                 .label("Edit term")
                 .variant(IconButtonVariant::Ghost)
-                .on_press(|_: &mut Dictionary| {})
+                .on_press(|host: &mut S| host.dictionary_intent("edit-term"))
                 .build(&k)
                 .key("pencil"),
         )
         .child(menu)
         .children(overlays)
 }
+pub trait DictionaryHost: 'static {
+    fn dictionary_ref(&self) -> &Dictionary;
+    fn dictionary_mut(&mut self) -> &mut Dictionary;
+    fn hosted() -> bool {
+        false
+    }
+    fn dictionary_intent(&mut self, _verb: &str) {}
+}
+impl DictionaryHost for Dictionary {
+    fn dictionary_ref(&self) -> &Dictionary {
+        self
+    }
+    fn dictionary_mut(&mut self) -> &mut Dictionary {
+        self
+    }
+}
 pub fn view(s: &Dictionary, cx: &mut Cx<Dictionary>) -> El {
+    embedded::<Dictionary>(s, cx)
+}
+pub fn embedded<S: DictionaryHost>(s: &Dictionary, cx: &mut Cx<S>) -> El {
     let dark = cx.system_dark();
     let k = Kit::neutral(dark);
     let t = rune::tok::theme(dark);
@@ -312,7 +348,10 @@ pub fn view(s: &Dictionary, cx: &mut Cx<Dictionary>) -> El {
         );
         let header = Collapsible::new(title, s.expanded[group])
             .ghost()
-            .on_toggle(move |s: &mut Dictionary| s.expanded[group] = !s.expanded[group])
+            .on_toggle(move |host: &mut S| {
+                let s = host.dictionary_mut();
+                s.expanded[group] = !s.expanded[group]
+            })
             .build(&k)
             .key(format!("group-{group}"));
         if group > 0 {
@@ -329,8 +368,14 @@ pub fn view(s: &Dictionary, cx: &mut Cx<Dictionary>) -> El {
                     .virtual_rows(
                         indices.len(),
                         64.0,
-                        move |_: &Dictionary, i| format!("term-{group}-{}", keys[i]).into(),
-                        move |s: &Dictionary, i| term_row(s, group, indices[i], dark),
+                        move |host: &S, i| {
+                            let _ = host.dictionary_ref();
+                            format!("term-{group}-{}", keys[i]).into()
+                        },
+                        move |host: &S, i| {
+                            let s = host.dictionary_ref();
+                            term_row::<S>(s, group, indices[i], dark)
+                        },
                     ),
             );
         }
@@ -340,7 +385,7 @@ pub fn view(s: &Dictionary, cx: &mut Cx<Dictionary>) -> El {
         .control_size(control_size)
         .variant(ButtonVariant::Neutral)
         .icon(&PLUS)
-        .on_press(|_: &mut Dictionary| {})
+        .on_press(|host: &mut S| host.dictionary_intent("add-term"))
         .build(&k)
         .fill(k.c.bg_base)
         .key("add");
@@ -375,8 +420,12 @@ pub fn view(s: &Dictionary, cx: &mut Cx<Dictionary>) -> El {
                         .label("Search terms and variants")
                         .height(control_height)
                         .leading_icon(&rune_kit::glyphs::SEARCH)
-                        .on_edit(|s: &mut Dictionary| &mut s.search)
-                        .on_change(|_: &mut Dictionary, tx| {
+                        .on_edit(|host: &mut S| {
+                            let s = host.dictionary_mut();
+                            &mut s.search
+                        })
+                        .on_change(|host: &mut S, tx| {
+                            let _ = host.dictionary_mut();
                             tx.scroll_to_instant("viewport", 0.0, 0.0)
                         })
                         .build(&k)
@@ -409,24 +458,27 @@ pub fn view(s: &Dictionary, cx: &mut Cx<Dictionary>) -> El {
                 .center()
                 .child(
                     el().key("resize-mark")
-                        .w(40.0)
+                        .w(if S::hosted() { 0.0 } else { 40.0 })
                         .h(3.0)
                         .radius(2.0)
                         .fill(t.text_secondary),
                 )
                 .w_full()
-                .h(8.0)
+                .h(if S::hosted() { 0.0 } else { 8.0 })
                 .role("separator")
                 .label("Resize Dictionary height")
                 .cursor(rune::Cursor::ResizeRow)
-                .on_drag(|s: &mut Dictionary, d: &mut Drag, tx| match d.phase {
-                    Phase::Down => d.data = s.observed_height.get(),
-                    Phase::Move => {
-                        s.height = clamp_height(d.data + d.dy, s.screen);
-                        tx.resize_window_instant((s.observed_width.get(), s.height));
-                    }
-                    Phase::Up => {
-                        s.persist(s.height);
+                .on_drag(|host: &mut S, d: &mut Drag, tx| {
+                    let s = host.dictionary_mut();
+                    match d.phase {
+                        Phase::Down => d.data = s.observed_height.get(),
+                        Phase::Move => {
+                            s.height = clamp_height(d.data + d.dy, s.screen);
+                            tx.resize_window_instant((s.observed_width.get(), s.height));
+                        }
+                        Phase::Up => {
+                            s.persist(s.height);
+                        }
                     }
                 }),
         )
@@ -434,3 +486,5 @@ pub fn view(s: &Dictionary, cx: &mut Cx<Dictionary>) -> El {
 
 pub mod band;
 pub mod history;
+
+pub mod settings;

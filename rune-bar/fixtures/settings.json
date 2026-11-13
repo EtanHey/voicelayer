@@ -1,0 +1,10 @@
+{
+  "setup":{"Microphone":true,"Accessibility":true,"Input Monitoring":true,"F5 listener":true},
+  "dictation_key":"F5", "f5_helper":true, "visible":true,
+  "microphones":["Built-in microphone","USB microphone"],"default_microphone":"Built-in microphone",
+  "last_age":"2 min ago","last_length":"0:24", "recognizer":"Whisper Large · 1.5 GB","resident":true,
+  "configured_model":"large-v3","active_model":"large-v3","configured_effort":"accurate","active_effort":"accurate",
+  "processing":[true,true,false],"processing_locks":[null,"VOICELAYER_STT_OUTRO_GATE",null],
+  "voices":["Garden","Brook"],"rates":["+0%","+10%"],"available_voices":["Garden","Brook","Meadow"],
+  "speech_locks":[null,null,null,null],"threshold":400,"clone_status":"Ready","version":"2.5 pilot"
+}

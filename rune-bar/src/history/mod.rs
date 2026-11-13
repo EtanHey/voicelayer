@@ -17,6 +17,7 @@ pub struct Entry {
 pub fn fixture() -> [Vec<Entry>; 3] {
     serde_json::from_str(include_str!("../../fixtures/history.json")).expect("neutral fixtures")
 }
+#[derive(Clone)]
 pub struct History {
     pub lists: [Vec<Entry>; 3],
     pub category: usize,
@@ -166,7 +167,7 @@ fn pager(s: &mut History, d: &mut Drag, tx: &mut rune::Tx) {
         }
     };
 }
-fn entry(s: &History, i: usize, dark: bool) -> El {
+fn entry<S: HistoryHost>(s: &History, i: usize, dark: bool) -> El {
     let k = Kit::neutral(dark);
     let t = rune::tok::theme(dark);
     let e = &s.lists[s.category][i];
@@ -208,15 +209,21 @@ fn entry(s: &History, i: usize, dark: bool) -> El {
     }
     let more = IconButton::new(&super::MORE)
         .label("Row actions")
-        .on_press(move |s: &mut History| {
-            s.menu = Some(i);
-            s.context = None;
-            s.menu_anchor = s.menu_anchors.get(&i).copied().unwrap_or_default();
+        .on_press(move |host: &mut S| {
+            let s = host.history_mut();
+            {
+                s.menu = Some(i);
+                s.context = None;
+                s.menu_anchor = s.menu_anchors.get(&i).copied().unwrap_or_default();
+            }
         })
         .build(&k)
         .key("row-menu")
-        .on_layout(move |s: &mut History, rect| {
-            s.menu_anchors.insert(i, [rect[0], rect[1] + rect[3]]);
+        .on_layout(move |host: &mut S, rect| {
+            let s = host.history_mut();
+            {
+                s.menu_anchors.insert(i, [rect[0], rect[1] + rect[3]]);
+            }
         });
     let timing = row()
         .key("row-time")
@@ -293,7 +300,10 @@ fn entry(s: &History, i: usize, dark: bool) -> El {
         .key(format!("entry-{i}"))
         .role("listitem")
         .w_full()
-        .on_layout(|s: &mut History, r| s.row_width = r[2])
+        .on_layout(|host: &mut S, r| {
+            let s = host.history_mut();
+            s.row_width = r[2]
+        })
         .padding(12.0)
         .gap(8.0)
         .radius(10.0)
@@ -302,9 +312,10 @@ fn entry(s: &History, i: usize, dark: bool) -> El {
         .child(block);
     // Both text styles share a line height and start on the first baseline.
     content = content
-        .on_drag(pager)
+        .on_drag(|host: &mut S, d, tx| host.history_drag(d, tx))
         .focusable(true)
-        .on_press(move |s: &mut History| {
+        .on_press(move |host: &mut S| {
+            let s = host.history_mut();
             s.expanded = if s.expanded == Some(i) { None } else { Some(i) }
         });
     if expanded {
@@ -317,27 +328,36 @@ fn entry(s: &History, i: usize, dark: bool) -> El {
         ] {
             actions = actions.child(
                 Button::new(label)
-                    .on_press(move |s: &mut History| s.emit(verb, Some(i)))
+                    .on_press(move |host: &mut S| {
+                        let s = host.history_mut();
+                        s.emit(verb, Some(i))
+                    })
                     .build(&k)
                     .key(format!("action-{verb}")),
             );
         }
         content = content.child(actions);
     }
-    content = content.on_secondary_press(move |s: &mut History, p, _| {
-        s.menu = Some(i);
-        s.context = Some(p)
+    content = content.on_secondary_press(move |host: &mut S, p, _| {
+        let s = host.history_mut();
+        {
+            s.menu = Some(i);
+            s.context = Some(p)
+        }
     });
     content
 }
 
-fn menu(s: &History, k: &Kit, overlays: &mut Vec<El>) -> El {
+fn menu<S: HistoryHost>(s: &History, k: &Kit, overlays: &mut Vec<El>) -> El {
     let mut menu = Menu::new("history-menu")
         .trigger(el())
         .open(s.menu.is_some())
-        .on_close(|s: &mut History| {
-            s.menu = None;
-            s.context = None
+        .on_close(|host: &mut S| {
+            let s = host.history_mut();
+            {
+                s.menu = None;
+                s.context = None
+            }
         });
     if let Some(p) = s.context {
         menu = menu.at(p.x, p.y)
@@ -353,17 +373,41 @@ fn menu(s: &History, k: &Kit, overlays: &mut Vec<El>) -> El {
             ("Open logs", "open-logs"),
             ("More info", "more-info"),
         ] {
-            menu = menu.item(MenuItem::new(label).on_select(move |s: &mut History| {
-                s.emit(verb, Some(i));
-                s.menu = None;
-                s.context = None
+            menu = menu.item(MenuItem::new(label).on_select(move |host: &mut S| {
+                let s = host.history_mut();
+                {
+                    s.emit(verb, Some(i));
+                    s.menu = None;
+                    s.context = None
+                }
             }));
         }
     }
     menu.build(k, overlays)
 }
 
+pub trait HistoryHost: 'static {
+    fn history_ref(&self) -> &History;
+    fn history_mut(&mut self) -> &mut History;
+    fn hosted() -> bool {
+        false
+    }
+    fn history_drag(&mut self, d: &mut Drag, tx: &mut rune::Tx) {
+        pager(self.history_mut(), d, tx)
+    }
+}
+impl HistoryHost for History {
+    fn history_ref(&self) -> &History {
+        self
+    }
+    fn history_mut(&mut self) -> &mut History {
+        self
+    }
+}
 pub fn view(s: &History, cx: &mut Cx<History>) -> El {
+    embedded::<History>(s, cx)
+}
+pub fn embedded<S: HistoryHost>(s: &History, cx: &mut Cx<S>) -> El {
     let dark = cx.system_dark();
     let reduce = s.reduce_motion || cx.system_reduced_motion();
     cx.reduced_motion(reduce);
@@ -381,14 +425,23 @@ pub fn view(s: &History, cx: &mut Cx<History>) -> El {
             .virtual_rows(
                 count,
                 90.0,
-                |_: &History, j| format!("entry-{j}").into(),
-                move |s: &History, j| col().w_full().pb(8.0).child(entry(s, j, dark)),
+                |host: &S, j| {
+                    let _ = host.history_ref();
+                    format!("entry-{j}").into()
+                },
+                move |host: &S, j| {
+                    let s = host.history_ref();
+                    col().w_full().pb(8.0).child(entry::<S>(s, j, dark))
+                },
             ),
     );
     if count < s.lists[s.category].len() {
         list = list.child(
             Button::new("Load older")
-                .on_press(|s: &mut History| s.older())
+                .on_press(|host: &mut S| {
+                    let s = host.history_mut();
+                    s.older()
+                })
                 .build(&k)
                 .key("load-older"),
         );
@@ -435,7 +488,7 @@ pub fn view(s: &History, cx: &mut Cx<History>) -> El {
                 ),
         );
     let mut overlays = vec![];
-    let menu = menu(s, &k, &mut overlays);
+    let menu = menu::<S>(s, &k, &mut overlays);
     col()
         .key("history")
         .w_full()
@@ -443,33 +496,46 @@ pub fn view(s: &History, cx: &mut Cx<History>) -> El {
         .padding(20.0)
         .gap(16.0)
         .fill(t.bg)
-        .on_key(|s: &mut History, e, _| {
-            if e.key == Key::Escape {
-                s.expanded = None;
-                s.menu = None;
-                true
-            } else {
-                false
+        .on_key(|host: &mut S, e, _| {
+            let s = host.history_mut();
+            {
+                if e.key == Key::Escape {
+                    s.expanded = None;
+                    s.menu = None;
+                    true
+                } else {
+                    false
+                }
             }
         })
-        .child(text("History").font(rune::tok::type_::TITLE).color(t.text))
+        .child(if S::hosted() {
+            el()
+        } else {
+            text("History").font(rune::tok::type_::TITLE).color(t.text)
+        })
         .child(
             SegmentedControl::new(&["Dictations", "Ask", "Speech"], Some(s.category))
                 .label("History category")
                 .width(None)
-                .on_pick(|s: &mut History, i, _| s.select(i))
+                .on_pick(|host: &mut S, i, _| {
+                    let s = host.history_mut();
+                    s.select(i)
+                })
                 .build(&k)
                 .key("selector")
-                .on_key(|s: &mut History, e, _| match e.key {
-                    Key::Left => {
-                        s.select(s.category.saturating_sub(1));
-                        true
+                .on_key(|host: &mut S, e, _| {
+                    let s = host.history_mut();
+                    match e.key {
+                        Key::Left => {
+                            s.select(s.category.saturating_sub(1));
+                            true
+                        }
+                        Key::Right => {
+                            s.select(s.category + 1);
+                            true
+                        }
+                        _ => false,
                     }
-                    Key::Right => {
-                        s.select(s.category + 1);
-                        true
-                    }
-                    _ => false,
                 }),
         )
         .child(
@@ -483,7 +549,7 @@ pub fn view(s: &History, cx: &mut Cx<History>) -> El {
                     stick_bottom: false,
                 })
                 .on_scroll_offset(move |p| at_end.set(p.offset[1] >= p.max[1] - 0.5))
-                .on_drag(pager)
+                .on_drag(|host: &mut S, d, tx| host.history_drag(d, tx))
                 .child(
                     list.offset(if reduce { 0.0 } else { s.slide }, 0.0)
                         .token_motion(rune::tok::motion::REFLOW),
@@ -493,26 +559,29 @@ pub fn view(s: &History, cx: &mut Cx<History>) -> El {
             row()
                 .key("pull-zone")
                 .w_full()
-                .h(52.0)
+                .h(if S::hosted() { 0.0 } else { 52.0 })
                 .center()
                 .label("Pull for Settings")
-                .on_drag(|s: &mut History, d: &mut Drag, tx| match d.phase {
-                    Phase::Down => {}
-                    Phase::Move => {
-                        if s.at_end.get() {
-                            s.pull = (d.dy / 100.0).clamp(0.0, 1.0)
+                .on_drag(|host: &mut S, d: &mut Drag, tx| {
+                    let s = host.history_mut();
+                    match d.phase {
+                        Phase::Down => {}
+                        Phase::Move => {
+                            if s.at_end.get() {
+                                s.pull = (d.dy / 100.0).clamp(0.0, 1.0)
+                            }
                         }
-                    }
-                    Phase::Up => {
-                        tx.animated();
-                        if d.cancelled() {
-                            s.pull = 0.0
-                        } else {
-                            s.release()
+                        Phase::Up => {
+                            tx.animated();
+                            if d.cancelled() {
+                                s.pull = 0.0
+                            } else {
+                                s.release()
+                            }
                         }
                     }
                 })
-                .child(badge),
+                .child(if S::hosted() { el() } else { badge }),
         )
         .child(menu)
         .children(overlays)
