@@ -81,7 +81,10 @@ export function applyRules(text: string, config?: RulesConfig): string {
       return marker;
     });
   result = applyPreNumberFormatting(result, disabled);
-  if (!disabled?.has("numbers")) result = applyNumberFormatting(result);
+  if (!disabled?.has("numbers")) {
+    result = applyNumberFormatting(result);
+    result = joinSpokenIdentifierDigits(result);
+  }
   for (let i = 0; i < protectedOutputs.length; i++) {
     result = result.split(`\uE000${String.fromCharCode(0xE100 + i)}\uE001`).join(protectedOutputs[i]);
   }
@@ -1300,6 +1303,65 @@ function formatNumbersInLine(text: string): string {
   return result.join(" ");
 }
 
+// --- Stage 4a: an identifier read digit by digit ---
+//
+// "PR number four seven one three six" reaches here as "PR number 4 7 1 3 6":
+// the number stage deliberately keeps adjacent single values apart ("two
+// three" is a list or a retraction, never 5). After a PR head, a run of three
+// or more single digits is one identifier, so it is joined. The only head is
+// PR: across the private archive that is the only identifier he reads digit
+// by digit, bare "number N" counts items, and versions are dotted. Separate
+// things stay separate: a comma between digits, a run that ends in a
+// multi-digit token, a time, a decimal or a percent never joins.
+//
+// Parakeet also puts its "?" after the head ("for PR number? 4 7 1 3 6"). When
+// the identifier ends the sentence and the head is not a complete noun phrase
+// ("the PR number?" may be a question answered by the number), the mark moves
+// to the end of the sentence. No mark is added and no word changes.
+const DIGIT_WORD = "(?:zero|one|two|three|four|five|six|seven|eight|nine)";
+// The number stage leaves a period-final digit word as a word ("4 9 eight."),
+// so the last token of a run may still be spelled out.
+const IDENTIFIER_DIGIT_RUN = new RegExp(
+  "\\b(PR(?:[ \\t]+number)?)(\\?)?([ \\t]+)(#[ \\t]*)?" +
+    `(\\d(?:[ \\t]+\\d)+(?!\\d)(?:[ \\t]+${DIGIT_WORD}\\b)?|\\d+)` +
+    `(?![\\d:%]|[.,]\\d|[ \\t]+\\d|[ \\t]+${DIGIT_WORD}\\b|[ \\t]*(?:%|percent\\b))(\\.(?=\\s|$))?`,
+  "giu",
+);
+
+// After one of these the head is a complete noun phrase, so a number after its
+// "?" may be an answer ("What's the PR number? 2 8 4.") and the mark stays.
+const COMPLETE_NOUN_PHRASE_BEFORE_HEAD = new Set([
+  "a", "an", "the", "this", "that", "these", "those", "my", "your", "our",
+  "his", "her", "its", "their", "which", "what", "whose", "what's", "whats",
+]);
+
+function joinSpokenIdentifierDigits(text: string): string {
+  if (!/\bPR\b/iu.test(text)) return text;
+  return text.replace(
+    IDENTIFIER_DIGIT_RUN,
+    (match: string, head: string, mark: string | undefined, gap: string,
+      hash: string | undefined, run: string, period: string | undefined,
+      offset: number, whole: string) => {
+      const tokens = run.split(/[ \t]+/u);
+      // Two spoken digits may be two values; only a longer run is one identifier.
+      if (tokens.length === 2) return match;
+      const identifier = tokens.map((token) => /^\d+$/u.test(token)
+        ? token : String(WORD_TO_NUMBER[token.toLowerCase()])).join("");
+      const number = `${hash ?? ""}${identifier}`;
+      if (!mark) return tokens.length > 1 ? `${head}${gap}${number}${period ?? ""}` : match;
+      const before = whole.slice(0, offset);
+      const previous = /([\p{L}'’]+)[ \t]*$/u.exec(before)?.[1]
+        ?.toLowerCase().replace("’", "'");
+      const sentenceStart = /(?:^|[.!?\n])[ \t]*$/u.test(before);
+      const endsSentence = period !== undefined || /^\s*$/u.test(whole.slice(offset + match.length));
+      if (!sentenceStart && previous && !COMPLETE_NOUN_PHRASE_BEFORE_HEAD.has(previous) && endsSentence) {
+        return `${head}${gap}${number}?`;
+      }
+      return `${head}${mark}${gap}${number}${period ?? ""}`;
+    },
+  );
+}
+
 // --- Stage 5: Tech vocabulary ---
 
 const TECH_VOCAB: [RegExp, string][] = [
@@ -1574,6 +1636,8 @@ const CONTENT_ENUMERATOR_HEADS = new Set([
 const SPOKEN_ENUMERATOR_HEAD_PATTERN = new RegExp(
   [
     "(^|([.?!,;:\\n])([ \\t]*))",
+    // A spoken lead-in ("So number one, ...") stays in the item's words.
+    "(?:(so,?)[ \\t]+)?",
     "(?:(and|or)[ \\t]+)?",
     "(?:(number|step)[ \\t]+)?",
     "(first of all|second of all|third of all|first off|then lastly|then next|firstly|secondly|thirdly|fourthly|finally|lastly|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|next|then|one|two|three|four|five|six|seven|eight|nine|ten|\\d{1,2})",
@@ -1588,6 +1652,7 @@ interface SpokenEnumeratorHead {
   boundary: string;
   conjunction?: string;
   qualifier?: string;
+  leadIn?: string;
   head: string;
   originalHead: string;
   delimiter: string;
@@ -1608,7 +1673,7 @@ function findSpokenEnumeratorHeads(text: string): SpokenEnumeratorHead[] {
   return [...text.matchAll(SPOKEN_ENUMERATOR_HEAD_PATTERN)]
     .filter((match) => {
       const start = match.index ?? 0;
-      const headIsNumeric = /^\d{1,2}$/u.test(match[6]);
+      const headIsNumeric = /^\d{1,2}$/u.test(match[7]);
       const followsDigitPeriod =
         match[2] === "." && /\d/u.test(text[start - 1] ?? "");
       const precedesDigit = /\d/u.test(
@@ -1617,17 +1682,18 @@ function findSpokenEnumeratorHeads(text: string): SpokenEnumeratorHead[] {
       return !headIsNumeric || (!followsDigitPeriod && !precedesDigit);
     })
     .map((match) => {
-      const originalHead = match[6];
+      const originalHead = match[7];
       const head = originalHead.toLowerCase();
       return {
         start: match.index ?? 0,
         end: (match.index ?? 0) + match[0].length,
         boundary: match[2] ?? "",
-        conjunction: match[4],
-        qualifier: match[5],
+        leadIn: match[4],
+        conjunction: match[5],
+        qualifier: match[6],
         head,
         originalHead,
-        delimiter: match[7],
+        delimiter: match[8],
         value: spokenEnumeratorValue(head),
         keepHead: CONTENT_ENUMERATOR_HEADS.has(head),
       };
@@ -1711,20 +1777,20 @@ export function applySpokenEnumeratorsWithDetail(text: string): {
     intro += heads[0].boundary;
   }
 
+  // Only the numeral phrase ("number one", "first", "step two") becomes the
+  // item number. A spoken "So", "and" or "or" before it is his word and stays
+  // at the front of that item.
   const removedWords: string[] = [];
   const items = heads.map((head, index) => {
-    if (head.conjunction && head.conjunction.toLowerCase() !== "or") {
-      removedWords.push(head.conjunction);
-    }
     if (head.qualifier) removedWords.push(head.qualifier);
     if (!head.keepHead) removedWords.push(...head.head.split(" "));
 
-    const keptConjunction =
-      head.conjunction?.toLowerCase() === "or" ? `${head.conjunction} ` : "";
+    const keptLeadIn = head.leadIn ? `${head.leadIn} ` : "";
+    const keptConjunction = head.conjunction ? `${head.conjunction} ` : "";
     const keptHead = head.keepHead
       ? `${head.originalHead}${head.delimiter} `
       : "";
-    return `${index + 1}. ${keptConjunction}${keptHead}${clauses[index]}`;
+    return `${index + 1}. ${keptLeadIn}${keptConjunction}${keptHead}${clauses[index]}`;
   });
 
   return {

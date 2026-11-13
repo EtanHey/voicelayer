@@ -39,7 +39,8 @@ const HARDWARE_EXPECTED = [
   "1. 2 boxes of drywall screws.",
   "2. A roll of painter's tape.",
   "3. A gallon of semi-gloss white paint.",
-  "4. A new set of brushes.",
+  // Lane c11-T6: a spoken "and" before a head is his word and stays.
+  "4. And a new set of brushes.",
 ].join("\n");
 
 // --- RED fixture 2: ordinal + sequence heads (2026-09-06T18:00:02.572Z) ---
@@ -304,10 +305,8 @@ describe("spoken enumerators — word-count invariant", () => {
   // lane brief: "words in output >= words in input minus removed pure
   // enumerators, which must be listed".
   const PURE_ENUMERATOR_WORDS = new Set([
-    // list-item conjunctions carried by a head ("And four, ...")
-    "and",
-    "or",
-    // head qualifiers
+    // head qualifiers (list-item conjunctions "and"/"or" and a lead-in "so"
+    // are kept since lane c11-T6, so they are not in this set)
     "number",
     "step",
     // cardinals
@@ -369,7 +368,6 @@ describe("spoken enumerators — word-count invariant", () => {
       "one",
       "two",
       "three",
-      "and",
       "four",
     ]);
   });
