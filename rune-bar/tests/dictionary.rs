@@ -52,7 +52,16 @@ fn plain_and_variant_rows_share_one_centre_line() {
         .into_iter()
         .find(|e| e.key.as_deref() == Some("add"))
         .unwrap();
-    assert!((search.rect[3] - add.rect[3]).abs() <= 0.5);
+    for (a, b) in [
+        (search.rect[1], add.rect[1]),
+        (search.rect[3], add.rect[3]),
+        (
+            search.rect[1] + search.rect[3] / 2.0,
+            add.rect[1] + add.rect[3] / 2.0,
+        ),
+    ] {
+        assert!((a - b).abs() <= 0.5);
+    }
 }
 #[test]
 fn typing_filters_terms_and_variants_and_clearing_restores_rows() {

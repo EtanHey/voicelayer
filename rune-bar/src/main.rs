@@ -51,19 +51,40 @@ fn initial() -> Dictionary {
     )
 }
 fn main() {
-    let height = initial().height;
-    rune::App::new(rune::AppSpec {
+    let state = initial();
+    let height = state.height;
+    let screen_height = state.screen;
+    let app = rune::App::new(rune::AppSpec {
+        poll: Some(|s: &mut Dictionary, now, tx| {
+            s.flush_resize(now);
+            if let Some(due) = s.resize_due {
+                tx.wake_after(std::time::Duration::from_secs_f64((due - now).max(0.0)));
+            }
+            false
+        }),
         min_size: Some((420.0, 240.0)),
         ..rune::AppSpec::new("VoiceBar · Dictionary", (WIDTH, height), initial, view)
     })
-    .window_options(rune::WindowOptions {
-        min_size: Some((420.0, 240.0)),
-        max_size: Some((f32::MAX, screen())),
+    .init(move || state)
+    .chrome(rune::Chrome {
+        full_size_content: false,
         ..Default::default()
     })
-    .on_frame_drawn(|rt| {
+    .window_options(rune::WindowOptions {
+        min_size: Some((420.0, 240.0)),
+        max_size: Some((f32::MAX, screen_height)),
+        ..Default::default()
+    });
+    let handle = app.handle();
+    app.on_frame_drawn(move |rt| {
         rt.state.observed_width.set(rt.viewport.0);
-        rt.state.persist(rt.viewport.1);
+        let height = rt.viewport.1;
+        if (rt.state.observed_height.get() - height).abs() >= 0.5 {
+            handle.update(move |s, tx| {
+                s.observe_resize(height, tx.clock());
+                tx.wake_after(std::time::Duration::from_millis(300));
+            });
+        }
     })
     .run();
 }

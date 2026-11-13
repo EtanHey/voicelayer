@@ -1,6 +1,9 @@
 //! Read-only Dictionary pilot. No backend, capture, clipboard or dictionary writes.
 use rune::{Cx, Drag, El, GrowthSpec, Phase, ScrollSpec, TextEdit, col, el, row, text};
-use rune_kit::{Button, Collapsible, IconButton, Kit, Menu, MenuItem, TextInput};
+use rune_kit::{
+    Button, ButtonVariant, Collapsible, ControlSize, IconButton, IconButtonVariant, Kit, Menu,
+    MenuItem, ScrollBar, TextInput,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     cell::Cell,
@@ -36,14 +39,33 @@ pub fn state_path() -> PathBuf {
         .unwrap_or_else(|| home().join(".local/state/voicelayer/rune-ui.json"))
 }
 pub fn read_entries(path: &Path) -> Vec<Entry> {
-    // All-or-empty for malformed snapshots; never report their contents in diagnostics.
+    // Invalid entries are isolated; never report runtime contents in diagnostics.
     std::fs::read(path)
         .ok()
         .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-        .and_then(|v| serde_json::from_value::<Vec<Entry>>(v.get("entries")?.clone()).ok())
+        .and_then(|v| v.get("entries")?.as_array().cloned())
         .unwrap_or_default()
         .into_iter()
-        .filter(|e| !e.canonical.trim().is_empty())
+        .filter_map(|v| {
+            let canonical = v.get("canonical")?.as_str()?.trim();
+            if canonical.is_empty() {
+                return None;
+            }
+            let variants = v
+                .get("variants")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_owned)
+                .collect();
+            Some(Entry {
+                canonical: canonical.to_owned(),
+                variants,
+            })
+        })
         .collect()
 }
 #[derive(Serialize, Deserialize)]
@@ -89,6 +111,7 @@ pub struct Dictionary {
     pub persisted: Cell<f32>,
     pub observed_height: Cell<f32>,
     pub observed_width: Cell<f32>,
+    pub resize_due: Option<f64>,
 }
 impl Dictionary {
     pub fn new(personal: Vec<Entry>, screen: f32, state_file: Option<PathBuf>) -> Self {
@@ -109,16 +132,18 @@ impl Dictionary {
             persisted: Cell::new(height),
             observed_height: Cell::new(height),
             observed_width: Cell::new(WIDTH),
+            resize_due: None,
         }
     }
     pub fn matches(&self, group: usize) -> Vec<usize> {
-        let query = self.search.text.to_lowercase();
+        let query = &self.search.text;
+        let fold = rune_kit::search::Fold::default();
         self.entries(group)
             .iter()
             .enumerate()
             .filter(|(_, e)| {
-                e.canonical.to_lowercase().contains(&query)
-                    || e.variants.iter().any(|v| v.to_lowercase().contains(&query))
+                fold.contains(&e.canonical, query)
+                    || e.variants.iter().any(|v| fold.contains(v, query))
             })
             .map(|(i, _)| i)
             .collect()
@@ -128,6 +153,16 @@ impl Dictionary {
             &self.personal
         } else {
             &self.bundled
+        }
+    }
+    pub fn observe_resize(&mut self, height: f32, now: f64) {
+        self.observed_height.set(clamp_height(height, self.screen));
+        self.resize_due = Some(now + 0.3);
+    }
+    pub fn flush_resize(&mut self, now: f64) {
+        if self.resize_due.is_some_and(|due| now >= due) {
+            self.persist(self.observed_height.get());
+            self.resize_due = None;
         }
     }
     pub fn persist(&self, height: f32) {
@@ -164,6 +199,11 @@ pub fn fixture() -> Vec<Entry> {
         },
     ]
 }
+static PLUS: rune::Icon = rune::Icon {
+    name: "plus",
+    view: 24.0,
+    body: r#"<path d="M12 5V19M5 12H19" fill="none" stroke="currentColor" stroke-width="1.5"/>"#,
+};
 static PENCIL: rune::Icon = rune::Icon {
     name: "pencil",
     view: 24.0,
@@ -205,6 +245,7 @@ fn term_row(s: &Dictionary, group: usize, index: usize, dark: bool) -> El {
         .trigger(
             IconButton::new(&MORE)
                 .label("Term actions")
+                .variant(IconButtonVariant::Ghost)
                 .expanded(s.open_menu.as_ref() == Some(&id))
                 .on_press(move |s: &mut Dictionary| {
                     s.open_menu = if s.open_menu.as_ref() == Some(&menu_id) {
@@ -227,13 +268,14 @@ fn term_row(s: &Dictionary, group: usize, index: usize, dark: bool) -> El {
         .focus_selected(selected)
         .label(&e.canonical)
         .w_full()
-        .h(64.0)
+        .h(if e.variants.is_empty() { 48.0 } else { 64.0 })
         .px(12.0)
         .gap(8.0)
         .center_y()
         .radius(rune::tok::radius::MD)
         .fill(if selected {
-            t.control_track
+            // Quiet neutral selection, bounded in both themes by the pixel test.
+            k.alpha(t.text, 0.05)
         } else {
             rune::Color::TRANSPARENT
         })
@@ -244,7 +286,8 @@ fn term_row(s: &Dictionary, group: usize, index: usize, dark: bool) -> El {
         .child(
             IconButton::new(&PENCIL)
                 .label("Edit term")
-                .disabled(true)
+                .variant(IconButtonVariant::Ghost)
+                .on_press(|_: &mut Dictionary| {})
                 .build(&k)
                 .key("pencil"),
         )
@@ -255,7 +298,7 @@ pub fn view(s: &Dictionary, cx: &mut Cx<Dictionary>) -> El {
     let dark = cx.system_dark();
     let k = Kit::neutral(dark);
     let t = rune::tok::theme(dark);
-    let mut content = col().w_full().gap(8.0);
+    let mut content = col().w_full().gap(4.0);
     for group in 0..2 {
         let indices = s.matches(group);
         let title = format!(
@@ -272,6 +315,9 @@ pub fn view(s: &Dictionary, cx: &mut Cx<Dictionary>) -> El {
             .on_toggle(move |s: &mut Dictionary| s.expanded[group] = !s.expanded[group])
             .build(&k)
             .key(format!("group-{group}"));
+        if group > 0 {
+            content = content.child(el().h(24.0));
+        }
         content = content.child(header);
         if s.expanded[group] {
             let keys = indices.clone();
@@ -289,6 +335,20 @@ pub fn view(s: &Dictionary, cx: &mut Cx<Dictionary>) -> El {
             );
         }
     }
+    let control_size = ControlSize::ExtraLarge;
+    let add = Button::new("Add term")
+        .control_size(control_size)
+        .variant(ButtonVariant::Neutral)
+        .icon(&PLUS)
+        .on_press(|_: &mut Dictionary| {})
+        .build(&k)
+        .fill(k.c.bg_base)
+        .key("add");
+    // TextInput has a height override but no ControlSize API: take the kit button metric.
+    let control_height = match control_size {
+        ControlSize::ExtraLarge => 36.0,
+        _ => unreachable!("toolbar size"),
+    };
     let body = col()
         .key("body")
         .w_full()
@@ -298,7 +358,10 @@ pub fn view(s: &Dictionary, cx: &mut Cx<Dictionary>) -> El {
         .gap(16.0)
         .child(
             text("Dictionary")
-                .font(rune::tok::type_::TITLE)
+                .font(rune::TextStyle {
+                    size: 24.0,
+                    ..rune::tok::type_::TITLE
+                })
                 .color(t.text),
         )
         .child(
@@ -310,7 +373,7 @@ pub fn view(s: &Dictionary, cx: &mut Cx<Dictionary>) -> El {
                     TextInput::new(&s.search)
                         .placeholder("Search terms and variants")
                         .label("Search terms and variants")
-                        .height(36.0)
+                        .height(control_height)
                         .leading_icon(&rune_kit::glyphs::SEARCH)
                         .on_edit(|s: &mut Dictionary| &mut s.search)
                         .on_change(|_: &mut Dictionary, tx| {
@@ -320,13 +383,7 @@ pub fn view(s: &Dictionary, cx: &mut Cx<Dictionary>) -> El {
                         .key("search")
                         .grow(1.0),
                 )
-                .child(
-                    Button::new("Add term")
-                        .disabled(true)
-                        .build(&k)
-                        .key("add")
-                        .h(36.0),
-                ),
+                .child(add),
         )
         .child(
             col()
@@ -337,7 +394,8 @@ pub fn view(s: &Dictionary, cx: &mut Cx<Dictionary>) -> El {
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
-                .child(content),
+                .child(content)
+                .scroll_bar(&k),
         );
     col()
         .key("dictionary")
@@ -346,7 +404,16 @@ pub fn view(s: &Dictionary, cx: &mut Cx<Dictionary>) -> El {
         .fill(t.bg)
         .child(body)
         .child(
-            el().key("bottom-edge")
+            col()
+                .key("bottom-edge")
+                .center()
+                .child(
+                    el().key("resize-mark")
+                        .w(40.0)
+                        .h(3.0)
+                        .radius(2.0)
+                        .fill(t.text_secondary),
+                )
                 .w_full()
                 .h(8.0)
                 .role("separator")

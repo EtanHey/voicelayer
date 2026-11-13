@@ -4,8 +4,11 @@ resolver = "3"
 
 [package]
 name = "voicebar-rune"
+default-run = "voicebar-rune"
 version = "0.1.0"
 edition = "2024"
+publish = false
+license = "Apache-2.0"
 rust-version = "1.99.1"
 
 [dependencies]
@@ -29,3 +32,7 @@ winit = { git = "https://github.com/anomalyco/rune", rev = "74a3c8d4f4aadbdadcc8
 wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "74a3c8d4f4aadbdadcc8fae0aee5e36f42af1ccd" }
 parley_engine = { git = "https://github.com/anomalyco/rune", rev = "74a3c8d4f4aadbdadcc8fae0aee5e36f42af1ccd" }
 accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "74a3c8d4f4aadbdadcc8fae0aee5e36f42af1ccd" }
+
+[[bin]]
+name = "trailing-band"
+path = "spikes/virtual-rows-trailing-band/repro.rs"

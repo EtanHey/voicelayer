@@ -35,12 +35,17 @@ CoreGraphics logical bounds. A window moved to a different monitor still uses it
 launch-time main-screen cap in this pilot.
 
 Search matches terms and variants case-insensitively. Disclosure headers collapse
-each group. One row can be selected. Add, Edit and the menu’s Copy/Delete items are
+each group. One row can be selected. Add and Edit are enabled no-ops; the menu’s Copy/Delete items remain
 disabled; there are no mutation or clipboard handlers in this slice.
 
 Rune-kit supplies the input, button, icon buttons, disclosure headers and neutral
-theme. Core Rune virtual rows bound mounted content for large dictionaries. The
+theme. Core Rune virtual rows bound mounted content for large dictionaries. A kit scrollbar
+follows the system scrollbar visibility preference. Native geometry writes wait
+300 ms after the latest resize; the grip also saves on release. The
 custom pencil and ellipsis are SVG glyphs inside kit icon buttons.
 
 Build output goes to `../.build.noindex/rune-target`. Run Cargo from this directory
 so it loads `.cargo/config.toml`. No audio or microphone tests are involved.
+
+Pixel tests require Python 3 and Pillow. All scripted input runs headlessly on
+invented fixture data. The native host uses a standard title bar.
