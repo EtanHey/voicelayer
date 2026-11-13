@@ -214,6 +214,32 @@ static MORE: rune::Icon = rune::Icon {
     view: 24.0,
     body: r#"<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>"#,
 };
+fn term_menu<S: DictionaryHost>(
+    id: &str,
+    trigger: El,
+    open: bool,
+    k: &Kit,
+    overlays: &mut Vec<El>,
+) -> El {
+    Menu::new(format!("{id}-actions"))
+        .trigger(trigger)
+        .open(open)
+        .item(
+            MenuItem::new("Copy")
+                .disabled(!S::hosted())
+                .on_select(|s: &mut S| s.dictionary_intent("copy-term")),
+        )
+        .item(
+            MenuItem::new("Delete")
+                .disabled(!S::hosted())
+                .on_select(|s: &mut S| s.dictionary_intent("delete-term")),
+        )
+        .on_close(|host: &mut S| {
+            let s = host.dictionary_mut();
+            s.open_menu = None
+        })
+        .build(k, overlays)
+}
 fn term_row<S: DictionaryHost>(s: &Dictionary, group: usize, index: usize, dark: bool) -> El {
     let k = Kit::neutral(dark);
     let t = rune::tok::theme(dark);
@@ -241,42 +267,29 @@ fn term_row<S: DictionaryHost>(s: &Dictionary, group: usize, index: usize, dark:
     }
     let mut overlays = Vec::new();
     let menu_id = id.clone();
-    let menu = Menu::new(format!("{id}-actions"))
-        .trigger(
-            IconButton::new(&MORE)
-                .label("Term actions")
-                .variant(IconButtonVariant::Ghost)
-                .expanded(s.open_menu.as_ref() == Some(&id))
-                .on_press(move |host: &mut S| {
-                    let s = host.dictionary_mut();
-                    {
-                        s.open_menu = if s.open_menu.as_ref() == Some(&menu_id) {
-                            None
-                        } else {
-                            Some(menu_id.clone())
-                        };
-                    }
-                })
-                .build(&k)
-                .key("menu"),
-        )
-        .open(s.open_menu.as_ref() == Some(&id))
-        .item(
-            MenuItem::new("Copy")
-                .disabled(!S::hosted())
-                .on_select(|s: &mut S| s.dictionary_intent("copy-term")),
-        )
-        .item(
-            MenuItem::new("Delete")
-                .disabled(!S::hosted())
-                .on_select(|s: &mut S| s.dictionary_intent("delete-term")),
-        )
-        .on_close(|host: &mut S| {
-            let s = host.dictionary_mut();
-            s.open_menu = None
-        })
-        .build(&k, &mut overlays);
-    row()
+    let menu = term_menu::<S>(
+        &id,
+        IconButton::new(&MORE)
+            .label("Term actions")
+            .variant(IconButtonVariant::Ghost)
+            .expanded(s.open_menu.as_ref() == Some(&id))
+            .on_press(move |host: &mut S| {
+                let s = host.dictionary_mut();
+                {
+                    s.open_menu = if s.open_menu.as_ref() == Some(&menu_id) {
+                        None
+                    } else {
+                        Some(menu_id.clone())
+                    };
+                }
+            })
+            .build(&k)
+            .key("menu"),
+        !S::hosted() && s.open_menu.as_ref() == Some(&id),
+        &k,
+        &mut overlays,
+    );
+    let item = row()
         .key(&id)
         .role("listitem")
         .focus_selected(selected)
@@ -309,7 +322,12 @@ fn term_row<S: DictionaryHost>(s: &Dictionary, group: usize, index: usize, dark:
                 .key("pencil"),
         )
         .child(menu)
-        .children(overlays)
+        .children(overlays);
+    if S::hosted() {
+        item.on_drag(|host: &mut S, d, tx| host.dictionary_drag(d, tx))
+    } else {
+        item
+    }
 }
 pub trait DictionaryHost: 'static {
     fn dictionary_ref(&self) -> &Dictionary;
@@ -318,6 +336,7 @@ pub trait DictionaryHost: 'static {
         false
     }
     fn dictionary_intent(&mut self, _verb: &str) {}
+    fn dictionary_drag(&mut self, _d: &mut Drag, _tx: &mut rune::Tx) {}
 }
 impl DictionaryHost for Dictionary {
     fn dictionary_ref(&self) -> &Dictionary {
@@ -334,6 +353,12 @@ pub fn embedded<S: DictionaryHost>(s: &Dictionary, cx: &mut Cx<S>) -> El {
     let dark = cx.system_dark();
     let k = Kit::neutral(dark);
     let t = rune::tok::theme(dark);
+    let mut hosted_overlays = vec![];
+    if S::hosted() {
+        if let Some(id) = &s.open_menu {
+            let _ = term_menu::<S>(id, el(), true, &k, &mut hosted_overlays);
+        }
+    }
     let mut content = col().w_full().gap(4.0);
     for group in 0..2 {
         let indices = s.matches(group);
@@ -401,14 +426,16 @@ pub fn embedded<S: DictionaryHost>(s: &Dictionary, cx: &mut Cx<S>) -> El {
         .min_h(0.0)
         .padding(24.0)
         .gap(16.0)
-        .child(
-            if S::hosted() { el() } else { text("Dictionary")
+        .child(if S::hosted() {
+            el()
+        } else {
+            text("Dictionary")
                 .font(rune::TextStyle {
                     size: 24.0,
                     ..rune::tok::type_::TITLE
                 })
-                .color(t.text) },
-        )
+                .color(t.text)
+        })
         .child(
             row()
                 .key("toolbar")
@@ -482,6 +509,7 @@ pub fn embedded<S: DictionaryHost>(s: &Dictionary, cx: &mut Cx<S>) -> El {
                     }
                 }),
         )
+        .children(hosted_overlays)
 }
 
 pub mod band;

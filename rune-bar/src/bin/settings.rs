@@ -42,6 +42,19 @@ fn initial() -> Settings {
             .and_then(|s| s.parse().ok())
             .unwrap_or(0),
     );
+    if !real && std::env::var_os("VOICELAYER_RUNE_SETTINGS_REPAIRS").is_some() {
+        s.snapshot.visible = Some(false);
+        s.snapshot.resident = Some(false);
+        s.snapshot.f5_helper = Some(false);
+        s.snapshot.processing_locks = [const { None }; 3];
+        s.snapshot.processing = [Some(false), Some(true), Some(true)];
+        s.snapshot.polish = Some(snapshot::Polish::Off);
+        if let Some(steps) = &mut s.snapshot.setup {
+            for (_, ok) in steps {
+                *ok = false;
+            }
+        }
+    }
     if real {
         s.dictionary = voicebar_rune::Dictionary::new(vec![], s.screen, None);
         s.history = voicebar_rune::history::History::new(Default::default());
@@ -54,9 +67,23 @@ fn initial() -> Settings {
             *lock = Some("QA_FIXTURE_LOCK".into());
         }
     }
+    if std::env::var_os("VOICELAYER_RUNE_SETTINGS_UNKNOWN").is_some() {
+        s.snapshot.processing = [None; 3];
+        s.snapshot.polish = None;
+        s.snapshot.configured_model = None;
+        s.snapshot.active_model = None;
+        s.snapshot.configured_effort = None;
+        s.snapshot.active_effort = None;
+        s.snapshot.recognizer = None;
+        s.snapshot.resident = None;
+    }
     if std::env::var_os("VOICELAYER_RUNE_SETTINGS_BROKEN").is_some() {
         if let Some(steps) = &mut s.snapshot.setup {
-            steps.iter_mut().find(|(name,_)| name == "Microphone").unwrap().1 = false;
+            steps
+                .iter_mut()
+                .find(|(name, _)| name == "Microphone")
+                .unwrap()
+                .1 = false;
         }
     }
     s

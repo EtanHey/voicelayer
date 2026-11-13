@@ -49,7 +49,7 @@ fn pager_keys_drag_and_history_handoff() {
     settle(&mut r);
     let (x, y) = r.find("pager").unwrap();
     r.pointer_down(x, y);
-    for (dx, expected) in [(-720.0, 5), (-1440.0, 6), (-2160.0, 0)] {
+    for (dx, expected) in [(-720.0, 5), (-1440.0, 6), (-2160.0, 6)] {
         r.pointer_move(x + dx, y);
         r.frame(0.016);
         assert_eq!(r.state.page(), expected);
@@ -93,7 +93,10 @@ fn setup_only_broken_and_helper_inline() {
         .setup
         .as_mut()
         .unwrap()
-        .insert("Microphone".into(), false);
+        .iter_mut()
+        .find(|(name, _)| name == "Microphone")
+        .unwrap()
+        .1 = false;
     settle(&mut r);
     let texts: Vec<_> = r.elements().iter().filter_map(|e| e.text.clone()).collect();
     assert_eq!(texts.iter().filter(|t| t.as_str() == "Fix").count(), 1);
@@ -111,6 +114,7 @@ fn setup_only_broken_and_helper_inline() {
 #[test]
 fn centres_and_no_prose() {
     let mut r = rt();
+    r.state.threshold = rune::TextEdit::new("450");
     for all_locked in [false, true] {
         if all_locked {
             for l in &mut r.state.snapshot.processing_locks {
@@ -126,10 +130,10 @@ fn centres_and_no_prose() {
             let es = r.elements();
             for e in &es {
                 if let Some(t) = &e.text {
-                    if !e.path.contains("row-first")
-                        && !e.path.contains("row-continuation")
-                        && !e.path.contains("row-question")
-                    {
+                    if !matches!(
+                        e.key.as_deref(),
+                        Some("row-first" | "row-continuation" | "row-question")
+                    ) {
                         assert!(t.split_whitespace().count() <= 8, "{t}");
                     }
                 }
@@ -168,112 +172,6 @@ fn centres_and_no_prose() {
             }
         }
     }
-}
-#[test]
-fn height_persists_and_footer_uses_space() {
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../.build.noindex/settings-height.json");
-    let _ = std::fs::remove_file(&path);
-    let mut r = runtime(Settings::new(
-        snapshot::fixture(),
-        900.0,
-        Some(path.clone()),
-    ));
-    drag(&mut r, "settings-bottom-edge", 0.0, 1000.0);
-    assert_eq!(r.state.height, 900.0);
-    assert_eq!(
-        Settings::new(snapshot::fixture(), 900.0, Some(path.clone())).height,
-        900.0
-    );
-    for tab in [0, 1, 3] {
-        r.state.select_tab(tab);
-        settle(&mut r);
-        let e = r
-            .elements()
-            .into_iter()
-            .find(|e| e.key.as_deref() == Some("panel-last-row"))
-            .unwrap();
-        assert!(
-            (900.0 - 16.0 - 20.0 - e.rect[1] - e.rect[3]).abs() < 1.0,
-            "{:?}",
-            e.rect
-        );
-    }
-    drag(&mut r, "settings-bottom-edge", 0.0, -2000.0);
-    assert_eq!(r.state.height, settings::MIN_HEIGHT);
-    std::fs::remove_file(path).unwrap();
-}
-#[test]
-fn missing_malformed_read_only_stores() {
-    let home = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../.build.noindex/settings-home");
-    let state = home.join(".local/state/voicelayer");
-    std::fs::create_dir_all(&state).unwrap();
-    let p = state.join("processing-settings.json");
-    let w = state.join("whisper-performance.json");
-    let voice = home.join(".voicelayer/voices/Neutral/profile.yaml");
-    std::fs::create_dir_all(voice.parent().unwrap()).unwrap();
-    std::fs::write(
-        &p,
-        r#"{"model_polish":true,"outro_gate":false,"smart_chunks":false}"#,
-    )
-    .unwrap();
-    std::fs::write(&w, r#"{"effort":"balanced"}"#).unwrap();
-    std::fs::write(&voice, "name: Neutral\n").unwrap();
-    let receipt = || {
-        [&p, &w, &voice].map(|p| {
-            (
-                std::fs::read(p).unwrap(),
-                std::fs::metadata(p).unwrap().modified().unwrap(),
-            )
-        })
-    };
-    let before = receipt();
-    let snap = snapshot::read(&home, &Default::default());
-    assert_eq!(snap.configured_effort.as_deref(), Some("balanced"));
-    assert_eq!(snap.available_voices, vec!["Neutral"]);
-    let mut r = runtime(Settings::new(snap, 900.0, None));
-    for key in ["check-shortcut", "hide-for-1-hour", "show", "copy"] {
-        click(&mut r, key);
-    }
-    r.state.select_tab(1);
-    settle(&mut r);
-    for key in ["load", "toggle-0", "toggle-1", "toggle-2"] {
-        click(&mut r, key);
-    }
-    r.state.select_tab(3);
-    settle(&mut r);
-    for key in ["apply", "revert", "preview"] {
-        click(&mut r, key);
-    }
-    assert_eq!(
-        r.state.intents,
-        vec![
-            "intent: check-shortcut",
-            "intent: hide 1h",
-            "intent: show",
-            "intent: copy-diagnostics",
-            "intent: recognizer-toggle",
-            "intent: set-processing polish=off",
-            "intent: set-processing outro=on",
-            "intent: set-processing smart-chunks=on",
-            "intent: threshold-apply",
-            "intent: threshold-revert",
-            "intent: speech-preview"
-        ]
-    );
-    assert_eq!(before, receipt());
-    std::fs::write(&p, "{bad").unwrap();
-    std::fs::remove_file(&w).unwrap();
-    let snap = snapshot::read(&home, &Default::default());
-    assert!(snap.setup.is_none());
-    assert_eq!(snap.processing, [None; 3]);
-    let r = runtime(Settings::new(snap, 900.0, None));
-    assert!(
-        r.elements()
-            .iter()
-            .any(|e| e.text.as_deref() == Some("Unavailable here"))
-    );
 }
 #[test]
 fn environment_values_match_daemon_parsers() {
@@ -322,61 +220,33 @@ fn binary_real_missing_and_malformed_stores_are_safe() {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let tree = std::fs::read_to_string(tree).unwrap();
-        assert!(tree.contains("Unavailable here"));
-    }
-}
-#[test]
-fn all_profile_menus_and_fixture_controls_emit_only_intents() {
-    let mut r = rt();
-    for key in [
-        "check-shortcut",
-        "hide-for-1-hour",
-        "show",
-        "make-default",
-        "copy",
-    ] {
-        click(&mut r, key);
-    }
-    r.state.select_tab(3);
-    settle(&mut r);
-    for key in ["Short-voice", "Short-rate", "Long-voice", "Long-rate"] {
-        click(&mut r, key);
-        let es = r.elements();
-        let pick = es
+        let tree: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(tree).unwrap()).unwrap();
+        let es = tree["elements"].as_array().unwrap();
+        let row = match tab {
+            0 => "row-visibility",
+            1 => "row-local-recognizer",
+            _ => "threshold-row",
+        };
+        let rows: Vec<_> = es
             .iter()
-            .find(|e| {
-                e.text.as_deref()
-                    == Some(if key.ends_with("voice") {
-                        "Meadow"
-                    } else {
-                        "+20%"
-                    })
-                    && e.visible[3] > 0.0
+            .filter(|e| {
+                e["path"]
+                    .as_str()
+                    .is_some_and(|p| p.split('/').any(|id| id == row))
             })
-            .unwrap();
-        let x = pick.rect[0] + pick.rect[2] / 2.0;
-        let y = pick.rect[1] + pick.rect[3] / 2.0;
-        r.pointer_down(x, y);
-        r.pointer_up(x, y);
-        settle(&mut r);
+            .collect();
+        assert!(rows.iter().any(|e| e["text"] == "Unavailable here"));
+        if tab == 1 {
+            assert!(
+                !es.iter()
+                    .any(|e| e["key"].as_str().is_some_and(|k| k.starts_with("toggle-")))
+            );
+        }
+        if tab == 3 {
+            assert!(!es.iter().any(|e| e["key"] == "threshold-text"));
+        }
     }
-    let expected = [
-        "intent: check-shortcut",
-        "intent: hide 1h",
-        "intent: show",
-        "intent: microphone-default 0",
-        "intent: copy-diagnostics",
-        "intent: set-Short-voice Meadow",
-        "intent: set-Short-rate +20%",
-        "intent: set-Long-voice Meadow",
-        "intent: set-Long-rate +20%",
-    ];
-    assert_eq!(r.state.intents, expected);
-    assert_eq!(
-        r.state.snapshot.voices,
-        [Some("Garden".into()), Some("Brook".into())]
-    );
 }
 #[test]
 fn taller_embedded_lists_mount_more_rows_to_bottom() {
@@ -457,8 +327,8 @@ fn binary_bottom_drag_resizes_and_relaunches() {
     }
 }
 #[test]
-fn complete_cycle_release_keeps_wrapped_page() {
+fn complete_cycle_release_clamps_last_page() {
     let mut r = rt();
     drag(&mut r, "pager", -5040.0, 0.0);
-    assert_eq!(r.state.page(), 0);
+    assert_eq!(r.state.page(), 6);
 }

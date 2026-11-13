@@ -5,8 +5,8 @@ use crate::{
     history::{self, History, HistoryHost},
 };
 use rune::{Cx, Drag, El, Key, Phase, ScrollSpec, col, el, row, text};
-use rune_kit::{Button, Kit, SegmentedControl, Select, Switch};
-use snapshot::{SettingsSnapshot, Polish};
+use rune_kit::{Button, Kit, SegmentedControl, Select, SelectAppearance, Switch};
+use snapshot::{Polish, SettingsSnapshot};
 use std::path::PathBuf;
 pub const TABS: [&str; 5] = [
     "General",
@@ -27,6 +27,7 @@ pub struct Settings {
     pub state_path: Option<PathBuf>,
     pub slide: f32,
     pub axis: i8,
+    pub settling: bool,
     pub drag_origin: usize,
     pub reduce_motion: bool,
     pub open: Option<String>,
@@ -40,7 +41,11 @@ impl DictionaryHost for Settings {
     fn dictionary_mut(&mut self) -> &mut Dictionary {
         &mut self.dictionary
     }
+    fn dictionary_drag(&mut self, d: &mut Drag, tx: &mut rune::Tx) {
+        pager(self, d, tx)
+    }
     fn dictionary_intent(&mut self, verb: &str) {
+        self.dictionary.open_menu = None;
         self.emit(verb)
     }
     fn hosted() -> bool {
@@ -85,6 +90,7 @@ impl Settings {
             state_path: path,
             slide: 0.0,
             axis: 0,
+            settling: false,
             drag_origin: 0,
             reduce_motion: false,
             open: None,
@@ -98,7 +104,10 @@ impl Settings {
         self.intents.push(line);
     }
     pub fn change(&mut self, operation: &str, from: &str, to: &str) {
-        self.emit(&format!("{operation} from={from} to={to} rev={}", self.snapshot.revision));
+        self.emit(&format!(
+            "{operation} from={from} to={to} rev={}",
+            self.snapshot.revision
+        ));
     }
     pub fn page(&self) -> usize {
         if self.tab == 4 {
@@ -116,6 +125,7 @@ impl Settings {
         self.open = None;
     }
     pub fn select_tab(&mut self, tab: usize) {
+        self.settling = false;
         self.tab = tab.min(4);
         self.open = None;
         self.slide = 0.0;
@@ -140,7 +150,11 @@ fn pager(s: &mut Settings, d: &mut Drag, tx: &mut rune::Tx) {
                 } else {
                     {
                         let raw = d.dx + (s.page() as f32 - s.drag_origin as f32) * s.width;
-                        if (s.page() == 0 && raw > 0.0) || (s.page() == 6 && raw < 0.0) { raw / (1.0 + raw.abs() / 120.0) } else { raw }
+                        if (s.page() == 0 && raw > 0.0) || (s.page() == 6 && raw < 0.0) {
+                            raw / (1.0 + raw.abs() / 120.0)
+                        } else {
+                            raw
+                        }
                     }
                 };
             }
@@ -149,14 +163,14 @@ fn pager(s: &mut Settings, d: &mut Drag, tx: &mut rune::Tx) {
             if !d.cancelled() && s.axis == 1 && (d.dx / s.width).round() == 0.0 && d.dx.abs() > 70.0
             {
                 s.select_page(
-                    (s.drag_origin as isize + if d.dx < 0.0 { 1 } else { -1 }).clamp(0, 6)
-                        as usize,
+                    (s.drag_origin as isize + if d.dx < 0.0 { 1 } else { -1 }).clamp(0, 6) as usize,
                 );
             }
             if d.cancelled() {
                 s.select_page(s.drag_origin);
             }
             s.slide = 0.0;
+            s.settling = true;
             s.axis = 0;
             tx.animated();
         }
@@ -164,12 +178,30 @@ fn pager(s: &mut Settings, d: &mut Drag, tx: &mut rune::Tx) {
 }
 fn button(label: &str, action: String, k: &Kit) -> El {
     Button::new(label)
-        .on_press(move |s: &mut Settings| {
-            match action.as_str() {
-                "hide 1h" | "show" => { if let Some(v) = s.snapshot.visible { s.change("set-visibility", if v {"shown"} else {"hidden"}, if action == "show" {"shown"} else {"hidden-1h"}); } }
-                "recognizer-toggle" => { if let Some(v) = s.snapshot.resident { s.change("set-residency", if v {"loaded"} else {"unloaded"}, if v {"unloaded"} else {"loaded"}); } }
-                _ => s.emit(&action),
+        .on_press(move |s: &mut Settings| match action.as_str() {
+            "hide 1h" | "show" => {
+                if let Some(v) = s.snapshot.visible {
+                    s.change(
+                        "set-visibility",
+                        if v { "shown" } else { "hidden" },
+                        if action == "show" {
+                            "shown"
+                        } else {
+                            "hidden-1h"
+                        },
+                    );
+                }
             }
+            "recognizer-toggle" => {
+                if let Some(v) = s.snapshot.resident {
+                    s.change(
+                        "set-residency",
+                        if v { "loaded" } else { "unloaded" },
+                        if v { "unloaded" } else { "loaded" },
+                    );
+                }
+            }
+            _ => s.emit(&action),
         })
         .build(k)
         .h(36.0)
@@ -202,12 +234,15 @@ fn setting(label: &str, control: El, dark: bool) -> El {
         )
         .child(control)
 }
-fn tag(label: &str, dark: bool) -> El { text(label).font(rune::tok::type_::LABEL).color(rune::tok::theme(dark).text_secondary) }
+fn tag(label: &str, dark: bool) -> El {
+    text(label)
+        .font(rune::tok::type_::LABEL)
+        .color(rune::tok::theme(dark).text_secondary)
+}
 fn section(title: &str, dark: bool) -> El {
     text(title)
         .font(rune::tok::type_::LABEL)
         .color(rune::tok::theme(dark).text_secondary)
-
 }
 fn lock(var: &Option<String>, dark: bool) -> El {
     if let Some(var) = var {
@@ -230,7 +265,8 @@ fn choice(
     let a = id.to_owned();
     let b = a.clone();
     let c = a.clone();
-    Select::new(id, options)
+    let field = Select::new(id, options)
+        .appearance(SelectAppearance::Field)
         .label(id)
         .current(current)
         .placeholder("Unavailable here")
@@ -247,12 +283,20 @@ fn choice(
         .on_choose(move |s: &mut Settings, v: &str, _| {
             let i = usize::from(b.starts_with("Long"));
             let from = s.snapshot.voices[i].clone();
-            if s.snapshot.speech_locks[i*2].is_none() { if let Some(from) = from { s.change(&format!("set-{b}"), &from, v); } }
+            if s.snapshot.speech_locks[i * 2].is_none() {
+                if let Some(from) = from {
+                    s.change(&format!("set-{b}"), &from, v);
+                }
+            }
             s.open = None;
         })
         .build(k, overlays)
-        .h(36.0).fill(k.c.bg_base).border(1.0,k.c.border_base).radius(6.0)
-        .key(c)
+        .w(180.0)
+        .h(36.0)
+        .fill(k.c.bg_base)
+        .border(1.0, k.c.border_base)
+        .radius(6.0);
+    row().key(c).child(field)
 }
 pub const GROUP_GAP: f32 = 24.0;
 // Groups stay together; additional drawer height remains below the form.
@@ -286,8 +330,12 @@ impl Form {
         if self.populated {
             self.groups.push(self.current);
         }
-        col().key("form-groups").w_full().gap(GROUP_GAP)
-            .children(self.groups.into_iter().enumerate().map(|(i,g)| g.key(format!("group-{i}"))))
+        col().key("form-groups").w_full().gap(GROUP_GAP).children(
+            self.groups
+                .into_iter()
+                .enumerate()
+                .map(|(i, g)| g.key(format!("group-{i}"))),
+        )
     }
 }
 fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) -> El {
@@ -330,19 +378,44 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
                             v.visible.map(|b| if b { "Shown" } else { "Hidden" }),
                             dark,
                         ))
-                        .child(match v.visible { Some(true) => button("Hide for 1 hour", "hide 1h".into(), k), Some(false) => button("Show", "show".into(), k), None => el() }),
+                        .child(match v.visible {
+                            Some(true) => button("Hide for 1 hour", "hide 1h".into(), k),
+                            Some(false) => button("Show", "show".into(), k),
+                            None => el(),
+                        }),
                     dark,
                 ))
                 .section("Microphone priority", dark);
             if let Some(mics) = &v.microphones {
                 for (i, mic) in mics.iter().enumerate() {
                     let mut controls = row().gap(8.0).center_y();
-                    if i == 0 { controls = controls.child(tag("Default", dark)); }
-                    else {
+                    if i == 0 {
+                        controls = controls.child(tag("Default", dark));
+                    } else {
                         let to = mic.clone();
-                        controls = controls.child(Button::new("Make default").on_press(move |s: &mut Settings| { if let Some(from) = s.snapshot.default_microphone.clone() { s.change("microphone-default", &from, &to); } }).build(k).h(36.0).key(format!("make-default-{i}")));
+                        controls = controls.child(
+                            Button::new("Make default")
+                                .on_press(move |s: &mut Settings| {
+                                    if let Some(from) = s.snapshot.default_microphone.clone() {
+                                        s.change("microphone-default", &from, &to);
+                                    }
+                                })
+                                .build(k)
+                                .h(36.0)
+                                .key(format!("make-default-{i}")),
+                        );
                     }
-                    content = content.child(setting(mic, controls, dark).child(tag(&(i+1).to_string(), dark)));
+                    content = content.child(
+                        row()
+                            .w_full()
+                            .min_h(44.0)
+                            .gap(8.0)
+                            .center_y()
+                            .key(format!("microphone-{i}"))
+                            .child(tag(&(i + 1).to_string(), dark).w(16.0))
+                            .child(value(Some(mic), dark).grow(1.0))
+                            .child(controls),
+                    );
                 }
             } else {
                 content = content.child(value(None, dark));
@@ -363,22 +436,32 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
                     .center_y()
                     .gap(8.0)
                     .child(value(v.recognizer.as_deref(), dark))
-                    .child(if v.resident.is_none() { el() } else { button(
-                        if v.resident == Some(true) {
-                            "Unload"
-                        } else {
-                            "Load"
-                        },
-                        "recognizer-toggle".into(),
-                        k,
-                    ) }),
+                    .child(if v.resident.is_none() {
+                        el()
+                    } else {
+                        button(
+                            if v.resident == Some(true) {
+                                "Unload"
+                            } else {
+                                "Load"
+                            },
+                            "recognizer-toggle".into(),
+                            k,
+                        )
+                    }),
                 dark,
             ));
             if v.resident.is_none() {
                 content = content.child(setting("Residency", value(None, dark), dark));
             }
-            content = content.section("Recognizer details", dark).child(row().w_full().gap(12.0)
-                .child(el().w(90.0)).child(tag("Configured", dark).w(215.0)).child(tag("Active", dark).grow(1.0)));
+            content = content.section("Recognizer details", dark).child(
+                row()
+                    .w_full()
+                    .gap(12.0)
+                    .child(el().w(90.0))
+                    .child(tag("Configured", dark).w(215.0))
+                    .child(tag("Active", dark).grow(1.0)),
+            );
             for (label, a, b) in [
                 (
                     "Model",
@@ -397,7 +480,18 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
                         .gap(12.0)
                         .child(text(label).w(90.0).color(rune::tok::theme(dark).text))
                         .child(value(a, dark).w(215.0))
-                        .child(row().grow(1.0).center_y().gap(8.0).child(value(b, dark)).child(if label == "Effort" { lock(&v.effort_lock, dark) } else { el() })),
+                        .child(
+                            row()
+                                .grow(1.0)
+                                .center_y()
+                                .gap(8.0)
+                                .child(value(b, dark))
+                                .child(if label == "Effort" {
+                                    lock(&v.effort_lock, dark)
+                                } else {
+                                    el()
+                                }),
+                        ),
                 );
             }
             content = content.section("Processing", dark);
@@ -415,35 +509,100 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
                     if i == 0 && v.polish == Some(Polish::Shadow) {
                         controls = controls.child(tag("Shadow", dark));
                     } else {
-                        controls = controls.child(Switch::new(enabled).label(*label).hide_label()
-                            .on_toggle(move |s: &mut Settings| {
-                                if s.snapshot.processing_locks[i].is_none() {
-                                    s.change(&format!("set-processing {key}"), if enabled {"on"} else {"off"}, if enabled {"off"} else {"on"});
-                                }
-                            }).build(k).key(format!("toggle-{i}")));
+                        controls = controls.child(
+                            Switch::new(enabled)
+                                .label(*label)
+                                .hide_label()
+                                .on_toggle(move |s: &mut Settings| {
+                                    if s.snapshot.processing_locks[i].is_none() {
+                                        s.change(
+                                            &format!("set-processing {key}"),
+                                            if enabled { "on" } else { "off" },
+                                            if enabled { "off" } else { "on" },
+                                        );
+                                    }
+                                })
+                                .build(k)
+                                .key(format!("toggle-{i}")),
+                        );
                     }
                     controls = controls.child(lock(&v.processing_locks[i], dark));
-                } else { controls = controls.child(value(None, dark)); }
-                let label = if i == 2 { row().grow(1.0).gap(8.0).center_y().child(value(Some(label), dark)).child(tag("Experimental", dark)) } else { value(Some(label), dark).grow(1.0) };
-                content = content.child(row().w_full().min_h(44.0).center_y().gap(12.0).child(label).child(controls));
+                } else {
+                    controls = controls.child(value(None, dark));
+                }
+                let label = if i == 2 {
+                    row()
+                        .grow(1.0)
+                        .gap(8.0)
+                        .center_y()
+                        .child(value(Some(label), dark))
+                        .child(tag("Experimental", dark))
+                } else {
+                    value(Some(label), dark).grow(1.0)
+                };
+                content = content.child(
+                    row()
+                        .w_full()
+                        .min_h(44.0)
+                        .center_y()
+                        .gap(12.0)
+                        .child(label)
+                        .child(controls),
+                );
             }
         }
         3 => {
             for (i, label) in ["Short", "Long"].iter().enumerate() {
                 content = content.section(label, dark);
-                let voice = if v.voices[i].is_some() { choice(s, &format!("{label}-voice"), v.voices[i].as_deref(), &v.available_voices, k, overlays) } else { value(None, dark) };
+                let voice = if v.voices[i].is_some() {
+                    choice(
+                        s,
+                        &format!("{label}-voice"),
+                        v.voices[i].as_deref(),
+                        &v.available_voices,
+                        k,
+                        overlays,
+                    )
+                } else {
+                    value(None, dark)
+                };
                 let mut rate = row().center_y().gap(12.0);
-                if let (Some(raw),Some(min),Some(max),Some(step)) = (v.rates[i].as_deref(),v.rate_min,v.rate_max,v.rate_step) {
+                if let (Some(raw), Some(min), Some(max), Some(step)) =
+                    (v.rates[i].as_deref(), v.rate_min, v.rate_max, v.rate_step)
+                {
                     if let Ok(n) = raw.trim_end_matches('%').parse::<i32>() {
                         for (name, delta) in [("−", -step), ("+", step)] {
-                            if delta > 0 { rate = rate.child(value(Some(raw), dark)); }
-                            let operation = format!("set-{label}-rate"); let from = raw.to_string();
-                            rate = rate.child(Button::new(name).disabled(n+delta < min || n+delta > max)
-                                .on_press(move |s: &mut Settings| { if s.snapshot.speech_locks[i*2+1].is_none() { s.change(&operation, &from, &format!("{:+}%", (n+delta).clamp(min,max))); } })
-                                .build(k).h(36.0).key(format!("{label}-rate-{}",if delta<0 {"minus"} else {"plus"})));
+                            if delta > 0 {
+                                rate = rate.child(value(Some(raw), dark));
+                            }
+                            let operation = format!("set-{label}-rate");
+                            let from = raw.to_string();
+                            rate = rate.child(
+                                Button::new(name)
+                                    .disabled(n + delta < min || n + delta > max)
+                                    .on_press(move |s: &mut Settings| {
+                                        if s.snapshot.speech_locks[i * 2 + 1].is_none() {
+                                            s.change(
+                                                &operation,
+                                                &from,
+                                                &format!("{:+}%", (n + delta).clamp(min, max)),
+                                            );
+                                        }
+                                    })
+                                    .build(k)
+                                    .h(36.0)
+                                    .key(format!(
+                                        "{label}-rate-{}",
+                                        if delta < 0 { "minus" } else { "plus" }
+                                    )),
+                            );
                         }
-                    } else { rate = rate.child(value(None,dark)); }
-                } else { rate = rate.child(value(None,dark)); }
+                    } else {
+                        rate = rate.child(value(None, dark));
+                    }
+                } else {
+                    rate = rate.child(value(None, dark));
+                }
                 content = content
                     .child(
                         setting(
@@ -470,38 +629,138 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
                         .key(format!("{label}-rate-row")),
                     );
             }
-            let field = row().w(100.0).h(36.0).center_y().px(8.0).fill(k.c.bg_base).border(1.0, k.c.border_base).radius(6.0).key("threshold")
-                .child(rune::text_input(&s.threshold, rune::TextStyle { line_height: 20.0, ..rune::tok::type_::BODY })
-                    .color(rune::tok::theme(dark).text).single_line()
-                    .on_edit(|s: &mut Settings| &mut s.threshold).label("Long text from").w_full().h(20.0).key("threshold-text"));
-            let mut threshold = row().center_y().gap(8.0).child(lock(&v.threshold_lock,dark));
+            let field = row()
+                .w(100.0)
+                .h(36.0)
+                .center_y()
+                .px(8.0)
+                .fill(k.c.bg_base)
+                .border(1.0, k.c.border_base)
+                .radius(6.0)
+                .key("threshold")
+                .child(
+                    rune::text_input(
+                        &s.threshold,
+                        rune::TextStyle {
+                            line_height: 20.0,
+                            ..rune::tok::type_::BODY
+                        },
+                    )
+                    .color(rune::tok::theme(dark).text)
+                    .single_line()
+                    .on_edit(|s: &mut Settings| &mut s.threshold)
+                    .label("Long text from")
+                    .w_full()
+                    .h(20.0)
+                    .key("threshold-text"),
+                );
+            let mut threshold = row()
+                .center_y()
+                .gap(8.0)
+                .child(lock(&v.threshold_lock, dark));
             if v.threshold.is_some() {
-                threshold = threshold.child(field).child(value(Some("characters"),dark));
+                threshold = threshold
+                    .child(field)
+                    .child(value(Some("characters"), dark));
                 if s.threshold.text != v.threshold.unwrap().to_string() {
-                    threshold = threshold.child(Button::new("Apply").on_press(|s: &mut Settings| {
-                        if s.snapshot.threshold_lock.is_none() { if let (Some(from),Ok(to))=(s.snapshot.threshold,s.threshold.text.parse::<u64>()) { s.change("set-threshold", &from.to_string(), &to.to_string()); } }
-                    }).build(k).h(36.0).key("apply"))
-                    .child(Button::new("Revert").on_press(|s: &mut Settings| { s.threshold = rune::TextEdit::new(s.snapshot.threshold.map(|n|n.to_string()).unwrap_or_default()); }).build(k).h(36.0).key("revert"));
+                    threshold = threshold
+                        .child(
+                            Button::new("Apply")
+                                .on_press(|s: &mut Settings| {
+                                    if s.snapshot.threshold_lock.is_none() {
+                                        if let (Some(from), Ok(to)) =
+                                            (s.snapshot.threshold, s.threshold.text.parse::<u64>())
+                                        {
+                                            s.change(
+                                                "set-threshold",
+                                                &from.to_string(),
+                                                &to.to_string(),
+                                            );
+                                        }
+                                    }
+                                })
+                                .build(k)
+                                .h(36.0)
+                                .key("apply"),
+                        )
+                        .child(
+                            Button::new("Revert")
+                                .on_press(|s: &mut Settings| {
+                                    s.threshold = rune::TextEdit::new(
+                                        s.snapshot
+                                            .threshold
+                                            .map(|n| n.to_string())
+                                            .unwrap_or_default(),
+                                    );
+                                })
+                                .build(k)
+                                .h(36.0)
+                                .key("revert"),
+                        );
                 }
-            } else { threshold = threshold.child(value(None,dark)); }
-            content = content.section("Playback",dark)
-                .child(setting("Long text from",threshold,dark).key("threshold-row"))
-                .child(setting("Clone",value(v.clone_status.as_deref(),dark),dark))
-                .child(setting("",button("Preview","speech-preview".into(),k),dark));
+            } else {
+                threshold = threshold.child(value(None, dark));
+            }
+            content = content
+                .section("Playback", dark)
+                .child(setting("Long text from", threshold, dark).key("threshold-row"))
+                .child(setting(
+                    "Clone",
+                    value(v.clone_status.as_deref(), dark),
+                    dark,
+                ))
+                .child(setting(
+                    "",
+                    button("Preview", "speech-preview".into(), k),
+                    dark,
+                ));
         }
         _ => {}
     }
     // Rows remain grouped at the top; the footer follows the drawer's bottom.
     let footer = if tab == 0 {
-        row().w_full().h(48.0).center_y().border_sides([1.0,0.0,0.0,0.0],k.c.border_base)
-            .child(tag(&v.version.as_ref().map(|v|format!("Version {v}")).unwrap_or_else(||"Unavailable here".into()),dark).grow(1.0))
-            .child(button("Copy diagnostics", "copy-diagnostics".into(), k)).key("panel-last-row")
-    } else { el() };
-    col().w_full().h_full().padding(20.0).child(
-        col().w_full().max_w(560.0).h_full().child(
-            col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom:false }).child(content.build())
-        ).child(footer)
-    ).items_center()
+        row()
+            .w_full()
+            .h(48.0)
+            .center_y()
+            .border_sides([1.0, 0.0, 0.0, 0.0], k.c.border_base)
+            .child(
+                tag(
+                    &v.version
+                        .as_ref()
+                        .map(|v| format!("Version {v}"))
+                        .unwrap_or_else(|| "Unavailable here".into()),
+                    dark,
+                )
+                .grow(1.0),
+            )
+            .child(button("Copy diagnostics", "copy-diagnostics".into(), k))
+            .key("panel-last-row")
+    } else {
+        el()
+    };
+    col()
+        .w_full()
+        .h_full()
+        .padding(20.0)
+        .child(
+            col()
+                .w_full()
+                .max_w(560.0)
+                .h_full()
+                .child(
+                    col()
+                        .w_full()
+                        .grow(1.0)
+                        .min_h(0.0)
+                        .scroll(ScrollSpec {
+                            stick_bottom: false,
+                        })
+                        .child(content.build()),
+                )
+                .child(footer),
+        )
+        .items_center()
 }
 
 pub fn view(s: &Settings, cx: &mut Cx<Settings>) -> El {
@@ -524,11 +783,21 @@ pub fn view(s: &Settings, cx: &mut Cx<Settings>) -> El {
     // Absolute page positions retain identity when release changes the selected page.
     let mut body = row().w(s.width * 7.0).h_full();
     for page in 0usize..7 {
-        body = body.child(if page.abs_diff(s.page()) <= 1 {
-            page_body(page).key(format!("page-{page}"))
-        } else { el().w(s.width).h_full().key(format!("page-{page}")) });
+        body = body.child(
+            if page == s.page()
+                || (s.axis == 1 && page == s.drag_origin)
+                || (s.slide.abs() > 0.01 && page.abs_diff(s.page()) <= 1)
+            {
+                page_body(page).key(format!("page-{page}"))
+            } else {
+                el().w(s.width).h_full().key(format!("page-{page}"))
+            },
+        );
     }
-    let body = body.offset(-(s.page() as f32) * s.width + if reduce { 0.0 } else { s.slide }, 0.0);
+    let body = body.offset(
+        -(s.page() as f32) * s.width + if reduce { 0.0 } else { s.slide },
+        0.0,
+    );
     col()
         .key("settings")
         .w_full()
@@ -539,24 +808,31 @@ pub fn view(s: &Settings, cx: &mut Cx<Settings>) -> El {
             s.height = r[3];
         })
         .child(
-            col().w_full().px(12.0).child(SegmentedControl::new(&TABS, Some(s.tab))
-                .width(None)
-                .on_pick(|s: &mut Settings, i, _| s.select_tab(i))
-                .build(&k)
-                .key("tabs")
-                .on_key(|s: &mut Settings, e, _| match e.key {
-                    Key::Left => {
-                        s.select_tab(s.tab.saturating_sub(1));
-                        true
-                    }
-                    Key::Right => {
-                        s.select_tab(s.tab + 1);
-                        true
-                    }
-                    _ => false,
-                })),
+            col().w_full().px(12.0).child(
+                SegmentedControl::new(&TABS, Some(s.tab))
+                    .width(None)
+                    .on_pick(|s: &mut Settings, i, _| s.select_tab(i))
+                    .build(&k)
+                    .key("tabs")
+                    .on_key(|s: &mut Settings, e, _| match e.key {
+                        Key::Left => {
+                            s.select_tab(s.tab.saturating_sub(1));
+                            true
+                        }
+                        Key::Right => {
+                            s.select_tab(s.tab + 1);
+                            true
+                        }
+                        _ => false,
+                    }),
+            ),
         )
-        .child(el().key("tab-hairline").w_full().h(1.0).fill(k.c.border_base))
+        .child(
+            el().key("tab-hairline")
+                .w_full()
+                .h(1.0)
+                .fill(k.c.border_base),
+        )
         .child(
             col()
                 .key("pager")
@@ -565,7 +841,7 @@ pub fn view(s: &Settings, cx: &mut Cx<Settings>) -> El {
                 .min_h(0.0)
                 .clip_rounded(0.0)
                 .on_drag(pager)
-                .child(if s.axis == 1 {
+                .child(if s.axis == 1 || !s.settling {
                     body.offset_motion(rune::Anim::INSTANT)
                 } else {
                     body.token_motion(rune::tok::motion::REFLOW)

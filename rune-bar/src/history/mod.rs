@@ -407,7 +407,9 @@ impl HistoryHost for History {
 pub fn view(s: &History, cx: &mut Cx<History>) -> El {
     embedded::<History>(s, cx)
 }
-pub fn embedded<S: HistoryHost>(s: &History, cx: &mut Cx<S>) -> El { embedded_page::<S>(s, s.category, cx) }
+pub fn embedded<S: HistoryHost>(s: &History, cx: &mut Cx<S>) -> El {
+    embedded_page::<S>(s, s.category, cx)
+}
 pub fn embedded_page<S: HistoryHost>(s: &History, category: usize, cx: &mut Cx<S>) -> El {
     let dark = cx.system_dark();
     let reduce = s.reduce_motion || cx.system_reduced_motion();
@@ -432,7 +434,10 @@ pub fn embedded_page<S: HistoryHost>(s: &History, category: usize, cx: &mut Cx<S
                 },
                 move |host: &S, j| {
                     let s = host.history_ref();
-                    col().w_full().pb(8.0).child(entry::<S>(s, category, j, dark))
+                    col()
+                        .w_full()
+                        .pb(8.0)
+                        .child(entry::<S>(s, category, j, dark))
                 },
             ),
     );
