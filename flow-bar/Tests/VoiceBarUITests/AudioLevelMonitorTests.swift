@@ -3,6 +3,48 @@ import AVFoundation
 import XCTest
 
 final class AudioLevelMonitorTests: XCTestCase {
+    /// #906 review (Codex P2): the real meter engine must never open the microphone from a test process.
+    func testRealEngineRefusesInsideATestProcessAndSaysSo() {
+        let savedReport = RealMicrophoneMeterGuard.report
+        defer { RealMicrophoneMeterGuard.report = savedReport }
+        var reports: [String] = []
+        RealMicrophoneMeterGuard.report = { reports.append($0) }
+        XCTAssertTrue(RealMicrophoneMeterGuard.runsInsideTests, "this process must be recognised as a test process")
+
+        let engine = AVAudioLevelMonitoringEngine()
+        var levels: [Double?] = []
+        let delivered = expectation(description: "a refused start reports no level")
+        delivered.assertForOverFulfill = false // stop() reports "no level" once more
+        let monitor = AudioLevelMonitor(engine: engine) { levels.append($0); delivered.fulfill() }
+
+        monitor.start()
+        wait(for: [delivered], timeout: 2)
+
+        XCTAssertEqual(reports, [RealMicrophoneMeterGuard.refusal], "one loud refusal per engine")
+        XCTAssertFalse(engine.didBuildEngine, "a refused engine never builds AVAudioEngine")
+        XCTAssertEqual(levels.count, 1)
+        XCTAssertNil(levels.first ?? 1)
+        XCTAssertThrowsError(try engine.start()) { XCTAssertTrue($0 is RealMicrophoneMeterRefused) }
+        monitor.stop()
+        XCTAssertFalse(engine.didBuildEngine)
+    }
+
+    /// The guard is a test-process rule only: outside one, the real engine takes its normal path.
+    func testRealEngineIsNotRefusedOutsideATestProcess() {
+        let savedProbe = RealMicrophoneMeterGuard.isTestProcess
+        let savedReport = RealMicrophoneMeterGuard.report
+        defer { RealMicrophoneMeterGuard.isTestProcess = savedProbe; RealMicrophoneMeterGuard.report = savedReport }
+        var reports = 0
+        RealMicrophoneMeterGuard.report = { _ in reports += 1 }
+        RealMicrophoneMeterGuard.isTestProcess = { false }
+
+        let engine = AVAudioLevelMonitoringEngine()
+        engine.stop() // the only call that is safe without a device: it must not build the engine or refuse
+
+        XCTAssertEqual(reports, 0)
+        XCTAssertFalse(engine.didBuildEngine)
+    }
+
     func testPrepareWarmsEngineWithoutStartingIt() {
         let engine = AudioLevelMonitorEngineSpy()
         let monitor = AudioLevelMonitor(engine: engine) { _ in }
