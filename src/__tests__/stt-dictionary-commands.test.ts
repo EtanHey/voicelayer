@@ -43,7 +43,7 @@ describe("a dictionary command stays its own token", () => {
 
   it("starts the text or a line with no space before it", () => {
     expect(clean("slash quill now.")).toBe("/quill now.");
-    expect(clean("Done.\nslash quill now.")).toBe("done.\n/quill now.");
+    expect(clean("Done.\nslash quill now.")).toBe("Done.\n/quill now.");
   });
 
   it("keeps two commands in a row as two tokens with one space", () => {
@@ -60,13 +60,13 @@ describe("a dictionary command stays its own token", () => {
 
   it("keeps several thousand protected commands correct", () => {
     const many = (sentence: string) => Array.from({ length: 5200 }, () => sentence).join(" ");
-    expect(clean(many("run slash quill."))).toBe(many("run /quill."));
+    expect(clean(many("run slash quill."))).toBe(many("Run /quill."));
   }, 30_000);
 
   // Lead ruling (Codex P2): a slash run made only of dictionary commands is
   // commands, even though the same sounds could be read as a path.
   it("reads a run made only of dictionary commands as commands", () => {
-    expect(clean("run slash quill slash zephyr sweep")).toBe("run /quill /zephyr-sweep");
+    expect(clean("run slash quill slash zephyr sweep")).toBe("Run /quill /zephyr-sweep");
   });
 
   // Codex P2 (provenance): text matching, so a "/quill" the recognizer wrote
@@ -91,7 +91,7 @@ describe("a dictionary command stays its own token", () => {
       ["see https://example.com/quill for more.", "See HTTPS://example.com/quill for more."],
       // The joining rule retains whitespace before a written dictionary command.
       ["run slash quill slash index", "run /quill/index"],
-      ["run slash quill slash zephyr sweep slash index", "run /quill /zephyr-sweep/index"],
+      ["run slash quill slash zephyr sweep slash index", "Run /quill /zephyr-sweep/index"],
       // Slashes without a written standalone command keep their original behavior.
       ["open src slash slash quill.", "Open src / /quill."],
       ["open src/ slash quill.", "Open src/ /quill."],
@@ -140,4 +140,64 @@ it("200 KiB of slash/hyphen near misses stays under the existing 100 ms bound", 
   const elapsed = performance.now() - start;
   expect(output).toBe(mainNormalizePathTokens(input));
   expect(elapsed).toBeLessThan(100);
+});
+
+const commands = new Set(["/quill", "/other"]);
+const caseControls = [
+  ["ask Claude /quill.", "ask Claude /quill."],
+  ["Use GitHub /quill /other.", "Use GitHub /quill /other."],
+  ["Done.\n/quill now.", "Done.\n/quill now."],
+  ...[".", ",", "?", ";", ":", ""].map((suffix) =>
+    [`Birch /quill${suffix}`, `Birch /quill${suffix}`]),
+  ["NASA /quill.", "NASA /quill."],
+  ["Birch /quill /other.", "Birch /quill /other."],
+  ["See Src / Foo. Birch /quill.", "See src/foo. Birch /quill."],
+] as const;
+
+for (const [input, expected] of caseControls) {
+  it(`path callback preserves non-path case: ${JSON.stringify(input)}`, () => {
+    expect(normalizePathTokens(input, commands)).toBe(expected);
+  });
+  it(`cleanup preserves non-path case: ${JSON.stringify(input)}`, () => {
+    expect(clean(input)).toBe(input.startsWith("ask ") ? `Ask${expected.slice(3)}` : expected);
+  });
+}
+
+it("lowercases the matched tilde clause as on main", () => {
+  expect(normalizePathTokens("open ~/Foo then Run- /quill", commands))
+    .toBe("open ~/foo then run- /quill");
+});
+
+it("300 seeded command-boundary inputs differ from main only by separation and non-path case", () => {
+  let seed = 0x241ca5e;
+  const pick = <T,>(items: readonly T[]): T => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return items[(seed >>> 8) % items.length];
+  };
+  for (let i = 0; i < 300; i++) {
+    const word = pick(["Birch", "NASA", "MapLe", "CEDAR"]);
+    const space = pick([" ", "  ", "\n", "\t"]);
+    const prefix = pick(["", "see ", "see Src / Foo, ", "see Src / Foo "]);
+    const tail = pick([".", ",", "?", ";", ":", "", " now."]);
+    const second = pick(["", `${space}/other`]);
+    const input = `${prefix}${word}${space}/quill${second}${tail}`;
+    // Oracle: start with the frozen main implementation. Restore only the
+    // original whitespace run at each known command boundary and the case of
+    // the generated non-path word; every other byte must remain main's output.
+    const baseline = mainNormalizePathTokens(input);
+    const expected = baseline
+      .replace(/\s*\/(quill|other)\b/gu, (_match, command) => `${space}/${command}`)
+      .replace(new RegExp(word, "giu"), word);
+    expect(normalizePathTokens(input, commands), input).toBe(expected);
+  }
+});
+
+it("lowercases a joined path before a kept command", () => {
+  expect(normalizePathTokens("see src / Foo /quill.", commands))
+    .toBe("see src/foo /quill.");
+});
+
+it("returns a non-path span unchanged, including hyphen spacing and command whitespace", () => {
+  expect(normalizePathTokens("Birch - Maple  /quill.", commands))
+    .toBe("Birch - Maple  /quill.");
 });

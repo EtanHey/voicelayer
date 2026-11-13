@@ -443,12 +443,13 @@ describe("stt-polish", () => {
 
   it("floors every active on-mode non-applied fallback status", async () => {
     const cleanedText =
-      "so i was thinking about the whole voice layer pipeline and how the polish " +
-      "step is supposed to add punctuation but sometimes it just does not and then " +
-      "you end up with this giant wall of text that has no periods no commas nothing " +
-      "and it is really hard to read especially when the dictation is long like this " +
-      "one where i just keep talking and talking without ever stopping to breathe or " +
-      "add any kind of structure to what i am saying which is exactly the failure mode";
+      "the imaginary birch observatory tracks paper comets across a painted sky " +
+      "while a clockwork gardener sorts blue pebbles into wooden trays and then " +
+      "carries each tray through a corridor lined with tiny lanterns and maps " +
+      "the maps describe a distant island where brass turtles collect colored " +
+      "ribbons beside a silent fountain and stack them beneath a striped canopy " +
+      "every ribbon has a different pattern and every turtle follows the same " +
+      "winding path through the garden until the last lantern turns violet";
     server = createMockPolishServer(() => ({
       text: `Raw Whisper text: ${cleanedText}`,
     }));
@@ -1859,11 +1860,11 @@ describe("stt-polish", () => {
 
   it("rejects spoken-list restructuring that deletes framing and ordinal cues", async () => {
     server = createMockPolishServer(() => ({
-      text: "Okay:\n1. I want to do x, y, z.\n2. I want to do the other thing.\n3. I want to do this, that, and this.",
+      text: "Garden:\n1. Plant birch seeds.\n2. Water cedar pots.\n3. Label maple trays.",
     }));
 
     const cleanedText =
-      "Or if I say, okay, first of all, I want to do x, y, z, and then second of all, I want to do the other thing, and then third of all, I want to do this, that, and this.";
+      "For the imaginary garden, first of all, plant birch seeds, and then second of all, water cedar pots, and then third of all, label maple trays.";
     const result = await polishTranscriptionText({
       rawText: cleanedText,
       cleanedText,
@@ -1874,7 +1875,7 @@ describe("stt-polish", () => {
       },
     });
 
-    expectConservedRejection(result, cleanedText, "Okay:\n1. I want to do x, y, z.\n2. I want to do the other thing.\n3. I want to do this, that, and this.");
+    expectConservedRejection(result, cleanedText, "Garden:\n1. Plant birch seeds.\n2. Water cedar pots.\n3. Label maple trays.");
   });
 
   it("does not count deterministic upstream list markers as invented numbers", async () => {
@@ -2422,12 +2423,13 @@ describe("stt-polish", () => {
 
   it("adds a terminal punctuation floor to a long single-narrative fallback", async () => {
     const cleanedText =
-      "so i was thinking about the whole voice layer pipeline and how the polish " +
-      "step is supposed to add punctuation but sometimes it just does not and then " +
-      "you end up with this giant wall of text that has no periods no commas nothing " +
-      "and it is really hard to read especially when the dictation is long like this " +
-      "one where i just keep talking and talking without ever stopping to breathe or " +
-      "add any kind of structure to what i am saying which is exactly the failure mode";
+      "the imaginary birch observatory tracks paper comets across a painted sky " +
+      "while a clockwork gardener sorts blue pebbles into wooden trays and then " +
+      "carries each tray through a corridor lined with tiny lanterns and maps " +
+      "the maps describe a distant island where brass turtles collect colored " +
+      "ribbons beside a silent fountain and stack them beneath a striped canopy " +
+      "every ribbon has a different pattern and every turtle follows the same " +
+      "winding path through the garden until the last lantern turns violet";
     const server = Bun.serve({
       port: 0,
       fetch: async () => {
@@ -3137,9 +3139,7 @@ describe("stt-polish", () => {
 });
 
 describe("stt-polish system prompt — false starts and retractions are KEPT", () => {
-  // Etan, 2026-09-06: "raw-ish, I guess. So my thinking process stays."
-  // AGENTS.md: "When I retract a word mid-sentence and say it again differently,
-  // hand over the full truth — retraction and all."
+  // Raw-accuracy policy: preserve false starts and retractions in full.
   const prompt = () => sttPolish.buildPolishSystemPrompt();
 
   it("states an explicit KEEP rule for false starts and self-corrections", () => {

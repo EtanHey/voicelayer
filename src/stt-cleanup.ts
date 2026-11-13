@@ -755,7 +755,28 @@ export function normalizePathTokens(text: string, commands: ReadonlySet<string> 
       if (/^[A-Za-z]+\s+\/\s*[A-Za-z0-9-]+$/u.test(match.trim())) {
         return match;
       }
-      return joinPathSeparators(match, commands).toLowerCase();
+      const joined = joinPathSeparators(match, commands);
+      const parts: string[] = [];
+      let cursor = 0;
+      let originalCursor = 0;
+      // Only path portions are case-normalized around kept command boundaries.
+      // Keep each command and its preceding whitespace exactly as joined above.
+      const boundaries = /\s+\/([A-Za-z0-9][A-Za-z0-9-]*)(?=[\s.,;:!?]|$)/gu;
+      const originals = Array.from(match.matchAll(boundaries))
+        .filter((boundary) => commands.has(`/${boundary[1]}`));
+      let commandIndex = 0;
+      for (const boundary of joined.matchAll(boundaries)) {
+        if (!commands.has(`/${boundary[1]}`)) continue;
+        const before = joined.slice(cursor, boundary.index);
+        const original = originals[commandIndex++];
+        parts.push(before.includes("/") ? before.toLowerCase() : match.slice(originalCursor, original.index), original[0]);
+        cursor = boundary.index + boundary[0].length;
+        originalCursor = original.index + original[0].length;
+      }
+      if (cursor === 0) return joined.toLowerCase();
+      const tail = joined.slice(cursor);
+      parts.push(tail.includes("/") ? tail.toLowerCase() : match.slice(originalCursor));
+      return parts.join("");
   });
 
   return result;
