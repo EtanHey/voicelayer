@@ -119,7 +119,7 @@ write_t3_proof() {
     hash="$(printf 'synthetic' | shasum -a 256 | awk '{print $1}')"
     bundle="$(bun "$ROOT_DIR/scripts/t3-optf5-proof.ts" bundle-digest --app "$2")"
     cat > "$1" <<EOF
-{"schema":"voicelayer.t3-optf5-proof.v2","receipt":"release","bundleSha256":"$bundle","evidence":{"captureLineSha256":"$hash","speakLineSha256":"$hash","historyEntrySha256":"$hash"},"gitCommit":"05bcc0a235712245dfc0bd08f8e657dd9277e7cd","buildTimeUTC":"2026-10-18T01:10:14Z","t3Build":"T3 Code (Alpha) 0.0.45 (0.0.45)","timestamp":"2026-10-18T01:30:00.000Z","expectedTextSha256":"$hash","historyTextSha256":"$hash","speakTextCommandId":"73C05ACC-9C3D-432A-BEE4-A6F6B662954F","readError":false}
+{"schema":"voicelayer.t3-optf5-proof.v2","receipt":"release","bundleSha256":"$bundle","evidence":{"captureLineSha256":"$hash","speakLineSha256":"$hash","historyEntrySha256":"$hash"},"gitCommit":"05bcc0a235712245dfc0bd08f8e657dd9277e7cd","buildTimeUTC":"2026-10-18T01:10:14Z","t3Build":"T3 Code (Alpha) 0.0.45 (0.0.45)","timestamp":"2026-10-18T01:30:00.000Z","expectedTextSha256":"$hash","historyTextSha256":"$hash","speakTextCommandId":"73C05ACC-9C3D-432A-BEE4-A6F6B662954F","readError":false,"machine":{"model":"MacBookPro18,3","chip":"Apple M1 Pro"}}
 EOF
 }
 
