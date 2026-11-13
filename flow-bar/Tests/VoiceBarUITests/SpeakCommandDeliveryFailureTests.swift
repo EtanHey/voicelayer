@@ -56,7 +56,12 @@ final class SpeakCommandDeliveryFailureTests: XCTestCase {
             XCTAssertTrue(state.isConnected)
             XCTAssertEqual(commands.count, 2)
             state.readClipboard()
-            XCTAssertEqual(commands.last?["cmd"] as? String, "stop", "Newer same-text identity remains live")
+            // Etan, 2026-11-08: the same text over the read on screen dedupes with a notice (no Stop); with no read
+            // on screen the same-text press still stops the pending one.
+            if active {
+                XCTAssertEqual(commands.count, 2, "Newer same-text identity remains live")
+                XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote)
+            } else { XCTAssertEqual(commands.last?["cmd"] as? String, "stop", "Newer same-text identity remains live") }
         }
     }
 
@@ -79,7 +84,12 @@ final class SpeakCommandDeliveryFailureTests: XCTestCase {
             XCTAssertEqual(state.mode, active ? .speaking : .idle)
             XCTAssertEqual(commands.count, 2)
             state.readClipboard()
-            XCTAssertEqual(commands.last?["cmd"] as? String, "stop")
+            // Etan, 2026-11-08: the same text over the read on screen dedupes with a notice (no Stop); with no read
+            // on screen the same-text press still stops the pending one.
+            if active {
+                XCTAssertEqual(commands.count, 2)
+                XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote)
+            } else { XCTAssertEqual(commands.last?["cmd"] as? String, "stop") }
         }
     }
 
@@ -111,7 +121,12 @@ final class SpeakCommandDeliveryFailureTests: XCTestCase {
             XCTAssertTrue(recorderAcks.isEmpty)
             XCTAssertEqual(commands.count, 1)
             state.readClipboard()
-            XCTAssertEqual(commands.last?["cmd"] as? String, "stop")
+            // Etan, 2026-11-08: the same text over the read on screen dedupes with a notice (no Stop); with no read
+            // on screen the same-text press still stops the pending one.
+            if active {
+                XCTAssertEqual(commands.count, 1)
+                XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote)
+            } else { XCTAssertEqual(commands.last?["cmd"] as? String, "stop") }
         }
     }
 

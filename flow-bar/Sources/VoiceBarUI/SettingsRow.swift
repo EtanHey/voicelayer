@@ -5,15 +5,27 @@ import SwiftUI
 struct SettingsRow<Lead: View, Trailing: View>: View {
     let title: String
     var description: String?
+    /// A status pill that sits on the description line, after it (the mic in use: "Connected · Used for dictation").
+    var badge: String?
+    /// A pill on the title line, after the title ("Smart chunks [Experimental]"), so the trailing column holds only
+    /// the row's control and the description gets the full text column.
+    var titleBadge: SettingsPill?
     var isSelected = false
+    // Small microphone buttons are 20 pt high; reserve that status-line height even with no badge/action.
+    var controlsFollowStatus = false
+    /// The text column's minimum before the controls wrap under it. A one-word title ("Rate") can give its wide
+    /// control (a slider) the room instead (lane S PR 3).
+    var textMinWidth: CGFloat = SettingsRowLabel.textMinWidth
     @ViewBuilder var lead: () -> Lead
     @ViewBuilder var trailing: () -> Trailing
 
     var body: some View {
-        SettingsRowLayout {
+        SettingsRowLayout(controlsFollowStatus: controlsFollowStatus, textMinWidth: textMinWidth) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 lead()
-                SettingsRowLabel(title: title, description: description, isSelected: isSelected)
+                SettingsRowLabel(title: title, description: description, badge: badge, titleBadge: titleBadge,
+                                 isSelected: isSelected,
+                                 statusLineMinHeight: controlsFollowStatus ? 20 : nil)
             }
             HStack(spacing: 6) { trailing() }
                 .fixedSize()
@@ -24,10 +36,11 @@ struct SettingsRow<Lead: View, Trailing: View>: View {
 }
 
 extension SettingsRow where Lead == EmptyView {
-    init(title: String, description: String? = nil, isSelected: Bool = false,
+    init(title: String, description: String? = nil, badge: String? = nil, titleBadge: SettingsPill? = nil,
+         isSelected: Bool = false, textMinWidth: CGFloat = SettingsRowLabel.textMinWidth,
          @ViewBuilder trailing: @escaping () -> Trailing) {
-        self.init(title: title, description: description, isSelected: isSelected, lead: { EmptyView() },
-                  trailing: trailing)
+        self.init(title: title, description: description, badge: badge, titleBadge: titleBadge,
+                  isSelected: isSelected, textMinWidth: textMinWidth, lead: { EmptyView() }, trailing: trailing)
     }
 }
 
@@ -97,5 +110,13 @@ extension View {
             Color.clear.preference(key: SettingsTextAuditKey.self,
                                    value: [SettingsTextAuditEntry(text: text, font: font, frame: proxy.frame(in: .global))])
         })
+    }
+}
+
+/// Geometry receipt for hosted layout checks; no product state or behavior reads this preference.
+struct SettingsControlFrameKey: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
     }
 }

@@ -213,10 +213,20 @@ class Run:
             "VOICEBAR_USER_DEFAULTS_SUITE": "ratchet." + self.root.name,
             "RATCHET_RESIDENT": str(self.root / "resident.sock"),
         })
-        (self.root / "model.bin").touch()
+        # Asset admission requires a nonempty regular file; the decoder below is synthetic.
+        (self.root / "model.bin").write_bytes(b"ratchet synthetic model placeholder\n")
         stub = self.root / "bin/whisper-cli"
         stub.write_text("#!" + sys.executable + "\n" + (REPO / "ratchet/fixture-whisper.py").read_text())
         stub.chmod(0o700)
+        # Boot warmup uses the server even when inference selects the CLI fixture.
+        # Keep it off the resident server's port and provide synthetic health only.
+        with socket.socket() as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            self.env["QA_VOICE_WHISPER_SERVER_PORT"] = str(reservation.getsockname()[1])
+        self.env["RATCHET_WHISPER_SERVER_RECEIPT"] = str(self.root / "whisper-server.jsonl")
+        server = self.root / "bin/whisper-server"
+        server.write_text("#!" + sys.executable + "\n" + (REPO / "ratchet/fixture-whisper-server.py").read_text())
+        server.chmod(0o700)
         self.env["PATH"] = str(self.root / "bin") + ":" + self.env["PATH"]
 
     def instrument(self):
@@ -292,6 +302,9 @@ class Run:
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     proc.wait()
+        receipt = self.root / "whisper-server.jsonl"
+        if receipt.exists():
+            self.output.with_suffix(".whisper-server.jsonl").write_bytes(receipt.read_bytes())
         for name in ("app", "daemon", "daemon-stop", "daemon-unlock"):
             self.output.with_suffix("." + name + ".log").write_text(self.transport_log(name))
         for log in self.files:
@@ -359,6 +372,16 @@ def command_client_registered(log, pid):
 
 
 def wire_row(run, row):
+    if row == "retranscribe-history-refresh":
+        # Bytes exist, but this synthetic model cannot load. Exercise real boot
+        # maintenance with a crashing server, never a healthy-server substitute.
+        (run.root / "model.bin").write_bytes(b"unloadable synthetic weights")
+        crashing = run.root / "bin/whisper-server"
+        crashing.write_text("#!/bin/sh\nprintf 'error loading model\\n' >&2\nexit 7\n")
+        crashing.chmod(0o700)
+        with socket.socket() as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            run.env["QA_VOICE_WHISPER_SERVER_PORT"] = str(reservation.getsockname()[1])
     (run.root / "vocab.json").write_text(json.dumps({"entries": []}))
     fixtures = prepare_recents(run) if row == "recents-newest-after-retranscribe" else None
     run.app()
@@ -468,7 +491,9 @@ def wire_row(run, row):
         (directory / "metadata.json").write_text(json.dumps(metadata))
         payload = json.dumps(dict(jsonrpc="2.0", id=42, method="tools/call", params={
             "name": "voice_ask", "arguments": {"retranscribe_archive_id": archive_id}})).encode()
+        retranscribe_started = time.monotonic()
         with connect(run.root / "m.sock") as mcp:
+            mcp.settimeout(15)
             mcp.sendall(b"Content-Length: " + str(len(payload)).encode() + b"\r\n\r\n" + payload)
             with mcp.makefile("rb") as stream:
                 header = stream.readline()
@@ -476,7 +501,22 @@ def wire_row(run, row):
                 if stream.readline() != b"\r\n":
                     raise RuntimeError("missing MCP header delimiter")
                 response = json.loads(stream.read(length))
+                # Snapshot before declaring retranscription complete: later logs
+                # cannot retroactively prove startup exercised the crash path.
+                boot_log_at_response = run.log("daemon")
             assert not response["result"].get("isError"), response
+        boot_rejections = []
+        for line in boot_log_at_response.splitlines():
+            if "{\"event\":\"recognizer_boot_warmup\"" not in line:
+                continue
+            event = json.loads(line[line.index("{"):])
+            if (event.get("engine") == "whisper" and event.get("outcome") == "reject"
+                    and "WHISPER_STARTUP_" in str(event.get("reason", ""))):
+                boot_rejections.append(event)
+        assert boot_rejections, "missing boot warm-up WHISPER_STARTUP_* rejection before retranscription completed"
+        boot_startup_reason = boot_rejections[-1]["reason"]
+        retranscribe_seconds = time.monotonic() - retranscribe_started
+        assert retranscribe_seconds < 15, "unloadable model stalled retranscription"
         wait(lambda: (directory / "voicelayer-transcript.txt").exists())
         frames, observed, quiet = captured.archive(str(audio.resolve()))
         matches = [f for f in frames if f.get("type") == "archive_metadata_updated"
@@ -484,6 +524,7 @@ def wire_row(run, row):
         assert (directory / "voicelayer-transcript.txt").read_text() == "Recovered synthetic answer."
         assert json.loads((directory / "metadata.json").read_text())["transcription_status"] == "transcribed"
         run.output.with_suffix(".wire.json").write_text(json.dumps({
+            "boot_startup_reason": boot_startup_reason, "retranscribe_seconds": retranscribe_seconds,
             "archive_updates": len(matches), "durable_transcript": True, "durable_metadata": True,
             "transcription_events": sum(f.get("type") == "transcription" for f in frames),
             "event_observed": observed, "quiet_period_complete": quiet, "quiet_seconds": 1}))

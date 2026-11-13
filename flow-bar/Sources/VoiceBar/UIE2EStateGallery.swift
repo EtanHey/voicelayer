@@ -215,7 +215,9 @@ final class UIE2EStateGallery {
         update(model, state: state, base: base, geometry: screenGeometry)
         let presentation = model.presentation
         return VoiceBarPanelLayout.make(presentation: presentation,
-            interactionConfiguration: AppDelegate.notchInteractionConfiguration(for: state, visualState: presentation.visualState),
+            interactionConfiguration: AppDelegate.notchInteractionConfiguration(for: state, visualState: presentation.visualState,
+                                                                               bandState: presentation.bandState,
+                                                                               visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset),
             canvasGeometry: VoiceBarNotchMorphCanvasLayout.resolve(for: presentation).canvasGeometry)
     }
     private static func update(_ model: VoiceBarNotchPresentationModel, state: VoiceState,
@@ -226,6 +228,9 @@ final class UIE2EStateGallery {
             compactStatusTrailingWingWidth: base.geometry.trailingWingWidth,
             recordingLeadingWingWidth: base.geometry.leadingWingWidth,
             recordingTrailingWingWidth: base.geometry.trailingWingWidth,
+            // T1/T5/T7: the reading wings (transport left, time + meter right) in the teleprompter state too.
+            teleprompterLeadingWingWidth: base.visualState == .teleprompter ? base.geometry.leadingWingWidth : nil,
+            teleprompterTrailingWingWidth: base.visualState == .teleprompter ? base.geometry.trailingWingWidth : nil,
             keepsIdleExpanded: state.mode == .idle && !state.isCollapsed,
             coreWidth: geometry.housingFrame.width, visibleCoreOcclusionInset: geometry.visibleCoreOcclusionInset,
             virtualNotchIdleCoreHeight: geometry.virtualNotchIdleCoreHeight,

@@ -6,7 +6,8 @@ import { downloadRecognizer, cancelRecognizerDownload } from "./recognizer-downl
 import { deleteRecognizer } from "./recognizer-management";
 import { VoiceAdmissionCancelledError, cancelPendingVoiceAdmissions, withFreshDeferredVoiceAdmission, captureVoiceAdmission, UpdateBusyError } from "./update-gate-admission";
 import { residencyBusy } from "./model-residency-busy";
-import { setRecognizerResidency, selectRecognizer, unloadParakeetForMemoryPressure } from "./recognizer-controller";
+import { setRecognizerResidency, selectRecognizer } from "./recognizer-controller";
+import { respondToMemoryPressure } from "./memory-pressure";
 import { setModelUnloadWhenIdle } from "./model-residency";
 import { parakeetServer } from "./parakeet-server";
 import { readRecognizerStatus, publishRecognizerStatus, onRecognizerStatusChange, beginRecognizerMaintenance, finishRecognizerTransition } from "./recognizer-state";
@@ -48,6 +49,9 @@ import {
   seekPlayback,
   seekSpeechWord,
   pausePlayback,
+  playPreviousRead,
+  resyncPlayback,
+  setPlaybackSpeed,
   hasF5Capture,
   resumePlayback,
   isPlaybackPaused,
@@ -189,21 +193,22 @@ function stopQueuePolicy(recordingState: string, retain: boolean): "clear" | "su
   return recordingState !== "idle" ? "keep" : retain ? "suspend" : "clear";
 }
 
-// A repeated selection is Next/Stop for an existing chain, not a new voice start.
+/** Lane B (Etan, 2026-11-08 4:40 pm): Option+F5 on the text already being read (playing or paused) dedupes and
+ * tells the user, keeping the read's position; it is never Next/Stop or a second read. */
+export const ALREADY_READING = "Already reading this";
+
+// A repeated selection never starts a second voice: the same read is "Already reading this", a queued one
+// "Already queued". Different text takes the gate below and joins the narration queue.
 function selectionControl(command: SocketCommand): SocketResponse | undefined {
   if (command.cmd !== "speak_text" || command.source !== "selection" ||
       getRecordingState() !== "idle" || getEffectiveRecordingState() !== "idle" || hasActiveVoiceOperation()) return undefined;
   const admission = selectionReads.admission(selectionIdentity(command.text));
   if (admission.kind === "queued") return buildAck(command, "noop", "Already queued");
-  if (admission.kind === "playing" && !isPlaybackPaused()) {
-    // A queued successor keeps its original admission; new text takes the gate below.
-    if (selectionReads.next(admission.requestId) === "stopped") stopPlayback();
-    return buildAck(command, "accept", "selection advanced");
-  }
+  if (admission.kind === "playing") return buildAck(command, "noop", ALREADY_READING);
   return undefined;
 }
 const recognizerMutationCommands = new Set(["set_recognizer", "delete_recognizer", "download_recognizer", "set_recognizer_residency"]);
-const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay", ...recognizerMutationCommands]);
+const updateGatedCommands = new Set(["speak_text", "record", "retranscribe_last", "retranscribe_recording", "preview_tts_profile", "replay", "previous_read", ...recognizerMutationCommands]);
 export function handleSocketCommand(...args: Parameters<typeof handleSocketCommandAdmitted>): ReturnType<typeof handleSocketCommandAdmitted> {
   if ((args[0].cmd === "stop" || args[0].cmd === "cancel") && !args[0].take_id) {
     // BARE-STOP: an id-less stop still cancels an anonymous (legacy, id-less) pending record, but never a
@@ -235,8 +240,8 @@ export function handleSocketCommand(...args: Parameters<typeof handleSocketComma
       // discovered here is a no-op, not another Next gesture or another read.
       if (command.cmd === "speak_text" && command.source === "selection") {
         const duplicate = selectionReads.admission(selectionIdentity(command.text));
-        if (duplicate.kind === "queued" || (duplicate.kind === "playing" && !isPlaybackPaused()))
-          return buildAck(command, "noop", "Already queued");
+        if (duplicate.kind === "queued") return buildAck(command, "noop", "Already queued");
+        if (duplicate.kind === "playing") return buildAck(command, "noop", ALREADY_READING);
       }
       return handleSocketCommandAdmitted(...args);
     }, command.cmd === "record" ? { maxWaitMs: 20, kind: "capture", scoped: command.take_id !== undefined } :
@@ -438,6 +443,20 @@ function handleSocketCommandAdmitted(
         () => buildAck(command, "accept"),
         (error) => buildAck(command, "reject", error instanceof Error ? error.message : String(error)),
       );
+    case "previous_read": {
+      // Lane B: replay the previous narration from its first word; the read on screen waits, paused at its word.
+      if (recordingState !== "idle") return buildAck(command, "reject", "busy");
+      const result = playPreviousRead();
+      return buildAck(command, result.outcome, result.reason);
+    }
+    case "resync_playback": {
+      const result = resyncPlayback();
+      return buildAck(command, result.outcome, result.reason);
+    }
+    case "set_playback_speed": {
+      const result = setPlaybackSpeed(command.speed);
+      return buildAck(command, result.outcome, result.reason);
+    }
     case "replay": {
       if (recordingState === "recording" || recordingState === "transcribing") {
         return buildAck(command, "reject", "busy");
@@ -724,7 +743,8 @@ function handleSocketCommandAdmitted(
     case "set_recognizer_residency":
       return setRecognizerResidency(command.engine, command.action).then(result => ({ ...buildAck(command, result.outcome, result.reason), recognizer_status: result.recognizer_status }));
     case "memory_pressure":
-      return unloadParakeetForMemoryPressure().then(result => ({ ...buildAck(command, result.outcome, "reason" in result ? result.reason : undefined), recognizer_status: readRecognizerStatus() }));
+      // c8-M2: polish server first; Parakeet only when critical or persisting (src/memory-pressure.ts).
+      return respondToMemoryPressure(command.level).then(result => ({ ...buildAck(command, result.outcome, result.reason), recognizer_status: readRecognizerStatus() }));
     case "set_model_unload_when_idle": {
       try {
         setModelUnloadWhenIdle(command.value);

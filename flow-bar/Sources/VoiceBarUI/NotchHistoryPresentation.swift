@@ -59,7 +59,7 @@ public enum NotchHistoryPresentation {
     public static let rowActions: [RowAction] = [
         RowAction(kind: .copy, symbol: VoiceBarActionSymbol.copy, label: "Copy"),
         RowAction(kind: .paste, symbol: VoiceBarActionSymbol.paste, label: "Paste into the app you were using"),
-        RowAction(kind: .retranscribe, symbol: "arrow.clockwise", label: "Transcribe again"),
+        RowAction(kind: .retranscribe, symbol: "arrow.clockwise", label: "Re-transcribe"),
     ]
 
     /// The row's actions for VoiceOver and keyboard users, who never hover (UXP-3, UX pass #7): the hover buttons
@@ -84,8 +84,63 @@ public enum NotchHistoryPresentation {
         }
     }
 
+    // MARK: Categories (lane H)
+
+    public struct EmptyState: Equatable, Sendable {
+        public let title: String
+        public let detail: String
+    }
+
+    /// The selector's height and the gap under it; the list gives up this much, the drawer's height does not change.
+    public static let categorySelectorHeight: CGFloat = 22
+    public static let categorySelectorGap: CGFloat = 4
+    public static let categorySelectorFontSize: CGFloat = 11.5
+    public static let categorySelectorLabel = "History category"
+    public static let emptyRowIdentifier = "history-empty-row"
+
+    public static func categoryIdentifier(_ scope: SettingsHistoryScope) -> String { "history-category-\(scope.rawValue)" }
+
+    /// A segment's tooltip (every notch control has one, R0856-09).
+    public static func categoryTooltip(_ scope: SettingsHistoryScope) -> String {
+        switch scope {
+        case .recording: "What you dictated"
+        case .ask: "Your answers to spoken questions"
+        case .speech: "Text read aloud to you"
+        }
+    }
+
+    /// `isLoaded` is false only while a category's first archive read is still running.
+    public static func emptyState(for scope: SettingsHistoryScope, isLoaded: Bool = true) -> EmptyState {
+        guard isLoaded else { return EmptyState(title: "Loading…", detail: "") }
+        switch scope {
+        case .recording:
+            return EmptyState(title: "No dictations yet", detail: "What you dictate shows up here.")
+        case .ask:
+            return EmptyState(title: "No asks yet", detail: "Your answers to an agent's spoken questions show up here.")
+        case .speech:
+            return EmptyState(title: "Nothing read aloud yet", detail: "Text VoiceBar reads to you shows up here.")
+        }
+    }
+
     public static let openHint = "Opens this recording in the History window"
+
+    public static func openHint(for scope: SettingsHistoryScope) -> String {
+        switch scope {
+        case .recording: openHint
+        case .ask: "Opens this ask in the History window"
+        case .speech: "Opens this speech in the History window"
+        }
+    }
+
+    /// "history-row-1" for the newest row: one-based, by position in the list.
+    public static func rowAccessibilityIdentifier(index: Int) -> String { "history-row-\(index + 1)" }
     public static let extendHandleLabel = "Show more rows"
+    /// The Settings drawer's grip (0510 N4, N16): drag it to resize the drawer, or up to close it.
+    public static let drawerGripLabel = "Drag to resize, or up to close"
+    /// 0510 N6: the overpull hint, which sits in the handle's band and never over a row.
+    public static let settingsPullHint = "Release for Settings"
+    public static let settingsPullHintIdentifier = "notch-settings-pull-hint"
+    public static let settingsPullHintHeight: CGFloat = NotchHistoryMorph.handleBandHeight
 
     // V12: what a row's text column can show while its hover actions are out (the 404 pt list, the row's insets,
     // the action column and the gap before it).

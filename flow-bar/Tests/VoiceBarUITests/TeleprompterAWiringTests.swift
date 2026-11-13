@@ -37,6 +37,8 @@ final class TeleprompterAWiringTests: XCTestCase {
         var sent: [[String: Any]] = []
         state.sendCommand = { sent.append($0) }
         speaking(state, utterance: "u1", text: "Hello world")
+        // C4 F3: a word not timed yet waits for its timing (the daemon refuses untimed words); once timed, it sends.
+        state.handleEvent(words("u1", offset: 0, [("Hello", 100, 300), ("world", 600, 850)]))
         state.seekSpeechWord(utteranceID: "u1", wordIndex: 1)
         XCTAssertEqual(sent.count, 1)
         XCTAssertEqual(sent.first?["cmd"] as? String, "speech_seek")

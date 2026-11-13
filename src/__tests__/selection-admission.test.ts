@@ -9,7 +9,7 @@ import * as tts from "../tts";
 import * as input from "../input";
 import * as client from "../socket-client";
 import * as archive from "../speech-archive-live";
-import { handleSocketCommand, resetSelectionReadQueueForTests } from "../socket-handlers";
+import { ALREADY_READING, handleSocketCommand, resetSelectionReadQueueForTests } from "../socket-handlers";
 
 const spies: { mockRestore(): void }[] = [];
 afterEach(() => { resetSelectionReadQueueForTests(); for (const spy of spies.splice(0)) spy.mockRestore(); });
@@ -36,12 +36,15 @@ test("selection admission preserves unrelated reads and never emits QUEUE_CLEARE
   }
   expect(await handleSocketCommand({ cmd: "speak_text", text: "Bravo", source: "selection" })).toMatchObject({ outcome: "noop", reason: "Already queued" });
   expect(counts.at(-1)).toBe(2);
-  expect(await press("1. Alpha")).toMatchObject({ outcome: "accept" });
-  expect(started).toEqual(["Alpha", "Bravo"]);
-  expect(counts.at(-1)).toBe(1);
+  // Etan, 2026-11-08 4:40 pm: the read already playing dedupes and says so; it is never Next or a second read.
+  expect(await press("1. Alpha")).toMatchObject({ outcome: "noop", reason: "Already reading this" });
+  expect(started).toEqual(["Alpha"]);
+  expect(counts.at(-1)).toBe(2);
   expect(cleared).not.toHaveBeenCalled();
+  // Next stays the button's job.
   await handleSocketCommand({ cmd: "read_next", request_id: "q1-1" });
   expect(started).toEqual(["Alpha", "Bravo"]);
+  expect(counts.at(-1)).toBe(1);
   await handleSocketCommand({ cmd: "stop" });
   expect(counts.at(-1)).toBe(0);
   expect(cleared).toHaveBeenCalledTimes(1);
@@ -113,7 +116,7 @@ test("marker-only Markdown cannot enqueue empty speech or clear a valid followin
   expect(cleared).not.toHaveBeenCalled();
 });
 
-test("a parked same-text read starts fresh while paused queued duplicates still hint", async () => {
+test("a paused same-text read dedupes (keeps its position) while paused queued duplicates still hint", async () => {
   let paused = false;
   const started: string[] = [];
   spies.push(spyOn(input, "getRecordingState").mockReturnValue("idle"),
@@ -130,9 +133,10 @@ test("a parked same-text read starts fresh while paused queued duplicates still 
   paused = true;
   expect(await handleSocketCommand({ cmd: "speak_text", id: "duplicate", text: "Bravo", source: "selection", queue: true }))
     .toMatchObject({ outcome: "noop", reason: "Already queued" });
+  // Etan, 2026-11-08 4:40 pm: the same text over a paused read is "Already reading this"; nothing restarts.
   expect(await handleSocketCommand({ cmd: "speak_text", id: "fresh", text: "Alpha", source: "selection" }))
-    .toMatchObject({ outcome: "accept" });
-  expect(started).toEqual(["Alpha", "Alpha"]);
+    .toMatchObject({ outcome: "noop", reason: "Already reading this" });
+  expect(started).toEqual(["Alpha"]);
 });
 
 const modelPath = process.env.VOICELAYER_ADMISSION_CASES;
@@ -171,7 +175,8 @@ for (let offset = 0; offset < rows.length; offset += batchSize) {
       const response = await (row.event === "selection" ? press(row.selected, "- [x] ")
         : handleSocketCommand({ cmd: "stop", ...(row.event === "f5" ? { retain_read_queue: true } : {}) }));
       expect(response, `row ${index}`).toMatchObject(row.decision === "hint"
-        ? { outcome: "noop", reason: "Already queued" } : { outcome: row.event === "stop" && (!row.playing || row.suspended) ? "noop" : "accept" });
+        // Etan 2026-11-08: the read on screen (playing or paused) answers "Already reading this"; a pending one "Already queued".
+        ? { outcome: "noop", reason: row.selected === row.playing ? ALREADY_READING : "Already queued" } : { outcome: row.event === "stop" && (!row.playing || row.suspended) ? "noop" : "accept" });
       expect(count, `row ${index}`).toBe(row.afterPending.length);
       const launch = row.decision === "read_next" ? row.afterPlaying
         : row.decision === "speak_text" && (row.preempted || row.suspended || !row.playing) ? row.selected : 0;

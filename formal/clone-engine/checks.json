@@ -1,0 +1,40 @@
+{
+  "module": "CloneEngine",
+  "receiptRunner": true,
+  "sources": [
+    "formal/clone-engine/check.py",
+    "formal/clone-engine/check.sh",
+    "formal/legacy_receipts.py",
+    "formal/tlc.lock.json",
+    "formal/tlc_support.py",
+    "formal/setup-tlc.py",
+    "formal/tlc.sh"
+  ],
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Old": {
+      "role": "mutant",
+      "target": "EventuallyRunningIfAutostart",
+      "kind": "temporal"
+    },
+    "Mutant": {
+      "role": "mutant",
+      "target": "AtMostOneEngine",
+      "kind": "invariant"
+    },
+    "Unreaped": {
+      "role": "mutant",
+      "target": "EventuallyStopped",
+      "kind": "temporal"
+    }
+  },
+  "acceptance": [
+    "AtMostOneEngine",
+    "EventuallyRunningIfAutostart",
+    "EventuallyStopped"
+  ]
+}

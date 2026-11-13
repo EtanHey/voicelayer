@@ -31,7 +31,7 @@ _guard_spec.loader.exec_module(device_guard)
 
 # Full PASS recorded 1488.545 s (earlier run 1504 s); keep 40 min for both broad suites.
 # gate2246 run-01 reached 250 s of recording, before xcodebuild/recorder overhead.
-SCENARIO_BUDGET_SECONDS = {'full': 2400, 'focused-338': 2400, 'gate2246': 600, 'hide1': 300, 'wings-u2': 300}
+SCENARIO_BUDGET_SECONDS = {'e2e24': 900, 'full': 2400, 'focused-338': 2400, 'gate2246': 600, 'hide1': 300, 'wings-u2': 300}
 # Whole owned-process cleanup (runner SIGINT 45 s + TERM/KILL legs + late children), bounded.
 CLEANUP_BUDGET_SECONDS = 180
 # Held back from the drain for the final scan and termination proof.
@@ -71,7 +71,7 @@ SUPERVISOR_LOCK_PATH = pathlib.Path('/tmp/voicebar-ui-e2e-supervisor-%d.lock' % 
 # into QA fields (unmodified printable keys). Matching is by keycode AND full modifier set (R5).
 TEXT_ENTRY = ('text', None, ())
 SCENARIO_KEYSTROKES = {'full': (('a', 0, ('command',)), (None, 51, ()), (None, 36, ()), (None, 53, ()), TEXT_ENTRY),
-                       'focused-338': (), 'hide1': (), 'gate2246': (), 'wings-u2': ()}
+                       'e2e24': (), 'focused-338': (), 'hide1': (), 'gate2246': (), 'wings-u2': ()}
 # NSEvent/CGEvent modifier bits as stored in com.apple.symbolichotkeys parameters[2].
 HOTKEY_MODIFIERS = {'shift': 1 << 17, 'control': 1 << 18, 'option': 1 << 19, 'command': 1 << 20, 'function': 1 << 23}
 HOTKEY_CAPS_LOCK = 1 << 16  # Ignored for matching; any other unknown bit is NOT_PROVEN.
@@ -1495,7 +1495,7 @@ class NativeHost:
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=pathlib.Path)
-    parser.add_argument('--scenario', default='full', choices=['full', 'hide1', 'gate2246', 'focused-338', 'wings-u2'])
+    parser.add_argument('--scenario', default='full', choices=['e2e24', 'full', 'hide1', 'gate2246', 'focused-338', 'wings-u2'])
     args = parser.parse_args(argv)
     try:
         # Acquire before host construction or reading/changing workstation mute;

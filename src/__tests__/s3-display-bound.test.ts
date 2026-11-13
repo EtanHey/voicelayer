@@ -41,7 +41,8 @@ describe("S3.1 structured display bounds", () => {
       expect(entry.text).toBe(display.text);
       expect(entry.display === undefined).toBe(true);
       expect(readFileSync(entry.file, "utf8")).toBe("retained audio");
-      expect(historyReplayMetadata(entry)).toEqual({ text: display.text, voice: "fixture" });
+      expect(historyReplayMetadata(entry)).toEqual({ text: display.text, voice: "fixture",
+        historyRef: { id: entry.id, timestamp: entry.timestamp } });
     }
   });
 
@@ -68,7 +69,8 @@ describe("S3.1 structured display bounds", () => {
     const entry = loadHistory().find(e => e.id === ref?.id);
     if (!entry) throw new Error("history fixture missing");
     expect(entry.display).toEqual(display);
-    expect(historyReplayMetadata(entry)).toEqual({ text: display.text, voice: "fixture", display });
+    expect(historyReplayMetadata(entry)).toEqual({ text: display.text, voice: "fixture", display,
+      historyRef: { id: entry.id, timestamp: entry.timestamp } });
   });
 
   for (const extraBytes of [0, 1]) {

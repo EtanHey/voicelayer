@@ -41,11 +41,12 @@ const defaults: RecognizerTransitionDeps = {
 
 /** Start after the daemon accepts commands. Maintenance makes inference wait
  * for this same load; capture admission never waits for the boot task. */
-export async function warmSelectedRecognizer(deps: RecognizerTransitionDeps = defaults): Promise<void> {
+export async function warmSelectedRecognizer(deps: RecognizerTransitionDeps = defaults) {
   const status = readRecognizerStatus();
   if (!(deps.assetsPresent?.(status.desired) ?? status.engines[status.desired].assets_present)) return;
   const result = await setRecognizerResidency(status.desired, "load", deps);
   console.error("[voicelayer] " + JSON.stringify({ event: "recognizer_boot_warmup", engine: status.desired, outcome: result.outcome, reason: result.reason ?? null }));
+  return result;
 }
 
 export async function unloadParakeetForMemoryPressure() {
@@ -119,6 +120,19 @@ async function selectRecognizerOwned(value: Recognizer, deps: RecognizerTransiti
       assertRecognizerOwnerOpen();
       noteRecognizerEngine(value, { phase: "ready", available: true, error: null }); noteRecognizerEffective(value);
     } catch (startupError) {
+      // A failed W selection must not strand the next daemon on broken W.
+      // Keep P's explicit-selection/recovery contract unchanged.
+      if (value === "whisper" && previous.desired === "parakeet") {
+        try {
+          persistRecognizer(previous.desired);
+          console.error("[voicelayer] " + JSON.stringify({ event: "recognizer_selection_rolled_back",
+            requested: value, restored_desired: previous.desired, cause: "whisper-startup-failed" }));
+        } catch {
+          outcome = "reject"; reason = "settings-write-failed";
+          console.error("[voicelayer] " + JSON.stringify({ event: "recognizer_selection_rollback_write_failed",
+            requested: value, restore_engine: previous.desired, cause: reason }));
+        }
+      }
       if (recognizerOwnerClosed()) { await stop(value); throw new Error("owner-shutdown"); }
       const failureReason = value + "-startup-failed";
       const attempt = startupError instanceof Error ? { name: startupError.name, message: startupError.message,
@@ -144,6 +158,8 @@ async function selectRecognizerOwned(value: Recognizer, deps: RecognizerTransiti
           assertRecognizerOwnerOpen();
           setRecognizerRecovery({ engine: restore, failed: value, attempt, evidencePath });
           noteRecognizerEngine(restore, { phase: "ready", available: true, error: null }); noteRecognizerEffective(restore, failureReason);
+          if (reason === "settings-write-failed") console.error("[voicelayer] " + JSON.stringify({
+            event: "recognizer_recovered_after_rollback_write_failure", effective: restore, persistence_error: reason }));
         } catch {
           await stop(restore);
           assertRecognizerOwnerOpen();
@@ -151,6 +167,7 @@ async function selectRecognizerOwned(value: Recognizer, deps: RecognizerTransiti
           noteRecognizerEffective(null, failureReason);
         }
       }
+      if (reason === "settings-write-failed") noteRecognizerEngine(value, { error: reason });
     }
   } catch (error) {
     reason = error instanceof Error ? error.message : "cleanup-unconfirmed"; outcome = "reject";

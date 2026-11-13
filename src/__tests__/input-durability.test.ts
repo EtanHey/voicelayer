@@ -214,7 +214,8 @@ async function waitUntil(
   }
 }
 
-function installFakeRecorder(chunks: Uint8Array[], keepStdoutOpen: boolean, beforeMicOpen?: () => void) {
+function installFakeRecorder(chunks: Uint8Array[], keepStdoutOpen: boolean, beforeMicOpen?: () => void,
+  stderrScript: { writes: string[]; afterMs?: number } = { writes: [] }) {
   let spawned = false;
   let stdoutController: ReadableStreamDefaultController<Uint8Array> | undefined;
   let stderrController: ReadableStreamDefaultController<Uint8Array> | undefined;
@@ -260,14 +261,22 @@ function installFakeRecorder(chunks: Uint8Array[], keepStdoutOpen: boolean, befo
       stderr: new ReadableStream<Uint8Array>({
         start(controller) {
           stderrController = controller;
-          controller.close();
+          const write = () => {
+            try {
+              for (const text of stderrScript.writes) controller.enqueue(new TextEncoder().encode(text));
+              controller.close();
+            } catch {}
+          };
+          if (stderrScript.afterMs === undefined) write();
+          else setTimeout(write, stderrScript.afterMs);
         },
       }),
       kill: () => {
         try {
           stdoutController?.close();
         } catch {}
-        try {
+        // A delayed stderr script models lines still in the pipe after the kill.
+        if (stderrScript.afterMs === undefined) try {
           stderrController?.close();
         } catch {}
       },
@@ -879,7 +888,7 @@ describe("input recording durability", () => {
     clearCancelSignal();
     if (process.env.PRIV11_NONCE) {
       const tokens = [`CANARY-TXT-${process.env.PRIV11_NONCE}`, `CANARY-HOME-${process.env.PRIV11_NONCE}`];
-      expect(diagnosticLeaks(tmpRoot, tokens, tmpRoot), "Canary in diagnostics before fixture cleanup").toEqual([]);
+      expect(diagnosticLeaks(tmpRoot, tokens, tmpRoot, process.env.QA_VOICE_RECORDINGS_DIR), "Canary in diagnostics before fixture cleanup").toEqual([]);
     }
     rmSync(tmpRoot, { recursive: true, force: true });
     if (savedRetainedPath === undefined) {
@@ -920,7 +929,7 @@ describe("input recording durability", () => {
             archiveDir = join(process.env.QA_VOICE_RECORDINGS_DIR!, "2026-06-25", "2026-06-25T10-11-12-000Z-abcd1234");
             mkdirSync(archiveDir, { recursive: true, mode: 0o700 });
             const audioPath = join(archiveDir, "audio.wav");
-            writeFileSync(audioPath, makeWav(makePcmChunk()));
+            writeFileSync(audioPath, makeWav(makePcmChunk()), { mode: 0o600 });
             backendMode = "hang";
             const pending = input.retranscribeRecordingCapture(audioPath);
             await waitUntil(() => finishHangingTranscription !== undefined, "private archived result");
@@ -3563,6 +3572,74 @@ describe("input recording durability", () => {
       }
     });
   }
+
+  // c8-M3: a recorder that reports CoreAudio overruns leaves that fact on the take.
+  const OVERRUN = "rec WARN coreaudio: coreaudio: unhandled buffer overrun.  Data discarded.\n";
+  for (const timing of ["during the take", "after the row exists"] as const) {
+    it(`c8-M3 records recorder overruns in the archive (${timing}) and says audio was dropped`, async () => {
+      vadProcessSpy!.mockResolvedValue(0.95);
+      installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false, undefined, {
+        // Two overruns, the second split across two pipe writes.
+        writes: [OVERRUN, OVERRUN.slice(0, 30), OVERRUN.slice(30), "rec INFO unrelated\n"],
+        ...(timing === "after the row exists" ? { afterMs: 400 } : {}),
+      });
+      const { waitForInput } = await import("../input");
+      let archive: string | undefined;
+      await waitForInput(2_000, "standard", true, { archiveSource: "voicebar", onArchiveCreated: path => { archive = path; } });
+      const metadataPath = join(archive!, "metadata.json");
+      await waitUntil(() => JSON.parse(readFileSync(metadataPath, "utf8")).capture_overruns?.count === 2,
+        "overruns stamped on the take", 4_000);
+      const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
+      // RM-overrun P2: the read position of a stderr line is not where audio was lost; no position.
+      expect(metadata.capture_overruns).toEqual({ count: 2 });
+      expect(metadata.capture_overrun_note).toBe("The system dropped audio during this take (2 times). The transcript may be missing words.");
+      if (timing === "after the row exists") {
+        expect(broadcasts.some(e => e.type === "archive_metadata_updated" && e.recording_path === join(archive!, "audio.wav"))).toBe(true);
+      }
+    });
+  }
+
+  // RM-overrun P2: a burst of late overrun lines must not become a burst of synchronous metadata writes
+  // on the event loop that drains the next recorder. Bookkeeping per line is in memory only.
+  it("c8-M3 a late burst of overrun lines costs at most one metadata write and one log line", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    const burst = Array.from({ length: 60 }, () => OVERRUN);
+    installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false, undefined, { writes: burst, afterMs: 400 });
+    const counts: number[] = [];
+    const realRename = fsModule.renameSync;
+    const renameSpy = spyOn(fsModule, "renameSync").mockImplementation(((from: fsModule.PathLike, to: fsModule.PathLike) => {
+      if (String(to).endsWith("metadata.json")) {
+        try { const count = JSON.parse(readFileSync(from, "utf8")).capture_overruns?.count; if (count !== undefined) counts.push(count); } catch {}
+      }
+      return realRename(from, to);
+    }) as typeof fsModule.renameSync);
+    const log = spyOn(console, "error");
+    try {
+      const { waitForInput } = await import("../input");
+      let archive: string | undefined;
+      await waitForInput(2_000, "standard", true, { archiveSource: "voicebar", onArchiveCreated: path => { archive = path; } });
+      await waitUntil(() => JSON.parse(readFileSync(join(archive!, "metadata.json"), "utf8")).capture_overruns?.count === 60,
+        "final overrun count stamped", 4_000);
+      await Bun.sleep(100);
+      const updates = counts.filter((count, i) => count !== counts[i - 1]);
+      expect(updates).toEqual([60]);
+      // One summary line from this lane; the pre-existing end-of-take `rec stderr:` dump is one more call.
+      const lines = log.mock.calls.map(call => call.map(String).join(" "));
+      expect(lines.filter(line => line.includes("CoreAudio buffer overrun"))).toHaveLength(1);
+      expect(lines.filter(line => /overrun/i.test(line)).length).toBeLessThanOrEqual(2);
+    } finally { renameSpy.mockRestore(); log.mockRestore(); }
+  });
+
+  it("c8-M3 a take without overruns carries no overrun note", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+    const { waitForInput } = await import("../input");
+    let archive: string | undefined;
+    await waitForInput(2_000, "standard", true, { archiveSource: "voicebar", onArchiveCreated: path => { archive = path; } });
+    const metadata = JSON.parse(readFileSync(join(archive!, "metadata.json"), "utf8"));
+    expect(metadata.capture_overruns).toBeUndefined();
+    expect(metadata.capture_overrun_note).toBeUndefined();
+  });
 
   it("finalizes the pre-STT VoiceBar archive in place without a duplicate row", async () => {
     vadProcessSpy!.mockResolvedValue(0.95);

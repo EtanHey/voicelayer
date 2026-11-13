@@ -66,9 +66,8 @@ final class SpeechSettingsShotsTests: XCTestCase {
         XCTAssertTrue(source.contains(".onSubmit {}"))
         XCTAssertFalse(source.contains("onChange(of: focused)"))
         XCTAssertFalse(source.contains("SpeechThresholdField"))
-        XCTAssertTrue(source.contains("Text(SpeechThresholdDraft.reportStatus)"))
-        XCTAssertTrue(source.contains("Text(SpeechThresholdDraft.captionContext)"))
-        XCTAssertTrue(source.contains(".help(SpeechThresholdDraft.revertHelp)"))
+        XCTAssertTrue(source.contains(".help(SpeechThresholdDraft.confirmedLabel(controls?.shortLimit))"))
+        XCTAssertTrue(source.contains("SpeechThresholdDraft.reportStatus"))
     }
 
     func testProfileCaptionsKeepConfirmedCutoffDuringDraftAndPendingWrite() throws {

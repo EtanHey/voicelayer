@@ -1,3 +1,9 @@
+import {
+  INTERROGATIVE_OPENERS,
+  QUESTION_AUX_OPENERS,
+  isInterrogative,
+  lowerWords,
+} from "./stt-interrogative";
 import { questionBoundaryIndices } from "./stt-polish";
 import {
   continuesSameClause,
@@ -20,102 +26,6 @@ import {
  * sentence splits) remains the job of the LLM polish layer when available — this
  * is the deterministic floor that holds when it is not.
  */
-
-// Question words that, when they START an utterance, make it interrogative.
-const INTERROGATIVE_OPENERS = new Set([
-  "what",
-  "what's",
-  "whats",
-  "why",
-  "why's",
-  "how",
-  "how's",
-  "hows",
-  "when",
-  "where",
-  "where's",
-  "who",
-  "who's",
-  "whom",
-  "whose",
-  "which",
-]);
-
-// Yes/no questions open with an auxiliary verb. A BARE aux opener is ambiguous
-// with an imperative ("do not use wait_for_all", "have a nice day"), so we only
-// treat aux openers as questions when the SECOND word is a subject pronoun /
-// demonstrative ("do you ...", "is this ...", "should I ..."). This honours the
-// standing rule that real questions must never be statement-ized, while leaving
-// imperatives ("do not ...") as statements.
-const QUESTION_AUX_OPENERS = new Set([
-  "do",
-  "does",
-  "did",
-  "is",
-  "are",
-  "am",
-  "was",
-  "were",
-  "can",
-  "could",
-  "should",
-  "would",
-  "will",
-  "have",
-  "has",
-  "had",
-  "may",
-  "might",
-  "shall",
-  // Negated/contracted forms whisper emits before a subject ("isn't it",
-  // "don't you", "can't we"). lowerWords normalizes curly apostrophes to ';
-  // the apostrophe-less variants cover whisper dropping the apostrophe.
-  "isn't",
-  "isnt",
-  "aren't",
-  "arent",
-  "wasn't",
-  "wasnt",
-  "weren't",
-  "werent",
-  "don't",
-  "dont",
-  "doesn't",
-  "doesnt",
-  "didn't",
-  "didnt",
-  "can't",
-  "cant",
-  "couldn't",
-  "couldnt",
-  "shouldn't",
-  "shouldnt",
-  "wouldn't",
-  "wouldnt",
-  "won't",
-  "wont",
-  "haven't",
-  "havent",
-  "hasn't",
-  "hasnt",
-  "hadn't",
-  "hadnt",
-]);
-
-const QUESTION_SUBJECTS = new Set([
-  "you",
-  "i",
-  "we",
-  "it",
-  "he",
-  "she",
-  "they",
-  "this",
-  "that",
-  "there",
-  "these",
-  "those",
-]);
 
 const LATER_STATEMENT_PREDICATES = new Map<string, Set<string>>([
   ["i", new Set(["am", "cannot", "don't", "dont", "guess", "had", "have", "need", "think", "want", "was", "will"])],
@@ -154,23 +64,6 @@ function isBareNonProseToken(text: string): boolean {
   if (slashCount >= 2) return true;
   if (slashCount === 1 && text.includes(".")) return true;
   return false;
-}
-
-function lowerWords(text: string, limit: number): string[] {
-  return (text.toLowerCase().match(/[\p{L}\p{N}''’-]+/gu) ?? [])
-    .slice(0, limit)
-    .map((word) => word.replace(/[''’]/g, "'"));
-}
-
-function isInterrogative(text: string): boolean {
-  const [first, second] = lowerWords(text, 2);
-  if (!first) return false;
-  if (INTERROGATIVE_OPENERS.has(first)) return true;
-  return (
-    QUESTION_AUX_OPENERS.has(first) &&
-    second !== undefined &&
-    QUESTION_SUBJECTS.has(second)
-  );
 }
 
 function hasLaterStatementOpener(text: string): boolean {

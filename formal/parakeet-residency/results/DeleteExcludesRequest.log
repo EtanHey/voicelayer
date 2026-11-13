@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "DeleteExcludesRequest",
+  "status": "EXPECTED_FAIL",
+  "generated": 8,
+  "distinct": 8
+}

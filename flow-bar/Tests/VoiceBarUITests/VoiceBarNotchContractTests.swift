@@ -46,12 +46,10 @@ final class VoiceBarNotchContractTests: XCTestCase {
                 coreWidth: 185,
                 topHeight: 32,
                 leadingWingWidth: 0,
-                // T3: time, Show/Hide teleprompter and 1× (Etan: "both wings slightly wider"); the panel hugs
-                // text + scrubber + handle.
-                trailingWingWidth: 109.5,
-                bodyLeadingExtent: 140,
-                bodyTrailingExtent: 140,
-                lowerSurfaceHeight: 163
+                trailingWingWidth: 73.5,
+                bodyLeadingExtent: 180,
+                bodyTrailingExtent: 180,
+                lowerSurfaceHeight: 163 // T8 (Etan QA 2026-11-09): no footer row, tight gaps (was 196)
             )
         )
     }
@@ -70,9 +68,9 @@ final class VoiceBarNotchContractTests: XCTestCase {
         XCTAssertEqual(hover.totalWidth, 332)
         XCTAssertEqual(recording.topWidth, 332)
         XCTAssertEqual(recording.totalWidth, 332)
-        XCTAssertEqual(teleprompter.topWidth, 294.5)
-        XCTAssertEqual(teleprompter.bodyWidth, 465)
-        XCTAssertEqual(teleprompter.totalWidth, 465)
+        XCTAssertEqual(teleprompter.topWidth, 258.5)
+        XCTAssertEqual(teleprompter.bodyWidth, 545, "2.4: the widened teleprompter")
+        XCTAssertEqual(teleprompter.totalWidth, 545)
         XCTAssertEqual(teleprompter.totalHeight, 195)
     }
 
@@ -120,7 +118,9 @@ final class VoiceBarNotchContractTests: XCTestCase {
         XCTAssertEqual(teleprompter.leadingWingWidth, 0)
         XCTAssertEqual(
             teleprompter.trailingWingWidth,
-            VoiceBarNotchContract.readingTrailingWingWidth
+            VoiceBarNotchContract.teleprompterWaveformWingWidth(
+                visibleCoreOcclusionInset: 0
+            )
         )
         XCTAssertGreaterThan(teleprompter.trailingWingWidth, teleprompter.leadingWingWidth)
 
@@ -201,7 +201,9 @@ final class VoiceBarNotchContractTests: XCTestCase {
             XCTAssertEqual(leading.outerInset, 14)
             // 2.3 U2: the fixed right wing centres its content between equal 8 pt insets.
             XCTAssertEqual(trailing.coreInset, VoiceBarNotchContract.fixedWingContentInset)
-            XCTAssertEqual(trailing.outerInset, VoiceBarNotchContract.fixedWingContentInset)
+            // C7-W: the recording row ends at the left wing's 14 pt outer inset, pinned to it.
+            XCTAssertEqual(trailing.outerInset, state == .recording ? 14 : VoiceBarNotchContract.fixedWingContentInset)
+            XCTAssertEqual(trailing.alignment, state == .recording ? .outer : .center)
         }
 
         let teleprompter = material.wingContentLayout(
@@ -225,7 +227,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
         // wing's content starts past the glass-hidden inset, 8 pt clear of the real notch edge.
         let recording = material.wingContentLayout(for: .trailing, state: .recording, visibleCoreOcclusionInset: 8.5)
         XCTAssertEqual(recording.coreInset, 8.5 + VoiceBarNotchContract.fixedWingContentInset)
-        XCTAssertEqual(recording.outerInset, VoiceBarNotchContract.fixedWingContentInset)
+        XCTAssertEqual(recording.outerInset, material.compactContentInset)
     }
 
     func testTeleprompterTextWidthTracksTheMeasuredHardwareCoreWidth() {

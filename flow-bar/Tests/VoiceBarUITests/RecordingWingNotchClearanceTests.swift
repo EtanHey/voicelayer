@@ -34,20 +34,19 @@ final class RecordingWingNotchClearanceTests: XCTestCase {
         // In wing coordinates from the drawn core edge: the physical notch edge is at the occlusion inset.
         let physicalEdge = screen.visibleCoreOcclusionInset
         XCTAssertEqual(screen.housingFrame.maxX + physicalEdge, 857, accuracy: 0.001, "auxiliaryTopRightArea.minX")
-        for time in ["0:00", "0:54", "9:59", "10m", "99h"] {
-            let text = ceil((time as NSString).size(withAttributes: [.font: VoiceBarRecordingWingLabel.timeFont]).width)
+        // X1-23 (C6 L3): long clocks keep minutes and seconds in a narrower face of the same size.
+        for time in ["0:00", "0:54", "9:59", "10:00", "59:59"] {
+            let text = ceil((time as NSString).size(withAttributes: [.font: VoiceBarClockFace.nsFont(for: time)]).width)
             XCTAssertLessThanOrEqual(text, VoiceBarRecordingWingLabel.width, "\(time) fits its region")
             // The time region is trailing-aligned: its text starts where the region's spare width ends.
             let textMinX = slot.coreInset + (VoiceBarRecordingWingLabel.width - text)
             XCTAssertGreaterThanOrEqual(textMinX - physicalEdge, 8, "\(time) keeps ≥ 8 pt from the real notch")
         }
-        // The meter is centred in the visible wing (from the notch edge to the outer edge), within 2 pt.
         let wing = p.geometry.trailingWingWidth
-        let meterMinX = slot.coreInset + VoiceBarRecordingWingLabel.width + VoiceBarRecordingWingLabel.meterGap
-        XCTAssertEqual(meterMinX + WaveformLayout.viewportWidth / 2, (physicalEdge + wing) / 2, accuracy: 2)
-        XCTAssertEqual(meterMinX + WaveformLayout.viewportWidth + VoiceBarRecordingWingLabel.meterGap +
-                       VoiceBarRecordingWingLabel.outerRegionWidth + slot.outerInset, wing, accuracy: 0.001,
-                       "the regions fill the wing exactly")
+        XCTAssertEqual(wing, p.geometry.leadingWingWidth, "QA 0449: equal space either side of the notch")
+        let contentWidth = VoiceBarRecordingWingLabel.width + VoiceBarRecordingWingLabel.recordingMeterGap + WaveformLayout.viewportWidth
+        XCTAssertEqual(slot.coreInset + contentWidth + slot.outerInset, wing, accuracy: 0.001,
+                       "the row fills the visible wing without an empty outer region")
         XCTAssertLessThanOrEqual(wing, VoiceBarNotchContract.morphCanvasWingCapacity, "inside the morph canvas")
         XCTAssertLessThanOrEqual(wing, 132)
     }
@@ -61,7 +60,9 @@ final class RecordingWingNotchClearanceTests: XCTestCase {
         let p = recording(screen)
         let slot = VoiceBarNotchContract.material.wingContentLayout(for: .trailing, state: .recording)
         XCTAssertEqual(slot.coreInset, VoiceBarNotchContract.fixedWingContentInset)
-        XCTAssertEqual(slot.coreInset, slot.outerInset, "equal insets: the meter is centred in the whole wing")
+        // C7-W: the meter ends at the left wing's outer inset (Stop's distance from the band's left edge).
+        XCTAssertEqual(slot.outerInset, VoiceBarNotchContract.material.compactContentInset)
+        XCTAssertEqual(slot.alignment, .outer)
         XCTAssertEqual(p.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth(visibleCoreOcclusionInset: 0),
                        accuracy: 0.001)
     }
@@ -73,8 +74,9 @@ final class RecordingWingNotchClearanceTests: XCTestCase {
         let source = try String(contentsOf: url, encoding: .utf8)
         let trailing = try XCTUnwrap(source.components(separatedBy: "private var notchTrailingContent").dropFirst().first)
             .components(separatedBy: "private var notchCompactStatusContent")[0]
-        let recording = try XCTUnwrap(trailing.components(separatedBy: "case .recording:").dropFirst().first)
-            .components(separatedBy: "case .compactStatus")[0]
+        // c9-P: recording and transcribing share one meter row; the name rides on the time while recording only.
+        let recording = try XCTUnwrap(trailing.components(separatedBy: "private var recordingMeterRow").dropFirst().first)
+            .components(separatedBy: "private var notchTrailingStatusContent")[0]
         XCTAssertFalse(recording.contains("VoiceBarRecordingMicrophoneRegion"), "no visible microphone name")
         XCTAssertTrue(recording.contains("microphoneName: state.recordingMicrophoneName"), "the name rides on the time")
         let controls = try String(contentsOf: url.deletingLastPathComponent().appendingPathComponent("VoiceBarWingControls.swift"),

@@ -39,13 +39,20 @@ const safe = [
   ['known identifier','תרים את ה handle socket command','תרים את ה-handleSocketCommand'],
   ['literal path','Read .env and src/input.ts before release.','Read .env and src/input.ts before release.'],
   ['fragment and multiplicity','Keep the fu… fragment and both repeated repeated words.','Keep the fu… fragment, and both repeated repeated words.'],
-  ['pure prose dash','Keep all words here - this clause must survive.','Keep all words here — this clause must survive.'],
+  ['pure prose dash','Keep all words here - this clause must survive.','Keep all words here - this clause must survive.'],
   // Regression guard: Etan 11-06 shapes; rules+polish already preserve these on 2.3.
   ['cutoff and retraction chain','it reads pub… publishing… published in this booklet','It reads pub… publishing… published in this booklet.'],
   ['article hesitation','the… the response is ready','The… the response is ready.'],
   ['contraction hesitation',"we'll… we'll find it","We'll… we'll find it."],
 ] as const;
 for(const surface of ['dictation','voice_ask'] as const) {
+  test(`${surface} validator accepts a proposed em dash before the delivery boundary`,async()=>{
+    const raw='Keep all words here - this clause must survive.';
+    reply='Keep all words here — this clause must survive.';
+    const result=await polishTranscriptionText({rawText:raw,cleanedText:raw,surface,env});
+    expect(result.status).toBe('applied');
+    expect(result.text).toBe(reply);
+  });
   for(const [label,raw,candidate] of rejects) test(`${surface} full caller conserves ${label}`,async()=>{
     reply=candidate;
     const result=await finalizeTranscriptionResultForSurface(raw,surface,env);

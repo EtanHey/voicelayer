@@ -281,7 +281,7 @@ describe("comma-wrapped spoken commands", () => {
 
     // Macroscope round 3. A WORD LOSS, and a direct violation of the lead's
     // ruling: a comma survives wherever Etan actually said "comma".
-    it("keeps a mark the speaker dictated AFTER a line break", () => {
+    it("preserves the dictated break before a spoken comma or period without capitalizing after the comma", () => {
       expect(applyRules("foo new line comma bar")).toBe("Foo\n, bar");
       expect(applyRules("foo new line period bar")).toBe("Foo\n. Bar");
     });

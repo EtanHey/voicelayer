@@ -1,0 +1,16 @@
+{
+  "role": "mutant",
+  "kind": "temporal",
+  "target": "DrawerAlwaysClosable",
+  "status": "EXPECTED_FAIL",
+  "generated": 93,
+  "distinct": 12,
+  "trace": [
+    "/\\ modal = FALSE\n/\\ settings = FALSE\n/\\ recording = FALSE\n/\\ history = FALSE\n/\\ captureClosedDrawer = FALSE\n/\\ teleprompter = FALSE",
+    "/\\ modal = FALSE\n/\\ settings = FALSE\n/\\ recording = FALSE\n/\\ history = TRUE\n/\\ captureClosedDrawer = FALSE\n/\\ teleprompter = FALSE",
+    "/\\ modal = FALSE\n/\\ settings = FALSE\n/\\ recording = TRUE\n/\\ history = TRUE\n/\\ captureClosedDrawer = FALSE\n/\\ teleprompter = FALSE",
+    "/\\ modal = FALSE\n/\\ settings = FALSE\n/\\ recording = FALSE\n/\\ history = TRUE\n/\\ captureClosedDrawer = FALSE\n/\\ teleprompter = FALSE",
+    "/\\ modal = FALSE\n/\\ settings = TRUE\n/\\ recording = FALSE\n/\\ history = FALSE\n/\\ captureClosedDrawer = FALSE\n/\\ teleprompter = FALSE",
+    "/\\ modal = FALSE\n/\\ settings = TRUE\n/\\ recording = TRUE\n/\\ history = FALSE\n/\\ captureClosedDrawer = FALSE\n/\\ teleprompter = FALSE\n\nBack to state 3: <OpenHistory line 42, col 5 to line 45, col 72 of module NotchSurface>"
+  ]
+}

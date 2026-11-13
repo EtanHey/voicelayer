@@ -58,6 +58,27 @@ public struct RecognizerProvenance: Equatable, Sendable {
         self.init(firstEngine: first ?? writer, writer: writer ?? first, fallbackReason: reason)
     }
 
+    /// History keeps the failure and its machine reason visible, including future codes.
+    public var errorNotice: String? {
+        guard let writer, let first = firstEngine, first != writer else { return nil }
+        let causes = [
+            "parakeet-startup-failed": "failed to start", "whisper-startup-failed": "failed to start",
+            "provider-error": "reported an error", "server-error": "reported a server error",
+            "timeout": "took too long", "provider-timeout": "took too long",
+            "input-format": "could not read the audio format", "input-identity": "returned mismatched audio evidence",
+            "language": "could not use the requested language", "unsupported-language": "does not support this language",
+            "prompt": "could not use the requested prompt", "uncovered-tail": "missed the ending",
+            "uncovered-internal": "missed part of the recording", "sparse-response": "returned too few words",
+            "invalid-timing": "returned invalid word timings", "incomplete-response": "returned only part of the recording",
+            "provider-partial": "returned only part of the recording", "empty-response": "returned no text",
+            "invalid-response": "returned an invalid response", "provider-invalid": "returned an invalid response",
+            "zero-pcm-response": "received audio containing only silence"
+        ]
+        let reason = fallbackReason ?? "unknown"
+        let cause = causes[reason] ?? "could not be used (\(reason))"
+        return "\(first.name) \(cause), so \(writer.name) transcribed this recording."
+    }
+
     /// One plain sentence about how this transcript was made, or nil when the engine asked first wrote it alone.
     public var notice: String? { notice(about: "this recording") }
 

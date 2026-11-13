@@ -1,3 +1,4 @@
+import AppKit
 @testable import VoiceBar
 @testable import VoiceBarUI
 import XCTest
@@ -7,6 +8,11 @@ import XCTest
 /// F5 / tap route stays closed until the bar is shown again.
 @MainActor
 final class HiddenVoiceBarTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        _ = NSApplication.shared
+    }
+
     private let until = Date(timeIntervalSince1970: 1_790_000_000)
 
     private func connectedState() -> VoiceState {
@@ -27,7 +33,7 @@ final class HiddenVoiceBarTests: XCTestCase {
     // MARK: - Copy
 
     /// BARE-STOP: Hide over speech sends a speech-scoped stop. An id-less stop must never be able to land
-    /// on a dictation take that opened a moment earlier; a capture Hide means to end goes through cancel.
+    /// on a dictation take that opened a moment earlier; an unfinished take refuses Hide.
     func testHideOverSpeechSendsASpeechScopedStop() {
         let state = connectedState()
         var commands: [[String: Any]] = []
@@ -95,7 +101,7 @@ final class HiddenVoiceBarTests: XCTestCase {
 
     // MARK: - F5 stays off while hidden
 
-    func testHideDropsQueuedAndOpeningTakesBeforeCaptureCanStart() throws {
+    func testHidePreservesQueuedAndOpeningTakesUntilTheirNormalRelease() throws {
         for opensBeforeHide in [false, true] {
             let state = connectedState()
             state.frontmostAppProvider = { nil }
@@ -113,18 +119,29 @@ final class HiddenVoiceBarTests: XCTestCase {
             state.record(pressToTalk: true)
             let b = try XCTUnwrap(state.queuedRecordingTakeID)
             if opensBeforeHide { snapshot("processing") }
+            let queuedBeforeHide = state.queuedRecordingTakeID
+            let modeBeforeHide = state.mode
+            let commandsBeforeHide = commands.count
+
             state.snooze(until: until)
+
+            XCTAssertFalse(state.isHidden)
+            XCTAssertNil(state.hiddenUntil)
+            XCTAssertEqual(state.mode, modeBeforeHide)
+            XCTAssertEqual(state.queuedRecordingTakeID, queuedBeforeHide)
+            XCTAssertEqual(commands.count, commandsBeforeHide, "Refused Hide sends no cancellation")
+            snapshot("processing")
+            XCTAssertEqual(recordCommands(commands), 2, "The queued capture opens exactly once on normal release")
             XCTAssertNil(state.queuedRecordingTakeID)
-            let startsBeforeRelease = recordCommands(commands)
+            XCTAssertEqual(state.mode, .recording)
+            XCTAssertFalse(commands.contains { $0["cmd"] as? String == "cancel" && $0["take_id"] as? String == b })
+
+            let commandsAfterRelease = commands.count
+            state.snooze(until: until)
+            XCTAssertFalse(state.isHidden)
+            XCTAssertEqual(commands.count, commandsAfterRelease)
             snapshot("processing")
-            XCTAssertEqual(recordCommands(commands), startsBeforeRelease)
-            XCTAssertNotEqual(state.mode, .recording)
-            if opensBeforeHide {
-                XCTAssertTrue(commands.contains { $0["cmd"] as? String == "cancel" && $0["take_id"] as? String == b })
-            }
-            state.unsnooze()
-            snapshot("processing")
-            XCTAssertEqual(recordCommands(commands), startsBeforeRelease)
+            XCTAssertEqual(recordCommands(commands), 2, "Repeated snapshots cannot duplicate the next take")
         }
     }
 

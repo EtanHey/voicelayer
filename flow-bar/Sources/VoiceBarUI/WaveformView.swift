@@ -83,11 +83,54 @@ public struct WaveformEnvelopeFollower {
     }
 }
 
+/// c9-P: how far the meter has handed over from its live drive (the red level meter) to the processing ripple.
+/// The bars stay one view: their heights and colour blend over `duration`, so nothing leaves or re-enters the slot.
+/// The hand-over only runs forward. A meter that first appears transcribing shows the ripple at once, and any frame
+/// that is not processing (live, booting, a new take) is the live meter at once, so the ripple never drives a
+/// recording (c9-P round 2, F2). The hand-over's clock starts at the first frame after the switch, never at the
+/// frame before it, so a paused or unsampled meter still gets the whole hand-over (F3).
+public struct WaveformProcessingHandover {
+    public static let duration = 0.45
+    private var isProcessing: Bool?
+    /// The first frame drawn processing after a live one; nil once there is nothing left to hand over.
+    private var edgeTime: Double?
+
+    public init() {}
+
+    /// The eased progress (0 = live drive, 1 = processing ripple) at `time`.
+    @discardableResult
+    public mutating func progress(isProcessing processing: Bool, at time: Double) -> Double {
+        let wasProcessing = isProcessing
+        isProcessing = processing
+        guard processing else {
+            edgeTime = nil
+            return 0
+        }
+        guard let wasProcessing else { return 1 } // first frame: already transcribing
+        if !wasProcessing { edgeTime = time.isFinite ? time : nil }
+        guard let edge = edgeTime, time.isFinite else { return 1 }
+        let linear = min(1, max(0, time - edge) / Self.duration)
+        if linear >= 1 { edgeTime = nil }
+        return Self.eased(linear)
+    }
+
+    /// Ease-in-out on the colour and drive, so the hand-over neither snaps at its start nor stops dead.
+    public static func eased(_ value: Double) -> Double {
+        let x = min(1, max(0, value))
+        return x * x * (3 - 2 * x)
+    }
+}
+
 private final class WaveformEnvelopeStore: ObservableObject {
     private var follower = WaveformEnvelopeFollower()
+    private var handover = WaveformProcessingHandover()
 
     func sample(rawLevel: Double?, at time: Double) -> Double {
         follower.sample(rawLevel: rawLevel, at: time)
+    }
+
+    func processingProgress(isProcessing: Bool, at time: Double) -> Double {
+        handover.progress(isProcessing: isProcessing, at: time)
     }
 }
 
@@ -126,7 +169,12 @@ extension EnvironmentValues {
 
 public struct WaveformView: View {
     @Environment(\.visualRenderTime) private var renderTime
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.voiceBarReduceMotionOverride) private var reduceMotionOverride
     public let color: Color
+    /// c9-P: the ripple's colour. `color` stays the live drive's, so a meter handing over to the ripple blends
+    /// one into the other on the same bars.
+    public let processingColor: Color
     private let currentLevel: () -> Double?
     private let isListening: Bool
     private let mode: RenderMode
@@ -141,6 +189,7 @@ public struct WaveformView: View {
 
     public init(
         color: Color,
+        processingColor: Color? = nil,
         isListening: Bool = false,
         isProcessing: Bool = false,
         isBooting: Bool = false,
@@ -148,6 +197,7 @@ public struct WaveformView: View {
         currentLevel: @escaping () -> Double?
     ) {
         self.color = color
+        self.processingColor = processingColor ?? color
         self.isListening = isListening
         self.isPaused = isPaused
         self.currentLevel = currentLevel
@@ -164,6 +214,7 @@ public struct WaveformView: View {
 
     public init(processingColor color: Color) {
         self.color = color
+        processingColor = color
         isListening = false
         isPaused = false
         currentLevel = { nil }
@@ -173,13 +224,20 @@ public struct WaveformView: View {
     public var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: isPaused || renderTime != nil)) { timeline in
             let now = renderTime ?? timeline.date.timeIntervalSinceReferenceDate
-            let envelopeLevel = mode == .audioDriven && !isPaused
+            // The live drive keeps sampling through a hand-over (a transcribing meter's level is nil), so the red
+            // meter releases while it fades.
+            let envelopeLevel = mode != .booting && !isPaused
                 ? envelopeStore.sample(rawLevel: currentLevel(), at: now)
                 : 0
+            // Every frame samples the hand-over, booting included, so a new take resets it (F2).
+            let processingProgress = envelopeStore.processingProgress(isProcessing: mode == .processing, at: now)
             TimelineSample(
                 envelopeLevel: envelopeLevel,
+                processingProgress: processingProgress,
+                reduceMotion: reduceMotionOverride ?? systemReduceMotion,
                 time: now,
                 color: color,
+                processingColor: processingColor,
                 isListening: isListening,
                 mode: mode,
                 barCount: barCount,
@@ -203,8 +261,12 @@ public struct WaveformView: View {
 
     private struct TimelineSample: View {
         let envelopeLevel: Double
+        /// 0 = the live drive, 1 = the processing ripple (c9-P hand-over).
+        let processingProgress: Double
+        let reduceMotion: Bool
         let time: Double
         let color: Color
+        let processingColor: Color
         let isListening: Bool
         let mode: RenderMode
         let barCount: Int
@@ -214,46 +276,60 @@ public struct WaveformView: View {
         let minHeight: CGFloat
 
         var body: some View {
+            let progress = mode == .booting ? 0 : processingProgress
+            let layers = WaveformMetrics.handoverLayerOpacities(progress: progress)
             WaveformBars(
-                normalizedLevels: normalizedLevels(time: time),
+                normalizedLevels: normalizedLevels(time: time, progress: progress),
                 color: color,
+                colorOpacity: layers.drive,
+                overlayColor: processingColor,
+                overlayOpacity: layers.ripple,
                 barWidth: barWidth,
                 barSpacing: barSpacing,
                 maxHeight: maxHeight,
                 minHeight: minHeight,
-                glowOpacity: glowOpacity,
-                glowRadius: glowRadius
+                glowOpacity: driveGlowOpacity * (1 - progress),
+                glowRadius: driveGlowRadius,
+                overlayGlowOpacity: processingGlowOpacity * progress,
+                overlayGlowRadius: 4
             )
         }
 
-        private func normalizedLevels(time: Double) -> [Double] {
+        private func normalizedLevels(time: Double, progress: Double) -> [Double] {
             switch mode {
-            case .audioDriven:
-                WaveformMetrics.audioDrivenLevels(
+            case .booting:
+                return WaveformMetrics.bootingLevels(barCount: barCount)
+            case .audioDriven, .processing:
+                let drive = WaveformMetrics.audioDrivenLevels(
                     level: envelopeLevel,
                     time: time,
                     barCount: barCount,
                     isListening: isListening
                 )
-            case .processing:
-                WaveformMetrics.processingLevels(time: time, barCount: barCount)
-            case .booting:
-                WaveformMetrics.bootingLevels(barCount: barCount)
+                guard progress > 0 else { return drive }
+                let ripple = reduceMotion
+                    ? WaveformMetrics.processingLevelsReducedMotion(barCount: barCount)
+                    : WaveformMetrics.processingLevels(time: time, barCount: barCount)
+                return WaveformMetrics.handoverLevels(from: drive, to: ripple, progress: progress)
             }
         }
 
-        private var glowOpacity: Double {
+        /// Reduce Motion: no ripple travels. The still arch keeps its full ink (round 2, F7: dimming the bars cost
+        /// contrast on the M4 grey); only its glow breathes, which reads as working without moving anything.
+        private var processingGlowOpacity: Double {
+            reduceMotion ? WaveformMetrics.processingReducedMotionGlowOpacity(time: time) : 0.35
+        }
+
+        private var driveGlowOpacity: Double {
             switch mode {
-            case .audioDriven: isListening ? 0.25 : 0.45
-            case .processing: 0.35
+            case .audioDriven, .processing: isListening ? 0.25 : 0.45
             case .booting: 0
             }
         }
 
-        private var glowRadius: CGFloat {
+        private var driveGlowRadius: CGFloat {
             switch mode {
-            case .audioDriven: isListening ? 3 : 5
-            case .processing: 4
+            case .audioDriven, .processing: isListening ? 3 : 5
             case .booting: 0
             }
         }
@@ -261,6 +337,7 @@ public struct WaveformView: View {
 }
 
 public struct VoiceBarNotchWaveform: View {
+    @Environment(\.voiceBarNotchAppearance) private var notchAppearance
     public let mode: VoiceMode
     public let isListening: Bool
     /// False while `.recording` is still optimistic — the press registered but
@@ -289,7 +366,11 @@ public struct VoiceBarNotchWaveform: View {
 
     public var body: some View {
         WaveformView(
-            color: Self.waveformColor(mode: mode, isCaptureLive: isCaptureLive, isPlaybackEnded: isPlaybackEnded),
+            // c9-P: while transcribing, the drive colour is the red the meter is handing over from.
+            color: mode == .transcribing
+                ? Theme.recordingColor
+                : Self.waveformColor(mode: mode, isCaptureLive: isCaptureLive, isPlaybackEnded: isPlaybackEnded),
+            processingColor: Theme.processingRippleColor(for: notchAppearance),
             isListening: mode == .recording && isListening,
             isProcessing: mode == .transcribing,
             isBooting: isBooting,
@@ -305,7 +386,8 @@ public struct VoiceBarNotchWaveform: View {
         case .recording:
             isCaptureLive ? Theme.recordingColor : Theme.captureBootingColor
         case .transcribing:
-            Theme.stateColor(for: .transcribing)
+            // c9-P: the ripple's lifted processing blue (contrast on the M4 glass); the transcribing spinner shares it.
+            Theme.processingRippleColor
         case .speaking:
             Theme.speakingColor
         case .idle, .error, .disconnected:
@@ -393,6 +475,35 @@ public enum WaveformMetrics {
         }
     }
 
+    /// c9-P Reduce Motion: the ripple's mean shape, held still (no travel between bars).
+    public static func processingLevelsReducedMotion(barCount: Int) -> [Double] {
+        guard barCount > 0 else { return [] }
+        return (0 ..< barCount).map { index in
+            max(0, min(1, 0.12 + 0.5 * 0.38 + 0.5 * 0.16 * centerWeight(index: index, barCount: barCount)))
+        }
+    }
+
+    /// c9-P Reduce Motion: the still ripple's glow breathes between 0.1 and 0.6 on the slow 2.6 s centre pulse. The
+    /// bars themselves stay fully opaque (round 2, F7: a 70 % floor fell to 2.3:1 on the M4 grey; holding 3:1 needs
+    /// at least 95 %, where a pulse is no longer visible, so the floor is the peak and the halo carries the pulse).
+    public static func processingReducedMotionGlowOpacity(time: Double) -> Double {
+        0.35 + 0.25 * sin(time * 2.4)
+    }
+
+    /// c9-P: the two layers' opacities for a hand-over at `progress` (0 = drive, 1 = ripple). The ripple is drawn at
+    /// `progress` over the fully opaque drive on the same bars, so together they show the two colours mixed by
+    /// `progress` at full coverage: the colour moves without the bars thinning out mid-way.
+    public static func handoverLayerOpacities(progress: Double) -> (drive: Double, ripple: Double) {
+        let p = min(1, max(0, progress))
+        return (p >= 1 ? 0 : 1, p)
+    }
+
+    /// c9-P: the hand-over from the live meter to the ripple blends each bar's height; bar positions never change.
+    public static func handoverLevels(from drive: [Double], to ripple: [Double], progress: Double) -> [Double] {
+        let p = min(1, max(0, progress))
+        return zip(drive, ripple).map { from, to in from + (to - from) * p }
+    }
+
     private static func phaseOffset(for index: Int) -> Double {
         let phi = 1.618033988749895
         return Double(index) * phi
@@ -423,39 +534,46 @@ public enum WaveformMetrics {
 private struct WaveformBars: View {
     let normalizedLevels: [Double]
     let color: Color
+    var colorOpacity: Double = 1
+    /// c9-P: drawn over `color` on the same bars, so a hand-over is a true colour blend at full coverage.
+    var overlayColor: Color = .clear
+    var overlayOpacity: Double = 0
     let barWidth: CGFloat
     let barSpacing: CGFloat
     let maxHeight: CGFloat
     let minHeight: CGFloat
     let glowOpacity: Double
     let glowRadius: CGFloat
+    var overlayGlowOpacity: Double = 0
+    var overlayGlowRadius: CGFloat = 0
 
     var body: some View {
         Canvas { context, _ in
-            context.addFilter(
-                .shadow(
-                    color: color.opacity(glowOpacity),
-                    radius: glowRadius,
-                    x: 0,
-                    y: 0
-                )
-            )
-            for index in normalizedLevels.indices {
-                let frame = WaveformBarGeometry.frame(
-                    index: index,
-                    normalizedLevel: normalizedLevels[index],
-                    barWidth: barWidth,
-                    barSpacing: barSpacing,
-                    maxHeight: maxHeight,
-                    minHeight: minHeight
-                )
-                context.fill(
-                    Path(
-                        roundedRect: frame,
-                        cornerRadius: barWidth / 2
-                    ),
-                    with: .color(color)
-                )
+            let bars = Path { path in
+                for index in normalizedLevels.indices {
+                    let frame = WaveformBarGeometry.frame(
+                        index: index,
+                        normalizedLevel: normalizedLevels[index],
+                        barWidth: barWidth,
+                        barSpacing: barSpacing,
+                        maxHeight: maxHeight,
+                        minHeight: minHeight
+                    )
+                    path.addPath(Path(roundedRect: frame, cornerRadius: barWidth / 2))
+                }
+            }
+            if colorOpacity > 0 {
+                context.drawLayer { layer in
+                    layer.addFilter(.shadow(color: color.opacity(glowOpacity), radius: glowRadius))
+                    layer.fill(bars, with: .color(color.opacity(colorOpacity)))
+                }
+            }
+            // The glow follows the hand-over too: the drive's glow fades as the ripple's rises.
+            if overlayOpacity > 0 {
+                context.drawLayer { layer in
+                    layer.addFilter(.shadow(color: overlayColor.opacity(overlayGlowOpacity), radius: overlayGlowRadius))
+                    layer.fill(bars, with: .color(overlayColor.opacity(overlayOpacity)))
+                }
             }
         }
         .frame(

@@ -111,7 +111,7 @@ final class VoiceBarFlowTests: XCTestCase {
         continueAfterFailure = true
         let env = ProcessInfo.processInfo.environment
         scenario = env["VOICEBAR_UIE2E_SCENARIO"] ?? "full"
-        guard ["full", "focused-338", "hide1", "gate2246", "wings-u2"].contains(scenario) else { throw NSError(domain: "UIE2E invalid scenario", code: 1) }
+        guard ["e2e24", "full", "focused-338", "hide1", "gate2246", "wings-u2"].contains(scenario) else { throw NSError(domain: "UIE2E invalid scenario", code: 1) }
         if scenario == "focused-338" {
             limitations = ["Gallery variants use real production BarView/DictationCard in arbitrary page positions; they do not prove notch placement. One actual production-geometry notch render per family is checked separately.",
                 "Static confirmation holds are synthetic presentations of actual production outcomes; synchronized lifetime uses fresh production timers. No real microphone, audio, global hotkey, external insertion or installed-app acceptance is claimed.",
@@ -253,7 +253,7 @@ final class VoiceBarFlowTests: XCTestCase {
                 requireFrame(capture, contract: evidenceContract)
             }
         }
-        let passed = (testRun?.failureCount ?? 0) == before
+        let passed = (testRun?.failureCount ?? 0) == before && (issue == nil || !matched.isEmpty)
         var receipt: [String: Any] = ["number": number, "name": name, "attachment": attachment, "passed": passed,
                                       "capture": capture, "evidenceContract": evidenceContract]
         if let skipped { receipt["skipped"] = skipped }

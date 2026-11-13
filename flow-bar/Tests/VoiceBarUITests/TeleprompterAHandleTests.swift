@@ -16,8 +16,8 @@ final class TeleprompterAHandleTests: XCTestCase {
         XCTAssertGreaterThan(before, -TeleprompterA.lineHeight)
     }
 
-    /// T3: the panel hugs text + scrubber + handle (163 pt for three lines, was 196 with the footer and control row).
     func testSurfaceHeightFollowsTheSettledLines() {
+        // T8 (Etan QA 2026-11-09): no footer row and tight gaps; 91 pt of chrome plus 24 pt per line.
         XCTAssertEqual(VoiceBarNotchContract.teleprompterLowerSurfaceHeight(lines: 3), 163)
         XCTAssertEqual(VoiceBarNotchContract.teleprompterLowerSurfaceHeight(lines: 8), 283)
         XCTAssertEqual(VoiceBarNotchContract.teleprompterLowerSurfaceHeight(lines: 12), 283)
@@ -70,15 +70,15 @@ final class TeleprompterAHandleTests: XCTestCase {
         XCTAssertEqual(VoiceBarPresentation.notchPresentation(from: input).geometry.lowerSurfaceHeight, 259)
     }
 
-    /// T3 (Etan, QA 2026-11-08 7:52): every teleprompter control is in a wing; the panel is text, scrubber, handle.
-    func testThePanelCarriesNoControlsAndTheHandleIsKeyboardOnlyFocusable() throws {
+    /// T7 (Etan QA 2026-11-09) reverses 2.3 U5: the red Stop sits in the eye row again, as its terminal control.
+    func testLowerRowCarriesTheStopAndTheHandleIsKeyboardOnlyFocusable() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
         let bar = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/BarView.swift"), encoding: .utf8)
-        let lower = try XCTUnwrap(bar.components(separatedBy: "private var notchLowerPanelContent").dropFirst().first)
-            .components(separatedBy: "private func queuedChip")[0]
-        XCTAssertFalse(lower.contains("notchTeleprompterButton"), "the teleprompter panel carries no control row")
-        XCTAssertFalse(lower.contains("stop.fill"), "Stop is in the left wing")
+        let lower = try XCTUnwrap(bar.components(separatedBy: "private var notchTeleprompterControls").dropFirst().first)
+            .components(separatedBy: "// MARK: - Error state")[0]
+        // X1-32 (C6 L3): the live terminal is the Stop square while playing and an X ("Close read") while paused.
+        XCTAssertTrue(lower.contains("readingTerminalButton"), "the teleprompter's lower row carries the live Stop")
         let view = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/TeleprompterAView.swift"),
                               encoding: .utf8)
         XCTAssertTrue(view.contains(".focusable(interactions: .activate)"))
@@ -93,7 +93,7 @@ final class TeleprompterAHandleTests: XCTestCase {
         let handle: NSPoint
     }
 
-    private func mount(_ view: TeleprompterAView) throws -> Mounted {
+    private func mount(_ view: TeleprompterAHeightHandle) throws -> Mounted {
         let host = NSHostingView(rootView: AnyView(view))
         host.frame = NSRect(x: 0, y: 0, width: 440, height: 140)
         let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
@@ -121,9 +121,8 @@ final class TeleprompterAHandleTests: XCTestCase {
         drain(mounted.host)
     }
 
-    private func handleView(_ holds: @escaping (Bool) -> Void) -> TeleprompterAView {
-        TeleprompterAView(text: "Synthetic handle ownership probe.", onVisibleLinesChange: { _ in },
-                          onHandleDrag: holds, playbackElapsedMilliseconds: { 0 })
+    private func handleView(_ holds: @escaping (Bool) -> Void) -> TeleprompterAHeightHandle {
+        TeleprompterAHeightHandle(visibleLines: 3, onVisibleLinesChange: { _ in }, onHandleDrag: holds)
     }
 
     func testNormalReleaseLetsGoOfTheHoldOnce() throws {
@@ -147,7 +146,7 @@ final class TeleprompterAHandleTests: XCTestCase {
         try send(.leftMouseDown, mounted.handle, 1, in: mounted)
         try send(.leftMouseDragged, NSPoint(x: mounted.handle.x, y: mounted.handle.y - 3), 2, in: mounted)
         XCTAssertEqual(holds, [true])
-        mounted.host.rootView = AnyView(TeleprompterAView(text: "Handle removed.", playbackElapsedMilliseconds: { 0 }))
+        mounted.host.rootView = AnyView(Text("Handle removed."))
         drain(mounted.host)
         XCTAssertEqual(holds, [true, false], "the handle's disappearance releases its hold")
         XCTAssertFalse(model.isPointerHeldByPull)

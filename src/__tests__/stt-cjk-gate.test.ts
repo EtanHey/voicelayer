@@ -99,7 +99,7 @@ describe("CJK hallucination candidates retain acoustic safety", () => {
   test("CLI fallback passes -l and retains spoken CJK while gating dead-device silence", async () => {
     const root = testTmp("cjk-cli"), path = join(root, "input.wav"), binary = join(root, "whisper-cli");
     const argsPath = join(root, "args.txt");
-    const keys = ["QA_VOICE_WHISPER_LANG", "VOICELAYER_STT_OUTRO_GATE", "LANE_D_CLI_ARGS_PATH"] as const;
+    const keys = ["QA_VOICE_WHISPER_LANG", "VOICELAYER_STT_OUTRO_GATE", "LANE_D_CLI_ARGS_PATH", "QA_VOICE_WHISPER_MODEL"] as const;
     const saved = keys.map(key => process.env[key]);
     mkdirSync(root, { recursive: true });
     writeFileSync(binary, `#!${process.execPath}
@@ -114,7 +114,9 @@ console.log("これは別の文章です。");
       process.env.LANE_D_CLI_ARGS_PATH = argsPath; process.env.VOICELAYER_STT_OUTRO_GATE = "1";
       const backend = new WhisperCppBackend();
       Object.defineProperty(backend, "binaryPath", { value: binary });
-      Object.defineProperty(backend, "modelPath", { value: join(root, "model-fixture.bin") });
+      const model = join(root, "model-fixture.bin");
+      writeFileSync(model, "isolated synthetic weights");
+      process.env.QA_VOICE_WHISPER_MODEL = model;
       for (const [setting, code] of [["english", "en"], ["hebrew", "he"]]) {
         process.env.QA_VOICE_WHISPER_LANG = setting; writeFileSync(path, wav());
         const result = await backend.transcribe(path);

@@ -25,15 +25,17 @@ import * as booking from "../session-booking";
 import * as longReadRunner from "../tts/long-read";
 import { handleReplay, handleVoiceAsk } from "../handlers";
 import { pausePlayback, isPlaybackPaused } from "../tts";
-import { awaitCurrentPlayback, getHistoryEntry, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, pausePlayback, cancelPlayback, chunkTextForLongRead, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
+import { addToHistory, awaitCurrentPlayback, getHistoryEntry, getPlaybackQueueDepth, hasPreviousRead, loadHistory, playPreviousRead, resetHeardQueueForTests, speak, speakLongRead, stopPlayback, seekPlayback, pausePlayback, cancelPlayback, chunkTextForLongRead, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
 import { handleSocketCommand, resetSelectionReadQueueForTests } from "../socket-handlers";
 import * as tts from "../tts";
 import { TTS_HISTORY_FILE } from "../paths";
 import { readTTSControlsStatus, recordFirstAudio } from "../tts-controls-status";
 import { fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
+import { TEST_TMP } from "./setup/test-tmp";
 import { planProsody } from "../tts/prosody";
 import { projectSpeakableText } from "../speakable-text";
 import { PreparedReadStart } from "../tts/selection-read-preparation";
+import { playbackSessionViolations } from "../playback/ledger";
 
 function deferred<T>() { let resolve!: (v: T) => void, reject!: (e: Error) => void; const promise = new Promise<T>((r, fail) => { resolve = r; reject = fail; }); return { promise, resolve, reject }; }
 const text = Array.from({ length: 80 }, (_, i) => `Sentence ${i} has enough words to fill the next chunk.`).join(" ");
@@ -308,7 +310,8 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         .toEqual({ engine: "qwen3-tts", origin: "speak", fallback: false });
       // The native cursor can reach a chunk boundary before its owned player exits.
       // Its physical process is still alive in both rows; no completion is delivered here.
-      clockMs += 2000;
+      // #818: the player's own clock is at the press too (a client clock ahead of the player never moves a pause).
+      clockMs += localPress;
       holdPlayerExit = ending === "slow-exit";
       expect(handleSocketCommand({ cmd: "record", take_id: crypto.randomUUID(), press_to_talk: true,
         playback_elapsed_ms: playing.long_read.chunk_start_ms + localPress })).toMatchObject({ outcome: "accept" });
@@ -1031,6 +1034,22 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(second.chunkId).toBe("1");
   });
 
+  it("T1 r2: a finished long read binds its own saved entry; Back never resolves it to a newer same-text entry", async () => {
+    resetHeardQueueForTests();
+    const display = "A long read Back must replay with its own audio.";
+    autoPlay = true; await start("edge", display).done;
+    const saved = loadHistory().find(entry => entry.text === display)!;
+    expect(saved).toBeDefined();
+    writeFileSync(TTS_HISTORY_FILE + ".unheard.mp3", "unheard");
+    addToHistory(display, TTS_HISTORY_FILE + ".unheard.mp3", "UNHEARD-voice");
+    expect(hasPreviousRead()).toBe(true);
+    expect(playPreviousRead()).toMatchObject({ outcome: "accept" });
+    await fixtureCheckpoint();
+    const replay = events.filter(e => e.type === "state" && e.state === "speaking").at(-1);
+    expect(replay.voice).toBe(saved.voice);
+    expect(replay.voice).not.toBe("UNHEARD-voice");
+  });
+
   for (const engine of ["edge", "clone", "fallback"] as const) it(`SPK1 normalizes ${engine} long reads while display/history stay original`, async () => {
     const display = "Play MP3 from INCIDENT-INVENTORY.md.";
     const spoken = engine === "clone" ? "Play M P three from incident inventory dot M D." : "Play MP3 from incident inventory dot M D.";
@@ -1065,6 +1084,9 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     holdSynth = true; holdHistory = true;
     const old = start(); await playerBarrier.at(0); await synthBarrier.at(1);
     clockMs += 250;
+    // Lane B: an ask parks a live read instead of cancelling it, so the cancelled generation here is a
+    // read the user stopped just before asking; its history teardown still gates the prompt.
+    stopPlayback(250);
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true, owner: { pid: process.pid, sessionId: "fixture", startedAt: new Date().toISOString() } }));
     const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
     holdSynth = false; autoPlay = true;
@@ -1387,16 +1409,98 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     stopPlayback(100); await h.done;
   });
 
-  it("voice_ask parks a playing read and keeps its in-flight synthesis for return", async () => {
+  it("Lane B: voice_ask parks a playing read at its word, keeps its in-flight synthesis and restores it from that word", async () => {
     holdSynth = true; const old = start(); await synthBarrier.at(1); await playerBarrier.at(0);
+    // 50 ms into chunk 0: the fixture's words start every 12 ms, so the audio is on word 4 (48 ms).
+    clockMs += 50;
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true, owner: { pid: process.pid, sessionId: "fixture", startedAt: new Date().toISOString() } }));
     const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
     holdSynth = false; autoPlay = true;
     const answer = await handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
     expect(answer.isError).not.toBe(true); expect(capture).toHaveBeenCalledTimes(1);
+    // The read was parked, not cancelled: its synthesis kept going and its player was only quiesced.
     expect(synths[1].killed).toBe(false); expect(players[0].killed).toBe(true);
-    synths[1].exit.resolve(0); await old.done;
+    // Chunk 1 was synthesizing (held by the fixture) when the ask came; it finishes now and the read plays on.
+    synths[1].exit.resolve(0);
+    await old.done;
+    const resumed = events.filter(e => e.type === "playback_state" && e.state === "resumed");
+    expect(resumed).toHaveLength(1);
+    expect(resumed[0]).toMatchObject({ word_index: 4, chunk_offset_ms: 48 });
     expect(players.length).toBeGreaterThan(2);
+    expect(playbackSessionViolations()).toEqual([]);
+  });
+
+  // Lane B night item 3 (the N4 guard's limit): a read that replaced another waits for that read's teardown
+  // before its runner exists. An ask arriving then must park it in preparation, never cancel it, and the read
+  // plays from its first word once its audio exists. The paused-ask stack (30de9c06) cancelled it here.
+  it("Lane B: voice_ask over a read still preparing (no runner yet) parks it and plays it once its audio exists", async () => {
+    holdPlayerExit = true;
+    start("edge", "Alpha replaced read."); await playerBarrier.at(0);
+    const bravo = start("edge", "Bravo preparing read.");
+    await fixtureCheckpoint();
+    // Bravo waits on Alpha's teardown (its player has not exited): no runner, no synthesis, no player yet.
+    expect(players).toHaveLength(1); expect(synths).toHaveLength(1);
+    spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true, owner: { pid: process.pid, sessionId: "fixture", startedAt: new Date().toISOString() } }));
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
+    const answer = handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
+    await fixtureCheckpoint();
+    // Alpha's player exits; only now can Bravo's runner start.
+    holdPlayerExit = false; players[0].exit.resolve(143); autoPlay = true;
+    expect((await answer).isError).not.toBe(true); expect(capture).toHaveBeenCalledTimes(1);
+    for (let i = 0; i < 20; i++) await fixtureCheckpoint();
+    const bravoSpeaking = events.filter(e => e.type === "state" && e.state === "speaking" && /Bravo/.test(e.text ?? ""));
+    expect(bravoSpeaking.length, "the read the ask found preparing plays after the ask").toBeGreaterThan(0);
+    expect(events.some(e => e.type === "playback_outcome" && e.reason === "replaced" && /Bravo/.test(e.text ?? ""))).toBe(false);
+    expect(bravoSpeaking.at(-1)).toMatchObject({ playback_offset_ms: 0 });
+    await bravo.done;
+    expect(playbackSessionViolations()).toEqual([]);
+  });
+
+  // Statechart gap 1: a read still synthesizing its first chunk behind short agent speech. The old hold paused its
+  // admission through pausePlayback, which the agent's playing job refused as stale; preemptLongRead("ask") then
+  // cancelled the read. The admission is parked directly now and the read plays once the ask is over.
+  it("statechart gap 1: voice_ask over a read preparing behind agent speech parks it (never cancels it)", async () => {
+    holdSynth = true; holdFirstSynth = true;
+    const agentWords = [{ text: "Agent", offset_ms: 0, duration_ms: 400 }, { text: "speech.", offset_ms: 400, duration_ms: 400 }];
+    const agentFile = join(mkdtempSync(join(TEST_TMP, "gap1-")), "agent.mp3");
+    writeFileSync(agentFile, "fake audio");
+    const agent = playAudioNonBlocking(agentFile, { text: "Agent speech.", voice: "fixture", durationMs: 800, wordBoundaries: agentWords });
+    const agentPlayer = await playerBarrier.at(0);
+    const read = start("edge", "Charlie reads behind the agent.");
+    await synthBarrier.at(0);
+    // Only the read's first chunk stays synthesizing; the ask's own prompt synthesizes normally.
+    holdSynth = false;
+    spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true, owner: { pid: process.pid, sessionId: "fixture", startedAt: new Date().toISOString() } }));
+    const capture = spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "fixture answer")); spies.push(capture);
+    const answer = handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
+    await fixtureCheckpoint();
+    expect(synths[0].killed, "the read's synthesis keeps going").toBe(false);
+    expect(events.some(e => e.type === "playback_outcome" && /Charlie/.test(e.text ?? ""))).toBe(false);
+    // The ask waits for the agent's short speech (FX-2), then asks; the read waits parked.
+    autoPlay = true; agentPlayer.exit.resolve(0); await agent.exited;
+    expect((await answer).isError).not.toBe(true); expect(capture).toHaveBeenCalledTimes(1);
+    synths[0].exit.resolve(0);
+    for (let i = 0; i < 20; i++) await fixtureCheckpoint();
+    await read.done;
+    expect(events.filter(e => e.type === "state" && e.state === "speaking" && /Charlie/.test(e.text ?? "")).length).toBeGreaterThan(0);
+    expect(playbackSessionViolations()).toEqual([]);
+  });
+
+  // Statechart gap 3: the runner's seek (a word click across chunks) reaches the engine as Seek / SeekDone.
+  it("statechart gap 3: a cross-chunk word seek drives the engine through seeking at its word", async () => {
+    const { playbackSessionEngine } = await import("../playback/ledger");
+    const h = start();
+    await playerBarrier.at(0);
+    let wait = 0;
+    while (!events.some(e => e.type === "speech_words" && e.wordOffset > 0) && wait++ < 50) await fixtureCheckpoint();
+    const next = events.find(e => e.type === "speech_words" && e.wordOffset > 0);
+    expect(tts.seekSpeechWord(h.id, next.wordOffset, "gap3")).toMatchObject({ outcome: "accept" });
+    await playerBarrier.at(1); await fixtureCheckpoint();
+    const log = playbackSessionEngine().log.filter(entry => entry.id === h.id);
+    expect(log.find(entry => entry.event === "seek")).toMatchObject({ from: "playing", to: "seeking" });
+    expect(log.map(entry => entry.event).slice(-3)).toEqual(["seek", "seek-done", "ready"]);
+    expect(playbackSessionEngine().get(h.id)).toMatchObject({ state: "playing", cursor: next.wordOffset });
+    stopPlayback(); await h.done;
   });
 
   it("records long-read first audio at player spawn once, including held preparation", async () => {
@@ -2417,17 +2521,24 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       expect(receipts("B")).toEqual([]);
     });
 
-    it("QUEUE1b SOL-R2-2: Ask after teardown ends the retained queue; a fresh D never runs into B", async () => {
+    // Statechart gap 2 (Lane B, supersedes QUEUE1b SOL-R2-2's Ask row): an ask never touches the narration queue. An
+    // ask that parks nothing (no read on screen) used to empty the reads F5 retained; they now survive it, exactly as
+    // they survive the capture, and a fresh D plays with them still queued behind it. Agent speech still ends them.
+    it("statechart gap 2: an Ask that parks nothing keeps the retained queue; a fresh D plays with B and C behind it", async () => {
       await suspendedBehindA();
       autoPlay = true;
       spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
       spies.push(spyOn(input, "waitForInput").mockImplementation(() => finishSyntheticCapture(async () => "an answer")));
       await handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
       await settle();
-      expect(lastQueue()).toEqual({ type: "read_queue", count: 0, current_request_id: null });
+      expect(lastQueue()).toEqual({ type: "read_queue", count: 2, current_request_id: "A" });
+      // D plays now (its player held open); the retained B and C wait behind it, as after a capture.
+      autoPlay = false;
       select("D", "Delta fresh selection.");
       await settle(); await settle();
+      expect(receipts("D").length).toBeGreaterThan(0);
       expect(receipts("B")).toEqual([]);
+      expect(lastQueue()).toMatchObject({ count: 2, current_request_id: "D" });
     });
 
     it("an agent voice_speak keeps its priority: it preempts the user's read as before and ends the user queue", async () => {

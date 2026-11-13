@@ -1,0 +1,90 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/selection-snapshot-startup/SelectionSnapshotStartup.tla": "315894febb9ff2162cbfa7b79473bccd5add999af6544e85efd5cec3a7038fec",
+    "formal/selection-snapshot-startup/checks.json": "1f8826f667298f0a2ede6cd4411530fa269c35141bdbfb02ff6726c69c10b2df",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
+    "formal/selection-snapshot-startup/MutantRead.cfg": "e495eae1eeff2868352e1999626063f553a3b918d4bda5970823cd72bead7f83",
+    "formal/selection-snapshot-startup/MutantInvalid.cfg": "b2b9312b82cabd969f0eb125e0256e90b4bbf9e80ebb3cca9c2f62ede73b06f7",
+    "formal/selection-snapshot-startup/MutantStartup.cfg": "63d67a80ad1ba8c643e0684c680441bae14583073b49c14733c83b7ccb3785eb",
+    "formal/selection-snapshot-startup/Current.cfg": "f9eef9e47c5b05cd3f6885876e0690dc77d8812b791324cc307e90cf3924b4b1",
+    "formal/selection-snapshot-startup/MutantType.cfg": "c69a479d84a248ff82b6fb7d8cb44d71332a9000ca3ae1d5d4fc403c9d914902",
+    "formal/selection-snapshot-startup/Fixed.cfg": "24e048df41e43314e5c374b45ec43c7db8fff8afc90d676a0f9d1aba12a92a5c",
+    "formal/legacy_receipts.py": "83fae1948d340e3e253cbd19aac05814ee2457664397616ffce0de4b502998f0",
+    "formal/selection-snapshot-startup/check.sh": "10ce81002a8b76334022d305f0977824ab6c2ae15c0fa76816e23e6e8b40bafa",
+    "formal/setup-tlc.py": "ada6a1d5fa6376d4abd8eb8309900bde02e757f53ee2a97e6614aeaee134c391",
+    "formal/tlc.lock.json": "3e37914f1398c6073444c37c6c8df70eb3030c14d269e808791e1d1b25467d34",
+    "formal/tlc_support.py": "8c5dad35602a3a631acc61b07ed2246eeb40ef2b3a6b3a9c72c5b207c95386ec",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
+  },
+  "mutants": {
+    "ColdDelivery": [
+      "Current"
+    ],
+    "ReadBound": [
+      "MutantRead"
+    ],
+    "StartupBound": [
+      "MutantStartup"
+    ],
+    "TypeOK": [
+      "MutantType"
+    ],
+    "ValidDelivery": [
+      "MutantInvalid"
+    ]
+  },
+  "graphHashes": {},
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 328,
+      "distinct": 280
+    },
+    "Current": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ColdDelivery",
+      "status": "EXPECTED_FAIL",
+      "generated": 162,
+      "distinct": 160
+    },
+    "MutantStartup": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "StartupBound",
+      "status": "EXPECTED_FAIL",
+      "generated": 273,
+      "distinct": 259
+    },
+    "MutantRead": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ReadBound",
+      "status": "EXPECTED_FAIL",
+      "generated": 197,
+      "distinct": 193
+    },
+    "MutantInvalid": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ValidDelivery",
+      "status": "EXPECTED_FAIL",
+      "generated": 97,
+      "distinct": 97
+    },
+    "MutantType": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "TypeOK",
+      "status": "EXPECTED_FAIL",
+      "generated": 49,
+      "distinct": 49
+    }
+  }
+}

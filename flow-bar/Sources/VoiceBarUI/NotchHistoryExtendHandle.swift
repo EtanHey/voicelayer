@@ -7,11 +7,17 @@ import SwiftUI
 /// `onDrag` reports the pointer's y (one coordinate space for the whole drag) and the sample's time on
 /// NotchHistoryClock's monotonic base (the gesture's own timestamp); `onDragEnd` fires
 /// exactly once per drag, `true` when the system cancelled it (no `onEnded`) or the handle unmounted.
+///
+/// The Settings drawer has the same grip at its bottom edge (`rows` nil): it pushes the drawer closed (Etan, QA 0510
+/// N4) and, C6 L2c (N16), drags it taller or shorter. VoiceOver reads it as the drawer's grip with one-row steps.
 struct NotchHistoryExtendHandle: View {
     let palette: VoiceBarNotchContrastPalette
-    let rows: Int
-    let maximumRows: Int
-    let onAdjust: (Int) -> Void
+    /// History's rows and their one-row VoiceOver steps; nil for the Settings drawer's grip.
+    var rows: (current: Int, maximum: Int, onAdjust: (Int) -> Void)?
+    /// The Settings drawer's rows and their one-row VoiceOver steps (N16).
+    var settingsRows: (current: Int, onAdjust: (Int) -> Void)?
+    /// 0510 N6: while a pull is armed for Settings its hint takes the grip's band, so the grip is not drawn.
+    var showsGrip = true
     var onDrag: ((CGFloat, TimeInterval) -> Void)?
     var onDragEnd: ((Bool) -> Void)?
     @State private var isHovered = false
@@ -22,10 +28,11 @@ struct NotchHistoryExtendHandle: View {
         ZStack {
             Capsule(style: .continuous)
                 .fill(palette.primary.color.opacity(
-                    isHovered ? NotchHistoryMorph.handleHoverOpacity : NotchHistoryMorph.handleOpacity
+                    !showsGrip ? 0 : isHovered ? NotchHistoryMorph.handleHoverOpacity : NotchHistoryMorph.handleOpacity
                 ))
                 .frame(width: NotchHistoryMorph.handleWidth, height: NotchHistoryMorph.handleThickness)
                 .animation(.easeOut(duration: 0.12), value: isHovered)
+                .animation(NotchDrawerMotion.gripAnimation(showsGrip: showsGrip), value: showsGrip)
                 .frame(width: NotchHistoryMorph.handleHitWidth, height: NotchHistoryMorph.handleBandHeight)
                 .contentShape(Rectangle())
                 .onHover { hovering in
@@ -38,9 +45,29 @@ struct NotchHistoryExtendHandle: View {
                     isHovered = false
                 }
                 .accessibilityHidden(true)
-            NotchHistoryExtendAccessibility(rows: rows, maximumRows: maximumRows, onAdjust: onAdjust)
-                .frame(width: NotchHistoryMorph.handleHitWidth, height: NotchHistoryMorph.handleBandHeight)
-                .allowsHitTesting(false)
+            if let rows {
+                NotchHistoryExtendAccessibility(rows: rows.current, maximumRows: rows.maximum, onAdjust: rows.onAdjust)
+                    .frame(width: NotchHistoryMorph.handleHitWidth, height: NotchHistoryMorph.handleBandHeight)
+                    .allowsHitTesting(false)
+            } else {
+                Color.clear
+                    .frame(width: NotchHistoryMorph.handleHitWidth, height: NotchHistoryMorph.handleBandHeight)
+                    .accessibilityElement()
+                    .accessibilityLabel(NotchHistoryPresentation.drawerGripLabel)
+                    .accessibilityValue(settingsRows.map {
+                        NotchSettingsDrawerPresentation.gripAccessibilityValue(rows: $0.current)
+                    } ?? "")
+                    .accessibilityAdjustableAction { direction in
+                        guard let settingsRows else { return }
+                        switch direction {
+                        case .increment: settingsRows.onAdjust(1)
+                        case .decrement: settingsRows.onAdjust(-1)
+                        @unknown default: break
+                        }
+                    }
+                    .accessibilityIdentifier("notch-drawer-grip")
+                    .allowsHitTesting(false)
+            }
         }
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)

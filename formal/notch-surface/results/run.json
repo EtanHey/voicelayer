@@ -1,0 +1,114 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/notch-surface/NotchSurface.tla": "3fe486175db400bf6754f69252f5c05ab0aa5edf9f1a2d2933060d83528cc104",
+    "formal/notch-surface/checks.json": "375ada09347838ee795809aaac4fa1c9d343cde1925a04c8bcb10441fbb4bd2c",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
+    "formal/notch-surface/MutantHistoryOnlyDismissStuck.cfg": "1085feb86beaa8dabe13f80d4e2eeea77f9880db28add4e5af898713ea9d7ac0",
+    "formal/notch-surface/MutantRecordingRefusesDrawer.cfg": "5a9e331db76b061229cd1d50ea1906861e2a36fbb0990ba6891e80fce6ea6b60",
+    "formal/notch-surface/MutantNoModalGuard.cfg": "79175dec2fb757e3e413ba373dd4e82849bf746ec1aec26b0f3b733639514678",
+    "formal/notch-surface/MutantNoExclusive.cfg": "3304e68c7d549438551e9f3cb616d2e436a577526c715ec30e9295ea23d7c0a1",
+    "formal/notch-surface/MutantTeleprompterKeepsDrawer.cfg": "de7be2671043def9d1d6d9382422fda8a51bb96fd88ed4457e19af8cd0645df1",
+    "formal/notch-surface/MutantHistoryOnlyDismiss.cfg": "ca9c87e7de7de588b8551441926ee05f944c2d5027bc4730703a5ca3109c3e7f",
+    "formal/notch-surface/MutantRecordingClosesDrawer.cfg": "4352f0e2c1f17e99be5e8f0d239c24b81cc4a5f938b17f70cba0f28222e7c410",
+    "formal/notch-surface/Fixed.cfg": "40cc0de75cda652284f32e5e3ac430a344f7a54c1598202aaa016e5956ea56d0",
+    "flow-bar/Sources/VoiceBarUI/NotchSurface.swift": "6832174c5cd26a5c417602ca6c4fa8175500785322dc40ceb85f5f877d1f1c3d",
+    "flow-bar/Sources/VoiceBarUI/NotchDrawerDismissal.swift": "f7e217d2cb5ab70bff9816c9860f0de52a25b0e32705e407dace64cddc1a6375",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "f549f6c96d60d0c52c73acc08739dd6d8bbb169a502f99aacf53e589e42ac4a8",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
+  },
+  "mutants": {
+    "AtMostOneDrawer": [
+      "MutantNoExclusive"
+    ],
+    "DismissalReachable": [
+      "MutantHistoryOnlyDismiss"
+    ],
+    "DrawerReachableWhileCapturing": [
+      "MutantRecordingRefusesDrawer"
+    ],
+    "CaptureKeepsDrawer": [
+      "MutantRecordingClosesDrawer"
+    ],
+    "NoDrawerOverModal": [
+      "MutantNoModalGuard"
+    ],
+    "NoDrawerOverTeleprompter": [
+      "MutantTeleprompterKeepsDrawer"
+    ],
+    "DrawerAlwaysClosable": [
+      "MutantHistoryOnlyDismissStuck"
+    ]
+  },
+  "graphHashes": {
+    "Fixed": "09c401b589b997cd53281e4b204433d4275efb8c4e483e76f10a46d87e250fb7"
+  },
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 95,
+      "distinct": 12
+    },
+    "MutantNoExclusive": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "AtMostOneDrawer",
+      "status": "EXPECTED_FAIL",
+      "generated": 14,
+      "distinct": 7
+    },
+    "MutantHistoryOnlyDismiss": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "DismissalReachable",
+      "status": "EXPECTED_FAIL",
+      "generated": 4,
+      "distinct": 3
+    },
+    "MutantHistoryOnlyDismissStuck": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "DrawerAlwaysClosable",
+      "status": "EXPECTED_FAIL",
+      "generated": 93,
+      "distinct": 12
+    },
+    "MutantRecordingRefusesDrawer": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "DrawerReachableWhileCapturing",
+      "status": "EXPECTED_FAIL",
+      "generated": 4,
+      "distinct": 4
+    },
+    "MutantRecordingClosesDrawer": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "CaptureKeepsDrawer",
+      "status": "EXPECTED_FAIL",
+      "generated": 17,
+      "distinct": 7
+    },
+    "MutantNoModalGuard": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoDrawerOverModal",
+      "status": "EXPECTED_FAIL",
+      "generated": 29,
+      "distinct": 8
+    },
+    "MutantTeleprompterKeepsDrawer": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoDrawerOverTeleprompter",
+      "status": "EXPECTED_FAIL",
+      "generated": 19,
+      "distinct": 8
+    }
+  }
+}

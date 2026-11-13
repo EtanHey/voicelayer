@@ -3,6 +3,29 @@ import XCTest
 @testable import VoiceBarUI
 
 @MainActor final class NativeUpdateGateTests: XCTestCase {
+    func testArchiveViewAdmissionAdmitsDrainingAndFaultsButRefusesHealthyClosedGatesWithoutWriting() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let path = root.appendingPathComponent("gate").path
+        try FileManager.default.createDirectory(atPath: path + ".admissions", withIntermediateDirectories: false)
+        let lease: [String: Any] = ["generation": 1, "operationId": UUID().uuidString,
+            "ownerId": UUID().uuidString, "targetSha": String(repeating: "a", count: 40)]
+        let ack: [String: Any] = ["lease": lease, "activeOperations": 0, "openArchives": 0]
+        for kind in ["OPEN", "DRAINING", "PREPARED", "COMMITTED", "UNKNOWN"] {
+            var value: [String: Any] = ["version": 1, "kind": kind, "lease": lease]
+            if kind == "OPEN" { value = ["version": 1, "kind": kind, "generation": 0, "released": NSNull()] }
+            if ["PREPARED", "COMMITTED"].contains(kind) { value["native"] = ack; value["daemon"] = ack }
+            let bytes = try JSONSerialization.data(withJSONObject: value)
+            try bytes.write(to: URL(fileURLWithPath: path))
+            let gate = NativeUpdateGate(path: path)
+            XCTAssertEqual(gate.permitsNewVoice(), !["PREPARED", "COMMITTED"].contains(kind), kind)
+            XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), bytes)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: path + ".lock"))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: path + ".voice-diag.json"))
+        }
+    }
+
     func testUpdateBusyAckShowsExistingNoticeBand() {
         let state = VoiceState()
         let id = UUID().uuidString

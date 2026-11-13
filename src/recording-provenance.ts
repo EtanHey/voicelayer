@@ -1,3 +1,4 @@
+import { executedWhisperHash, executedWhisperCliPath } from "./whisper-model-identity";
 /**
  * Recording provenance — the machine + STT stack facts stamped into every
  * `metadata.json` under `~/.local/share/voicelayer/recordings/`.
@@ -178,11 +179,10 @@ export function normalizeWhisperBackend(
 export function fallbackReasonFromBackend(
   backend: string | null,
 ): string | null {
-  return (
-    backend?.match(
-      /\+fallback-(timeout|empty-response|server-error|parakeet-startup-failed|whisper-startup-failed|language|prompt|input-format|input-identity|provider-error|provider-timeout|provider-partial|provider-invalid|invalid-response|invalid-timing|incomplete-response|unsupported-language|sparse-response|uncovered-tail|uncovered-internal|zero-pcm-response)(?=->|$)/,
-    )?.[1] ?? null
-  );
+  const reason = backend?.match(/\+fallback-([^+>]+)(?=->|\+|$)/)?.[1];
+  if (reason) return reason;
+  const engines = backend?.split("->").map(part => part.startsWith("parakeet") ? "parakeet" : part.startsWith("whisper") ? "whisper" : part.startsWith("wispr") ? "wispr" : null);
+  return engines && engines.length > 1 && engines[0] !== engines.at(-1) ? "unknown" : null;
 }
 
 /**
@@ -558,6 +558,8 @@ export function primeRecordingProvenanceProbes(): Promise<void> {
  */
 export function whisperModelSha256(modelPath: string | null): string | null {
   if (!modelPath) return null;
+  const actualHash = executedWhisperHash(modelPath);
+  if (actualHash) return actualHash;
   const sidecar = `${modelPath}.sha256`;
   if (!existsSync(sidecar)) return null;
   try {
@@ -668,9 +670,11 @@ export function buildRecordingProvenance(
     whisper_backend: input.backend,
     fallback_reason: fallbackReason,
     whisper_model_path: modelPath,
-    whisper_model_sha256: (probe.whisperModelSha256 ?? whisperModelSha256)(
-      modelPath,
-    ),
+    whisper_model_sha256: probe.whisperModelSha256
+      ? probe.whisperModelSha256(modelPath)
+      : kind === "server"
+        ? whisperServerLaunchRecord()?.modelSha256 ?? null
+        : whisperModelSha256(modelPath),
     whisper_cpp_version: cppVersion.version,
     whisper_cpp_version_source: cppVersion.source,
     whisper_server_args: launchArgs,
@@ -699,7 +703,7 @@ export function buildRecordingProvenance(
  * so `kind: "cli"` always reports the configured model.
  */
 function defaultWhisperModelPath(kind: WhisperBackendKind): string | null {
-  if (kind === "cli") return resolveWhisperModelPath();
+  if (kind === "cli") return executedWhisperCliPath() ?? resolveWhisperModelPath();
   return whisperServerLaunchRecord()?.modelPath ?? resolveWhisperModelPath();
 }
 

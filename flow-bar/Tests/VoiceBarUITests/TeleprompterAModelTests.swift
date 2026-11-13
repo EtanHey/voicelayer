@@ -35,12 +35,16 @@ final class TeleprompterAModelTests: XCTestCase {
     func testMetricsMatchTheSpec() {
         XCTAssertEqual(TeleprompterA.lineHeight, 24)
         XCTAssertEqual(TeleprompterA.fontSize, 17)
-        XCTAssertEqual(TeleprompterA.columnWidth, 404)
+        // Lane B: the column follows the teleprompter body's whole text width (was a 404 pt cap).
+        XCTAssertEqual(TeleprompterA.columnWidth, VoiceBarNotchContract.material.teleprompterTextWidth)
         XCTAssertEqual(TeleprompterA.topFadeHeight, 16)
-        // T3: no footer; the home-bar handle sits under the scrubber row.
-        XCTAssertEqual(TeleprompterA.handleSize, CGSize(width: 112, height: 5))
+        XCTAssertEqual(TeleprompterA.handleSize, CGSize(width: 34, height: 4))
+        // T1/T3/T6 (Etan QA 2026-11-09): no footer row under the text.
         XCTAssertEqual(TeleprompterA.bodyHeight(lines: 3), 72)
-        XCTAssertEqual(TeleprompterA.panelStackHeight(lines: 3), 72 + 7 + 40 + 4 + 14)
+        // T2/T8: text, scrubber, eye row 3 pt under it (≤ 7), the handle under the eye row.
+        XCTAssertLessThanOrEqual(TeleprompterA.controlsGap, 7)
+        XCTAssertEqual(TeleprompterA.chromeHeight, 91)
+        XCTAssertEqual(TeleprompterA.lowerSurfaceHeight(lines: 3), 163)
     }
 
     func testHandleRubberBandsPastEitherEndAndSnapsToWholeLines() {
@@ -59,8 +63,6 @@ final class TeleprompterAModelTests: XCTestCase {
         XCTAssertEqual([0, 3, 5, 8, 12].map(TeleprompterA.clamp), [3, 3, 5, 8, 8])
     }
 
-    /// T2 (QA 2026-11-08 S3-F1): clicking earlier text drew the old and new lines on top of each other while the
-    /// mounted lines slid across the whole jump. A reading step still slides; a seek's jump lands.
     func testOnlyAOneLineReadingStepSlides() {
         XCTAssertNotNil(TeleprompterA.slide(reduceMotion: false, fromLine: 4, toLine: 5))
         XCTAssertNotNil(TeleprompterA.slide(reduceMotion: false, fromLine: 5, toLine: 4))
@@ -69,9 +71,12 @@ final class TeleprompterAModelTests: XCTestCase {
         XCTAssertNil(TeleprompterA.slide(reduceMotion: true, fromLine: 4, toLine: 5))
     }
 
-    func testQueuedChip() {
-        XCTAssertNil(TeleprompterA.queuedChip(0))
-        XCTAssertEqual(TeleprompterA.queuedChip(2), "+2 queued")
+    func testFooterStateHasNoReadingProse() {
+        // T3 (Etan QA 2026-11-09): reading draws no status words; the pause words are VoiceOver-only.
+        XCTAssertEqual(TeleprompterA.footerState(isPaused: false, isPausedForDictation: false), "")
+        XCTAssertEqual(TeleprompterA.footerState(isPaused: true, isPausedForDictation: false), "Paused")
+        XCTAssertEqual(TeleprompterA.footerState(isPaused: true, isPausedForDictation: true),
+                       "Paused for your dictation · resumes after paste")
     }
 
     func testWrapHonoursWidthForcedBreaksAndGlue() {
@@ -116,7 +121,11 @@ final class TeleprompterAModelTests: XCTestCase {
         XCTAssertEqual(table.words[2]?.startMs, 1900)
         XCTAssertEqual(table.seekIndex(token: 1, text: "world"), 1)
         XCTAssertNil(table.seekIndex(token: 1, text: "word"))
-        XCTAssertNil(table.seekIndex(token: 7, text: "world"))
+        // C7 L3 V09: a word this read has not timed yet (its chunk is still synthesizing) is a pending target;
+        // VoiceState seeks it once timed, checking the same text then. C4 F3: before the first chunk too.
+        XCTAssertEqual(table.seekIndex(token: 7, text: "world"), 7)
+        XCTAssertEqual(SpeechWordTable(utteranceID: "u1").seekIndex(token: 0, text: "Hello"), 0)
+        XCTAssertNil(table.seekIndex(token: -1, text: "Hello"))
     }
 
     /// The highlighted word is exactly the last `speech_words` start the utterance clock has reached.

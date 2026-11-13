@@ -4,7 +4,8 @@
   "hashes": {
     "formal/voice-ask-no-answer/VoiceAskNoAnswer.tla": "a450ce0156617af8e30f196160d8d6312df1fda8c5704605f3fd5b2101374c32",
     "formal/voice-ask-no-answer/checks.json": "1e3caf306b1f8febdf5d40ea4b438cfa38c93f56a32f5da3e0a2ca1c2b34f55e",
-    "formal/check-model.py": "4e75fc23ac29fe4cc7182d4db1176ea28228f0b49854f84a3ab5ae6df90e3bbf",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
     "formal/voice-ask-no-answer/NeverCloseMutant.cfg": "40b717b8f79acdb60309bd5b6196c04f6f868048a710fe4d16ff5a0cc4c7f282",
     "formal/voice-ask-no-answer/NoPendingCheckMutant.cfg": "ba172e1a8dfba567fd20199564aa0f726d98c0e243a286c00fbef897ba361ec4",
     "formal/voice-ask-no-answer/SpeechCapMutant.cfg": "055bc7608b2da900ecff9b953d11bcb77ce2de87c2dafc905f66b5faa72def4c",
@@ -13,17 +14,18 @@
     "formal/voice-ask-no-answer/DropRecordingMutant.cfg": "2ec763631833484702a975f4e65d02f723cadf1a82c287c127059bf32688c383",
     "formal/voice-ask-no-answer/OldDeadlineMutant.cfg": "33c6044677cce48a9dd0dd90728661b98da4593822531c19a36dac58d248068c",
     "formal/voice-ask-no-answer/Fixed.cfg": "553a6c6f7c6fc6aaa0c978853be999289346b873fc8131fb51286ee51a923ca8",
-    "src/input.ts": "e45dee78854a164d6f942ae46549e0ff0b4bf41a85983709b523e909033a06e3",
-    "src/handlers.ts": "dfe70864423ff875b35c5119de2d7a69e26fefb1a3d566b5ef72ecd21f60f912",
+    "src/input.ts": "960fd73619662d1b7b62bdf1f3a14e7b86291880f6e884bf8829f2c7ffbc8e0a",
+    "src/handlers.ts": "9f21ac856cd8a8f2cb769f181b4d75e79a44f8fe091192660a8a79ce9bd18e3a",
     "src/voice-ask-no-answer.ts": "b952a04defe6db2651b242245adcd3bca9503b408f804b62b4c59d083ce35596",
     "src/voice-turn-result.ts": "e1267f5e1e246712dc1798b635a1b174d2e4327518ec678d9484f5a0d3059a47",
-    "src/__tests__/input-durability.test.ts": "e43727155ceea69d6e46de0e873192866c857558bd199d8ed98df76b9efe309f",
+    "src/__tests__/input-durability.test.ts": "8a26277cd46d4ffa1a6d08c5f0a016e365db69c831785e550a13716e4df09bcf",
     "src/__tests__/voice-ask-no-answer.test.ts": "98cef36ef656e2196e82c4139a04656ea592e6f4658490a655b0cd7a48f99367",
     "src/voice-away-policy.ts": "61aa52de50d006b05e4e9d9769cd28a8261a7bcff4604932cbfd71d3bfd79981",
     "src/__tests__/voice-away-policy.test.ts": "b6d7ae440036018c5072e0eb23fd801cec457504d12fde775f4790a59a9d54ce",
-    "src/__tests__/converse-resilience.test.ts": "528d79f7113f82609df77160f4ba5ce9f8540bb659dc8e384629b0993f6942d1",
+    "src/__tests__/converse-resilience.test.ts": "bb204bdf1831717eb9cb3f81edbe5b5c98cf64d53179e40d354347fdbbe80a59",
     "src/vad.ts": "87ab1bcdadb01ad23647b20b71e0529e994c97e7583d0223e42caf8a41dc875b",
-    "src/__tests__/barge-in-vad-isolation.test.ts": "b794ae09794f5b292619871d9f9063c4b8debc2d93ec3d2a79e0c0454d936d0a"
+    "src/__tests__/barge-in-vad-isolation.test.ts": "b794ae09794f5b292619871d9f9063c4b8debc2d93ec3d2a79e0c0454d936d0a",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
     "NoCutOffMidAnswer": [

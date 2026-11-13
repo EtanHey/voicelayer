@@ -6,7 +6,7 @@ final class SettingsCopyLintTests: XCTestCase {
     private let sourcesRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources")
 
-    func testNoUIStringLiteralUsesAnEmDashASpacedEnDashOrThreeDots() throws {
+    func testUIStringPunctuationExceptTheRequiredVerbatimCandidateSentence() throws {
         var scanned = 0
         var violations: [String] = []
         for target in ["VoiceBarUI", "VoiceBar"] {
@@ -20,8 +20,7 @@ final class SettingsCopyLintTests: XCTestCase {
                 let name = "\(target)/\(file.lastPathComponent)"
                 violations += SwiftStringLiteralScanner.literals(in: source)
                     .filter { !$0.isLogText }
-                    // Parent explicitly requested this exact symmetric startup-recovery sentence.
-                    // Keep the punctuation rule strict for every other file and literal.
+                    // The lead requires candidate 7 copy verbatim, including this existing punctuation.
                     .filter { !(name == "VoiceBarUI/RecognizerPickerState.swift"
                         && $0.text == "Using Parakeet — Whisper failed to load") }
                     .flatMap { literal in

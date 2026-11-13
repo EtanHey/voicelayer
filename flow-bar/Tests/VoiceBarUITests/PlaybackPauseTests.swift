@@ -150,13 +150,9 @@ final class PlaybackPauseTests: XCTestCase {
         state.handleEvent(resumed)
         let position = state.playbackElapsedMilliseconds()
         XCTAssertTrue(state.showsReadingProcessingSpinner)
-        XCTAssertEqual(VoiceBarPresentation.playbackLeadingSlotCount(for: state), 2)
-        // TP-3 + N1: the reading wing draws the spinner in its fourth slot (Replay, Stop, Pause, spinner).
-        XCTAssertTrue(VoiceBarPresentation.showsReadingWingSpinner(for: state))
-        XCTAssertEqual(VoiceBarPresentation.readingLeadingWingWidth(slotCount: 2),
-                       VoiceBarNotchContract.readingLeadingWingWidth(slots: 4))
-        XCTAssertLessThanOrEqual(VoiceBarNotchContract.readingLeadingWingWidth(slots: 4),
-                                 VoiceBarNotchContract.morphCanvasWingCapacity)
+        // T1: the transport keeps its four slots; with nothing queued the spinner takes Forward's (Q1).
+        XCTAssertEqual(VoiceBarPresentation.playbackLeadingSlotCount(for: state), VoiceBarPresentation.readingTransportSlotCount)
+        XCTAssertTrue(VoiceBarPresentation.readingForwardControl(for: state).showsProcessingSpinner)
         XCTAssertEqual(state.mode, .speaking)
         state.handleEvent(["type": "transcription", "text": ""])
         state.handleEvent(["type": "error", "message": "Transcription failed", "recoverable": true])
@@ -168,8 +164,8 @@ final class PlaybackPauseTests: XCTestCase {
         state.handleEvent(resumed)
         state.handleEvent(["type": "read_processing", "utterance_id": "read-1", "active": false])
         XCTAssertFalse(state.showsReadingProcessingSpinner)
-        XCTAssertEqual(VoiceBarPresentation.playbackLeadingSlotCount(for: state), 1)
-        XCTAssertFalse(VoiceBarPresentation.showsReadingWingSpinner(for: state))
+        XCTAssertEqual(VoiceBarPresentation.playbackLeadingSlotCount(for: state), VoiceBarPresentation.readingTransportSlotCount)
+        XCTAssertFalse(VoiceBarPresentation.readingForwardControl(for: state).showsProcessingSpinner)
         XCTAssertEqual(state.mode, .speaking)
     }
 
@@ -308,20 +304,23 @@ final class PlaybackPauseTests: XCTestCase {
         XCTAssertEqual(state.playbackAudioLevel(), 0)
     }
 
-    func testPauseCollapsesTheTeleprompterAndResumeExpandsIt() {
+    /// X1-34 (Etan QA 2026-11-10, reversing P16's collapse): "paused on its own should not hide the teleprompter, but
+    /// just pause". Hide is the eye's job, paused or playing.
+    func testPauseKeepsTheTeleprompterAndHideCollapsesIt() {
         let (state, _) = speakingState()
         XCTAssertEqual(presentation(for: state).visualState, .teleprompter)
 
         state.handleEvent(pausedEvent())
-        let paused = presentation(for: state)
-        XCTAssertEqual(paused.visualState, .compactStatus)
-        // T3: paused keeps the reading wings (left Replay/Stop/Play, right time/eye/1×), so pausing never reflows them.
-        XCTAssertEqual(paused.geometry.trailingWingWidth, VoiceBarNotchContract.readingTrailingWingWidth)
-        XCTAssertEqual(paused.geometry.leadingWingWidth, VoiceBarNotchContract.readingLeadingWingWidth(slots: 3))
+        XCTAssertEqual(presentation(for: state).visualState, .teleprompter)
+        state.dismissTeleprompter()
+        let hidden = presentation(for: state)
+        XCTAssertEqual(hidden.visualState, .compactStatus)
+        // Reading keeps its time/meter/terminal wing when collapsed, independent of the narrower recording row.
+        XCTAssertEqual(hidden.geometry.trailingWingWidth, VoiceBarPresentation.readingTrailingWingWidth(visibleCoreOcclusionInset: 0))
 
         resume(state, offset: 2500)
         XCTAssertFalse(state.isPlaybackPaused)
-        XCTAssertEqual(presentation(for: state).visualState, .teleprompter)
+        XCTAssertTrue(state.isTeleprompterDismissed, "Resume does not reopen a teleprompter the eye hid")
     }
 
     func testPauseToggleNotifiesPanelLayout() {
@@ -604,19 +603,21 @@ final class PlaybackPauseTests: XCTestCase {
         let teleprompter = presentation(for: state)
         state.dismissTeleprompter()
         let compact = presentation(for: state)
-        // T3 (Etan, QA 2026-11-08 7:52): Replay, Stop, Pause in the left wing. Pause keeps the core-side slot in the
-        // mic lane's insets, so it stays the same distance from the notch; the wing fits its three slots exactly.
         for speaking in [teleprompter, compact] {
-            XCTAssertEqual(speaking.geometry.leadingWingWidth, VoiceBarNotchContract.readingLeadingWingWidth(slots: 3),
-                           "\(speaking.visualState)")
+            XCTAssertEqual(speaking.geometry.leadingWingWidth, mic.geometry.leadingWingWidth, "\(speaking.visualState)")
             XCTAssertEqual(material.wingContentLayout(for: .leading, state: speaking.visualState), micSlot)
+            let micLayout = VoiceBarNotchShapeLayout(geometry: mic.geometry)
+            let layout = VoiceBarNotchShapeLayout(geometry: speaking.geometry)
+            XCTAssertEqual(
+                layout.coreRect.minX - layout.leadingWingRect.minX,
+                micLayout.coreRect.minX - micLayout.leadingWingRect.minX
+            )
         }
         state.showTeleprompter()
 
         state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
         XCTAssertTrue(state.isTeleprompterReadback)
-        XCTAssertEqual(presentation(for: state).geometry.leadingWingWidth,
-                       VoiceBarNotchContract.readingLeadingWingWidth(slots: 1), "a stopped read keeps Replay, no Pause")
+        XCTAssertEqual(presentation(for: state).geometry.leadingWingWidth, 0, "a readback has nothing to pause")
     }
 
     func testManualSpeechPauseDuringCaptureUsesScopedExistingPauseCommand() {

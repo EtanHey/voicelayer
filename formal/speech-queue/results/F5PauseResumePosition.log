@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "ResumeFromPausedPosition",
+  "status": "EXPECTED_FAIL",
+  "generated": 5440,
+  "distinct": 2385
+}

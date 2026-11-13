@@ -1,0 +1,407 @@
+import SwiftUI
+
+/// What the Settings drawer shows that the notch view cannot build on its own. The app (and the UIE2E host) supply
+/// it; a BarView without one keeps the 2.3 behaviour (the gear opens the Settings window).
+public struct NotchSettingsDrawerContext {
+    public var updates: NotchUpdateController?
+    /// The Settings window's own pane for a tab (`SettingsView.notchDrawerPane`), built from the same stores, so
+    /// the drawer edits the real settings (Etan, QA 0510 R2: "we literally already have notch history, this is so
+    /// easy to re-use"). The request carries a spot to scroll to (the microphone priority list, 0510 N9).
+    public var pane: (SettingsTab, SettingsTabRequest?) -> AnyView
+
+    public init(
+        updates: NotchUpdateController?,
+        pane: @escaping (SettingsTab, SettingsTabRequest?) -> AnyView = { _, _ in AnyView(EmptyView()) }
+    ) {
+        self.updates = updates
+        self.pane = pane
+    }
+}
+
+/// Copy and metrics for the drawer (unit-tested; no em dashes or double hyphens in anything user-visible).
+public enum NotchSettingsDrawerPresentation {
+    public static let tabBarHeight: CGFloat = 46
+    public static let horizontalInset: CGFloat = 8
+    /// The grouped Form's own side inset (macOS draws its cards this far inside the scroll view). The drawer cancels
+    /// it so a section card's edges are the tab bar's edges.
+    public static let groupedFormInset: CGFloat = 20
+    /// Height of the fade at a pane's scrolling top edge (lane S PR 3: Etan's video showed a card's labels cut through
+    /// under the tab bar while scrolling).
+    public static let scrollEdgeFade: CGFloat = 20
+    /// A grouped card's row inset; the version row uses it on both sides so its text and button line up with the
+    /// rows above it.
+    public static let rowLeadingPadding: CGFloat = 10
+    public static let rowTrailingPadding: CGFloat = 10
+    public static let titleFontSize: CGFloat = 13
+    public static let detailFontSize: CGFloat = 11.5
+    public static let tabGlyphSize: CGFloat = 13
+
+    /// The height, in History row units, a drawer opens at before its grip has resized it: expanded History's
+    /// eight. C6 L2c (N16): the grip drags it taller, up to `maximumRows`, and it reopens at the height it was left
+    /// at (`NotchSettingsDrawerHeight.swift`). The window never resizes for any of these heights.
+    public static let rows = NotchHistoryMorph.maximumRows
+
+    /// The default drawer's height below the 32 pt band.
+    public static var lowerSurfaceHeight: CGFloat {
+        NotchHistoryMorph.lowerSurfaceHeight(rows: CGFloat(rows))
+    }
+
+    public static let topInset: CGFloat = 6
+
+    /// The default drawer's History tab list: below its tab bar, above the grip's band (BarView adds the grip).
+    public static var historyListHeight: CGFloat {
+        historyListHeight(rows: CGFloat(rows))
+    }
+
+    public static let versionTitle = "VoiceBar"
+    public static let checkForUpdates = "Check for updates"
+    public static let releaseNotes = "Release notes"
+
+    public static func updateButtonTitle(_ version: String) -> String { "Update to \(version)" }
+
+    public static func updateStatus(_ phase: NotchUpdatePhase) -> String? {
+        switch phase {
+        case .idle: nil
+        case .checking: "Checking for updates…"
+        case .upToDate: "No newer release is available."
+        case let .ahead(latest): "No newer release. This build is past \(latest)."
+        case let .available(version): "VoiceBar \(version) is available."
+        case .couldNotCheck: "Could not check for updates. Try again in a moment."
+        case .updating: "Updating. VoiceBar restarts when it is done."
+        case let .refused(reason): reason
+        }
+    }
+
+    /// A tab's tooltip. Never painted in the drawer (0510 N2: no explanatory prose rows).
+    public static func tabDescription(_ tab: SettingsTab) -> String {
+        switch tab {
+        case .general: "Permissions, the dictation key, your microphone and updates."
+        case .transcription: "The local recognizer, its model and the processing options."
+        case .dictionary: "Words VoiceBar should spell your way."
+        case .speech: "Voices, reading speed and the long-text threshold."
+        case .history: "Your recent dictations."
+        }
+    }
+}
+
+/// One notch glyph with the band's contrast edge (`notchAdaptiveGlyphEdge`). The edge is for legibility only. It
+/// never kept a glyph painted: the drawer's icons vanished (N3, N12) because the panel's backing-scale pass asked
+/// SwiftUI's symbol image layers to redraw, which empties them (`VoiceBarBackingScaleSynchronizer`, fixed there).
+struct NotchGlyph: View {
+    let systemName: String
+    var pointSize: CGFloat = NotchSettingsDrawerPresentation.tabGlyphSize
+    let color: Color
+    let appearance: VoiceBarNotchAppearance
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: pointSize, weight: .semibold))
+            .foregroundStyle(color)
+            .notchAdaptiveGlyphEdge(VoiceBarNotchGlyphContrastTreatment.resolve(for: appearance).color)
+    }
+}
+
+/// 2.4 Lane A, Etan's QA 0510 N1: Settings as a notch drawer with the real settings in every tab. Pull History
+/// further down, or press the gear, and it hangs from the notch with its tabs. Each tab is the Settings window's
+/// own pane (it scrolls inside the drawer when it is taller); History is the notch's own History list.
+struct NotchSettingsDrawer: View {
+    let selectedTab: SettingsTab
+    let appearance: VoiceBarNotchAppearance
+    let context: NotchSettingsDrawerContext
+    /// A spot the drawer was opened at (the microphone control opens General at Microphone priority).
+    var request: SettingsTabRequest?
+    /// The notch's History rows, for the History tab.
+    var history: () -> AnyView = { AnyView(EmptyView()) }
+    let onSelectTab: (SettingsTab) -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var palette: VoiceBarNotchContrastPalette { .resolve(for: appearance) }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            tabBar
+            // Always fills below the tabs, even for a pane that draws nothing, so the tabs never re-centre (N3).
+            // C6 L2 (S9): a tab switch crossfades its content (`NotchDrawerMotion.tabTransition`).
+            Color.clear
+                .overlay(alignment: .top) {
+                    NotchDrawerCrossfade(
+                        key: selectedTab,
+                        animation: NotchDrawerMotion.easeOut(NotchDrawerMotion.tabInDuration),
+                        transition: NotchDrawerMotion.tabTransition(reduceMotion: reduceMotion)
+                    ) { tab in
+                        content(tab)
+                    }
+                }
+                .clipped()
+        }
+        .padding(.horizontal, NotchSettingsDrawerPresentation.horizontalInset)
+        .padding(.top, NotchSettingsDrawerPresentation.topInset)
+    }
+
+    @ViewBuilder
+    private func content(_ tab: SettingsTab) -> some View {
+        switch tab {
+        case .history:
+            history()
+        case .general:
+            VStack(spacing: 0) {
+                pane(.general)
+                if let updates = context.updates {
+                    NotchSettingsVersionRow(updates: updates, appearance: appearance)
+                }
+            }
+        case .transcription, .dictionary, .speech:
+            pane(tab)
+        }
+    }
+
+    private func pane(_ tab: SettingsTab) -> some View {
+        context.pane(tab, request?.tab == tab ? request : nil)
+            .environment(\.colorScheme, appearance == .dark ? .dark : .light)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    // MARK: Tabs
+
+    private var tabBar: some View {
+        HStack(spacing: 2) {
+            ForEach(SettingsTab.allCases) { tab in
+                let isSelected = tab == selectedTab
+                let ink = isSelected ? palette.primary.color : palette.secondary.color
+                Button { onSelectTab(tab) } label: {
+                    VStack(spacing: 3) {
+                        NotchGlyph(systemName: tab.systemImage, color: ink, appearance: appearance)
+                        Text(tab.title)
+                            .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
+                            .foregroundStyle(ink)
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: NotchSettingsDrawerPresentation.tabBarHeight - 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(palette.primary.color.opacity(isSelected ? 0.14 : 0))
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .background(PillControlTooltip(text: NotchSettingsDrawerPresentation.tabDescription(tab)))
+                .accessibilityLabel(tab.title)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+            }
+        }
+        .frame(height: NotchSettingsDrawerPresentation.tabBarHeight)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Settings tabs")
+    }
+}
+
+/// A compact capsule button that reads on the notch glass in both appearances.
+struct NotchDrawerButton: View {
+    let title: String
+    let palette: VoiceBarNotchContrastPalette
+    var prominent = false
+    var isEnabled = true
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11.5, weight: .medium))
+                .lineLimit(1)
+                .fixedSize()
+                .foregroundStyle(palette.primary.color.opacity(isEnabled ? 1 : 0.45))
+                .padding(.horizontal, 10)
+                .frame(height: 24)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(palette.primary.color.opacity(prominent ? 0.2 : 0.12))
+                )
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .background(PillControlTooltip(text: title))
+        .accessibilityLabel(title)
+    }
+}
+
+/// The version row under General: "VoiceBar" with its action on the same line (Check for updates, or Release notes and
+/// Update when a release is newer), then the full build line and the update status across the full width below
+/// (never truncated; either wraps to a second line if it must). Etan (QA 2026-11-11): it read cramped when the status
+/// was squeezed beside the button into two short lines; it now uses the card rows' 10 pt insets (lane S DESIGN.md §10).
+struct NotchSettingsVersionRow: View {
+    let updates: NotchUpdateController
+    let appearance: VoiceBarNotchAppearance
+
+    private var palette: VoiceBarNotchContrastPalette { .resolve(for: appearance) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .center, spacing: 8) {
+                Text(NotchSettingsDrawerPresentation.versionTitle)
+                    .font(.system(size: NotchSettingsDrawerPresentation.titleFontSize, weight: .medium))
+                    .foregroundStyle(palette.primary.color)
+                Spacer(minLength: 8)
+                if let version = updates.availableVersion {
+                    if let url = NotchUpdateController.releaseNotesURL(version: version) {
+                        NotchDrawerButton(title: NotchSettingsDrawerPresentation.releaseNotes, palette: palette) {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    NotchDrawerButton(title: NotchSettingsDrawerPresentation.updateButtonTitle(version),
+                                      palette: palette, prominent: true, isEnabled: updates.canUpdate) {
+                        updates.update()
+                    }
+                } else {
+                    NotchDrawerButton(title: NotchSettingsDrawerPresentation.checkForUpdates, palette: palette,
+                                      isEnabled: updates.phase != .checking && updates.phase != .updating) {
+                        Task { await updates.checkForUpdates() }
+                    }
+                }
+            }
+            Text(updates.buildLine)
+                .font(.system(size: NotchSettingsDrawerPresentation.detailFontSize))
+                .monospacedDigit()
+                .foregroundStyle(palette.tertiary.color)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .accessibilityIdentifier("notch-settings-build-line")
+            if let status = NotchSettingsDrawerPresentation.updateStatus(updates.phase) {
+                HStack(spacing: 6) {
+                    if updates.phase == .checking || updates.phase == .updating {
+                        ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 12, height: 12)
+                    }
+                    Text(status)
+                        .font(.system(size: NotchSettingsDrawerPresentation.detailFontSize))
+                        .foregroundStyle(palette.secondary.color)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, NotchSettingsDrawerPresentation.rowLeadingPadding)
+        .padding(.trailing, NotchSettingsDrawerPresentation.rowTrailingPadding)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .overlay(alignment: .top) {
+            Rectangle().fill(palette.primary.color.opacity(0.1)).frame(height: 0.5)
+        }
+        .task { if updates.status == nil { await updates.checkForUpdates(force: false) } }
+    }
+}
+
+extension SettingsTab {
+    /// The drawer panes that are grouped Forms (Dictionary scrolls its own list; History is the notch's rows).
+    var notchUsesGroupedForm: Bool {
+        switch self {
+        case .general, .transcription, .speech: true
+        case .dictionary, .history: false
+        }
+    }
+}
+
+/// Cancels a grouped Form's 20 pt side inset inside the drawer (lane S, Etan QA 2026-11-11 "the gutters on the sides
+/// are still huge"). The Form is laid out 20 pt wider on each side than the pane, so its cards land on the pane's
+/// edges; the drawer clips the pane, so the overlay scroller, which would sit in the clipped strip, is inset back to
+/// just inside the visible edge.
+struct NotchGroupedFormGutter: ViewModifier {
+    let isGroupedForm: Bool
+
+    func body(content: Content) -> some View {
+        if isGroupedForm {
+            content
+                .padding(.horizontal, -NotchSettingsDrawerPresentation.groupedFormInset)
+                .modifier(NotchScrollEdgeFade(isActive: true))
+                .background(NotchFormScrollerInset(trailing: NotchSettingsDrawerPresentation.groupedFormInset - 1))
+        } else {
+            content
+        }
+    }
+}
+
+/// Finds the pane's scroll view (a sibling of this probe under the same hosting container) and insets its vertical
+/// scroller. If AppKit's tree ever differs it finds nothing and changes nothing: the scroller is then clipped, never
+/// misplaced.
+struct NotchFormScrollerInset: NSViewRepresentable {
+    let trailing: CGFloat
+
+    func makeNSView(context: Context) -> Probe { Probe(trailing: trailing) }
+    func updateNSView(_ view: Probe, context: Context) {
+        view.trailing = trailing
+        view.apply()
+    }
+
+    final class Probe: NSView {
+        var trailing: CGFloat
+
+        init(trailing: CGFloat) {
+            self.trailing = trailing
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable) required init?(coder: NSCoder) { nil }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            DispatchQueue.main.async { [weak self] in self?.apply() }
+        }
+
+        override func layout() {
+            super.layout()
+            apply()
+        }
+
+        func apply() {
+            guard let scrollView = Self.scrollView(near: self) else { return }
+            let insets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: trailing)
+            if scrollView.scrollerInsets.right != insets.right { scrollView.scrollerInsets = insets }
+        }
+
+        /// The nearest NSScrollView among this probe's ancestors' descendants, searching outward three levels.
+        static func scrollView(near view: NSView) -> NSScrollView? {
+            var ancestor = view.superview
+            for _ in 0 ..< 3 {
+                guard let current = ancestor else { return nil }
+                if let found = firstScrollView(in: current, skipping: view) { return found }
+                ancestor = current.superview
+            }
+            return nil
+        }
+
+        private static func firstScrollView(in root: NSView, skipping probe: NSView) -> NSScrollView? {
+            for subview in root.subviews where subview !== probe {
+                if let scroll = subview as? NSScrollView { return scroll }
+                if let found = firstScrollView(in: subview, skipping: probe) { return found }
+            }
+            return nil
+        }
+    }
+}
+
+/// Fades a scrolling pane's top edge over `scrollEdgeFade` points, so content scrolled up under the tab bar (or the
+/// Dictionary toolbar) dissolves instead of being cut through mid-line. At rest the first section header sits below
+/// the fade.
+struct NotchScrollEdgeFade: ViewModifier {
+    let isActive: Bool
+
+    func body(content: Content) -> some View {
+        if isActive {
+            content.mask {
+                VStack(spacing: 0) {
+                    // Keep a clear guard below the tabs; a full-height fade leaves readable half-lines.
+                    Color.clear.frame(height: NotchSettingsDrawerPresentation.scrollEdgeFade - 6)
+                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 6)
+                    Color.black
+                }
+            }
+        } else {
+            content
+        }
+    }
+}

@@ -31,8 +31,8 @@ import {
   playAudioNonBlocking,
   awaitCurrentPlayback,
   getPlaybackQueueDepth,
-  preemptLongRead,
-  parkReadForAsk,
+  holdReadForAsk,
+  type AskReadHoldHandle,
   releaseAskReadSuccessor,
   reserveCaptureAdmission,
   isCaptureAdmissionReserved,
@@ -42,6 +42,7 @@ import {
   type QueuedPlaybackHandle,
 } from "./tts";
 import { waitForPlayerExit } from "./tts/playback-exit";
+import { ledgerCaptureEnd, ledgerMicOpen } from "./playback/ledger";
 import {
   waitForInput,
   type WaitForInputOptions,
@@ -858,6 +859,8 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
       );
     }, timeoutMs);
   };
+  /** Lane B: the read this ask parked; restored on every ask end. */
+  let readHold: AskReadHoldHandle | undefined;
   let promptBudgetRemaining = voiceAskPromptTimeoutMs(validated.message);
   let promptBudgetStartedAt = 0;
   const onPromptParkedChange = (parked: boolean): void => {
@@ -873,23 +876,25 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
   };
   armTimeout(VOICE_ASK_PLAYBACK_WAIT_TIMEOUT_MS, "playback-wait");
 
-  let returnInterruptedRead: ((processing?: boolean) => boolean) | undefined;
   const converseFlow = async (): Promise<VoiceAskTurnOutcome> => {
     // V1 policy: refuse instead of queueing while the user is recording.
     // Queueing a question would make the eventual prompt stale and can still
     // leak audio if the recording state changes while the caller waits.
     assertSpeakerClear();
 
-    // Park the live read, then wait for physical playback exit before Ask borrows the speaker.
-    returnInterruptedRead = parkReadForAsk();
-    preemptLongRead("ask");
+    // Lane B: park the read on screen at its exact word; an ask never cancels a read nor empties the narration queue
+    // (statechart gaps 1 and 2). Another ask still owning capture refuses this one before the read is touched. Then
+    // wait for physical playback exit (P0-2: awaits full queue) before Ask borrows the speaker. The ask's recorder
+    // exit (or its end) restores the read.
+    readHold ??= holdReadForAsk();
+    if (readHold.refused) return { kind: "capture-owned" };
     await awaitCurrentPlayback({ forCaptureAdmission: true });
     if (timeoutSettled || inputAbortController.signal.aborted) {
       return { kind: "ended-before-capture" };
     }
 
     captureAdmission = reserveCaptureAdmission();
-    if (!captureAdmission && returnInterruptedRead && isPlaybackPaused()) {
+    if (!captureAdmission && readHold?.held && isPlaybackPaused()) {
       // A seek's runner can materialize its parked job/slice after the old player exit.
       await awaitCurrentPlayback({ forCaptureAdmission: true });
       if (timeoutSettled || inputAbortController.signal.aborted) return { kind: "ended-before-capture" };
@@ -976,6 +981,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         archiveSource: "voice_ask",
         voiceAskArtifacts,
         onCaptureStart: () => {
+          ledgerMicOpen();
           captureActive = true;
           armTimeout(outerTimeoutMs, "capture");
         },
@@ -1003,14 +1009,19 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
           captureArchivePath = archivePath;
         },
         onCaptureEnd: (transcribedDurationMs) => {
+          ledgerCaptureEnd("answer");
           captureActive = false;
           captureHeld = false;
           armTimeout(voiceAskReturnTimeoutMs(transcribedDurationMs), "return");
         },
         onPhaseChange: (phase) => {
           progressHeartbeat?.setStage(phase);
-          // The input phase follows bounded recorder-exit settlement; run after its transcribing state is published.
-          queueMicrotask(() => { if (returnInterruptedRead?.(true)) returnInterruptedRead = undefined; });
+          // Capture-end r2: the input phase follows bounded recorder-exit settlement. Once its transcribing state is
+          // published, the read this ask parked takes the speaker back (idempotent; the ask's end is the fallback).
+          queueMicrotask(() => {
+            try { readHold?.restore({ recorderExited: true }); }
+            catch (error) { console.error(`[voicelayer] Parked read restore failed: ${error instanceof Error ? error.message : String(error)}`); }
+          });
         },
         onNoAnswer: (unclassified) => { noAnswer = !unclassified; unclassifiedAnswer = unclassified; },
         onNoSpeech: () => {
@@ -1059,8 +1070,10 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
   }).finally(async () => {
     await promptTimeoutCleanup;
     captureAdmission?.release();
-    returnInterruptedRead?.();
-    returnInterruptedRead = undefined;
+    // Lane B: the capture is over and its admission released: restore the parked read if its recorder exit did
+    // not (failure, cancel, timeout, or a read the user had paused). A Stop during the ask ended it already.
+    try { readHold?.restore(); }
+    catch (error) { console.error(`[voicelayer] Parked read restore failed: ${error instanceof Error ? error.message : String(error)}`); }
     if (!operationLifecycle) releaseAskReadSuccessor();
   });
   const confirmedTeardown = async () => {

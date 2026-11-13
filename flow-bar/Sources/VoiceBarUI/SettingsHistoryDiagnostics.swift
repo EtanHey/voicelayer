@@ -100,6 +100,10 @@ public struct SettingsHistoryDiagnostics: Equatable, Sendable {
         var warnings = ["Earlier attempts and retry times are not retained in this archive format."]
         if let id = metadata["id"] as? String, id != relative[1] { warnings.append("Metadata ID differs from the selected folder. Folder identity is used.") }
         if reason != nil, (transcriptSize ?? 0) > 0 { warnings.append("Saved text and an error coexist. The error does not replace or validate the saved result.") }
+        if let overruns = (metadata["capture_overruns"] as? [String: Any])?["count"] as? Int, overruns > 0 {
+            // c8-M3: a transcript with a hole is never presented as complete.
+            warnings.append("The system dropped audio during this take (\(overruns == 1 ? "once" : "\(overruns) times")). The transcript may be missing words.")
+        }
         let provenance = metadata["provenance"] as? [String: Any]
         let archiveState: ArchiveState = reason == "transcription-failed" ? .failed
             : status == "partial" ? .partial : status == "cancelled" ? .cancelled : status == "transcribed" ? .transcribed

@@ -1,6 +1,7 @@
 @testable import VoiceBarUI
 import XCTest
 
+@MainActor
 final class VoiceStateTests: XCTestCase {
     func testQueuedSpeaksKeepCurrentTeleprompterThenAdvanceItsWords() {
         let state = VoiceState()
@@ -679,6 +680,7 @@ final class VoiceStateTests: XCTestCase {
         let state = VoiceState()
         var sentCommand: [String: Any]?
 
+        state.isConnected = true // The request fixture has a connected daemon.
         state.sendCommand = { command in
             sentCommand = command
         }
@@ -695,6 +697,7 @@ final class VoiceStateTests: XCTestCase {
         let state = VoiceState(recentTranscriptionsLoader: { [] })
         var sentCommand: [String: Any]?
         var pastedTexts: [String] = []
+        state.isConnected = true // The request fixture has a connected daemon.
         state.sendCommand = { command in
             sentCommand = command
         }
@@ -728,6 +731,7 @@ final class VoiceStateTests: XCTestCase {
         let state = VoiceState(recentTranscriptionsLoader: { [] })
         var sentCommand: [String: Any]?
         var pastedTexts: [String] = []
+        state.isConnected = true // The request fixture has a connected daemon.
         state.sendCommand = { command in
             sentCommand = command
         }
@@ -759,6 +763,7 @@ final class VoiceStateTests: XCTestCase {
         let state = VoiceState()
         var sentCommands: [[String: Any]] = []
 
+        state.isConnected = true // The request fixture has a connected daemon.
         state.sendCommand = { command in
             sentCommands.append(command)
         }
@@ -857,6 +862,7 @@ final class VoiceStateTests: XCTestCase {
         )
         var sentCommand: [String: Any]?
         var pastedTexts: [String] = []
+        state.isConnected = true // The request fixture has a connected daemon.
         state.sendCommand = { command in
             sentCommand = command
         }
@@ -935,7 +941,9 @@ final class VoiceStateTests: XCTestCase {
     func testARejectedSamePathRetryKeepsTheFirstJobsArchivedOrigin() async throws {
         try await assertArchivedResultLeavesTheRecentListAlone { state in
             state.handleEvent(["type": "error", "message": "Synthetic error from another client"])
+            state.dismissError() // Recovery returns the native mode to idle before retrying.
             var retry: [String: Any]?
+            state.isConnected = true // The request fixture has a connected daemon.
             state.sendCommand = { retry = $0 }
             state.retranscribeHistoryEntry(recordingPath: Self.archivedFixturePath)
             guard let id = retry?["id"] as? String else { return XCTFail("the retry was sent") }
@@ -968,6 +976,7 @@ final class VoiceStateTests: XCTestCase {
         state.pasteConfirmationDelay = 0
         var sentCommand: [String: Any]?
         var pastedTexts: [String] = []
+        state.isConnected = true // The request fixture has a connected daemon.
         state.sendCommand = { sentCommand = $0 }
         state.pasteHandler = { text in
             pastedTexts.append(text)
@@ -1030,6 +1039,7 @@ final class VoiceStateTests: XCTestCase {
         var sentCommand: [String: Any]?
         var pastedTexts: [String] = []
         var changedPaths: [String?] = []
+        state.isConnected = true // The request fixture has a connected daemon.
         state.sendCommand = { sentCommand = $0 }
         state.pasteHandler = { text in
             pastedTexts.append(text)
@@ -1071,6 +1081,7 @@ final class VoiceStateTests: XCTestCase {
             recentTranscriptionEntriesSaver: { _ in }
         )
         var sentCommands: [[String: Any]] = []
+        state.isConnected = true // The request fixture has a connected daemon.
         state.sendCommand = { command in
             sentCommands.append(command)
         }
@@ -1104,6 +1115,7 @@ final class VoiceStateTests: XCTestCase {
             recentTranscriptionEntriesSaver: { _ in }
         )
         var sentCommand: [String: Any]?
+        state.isConnected = true // The request fixture has a connected daemon.
         state.sendCommand = { command in
             sentCommand = command
         }
@@ -1152,6 +1164,7 @@ final class VoiceStateTests: XCTestCase {
         )
         var sentCommand: [String: Any]?
         var pastedTexts: [String] = []
+        state.isConnected = true // The request fixture has a connected daemon.
         state.sendCommand = { command in
             sentCommand = command
         }
@@ -1207,6 +1220,7 @@ final class VoiceStateTests: XCTestCase {
             recentTranscriptionEntriesSaver: { _ in }
         )
         var sentCommands: [[String: Any]] = []
+        state.isConnected = true // The request fixture has a connected daemon.
         state.sendCommand = { command in
             sentCommands.append(command)
         }
@@ -1221,6 +1235,9 @@ final class VoiceStateTests: XCTestCase {
             "id": recordID,
             "reason": "busy",
         ])
+        XCTAssertFalse(state.historyRetranscriptionAvailability.isEnabled, "a rejected opening has not received idle yet")
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        state.dismissError() // Recover native idle before the second archive request.
         state.retranscribeHistoryEntry(recordingPath: secondAudioPath)
 
         let historyCommands = sentCommands.filter { $0["cmd"] as? String == "retranscribe_recording" }
@@ -1238,6 +1255,7 @@ final class VoiceStateTests: XCTestCase {
             recentTranscriptionEntriesSaver: { _ in }
         )
         var sentCommands: [[String: Any]] = []
+        state.isConnected = true // The request fixture has a connected daemon.
         state.sendCommand = { command in
             sentCommands.append(command)
         }
@@ -1259,6 +1277,7 @@ final class VoiceStateTests: XCTestCase {
         )
         var sentCommand: [String: Any]?
         var pastedTexts: [String] = []
+        state.isConnected = true // The request fixture has a connected daemon.
         state.sendCommand = { command in
             sentCommand = command
         }
@@ -1320,6 +1339,7 @@ final class VoiceStateTests: XCTestCase {
             recentTranscriptionEntriesSaver: { _ in }
         )
         var sentCommand: [String: Any]?
+        state.isConnected = true // The request fixture has a connected daemon.
         state.sendCommand = { command in
             sentCommand = command
         }
@@ -1358,6 +1378,7 @@ final class VoiceStateTests: XCTestCase {
         state.transcriptionTimeout = .milliseconds(20)
         state.barInitiatedTranscriptionTimeout = .seconds(30)
         var sentCommand: [String: Any]?
+        state.isConnected = true // The request fixture has a connected daemon.
         state.sendCommand = { command in
             sentCommand = command
         }
@@ -1390,6 +1411,7 @@ final class VoiceStateTests: XCTestCase {
             recentTranscriptionEntriesSaver: { _ in }
         )
         var sentCommand: [String: Any]?
+        state.isConnected = true // The request fixture has a connected daemon.
         state.sendCommand = { command in
             sentCommand = command
         }

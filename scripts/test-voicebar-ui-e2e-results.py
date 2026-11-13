@@ -19,6 +19,40 @@ QA_SOURCE = dict(kind='application', bundle='com.voicelayer.voicebar.uie2e', exe
 
 
 class ReportTests(unittest.TestCase):
+    def timing_manifest(self, entries):
+        attachments = []
+        for index, (name, data) in enumerate(entries):
+            filename = f'timing-{index}.json'
+            (self.root / filename).write_text(json.dumps(data))
+            attachments.append(dict(suggestedHumanReadableName='UIE2E-E2E24-TIMING-' + name + '_0_UUID.json',
+                exportedFileName=filename, isAssociatedWithFailure=False))
+        return [dict(attachments=attachments)]
+
+    def test_timing_export_preserves_each_case_and_total(self):
+        manifest = self.timing_manifest([('dictionary', dict(case='dictionary',seconds=1.25)),
+                                         ('recognizer', dict(case='recognizer',seconds=2))])
+        data = results.timing_receipts(self.root, manifest, {'e2e24:dictionary','e2e24:recognizer'})
+        self.assertEqual(data['totalSeconds'],3.25)
+        self.assertEqual([row['case'] for row in data['cases']],['dictionary','recognizer'])
+
+    def test_timing_missing_duplicate_invalid_and_mismatched_cases_fail(self):
+        for entries in [[], [('dictionary',dict(case='dictionary',seconds=-1))],
+            [('dictionary',dict(case='dictionary',seconds=True))],
+            [('dictionary',dict(case='dictionary',seconds=float('nan')))],
+            [('dictionary',dict(case='recognizer',seconds=1))],
+            [('dictionary',dict(case='dictionary',seconds=1))]*2]:
+            with self.subTest(entries=entries), self.assertRaises(ValueError):
+                results.timing_receipts(self.root,self.timing_manifest(entries),{'e2e24:dictionary'})
+
+    def test_timing_cannot_escape_export_or_use_failed_attachment(self):
+        manifest = self.timing_manifest([('dictionary',dict(case='dictionary',seconds=1))])
+        attachment = manifest[0]['attachments'][0]
+        attachment['isAssociatedWithFailure'] = True
+        with self.assertRaises(ValueError): results.timing_receipts(self.root,manifest,{'e2e24:dictionary'})
+        attachment['isAssociatedWithFailure'] = False
+        attachment['exportedFileName'] = '../outside.json'
+        with self.assertRaises(ValueError): results.timing_receipts(self.root,manifest,{'e2e24:dictionary'})
+
     def test_seek2_can_no_longer_be_waived_as_an_expected_failure(self):
         step = dict(passed=True, expectedFailure=dict(packet='SEEK2', surface='notch:seek-idle',
                     descriptions=['[SEEK2] readback must seek']))
@@ -69,6 +103,56 @@ class ReportTests(unittest.TestCase):
         step['expectedFailure'] = dict(packet='SEL1', surface='notch:supersede-preparing', descriptions=['[SEL1] replacement'])
         with self.assertRaises(ValueError):
             results.report(self.root, [step], [dict(attachments=[attachment])])
+
+    def test_etan_qa_row_xfail_needs_matching_marker_and_exact_surface(self):
+        for row in ['Q2']:
+            expected = dict(packet=row, surface='e2e24:' + row, descriptions=['[' + row + '] product assertion'],
+                            surfaces=['e2e24:' + row])
+            step = dict(passed=True, expectedFailure=expected)
+            self.assertEqual(results.expected_packet(step), row)
+            for key, value in [('descriptions', ['[OTHER] unrelated']), ('surfaces', ['e2e24:OTHER']), ('surface', 'e2e24:OTHER')]:
+                invalid = dict(expected, **{key: value})
+                with self.assertRaises(ValueError):
+                    results.expected_packet(dict(step, expectedFailure=invalid))
+
+    def test_fixed_teleprompter_rows_are_no_longer_expected_failures(self):
+        # T1-T8 (feat/2.4-teleprompter-etan): a fixed row verifies; an XFAIL tag on it is refused.
+        for row in ['T1', 'T2', 'T4', 'T5', 'T6', 'T7', 'T8']:
+            self.assertNotIn(row, results.QA_ROW_PACKETS)
+            expected = dict(packet=row, surface='e2e24:' + row, descriptions=['[' + row + '] product assertion'],
+                            surfaces=['e2e24:' + row])
+            with self.assertRaises(ValueError):
+                results.expected_packet(dict(passed=True, expectedFailure=expected))
+
+    def test_etan_qa_row_exports_as_expected_never_verified(self):
+        directory, ledger, manifest = self.attachment_run()
+        expected = dict(packet='Q2', surface='e2e24:Q2', surfaces=['e2e24:Q2'],
+                        descriptions=['[Q2] recording wing has no microphone control'])
+        ledger['steps'][0]['expectedFailure'] = expected
+        ledger['coverage'].update(expectedSurfaces={'e2e24:Q2': 'Q2'}, missingSurfaces=[], verifiedSurfaces=[])
+        (directory / 'step.json').write_text(json.dumps(ledger['steps'][0]))
+        (directory / 'ledger.json').write_text(json.dumps(ledger))
+        self.assertTrue(self.export_attached_run())
+        self.assertIn('XFAIL [Q2]', (directory / 'index.html').read_text())
+        ledger['coverage']['verifiedSurfaces'] = ['e2e24:Q2']
+        (directory / 'ledger.json').write_text(json.dumps(ledger))
+        with self.assertRaises(ValueError):
+            self.export_attached_run()
+
+    def test_known_qa_unexpected_pass_cannot_become_verified(self):
+        directory, ledger, manifest = self.attachment_run()
+        ledger['coverage'].update(expectedSurfaces={}, missingSurfaces=[], verifiedSurfaces=['e2e24:Q2'])
+        (directory / 'ledger.json').write_text(json.dumps(ledger))
+        with self.assertRaises(ValueError):
+            self.export_attached_run()
+
+    def test_fixed_0510_rows_verify_normally_and_no_longer_take_an_expected_tag(self):
+        self.assertFalse({'N1', 'N4', 'N5', 'N6', 'N7', 'N9', 'N10'} & results.QA_ROW_PACKETS)
+        for row in ['N1', 'N9']:
+            expected = dict(packet=row, surface='e2e24:' + row, descriptions=['[' + row + '] stale'],
+                            surfaces=['e2e24:' + row])
+            with self.assertRaises(ValueError):
+                results.expected_packet(dict(passed=True, expectedFailure=expected))
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(suffix='.noindex', dir=BUILD_ROOT)
@@ -627,6 +711,23 @@ class ReportTests(unittest.TestCase):
         # The signed test runner cannot write here. Only exported XCTest attachments exist.
         with patch.object(results.subprocess, 'run'):
             return results.export(self.root, self.root / 'no-sandbox-ledger')
+
+    def test_e2e24_export_writes_timings_and_missing_attachment_fails(self):
+        directory, ledger, manifest = self.attachment_run()
+        ledger.update(scenario='e2e24', scope='e2e24')
+        ledger['coverage'].update(scenario='e2e24', verifiedSurfaces=['e2e24:dictionary'], missingSurfaces=[])
+        (directory/'ledger.json').write_text(json.dumps(ledger))
+        (self.root/'scenario.json').write_text(json.dumps(dict(scenario='e2e24')))
+        with patch.object(results.subprocess,'run'):
+            self.assertFalse(results.export(self.root,self.root/'sandbox'))
+        self.assertIn('timing', (directory/'index.html').read_text())
+        (directory/'timing.json').write_text(json.dumps(dict(case='dictionary',seconds=1.25)))
+        manifest.append(dict(suggestedHumanReadableName='UIE2E-E2E24-TIMING-dictionary_0_UUID.json',
+                             exportedFileName='timing.json',isAssociatedWithFailure=False))
+        (directory/'manifest.json').write_text(json.dumps([dict(attachments=manifest)]))
+        with patch.object(results.subprocess,'run'):
+            self.assertTrue(results.export(self.root,self.root/'sandbox'))
+        self.assertEqual(json.loads((self.root/'timings.json').read_text())['totalSeconds'],1.25)
 
     def test_export_reads_attached_receipts_without_any_scratch_ledger(self):
         self.attachment_run()

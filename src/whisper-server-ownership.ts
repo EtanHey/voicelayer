@@ -55,6 +55,7 @@ export interface WhisperServerOwnershipRecord {
   args: string[];
   /** Model the server was launched with. */
   model_path: string;
+  model_sha256?: string;
   /** Performance effort tier the server was launched with. */
   performance_effort: string;
   /** Acceleration mode the server was launched with. */
@@ -137,6 +138,7 @@ export function readWhisperServerOwnership(
         typeof parsed.started_at === "string" ? parsed.started_at : "",
       binary: parsed.binary,
       args: parsed.args,
+      model_sha256: typeof parsed.model_sha256 === "string" && /^[a-f0-9]{64}$/.test(parsed.model_sha256) ? parsed.model_sha256 : undefined,
       model_path:
         typeof parsed.model_path === "string" ? parsed.model_path : "",
       performance_effort:

@@ -63,6 +63,8 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
     /// MICDROP2: the archived note; wins over a label rebuilt from `micDisconnectedAtMs`.
     public let micDisconnectNote: String?
     public let deliveryNote: String?
+    /// c8-M3: the system dropped audio during this take; the transcript may be missing words.
+    public let captureOverrunNote: String?
     public let modelLabel: String?
     public let performanceEffort: VoiceBarPerformanceEffort?
     public let inputDeviceLabel: String?
@@ -85,6 +87,7 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
         micDisconnectedAtMs: Int? = nil,
         micDisconnectNote: String? = nil,
         deliveryNote: String? = nil,
+        captureOverrunNote: String? = nil,
         modelLabel: String? = nil,
         performanceEffort: VoiceBarPerformanceEffort? = nil,
         inputDeviceLabel: String? = nil,
@@ -104,6 +107,7 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
         self.micDisconnectedAtMs = micDisconnectedAtMs
         self.micDisconnectNote = micDisconnectNote
         self.deliveryNote = deliveryNote
+        self.captureOverrunNote = captureOverrunNote
         self.modelLabel = modelLabel
         self.performanceEffort = performanceEffort
         self.inputDeviceLabel = inputDeviceLabel
@@ -283,6 +287,8 @@ public enum SettingsHistoryArchive {
             micDisconnectNote: metadata?.micDisconnectNote?
                 .trimmingCharacters(in: .whitespacesAndNewlines).settingsArchiveNilIfEmpty,
             deliveryNote: metadata?.deliveryNote,
+            captureOverrunNote: metadata?.captureOverrunNote?
+                .trimmingCharacters(in: .whitespacesAndNewlines).settingsArchiveNilIfEmpty,
             modelLabel: VoiceModelDisplayName.normalize(metadata?.provenance?.whisperModelPath),
             performanceEffort: metadata?.provenance?.performanceEffort.flatMap(VoiceBarPerformanceEffort.init),
             inputDeviceLabel: metadata?.inputDeviceName?

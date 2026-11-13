@@ -41,7 +41,7 @@ final class TeleprompterPreparingHandoffTests: XCTestCase {
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/VoiceBarUI/BarView.swift"), encoding: .utf8)
         let start = try XCTUnwrap(source.range(of: "private func notchTeleprompterBody(text: String)"))
-        let end = try XCTUnwrap(source.range(of: "private var showsTeleprompterA", range: start.upperBound ..< source.endIndex))
+        let end = try XCTUnwrap(source.range(of: "private var notchTeleprompterControls", range: start.upperBound ..< source.endIndex))
         let body = source[start.upperBound ..< end.lowerBound]
         // Status, U5's live Teleprompter A and the readback TeleprompterView: every branch hands off.
         XCTAssertEqual(body.components(separatedBy: ".transition(TeleprompterPreparingHandoff.transition)").count - 1, 3)

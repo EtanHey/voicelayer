@@ -69,7 +69,9 @@ def run(directory, module, config, label, expected=None):
     states = re.search(r'(\d+) states generated, (\d+) distinct states found', text)
     rows.append((label, expected or 'fixed', code, states.group(2) if states else '-', bool(valid)))
     print(f'{label}: exit={code} expected={expected or "PASS"} valid={bool(valid)}', flush=True)
-    return bool(valid)
+    if not valid:
+        raise SystemExit(f"STOP {label}: unexpected TLC outcome; no receipt")
+    return True
 
 success = True
 with tempfile.TemporaryDirectory(prefix='check-', dir=scratch) as temporary:

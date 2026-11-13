@@ -54,6 +54,43 @@ export class SpeechWordTimeline {
       words: chunk.words.map(word => ({ ...word, startMs: startMs + word.startMs, endMs: startMs + word.endMs })) };
   }
 
+  /** Full timing prefix for restoring a held presentation after another read owned the client. */
+  snapshot(): SpeechWordsEvent[] {
+    return [...this.chunks.keys()].sort((a, b) => a - b).map(index => this.event(index));
+  }
+
+  /** Lane B: the read-global index of chunk `index`'s first word, when every earlier chunk is known. */
+  wordOffsetOf(index: number): number | undefined {
+    let offset = 0;
+    for (let i = 0; i < index; i++) {
+      const chunk = this.chunks.get(i);
+      if (!chunk) return undefined;
+      offset += chunk.words.length;
+    }
+    return offset;
+  }
+
+  /** Lane B: the read-global index of the word a read-global offset is in (the last word whose start it reached). */
+  wordAt(offsetMs: number): number | undefined {
+    let start = 0, offset = 0;
+    for (let i = 0; i < this.chunks.size; i++) {
+      const chunk = this.chunks.get(i);
+      if (!chunk) return undefined;
+      if (offsetMs < start + chunk.duration || i === this.chunks.size - 1) {
+        return offset + Math.max(0, chunk.words.findLastIndex(word => word.startMs <= offsetMs - start));
+      }
+      start += chunk.duration; offset += chunk.words.length;
+    }
+    return undefined;
+  }
+
+  /** Words known so far across the synthesized prefix. */
+  wordCount(): number {
+    let count = 0;
+    for (const chunk of this.chunks.values()) count += chunk.words.length;
+    return count;
+  }
+
   seek(wordIndex: number, perform: (offsetMs: number) => SeekResult, commandId?: string): SeekResult {
     const receipt = commandId ? this.receipts.get(commandId) : undefined;
     if (receipt) return receipt.wordIndex === wordIndex ? receipt.result : { outcome: "reject", reason: "seek id reused" };

@@ -41,6 +41,8 @@ export interface LongReadDependencies {
   prepareSeek?(chunk: LongReadChunk, offsetMs: number, signal: AbortSignal): Promise<string | undefined>;
   disposeSeek?(file?: string): void;
   seekFailed?(error: unknown): void;
+  /** Lane B: a seek (or replay) was committed at this read-global offset; the playing chunk is replaced now. */
+  seekCommitted?(offsetMs: number): void;
   /** Every synthesized chunk grows the seekable total; `final` once all chunks exist. */
   onDuration?(totalMs: number, final: boolean): void;
   synthesize(text: string, index: number, signal: AbortSignal): Promise<LongReadChunk>;
@@ -121,6 +123,7 @@ export async function runLongRead(
       // Replacing it early could turn its interrupted player into a read stop.
       deps.disposeSeek?.(target?.sliceFile);
       target = { index, local, sliceFile };
+      deps.seekCommitted?.(chunkStart(index) + local);
       playback?.interrupt?.(); wake();
     };
     // Global zero reuses the retained original; no asynchronous slice can overtake Stop.

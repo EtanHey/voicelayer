@@ -49,16 +49,17 @@ final class ReadQueueTests: XCTestCase {
         XCTAssertEqual(VoiceBarPresentation.readQueueControl(for: state)?.countLabel, "+1")
     }
 
-    func testEmptySelectionStopsAndClearsTheWholeQueue() {
+    /// Etan, 2026-11-08 4:40 pm: an empty Option+F5 over a read pauses it (resumes it when paused); the queue stays.
+    func testEmptySelectionPausesTheReadAndKeepsTheQueue() {
         for second in ["", nil] as [String?] {
             let (state, a) = readingA()
             press(state, "Bravo selection")
             state.handleEvent(queueEvent(1, a))
             commands = []
             press(state, second)
-            XCTAssertEqual(cmds, ["stop"], "same or empty selection is Stop: \(String(describing: second))")
-            XCTAssertEqual(state.readQueueCount, 0)
-            XCTAssertNil(VoiceBarPresentation.readQueueControl(for: state))
+            XCTAssertEqual(cmds, ["pause"], "empty selection pauses: \(String(describing: second))")
+            XCTAssertEqual(state.readQueueCount, 1)
+            XCTAssertNotNil(VoiceBarPresentation.readQueueControl(for: state))
         }
     }
 
@@ -73,7 +74,9 @@ final class ReadQueueTests: XCTestCase {
         XCTAssertEqual(state.selectionFeedbackNote, "Already queued")
     }
 
-    func testPlayingRepeatAdvancesWithoutClearingPendingReads() {
+    /// Etan, 2026-11-08 4:40 pm: the text already being read dedupes with a notice; it is never Next (that is the
+    /// button's job) and the queue is kept.
+    func testPlayingRepeatDedupesWithANoticeAndKeepsPendingReads() {
         for text in ["Alpha selection", "  Alpha \n selection ", "1. Alpha selection", "- [x] Alpha selection"] {
             let (state, a) = readingA()
             press(state, "Bravo selection")
@@ -81,8 +84,8 @@ final class ReadQueueTests: XCTestCase {
             state.handleEvent(queueEvent(2, a))
             commands = []
             press(state, text)
-            XCTAssertEqual(cmds, ["read_next"], text)
-            XCTAssertEqual(commands.last?["request_id"] as? String, a)
+            XCTAssertTrue(cmds.isEmpty, text)
+            XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote, text)
             XCTAssertEqual(state.readQueueCount, 2)
         }
     }
@@ -108,8 +111,8 @@ final class ReadQueueTests: XCTestCase {
         }
         commands = []
         press(state, "Projected display")
-        XCTAssertEqual(cmds, ["read_next"], "the playing read's own receipt still identifies it")
-        XCTAssertEqual(commands.last?["request_id"] as? String, "unretained-read")
+        XCTAssertTrue(cmds.isEmpty, "the playing read's own receipt still identifies it")
+        XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote)
     }
 
     func testEveryQueuedIdentityIsCheckedBeforeCapacityAndKeepsCaseAndTimerChanges() {
@@ -141,11 +144,13 @@ final class ReadQueueTests: XCTestCase {
         }
     }
 
-    func testCanonicalEquivalentSelectionsStopThePlayingReadAndHintForQueuedRead() {
+    func testCanonicalEquivalentSelectionsDedupeThePlayingReadAndHintForQueuedRead() {
         for (composed, decomposed) in [("café", "cafe\u{0301}"), ("ש\u{05b8}\u{05c1}", "ש\u{05c1}\u{05b8}")] {
             let (playing, _) = readingA(composed)
+            commands = []
             press(playing, decomposed)
-            XCTAssertEqual(cmds, ["stop"])
+            XCTAssertTrue(cmds.isEmpty)
+            XCTAssertEqual(playing.selectionFeedbackNote, VoiceState.alreadyReadingNote)
             let (queued, a) = readingA()
             press(queued, composed)
             queued.handleEvent(queueEvent(1, a))
@@ -182,7 +187,8 @@ final class ReadQueueTests: XCTestCase {
         state.handleEvent(speaking(id: inflight, text: "Projected display", read: "inflight-read"))
         commands = []
         press(state, "Inflight selection")
-        XCTAssertEqual(cmds, ["stop"], "a genuine unacknowledged submission still binds its receipt")
+        XCTAssertTrue(cmds.isEmpty, "a genuine unacknowledged submission still binds its receipt")
+        XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote)
     }
 
     func testClearedSnapshotAlreadyOverridesTheOldPlayingDisplayBeforeExternalSpeechArrives() {
@@ -260,7 +266,11 @@ final class ReadQueueTests: XCTestCase {
                     XCTAssertEqual(commands.last?["source"] as? String, "selection", label)
                     XCTAssertEqual(commands.last?["queue"] as? Bool == true, row.playing != 0 && !row.preempted, label)
                 }
-                if row.decision == "hint" { XCTAssertEqual(state.selectionFeedbackNote, "Already queued", label) }
+                // Etan, 2026-11-08: the read being played is "Already reading this"; a queued one "Already queued".
+                if row.decision == "hint" {
+                    let reading = row.selected == row.playing && !row.suspended && !row.pending.contains(row.selected)
+                    XCTAssertEqual(state.selectionFeedbackNote, reading ? VoiceState.alreadyReadingNote : "Already queued", label)
+                }
                 if row.decision == "read_next" { XCTAssertEqual(commands.last?["request_id"] as? String, owner, label) }
                 if row.event == "stop" { XCTAssertEqual(state.readQueueCount, 0, label) }
                 else { XCTAssertEqual(state.readQueueCount, row.preempted ? 0 : row.pending.count, label) }
@@ -389,12 +399,7 @@ final class ReadQueueTests: XCTestCase {
                        VoiceBarNotchContract.compactIndicatorLaneWidth, "P16's single pause lane is unchanged")
         let input = VoiceBarNotchOperationalInput(mode: .speaking, hasTeleprompterText: true,
                                                   readQueueLeadingSlotCount: control.leadingSlotCount)
-        // T3: reading adds Replay and Stop to the left wing; Next takes the fourth slot and carries its "+N" as a
-        // badge (five slots do not fit the 130 pt morph canvas).
-        XCTAssertEqual(VoiceBarPresentation.notchPresentation(from: input).geometry.leadingWingWidth,
-                       VoiceBarNotchContract.readingLeadingWingWidth(slots: 4))
-        XCTAssertLessThanOrEqual(VoiceBarNotchContract.readingLeadingWingWidth(slots: 4),
-                                 VoiceBarNotchContract.morphCanvasWingCapacity)
+        XCTAssertEqual(VoiceBarPresentation.notchPresentation(from: input).geometry.leadingWingWidth, wing)
         state.handleEvent(queueEvent(0, a))
         XCTAssertNil(VoiceBarPresentation.readQueueControl(for: state), "count 0 removes Next and its slot")
     }
@@ -414,10 +419,13 @@ final class ReadQueueTests: XCTestCase {
         let slots = VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1
         let input = VoiceBarNotchOperationalInput(mode: .speaking, hasTeleprompterText: true,
                                                   readQueueLeadingSlotCount: slots)
-        // T3: with the queue empty the reading wing holds Replay, Stop and Pause, and no empty Next slot.
+        // QUEUE1's own Next control goes with the queue; the input built from it alone is the fixed wing.
         XCTAssertEqual(slots, 1, "no empty Next slot remains")
         XCTAssertEqual(VoiceBarPresentation.notchPresentation(from: input).geometry.leadingWingWidth,
-                       VoiceBarNotchContract.readingLeadingWingWidth(slots: 3))
+                       VoiceBarNotchContract.fixedWingWidth)
+        // T1 (Etan QA 2026-11-09): the live wing keeps its whole transport; Forward is shown disabled instead.
+        XCTAssertEqual(VoiceBarPresentation.playbackLeadingSlotCount(for: state), VoiceBarPresentation.readingTransportSlotCount)
+        XCTAssertFalse(VoiceBarPresentation.readingForwardControl(for: state).isEnabled)
         XCTAssertNil(VoiceBarPresentation.readQueueControl(
             mode: .speaking, isReadback: false, currentRequestID: a, count: -1), "negative counts are zero")
 
@@ -524,29 +532,21 @@ final class ReadQueueTests: XCTestCase {
 
     // MARK: - QUEUE1b Q1B-SOL-1 (lead ruling): Hide ends the read chain on both sides
 
-    func testHideDuringTheCaptureDiscardsTheRetainedQueueOnBothSides() throws {
+    func testHideDuringCaptureRefusesAndKeepsTheRetainedQueue() throws {
         let (state, a) = readingA()
         press(state, "Bravo selection")
-        let b = try XCTUnwrap(commands.last?["id"] as? String)
         state.handleEvent(queueEvent(1, a))
         state.retainingReadQueueOnStop { state.stop() }
         state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
         state.record(pressToTalk: true)
         state.handleEvent(["type": "state", "state": "recording", "bar_owned": true])
+        let queueCount = state.readQueueCount
         commands = []
         state.snooze()
-        XCTAssertEqual(cmds, ["cancel"], "capture mechanics unchanged: Hide still cancels the dictation")
-        XCTAssertEqual(commands.last?["discard_read_queue"] as? Bool, true, "the daemon is told to drop the queue")
-        XCTAssertEqual(state.readQueueCount, 0)
-        state.unsnooze()
-        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
-        state.mode = .idle
-        XCTAssertNil(VoiceBarPresentation.readQueueControl(for: state))
-        commands = []
-        state.skipToNextRead()
-        XCTAssertEqual(commands.count, 0, "no Next survives Hide")
-        state.handleEvent(speaking(id: b, text: "Bravo selection", read: "read-B"))
-        XCTAssertNotEqual(state.statusText, "Bravo selection", "B is forgotten")
+        XCTAssertFalse(state.isHidden)
+        XCTAssertEqual(state.mode, .recording)
+        XCTAssertTrue(commands.isEmpty, "refused Hide sends neither cancel nor queue discard")
+        XCTAssertEqual(state.readQueueCount, queueCount)
     }
 
     func testHideWhileReadsWaitInIdleTellsTheDaemonToDropThem() {

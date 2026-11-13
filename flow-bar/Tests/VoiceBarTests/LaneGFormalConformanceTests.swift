@@ -88,7 +88,7 @@ final class LaneGFormalConformanceTests: XCTestCase {
     /// Read routing from the real renderer, rather than reproducing a mode allowlist in the test.
     private func wingModes() throws -> Set<String> {
         let text = try source("flow-bar/Sources/VoiceBarUI/BarView.swift")
-        let body = try between(text, "private var notchCompactStatusContent:", "private var notchReadingTrailingContent:")
+        let body = try between(text, "private var notchCompactStatusContent:", "private var notchSpeakingTrailingContent:")
         let regex = try NSRegularExpression(pattern: "(?s)case\\s+([^:]+):(.+?)(?=\\n\\s*case|\\z)")
         var result = Set<String>()
         for match in regex.matches(in: body, range: NSRange(body.startIndex..., in: body)) {
@@ -148,6 +148,10 @@ final class LaneGFormalConformanceTests: XCTestCase {
         var errors = Dictionary(uniqueKeysWithValues: ["Current", "FixedProjection", "FixedText", "N1", "N2", "N3", "N4", "N5", "N6", "WingBounds", "Resident", "N3NoticeBand"].map { ($0, [String]()) })
         var heights: [Int: CGFloat] = [:]
         let resident = VoiceBarNotchPresentationModel()
+        // Adaptation point (C4 F4): the corpus compares settled states. The resident model holds the reading canvas
+        // 0.6 s past a read's end so the collapse is never cut; settle that hold at once here (ReadingFollowupsL3Tests
+        // pins the timing itself), or one speaking row would leak its canvas into every later row.
+        resident.scheduleReadingCanvasRelease = { _, release in release() }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         for row in corpus.rows {
             let input = try input(row)
@@ -168,12 +172,19 @@ final class LaneGFormalConformanceTests: XCTestCase {
             let tag = "\(row.policy)/\(String(decoding: try encoder.encode(row.input), as: UTF8.self))"
             resident.setHovered(input.isHovered)
             resident.setHistoryPanelOpen(input.isHistoryPanelOpen)
-            resident.updateOperationalEnvelope(hasTeleprompter: p.visualState == .teleprompter,
-                isRecording: input.mode == .recording, hasCompactStatus: p.visualState == .compactStatus,
-                compactStatusLeadingWingWidth: p.geometry.leadingWingWidth, compactStatusTrailingWingWidth: p.geometry.trailingWingWidth,
-                recordingLeadingWingWidth: p.geometry.leadingWingWidth, recordingTrailingWingWidth: p.geometry.trailingWingWidth,
-                teleprompterLeadingWingWidth: input.mode == .speaking ? p.geometry.leadingWingWidth : nil,
-                keepsIdleExpanded: input.mode == .idle && !input.isCollapsed, transientNoteWidth: p.transientNoteWidth, feedback: p.feedback)
+            // Adaptation point (0510 R3): the app feeds the resident model from the drawer-less resolve
+            // (`AppDelegate.refreshNotchPresentationModel`), so a drawer knows the band it hangs under.
+            var drawerless = input
+            drawerless.isHistoryPanelOpen = false
+            let feed = VoiceBarPresentation.notchPresentation(from: drawerless)
+            resident.updateOperationalEnvelope(hasTeleprompter: feed.visualState == .teleprompter,
+                isRecording: input.mode == .recording, hasCompactStatus: feed.visualState == .compactStatus,
+                compactStatusLeadingWingWidth: feed.geometry.leadingWingWidth, compactStatusTrailingWingWidth: feed.geometry.trailingWingWidth,
+                recordingLeadingWingWidth: feed.geometry.leadingWingWidth, recordingTrailingWingWidth: feed.geometry.trailingWingWidth,
+                teleprompterLeadingWingWidth: input.mode == .speaking ? feed.geometry.leadingWingWidth : nil,
+                teleprompterTrailingWingWidth: feed.visualState == .teleprompter ? feed.geometry.trailingWingWidth : nil,
+                keepsIdleExpanded: input.mode == .idle && !input.isCollapsed, transientNoteWidth: p.transientNoteWidth, feedback: p.feedback,
+                holdsReadingCanvas: feed.holdsReadingCanvas)
             if resident.presentation != p { errors["Resident"]!.append(tag) }
             if p.geometry.leadingWingWidth > 132 || p.geometry.trailingWingWidth > 132 { errors["WingBounds"]!.append(tag) }
             if row.policy == "Current" {

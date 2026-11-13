@@ -22,8 +22,11 @@ final class SettingsCopyContractTests: XCTestCase {
         XCTAssertTrue(details.contains("SettingsDiagnosticSummary.historyMetadata(recordingEntry)"))
         let header = try XCTUnwrap(source.range(of: "private func dictionaryEntryHeader"))
         let body = source[header.lowerBound...]
-        XCTAssertLessThan(try XCTUnwrap(body.range(of: "SettingsCopyButton(text: entry.canonical")).lowerBound,
-                          try XCTUnwrap(body.range(of: "if isEditable")).lowerBound,
+        // The pencil is editable-only; inside the action menu, Copy must precede the editable-only Delete branch.
+        let menuStart = try XCTUnwrap(body.range(of: "Menu {"))
+        let menu = body[menuStart.lowerBound...]
+        XCTAssertLessThan(try XCTUnwrap(menu.range(of: "SettingsCopyButton(text: entry.canonical")).lowerBound,
+                          try XCTUnwrap(menu.range(of: "if isEditable")).lowerBound,
                           "Included terms must have Copy too")
         XCTAssertFalse(source.contains("Copy question"))
     }

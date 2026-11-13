@@ -1,0 +1,37 @@
+[
+  {
+    "auxiliaryTopLeftArea" : {
+      "height" : 32,
+      "width" : 771.5,
+      "x" : 0,
+      "y" : 1085
+    },
+    "auxiliaryTopRightArea" : {
+      "height" : 32,
+      "width" : 771.5,
+      "x" : 956.5,
+      "y" : 1085
+    },
+    "frame" : {
+      "height" : 1117,
+      "width" : 1728,
+      "x" : 0,
+      "y" : 0
+    },
+    "name" : "Built-in Retina Display",
+    "provenance" : {
+      "backingScale" : 2,
+      "capturedAt" : "2026-11-08T13:04:23Z",
+      "displayMode" : {
+        "height" : 1117,
+        "pixelHeight" : 2234,
+        "pixelWidth" : 3456,
+        "refreshRate" : 120,
+        "width" : 1728
+      },
+      "model" : "Mac16,5",
+      "source" : "NSScreen read-only probe"
+    },
+    "safeAreaTop" : 32
+  }
+]

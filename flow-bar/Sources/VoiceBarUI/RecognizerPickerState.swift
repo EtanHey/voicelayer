@@ -112,6 +112,7 @@ public struct RecognizerStatusSnapshot: Equatable, Sendable {
     public private(set) var parakeet: Engine
     public private(set) var whisper: Engine
     public let fallbackReason: String?
+    public private(set) var lastTranscriptionBackend: String? = nil
     public private(set) var switchAllowed: Bool
     public private(set) var switchRefusalReason: String?
     public let idleUnloadSeconds: Double
@@ -166,6 +167,7 @@ public struct RecognizerStatusSnapshot: Equatable, Sendable {
         // Only authoritative phases describe residency; availability remains nullable.
         self.revision = revision; self.desired = desired; self.effective = effective; self.phase = phase
         self.parakeet = parakeet; self.whisper = whisper
+        self.lastTranscriptionBackend = payload["last_transcription_backend"] as? String
         self.fallbackReason = payload["fallback_reason"] as? String
         self.switchAllowed = switchAllowed; self.switchRefusalReason = payload["switch_refusal_reason"] as? String
         self.idleUnloadSeconds = idle; self.source = source
@@ -195,6 +197,7 @@ public struct RecognizerPickerState: Equatable, Sendable {
     public let whisper: RecognizerPickerResidency
     public let disabledReason: String?
     public let fallbackReason: String?
+    public private(set) var lastTranscriptionBackend: String? = nil
     public let commandNotice: String?
     public let parakeetAvailable: Bool?
     public let parakeetError: String?
@@ -237,6 +240,7 @@ public struct RecognizerPickerState: Equatable, Sendable {
                   downloads: [.parakeet: snapshot.parakeet.download, .whisper: snapshot.whisper.download].compactMapValues { $0 },
                   idleUnloadSeconds: snapshot.idleUnloadSeconds, unloadWhenIdle: snapshot.unloadWhenIdle,
                   unloadWhenIdlePending: unloadWhenIdlePending)
+        self.lastTranscriptionBackend = snapshot.lastTranscriptionBackend
     }
     public static let unavailable = RecognizerPickerState(selected: nil, effective: nil,
         parakeet: .unknown, whisper: .unknown, disabledReason: "Recognizer status unavailable")
@@ -346,8 +350,13 @@ public struct RecognizerPickerState: Equatable, Sendable {
     public var smartChunkingApplicable: Bool {
         selected == .whisper
     }
+    private var deliveredWarning: String? {
+        RecognizerProvenance(backend: lastTranscriptionBackend)?.notice(about: Self.pickerSubject)
+    }
     public var explanation: String? {
+        // The result of the user's own click comes first; the delivered-transcript warning outlasts status lines only.
         if let commandNotice { return commandNotice }
+        if let warning = deliveredWarning { return warning }
         if downloads.values.contains(where: { $0.isActive }) { return nil }
         for engine in RecognizerPickerEngine.allCases {
             if let failure = downloads[engine], failure.state == "error", let reason = failure.error {
@@ -390,6 +399,7 @@ public struct RecognizerPickerState: Equatable, Sendable {
     static let pickerSubject = "your last recording"
     /// Orange only for a hand-off that happened or failed; work in progress reads as a normal status line.
     public var explanationIsWarning: Bool {
+        if commandNotice == nil, deliveredWarning != nil { return true }
         if let effective, fallbackReason != nil, residency(for: effective) == .loading,
            commandNotice == nil, explanation == provenanceNotice { return false }
         return fallbackReason != nil || parakeet == .error

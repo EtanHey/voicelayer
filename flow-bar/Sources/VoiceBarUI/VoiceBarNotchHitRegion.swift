@@ -9,8 +9,14 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
     public let lowerControlCount: Int
     /// The whole lower surface takes clicks, hover and scroll (the History panel's rows).
     public let lowerSurfaceIsInteractive: Bool
-    /// The gap between wing control slots (T3: the reading wings space theirs a little wider).
-    public let controlSpacing: CGFloat
+    /// T6: the outermost leading control may be wider than a slot (the reading speed chip); it grows outward.
+    public let leadingOutermostControlWidth: CGFloat?
+    /// T4/T7: one more lower control one pitch past the centred group's trailing edge (Stop or X), outside its centring.
+    public let lowerTerminalControl: Bool
+    /// The lower row's bottom edge, from the body's bottom.
+    public let lowerControlBottomInset: CGFloat
+    /// The first leading control's distance from the core (C7-W: the recording controls sit further out).
+    public let leadingCoreInset: CGFloat
 
     public init(
         leadingControlCount: Int = 0,
@@ -19,7 +25,10 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
         trailingOuterInset: CGFloat = VoiceBarNotchContract.material.compactContentInset,
         lowerControlCount: Int = 0,
         lowerSurfaceIsInteractive: Bool = false,
-        controlSpacing: CGFloat = VoiceBarNotchContract.material.compactControlSpacing
+        leadingOutermostControlWidth: CGFloat? = nil,
+        lowerTerminalControl: Bool = false,
+        lowerControlBottomInset: CGFloat = 14,
+        leadingCoreInset: CGFloat = VoiceBarNotchContract.compactCoreContentInset
     ) {
         self.leadingControlCount = max(0, leadingControlCount)
         self.trailingControlCountFromCore = max(0, trailingControlCountFromCore)
@@ -27,7 +36,10 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
         self.trailingOuterInset = max(0, trailingOuterInset)
         self.lowerControlCount = max(0, lowerControlCount)
         self.lowerSurfaceIsInteractive = lowerSurfaceIsInteractive
-        self.controlSpacing = max(0, controlSpacing)
+        self.leadingOutermostControlWidth = leadingOutermostControlWidth.map { max(0, $0) }
+        self.lowerTerminalControl = lowerTerminalControl
+        self.lowerControlBottomInset = max(0, lowerControlBottomInset)
+        self.leadingCoreInset = max(0, leadingCoreInset)
     }
 
     /// The History panel: the launcher's buttons stay live (History closes it again) and the body is live.
@@ -39,6 +51,16 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
     )
 
     public static let none = VoiceBarNotchInteractionConfiguration()
+
+    /// The same band controls over a live drawer body (0510 R3: a drawer under the recording or status wings).
+    public var withInteractiveLowerSurface: Self {
+        VoiceBarNotchInteractionConfiguration(
+            leadingControlCount: leadingControlCount, trailingControlCountFromCore: trailingControlCountFromCore,
+            trailingControlCountFromOuter: trailingControlCountFromOuter, trailingOuterInset: trailingOuterInset,
+            lowerControlCount: lowerControlCount, lowerSurfaceIsInteractive: true,
+            leadingCoreInset: leadingCoreInset
+        )
+    }
 
     /// Compatibility for geometry-only callers. The app installs a complete
     /// operational configuration so optional controls are never inferred from
@@ -63,7 +85,11 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
         case .teleprompter:
             VoiceBarNotchInteractionConfiguration(lowerControlCount: 1)
         case .history:
-            .historyPanel
+            presentation.bandState == .recording
+                ? VoiceBarNotchInteractionConfiguration(leadingControlCount: 2).withInteractiveLowerSurface
+                : presentation.bandState == .compactStatus
+                ? VoiceBarNotchInteractionConfiguration.none.withInteractiveLowerSurface
+                : .historyPanel
         }
     }
 }
@@ -77,19 +103,22 @@ public struct VoiceBarNotchHitRegion: Equatable {
     ) {
         let material = VoiceBarNotchContract.material
         let size = material.compactControlSize
-        let pitch = size + configuration.controlSpacing
+        let pitch = size + material.compactControlSpacing
         let topY = geometry.lowerSurfaceHeight + ((geometry.topHeight - size) / 2)
         var rects: [CGRect] = []
 
         for index in 0 ..< configuration.leadingControlCount {
+            let isOutermost = index == configuration.leadingControlCount - 1
+            let width = isOutermost ? max(size, configuration.leadingOutermostControlWidth ?? size) : size
             rects.append(
                 CGRect(
                     x: geometry.coreOriginX
-                        - VoiceBarNotchContract.compactCoreContentInset
+                        - configuration.leadingCoreInset
                         - size
-                        - (CGFloat(index) * pitch),
+                        - (CGFloat(index) * pitch)
+                        - (width - size),
                     y: topY,
-                    width: size,
+                    width: width,
                     height: size
                 )
             )
@@ -125,15 +154,16 @@ public struct VoiceBarNotchHitRegion: Equatable {
         }
 
         if configuration.lowerControlCount > 0 {
-            let lowerPitch = size + 10
-            let rowWidth = (CGFloat(configuration.lowerControlCount) * size)
-                + (CGFloat(configuration.lowerControlCount - 1) * 10)
-            let rowOriginX = (geometry.totalWidth - rowWidth) / 2
-            for index in 0 ..< configuration.lowerControlCount {
+            // X4: the group and the terminal control are one row centred on the body (the drag bar's centre). The
+            // rects keep their order: the group, then the terminal slot.
+            let count = configuration.lowerControlCount + (configuration.lowerTerminalControl ? 1 : 0)
+            for index in 0 ..< count {
+                let midX = geometry.totalWidth / 2
+                    + VoiceBarPresentation.teleprompterLowerControlOffset(index: index, count: count)
                 rects.append(
                     CGRect(
-                        x: rowOriginX + (CGFloat(index) * lowerPitch),
-                        y: 14,
+                        x: midX - size / 2,
+                        y: configuration.lowerControlBottomInset,
                         width: size,
                         height: size
                     )

@@ -406,7 +406,9 @@ final class SpeakSelectionTests: XCTestCase {
             }
             state.selectionTextCaptureHandler = { $0(.completed("C")) }
             state.speakSelection()
-            XCTAssertEqual(commands.compactMap { $0["cmd"] as? String }, ["speak_text", "speak_text", "stop"])
+            // Etan, 2026-11-08 4:40 pm: the same text over the read on screen dedupes with a notice (no Stop).
+            XCTAssertEqual(commands.compactMap { $0["cmd"] as? String }, ["speak_text", "speak_text"])
+            XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote)
         }
     }
 
@@ -458,14 +460,17 @@ final class SpeakSelectionTests: XCTestCase {
         state.handleEvent(["type": "state", "state": "speaking", "text": "Preparing speech…",
             "long_read": ["id": "legacy-read", "preparing": true]])
         state.speakSelection()
-        XCTAssertEqual(commands.compactMap { $0["cmd"] as? String }, ["speak_text", "stop"])
+        // Etan, 2026-11-08 4:40 pm: the same text over the read on screen dedupes with a notice (no Stop).
+        XCTAssertEqual(commands.compactMap { $0["cmd"] as? String }, ["speak_text"])
+        XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote)
     }
 
     func testExternalHashComparesRawSelectionDuringPreparationAndPlayback() {
         // SHA-256 of normalized "hello world" (shared TS/Swift wire vector).
         let hash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
         for preparing in [true, false] {
-            for (selection, expected) in [(" hello\nworld ", "stop"), ("different", "speak_text"), ("", "stop")] {
+            // Etan, 2026-11-08 4:40 pm: the same text over the read on screen dedupes with a notice (no Stop). An empty selection pauses the read.
+            for (selection, expected) in [(" hello\nworld ", nil), ("different", "speak_text"), ("", "pause")] as [(String, String?)] {
                 let state = VoiceState()
                 state.handleEvent(["type": "state", "state": "speaking", "text": "projected text",
                     "request_id": "external", "text_hash": hash,
@@ -475,6 +480,7 @@ final class SpeakSelectionTests: XCTestCase {
                 state.selectionTextCaptureHandler = { $0(.completed(selection)) }
                 state.speakSelection()
                 XCTAssertEqual(commands.first?["cmd"] as? String, expected)
+                if expected == nil { XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote) }
                 if expected == "speak_text" { XCTAssertEqual((commands.first?["text_hash"] as? String)?.count, 64) }
             }
         }
@@ -497,7 +503,9 @@ final class SpeakSelectionTests: XCTestCase {
             XCTAssertEqual(state.statusText, preparing ? "Preparing speech…" : "Own B original selection שלום")
             // Compare against B's original input even when the displayed speech is projected.
             state.speakSelection()
-            XCTAssertEqual(commands.compactMap { $0["cmd"] as? String }, ["speak_text", "stop"])
+            // Etan, 2026-11-08 4:40 pm: the same text over the read on screen dedupes with a notice (no Stop).
+            XCTAssertEqual(commands.compactMap { $0["cmd"] as? String }, ["speak_text"])
+            XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote)
         }
     }
 
@@ -520,7 +528,9 @@ final class SpeakSelectionTests: XCTestCase {
         XCTAssertEqual(state.statusText, "C")
         state.selectionTextCaptureHandler = { $0(.completed("C")) }
         state.speakSelection()
-        XCTAssertEqual(commands.last?["cmd"] as? String, "stop")
+        // Etan, 2026-11-08 4:40 pm: the same text over the read on screen dedupes with a notice (no Stop).
+        XCTAssertEqual(commands.count, 2)
+        XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote)
     }
 
     func testCapacityEvictionAllowsLateReceiptAsExternalHashRead() throws {
@@ -542,7 +552,9 @@ final class SpeakSelectionTests: XCTestCase {
             XCTAssertEqual(state.statusText, "Preparing evicted read…")
             state.selectionTextCaptureHandler = { $0(.completed(next)) }
             state.speakSelection()
-            XCTAssertEqual(commands.last?["cmd"] as? String, next == "different selection" ? "speak_text" : "stop")
+            // Etan, 2026-11-08 4:40 pm: the same text over the read on screen dedupes with a notice (no Stop).
+            XCTAssertEqual(commands.count, next == "different selection" ? 34 : 33)
+            if next != "different selection" { XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote) }
         }
     }
 
@@ -678,7 +690,8 @@ final class SpeakSelectionTests: XCTestCase {
 
     func testRetiredIdentityCannotRebindAfterStopCancelOrCompletion() throws {
         for received in [false, true] {
-            for end in ["stop", "cancel", "completion", "selection-stop", "error", "disconnect", "recording"] {
+            // "selection-stop" is gone: Etan (2026-11-08) made the same-text press a dedupe notice, never a Stop.
+            for end in ["stop", "cancel", "completion", "error", "disconnect", "recording"] {
                 let state = VoiceState()
                 state.isConnected = true
                 var commands: [[String: Any]] = []
@@ -694,7 +707,6 @@ final class SpeakSelectionTests: XCTestCase {
                 case "stop": state.stop()
                 case "cancel": state.cancel()
                 case "completion": state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
-                case "selection-stop": state.speakSelection()
                 case "error": state.mode = .error
                 case "disconnect": state.mode = .disconnected
                 default: state.mode = .recording
@@ -838,13 +850,15 @@ final class SpeakSelectionTests: XCTestCase {
                                "long_read": ["id": "own-preparing", "preparing": true]])
             selection = next
             state.speakSelection()
-            XCTAssertEqual(commands, ["speak_text", next == "Preparing speech…" ? "stop" : "speak_text"])
+            // Etan, 2026-11-08 4:40 pm: the same text over the read on screen dedupes with a notice (no Stop).
+            XCTAssertEqual(commands, next == "Preparing speech…" ? ["speak_text"] : ["speak_text", "speak_text"])
         }
     }
 
     func testExternalSpeakingWithoutCanonicalTextUsesUnknownTextRulesEvenWithSubtitleWords() {
         for (result, expected) in [(SelectionCaptureResult.completed("same"), "speak_text"),
-                                   (.completed(nil), "stop"), (.captureFailed, "stop")] {
+                                   // Etan, 2026-11-08: an empty selection pauses the read; a failed capture keeps Stop.
+                                   (.completed(nil), "pause"), (.captureFailed, "stop")] {
             let state = VoiceState()
             state.handleEvent(["type": "state", "state": "speaking"])
             state.handleEvent(["type": "subtitle", "words": [["text": "same", "offset_ms": 0, "duration_ms": 100]]])
@@ -866,19 +880,23 @@ final class SpeakSelectionTests: XCTestCase {
         state.handleEvent(["type": "state", "state": "speaking", "text": "now known text",
                            "long_read": ["id": "old-read", "preparing": false]])
         completion?(.completed("now  known\ntext"))
-        XCTAssertEqual(commands, ["stop"])
+        // Etan, 2026-11-08 4:40 pm: the same text over the read on screen dedupes with a notice (no Stop).
+        XCTAssertEqual(commands, [])
+        XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote)
     }
 
-    func testSameSelectionWithNormalizedWhitespaceStops() {
+    func testSameSelectionWithNormalizedWhitespaceDedupes() {
         let state = speakingState("same  selection\nשלום")
         var commands: [String] = []
         state.sendCommand = { commands.append($0["cmd"] as! String) }
         state.selectionTextCaptureHandler = { $0(.completed("  same\tselection שלום\n")) }
         state.speakSelection()
-        XCTAssertEqual(commands, ["stop"])
+        // Etan, 2026-11-08 4:40 pm: the same text over the read on screen dedupes with a notice (no Stop).
+        XCTAssertEqual(commands, [])
+        XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote)
     }
 
-    func testSameRawSelectionStopsDuringPreparationAndAfterMarkdownProjection() {
+    func testSameRawSelectionDedupesDuringPreparationAndAfterMarkdownProjection() {
         let state = VoiceState()
         let text = "# Private title\n\n- original selection"
         var commands: [[String: Any]] = []
@@ -888,7 +906,9 @@ final class SpeakSelectionTests: XCTestCase {
         state.handleEvent(["type": "state", "state": "speaking", "text": "Preparing speech…",
                            "long_read": ["id": "own-read", "preparing": true]])
         state.speakSelection()
-        XCTAssertEqual(commands.last?["cmd"] as? String, "stop")
+        // Etan, 2026-11-08 4:40 pm: the same text over the read on screen dedupes with a notice (no Stop).
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote)
         // A new read must retain the original selection even though its display is projected.
         state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
         state.speakSelection()
@@ -897,13 +917,17 @@ final class SpeakSelectionTests: XCTestCase {
         state.handleEvent(["type": "state", "state": "speaking", "text": "Private title original selection",
                            "long_read": ["id": "next-read", "preparing": false]])
         state.speakSelection()
-        XCTAssertEqual(commands.last?["cmd"] as? String, "stop")
+        XCTAssertEqual(commands.count, 2)
+        XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote)
     }
 
-    func testEmptyAndFailedCapturesStopSpeakingAndPreparing() {
+    /// Etan, 2026-11-08 4:40 pm: an EMPTY selection over a read pauses it; a capture that FAILED keeps its Stop.
+    func testEmptyCapturesPauseAndFailedCapturesStopSpeakingAndPreparing() {
         for preparing in [false, true] {
-            for result in [SelectionCaptureResult.completed(nil), .completed(" \n\t"), .copyTimedOut,
-                           .secureField, .captureFailed, .clipboardRestoreFailed, .clipboardChanged, .copyFailed, .copyEmpty] {
+            for (result, expected) in [(SelectionCaptureResult.completed(nil), "pause"), (.completed(" \n\t"), "pause"),
+                                       (.copyEmpty, "pause"), (.copyTimedOut, "stop"), (.secureField, "stop"),
+                                       (.captureFailed, "stop"), (.clipboardRestoreFailed, "stop"),
+                                       (.clipboardChanged, "stop"), (.copyFailed, "stop")] {
                 let state = speakingState(preparing: preparing)
                 var commands: [String] = []
                 var captures = 0
@@ -911,7 +935,7 @@ final class SpeakSelectionTests: XCTestCase {
                 state.selectionTextCaptureHandler = { captures += 1; $0(result) }
                 state.speakSelection()
                 XCTAssertEqual(captures, 1)
-                XCTAssertEqual(commands, ["stop"])
+                XCTAssertEqual(commands, [expected], "\(result)")
             }
         }
     }
@@ -943,7 +967,9 @@ final class SpeakSelectionTests: XCTestCase {
         state.handleEvent(["type": "ack", "command": "speak_text", "outcome": "reject", "reason": "busy", "id": id])
         state.selectionTextCaptureHandler = { $0(.completed("external text")) }
         state.speakSelection()
-        XCTAssertEqual(commands.last?["cmd"] as? String, "stop")
+        // Etan, 2026-11-08 4:40 pm: the same text over the read on screen dedupes with a notice (no Stop).
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote)
     }
 
     func testNonBusyRejectionDoesNotClaimVoiceLayerIsBusyOrExposeDaemonDetails() {
@@ -1043,9 +1069,10 @@ final class SpeakSelectionTests: XCTestCase {
     @MainActor
     func testLatestCaptureSurvivesPendingSubmissionsFirstReceipt() async throws {
         for ackBeforeReceipt in [false, true] {
-            for (result, expected) in [(SelectionCaptureResult.completed("pending B"), "stop"),
+            // Etan, 2026-11-08: the same text dedupes (no command), an empty selection pauses, failures keep Stop.
+            for (result, expected) in [(SelectionCaptureResult.completed("pending B"), nil),
                                        (.completed("different C"), "speak_text"),
-                                       (.completed(nil), "stop"), (.copyTimedOut, "stop"), (.captureFailed, "stop")] {
+                                       (.completed(nil), "pause"), (.copyTimedOut, "stop"), (.captureFailed, "stop")] as [(SelectionCaptureResult, String?)] {
                 let state = speakingState("playing A")
                 var commands: [[String: Any]] = []
                 state.sendCommand = { commands.append($0) }
@@ -1063,8 +1090,9 @@ final class SpeakSelectionTests: XCTestCase {
                                    "long_read": ["id": "pending-read-B", "preparing": true]])
                 await Task.yield()
                 try XCTUnwrap(completion)(result)
-                XCTAssertEqual(commands.compactMap { $0["cmd"] as? String }, ["speak_text", expected],
+                XCTAssertEqual(commands.compactMap { $0["cmd"] as? String }, ["speak_text"] + [expected].compactMap { $0 },
                                "ackBeforeReceipt=\(ackBeforeReceipt), outcome=\(result.outcome)")
+                if expected == nil { XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote) }
                 if expected == "speak_text" { XCTAssertEqual(commands.last?["text"] as? String, "different C") }
             }
         }
@@ -1100,17 +1128,20 @@ final class SpeakSelectionTests: XCTestCase {
         }
     }
 
-    func testSameSelectionStopsBeforePreparationReceiptAndOldAckIsIgnored() {
+    /// Etan, 2026-11-08: the same text before its read's receipt dedupes too; the request stays live, so the
+    /// daemon's later busy rejection of THAT request is shown (it used to be retired by the old same-text Stop).
+    func testSameSelectionDedupesBeforePreparationReceiptAndItsRejectionIsShown() {
         let state = VoiceState()
         var commands: [[String: Any]] = []
         state.sendCommand = { commands.append($0) }
         state.selectionTextCaptureHandler = { $0(.completed("own selection")) }
         state.speakSelection()
         state.speakSelection()
-        XCTAssertEqual(commands.compactMap { $0["cmd"] as? String }, ["speak_text", "stop"])
+        XCTAssertEqual(commands.compactMap { $0["cmd"] as? String }, ["speak_text"])
+        XCTAssertEqual(state.selectionFeedbackNote, VoiceState.alreadyReadingNote)
         state.handleEvent(["type": "ack", "command": "speak_text", "outcome": "reject", "reason": "busy",
                            "id": commands.first?["id"] as? String ?? "missing"])
-        XCTAssertFalse(state.showsSelectionBusyNote)
+        XCTAssertEqual(state.selectionFeedbackNote, "Busy. Selection not read")
     }
 
     @MainActor

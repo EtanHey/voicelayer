@@ -1,30 +1,46 @@
 import AppKit
 import SwiftUI
 
-/// U5, SPEC § Teleprompter A: 24 pt lines of 17 pt text in a 404 pt column. Reading starts on the first line;
-/// once the focus line reaches the middle row it holds there and the text slides up one line at a time.
+/// U5, SPEC § Teleprompter A: 24 pt lines of 17 pt text. Reading starts on the first line; once the focus line
+/// reaches the middle row it holds there and the text slides up one line at a time.
 public enum TeleprompterA {
     public static let lineHeight: CGFloat = 24
     public static let fontSize: CGFloat = 17
-    public static let columnWidth: CGFloat = 404
+    /// Lane B (2.4, "the teleprompter is wider"): the column is the teleprompter body's whole text width (429 pt at
+    /// the 185 pt contract core; it was capped at 404). A wider body widens it with no change here.
+    public static var columnWidth: CGFloat { VoiceBarNotchContract.material.teleprompterTextWidth }
+    /// Lane B: the greedy wrap leaves this much room, so per-glyph rounding in SwiftUI can never push a line past
+    /// the column (that compression is what rendered "Codex" as "Cod…").
+    public static let wrapSlack: CGFloat = 2
     public static let lineRange = 3 ... 8
     public static let topFadeHeight: CGFloat = 16
-    /// T3 (Etan, QA 2026-11-08 8:41–8:58: "the dragging thing could probably just go underneath the scrubbing… just
-    /// like iPhone has at the line at the bottom"): a long, thin home-bar line under the scrubber.
-    public static let handleSize = CGSize(width: 112, height: 5)
-    /// The handle's hit band under the scrubber.
+    public static let handleSize = CGSize(width: 34, height: 4)
+    /// The handle's hit band under the eye row.
     public static let handleBandHeight: CGFloat = 14
-    /// T3: the scrubber row (track, clock labels and its one-line timing notice) between the text and the handle.
-    public static let scrubberGap: CGFloat = 7
-    public static let scrubberRowHeight: CGFloat = 40
-    public static let handleGap: CGFloat = 4
-    /// A stopped read's scrubber has no timing notice and no handle under it; its text takes the rest of the stack.
-    public static let stoppedScrubberRowHeight: CGFloat = 20
+    /// T2/T8 (Etan QA 2026-11-09: "The drag bar ... can go underneath the eye and the replay row. Scrub would have
+    /// less gap"): the lower body, top to bottom, is text, scrubber, eye row, height handle. No footer row; the gaps
+    /// are tight so the text keeps the room.
+    public static let bodyTopInset: CGFloat = 16
+    /// Text to scrubber.
+    public static let scrubberGap: CGFloat = 8
+    /// `SettingsPlaybackScrubBar`'s own frame.
+    public static let scrubberHeight: CGFloat = 24
+    /// Scrubber to the eye row (T8: at most 7 pt).
+    public static let controlsGap: CGFloat = 3
+    public static let controlsHeight: CGFloat = 20
+    /// Eye row to the handle band.
+    public static let handleGap: CGFloat = 2
+    public static let bodyBottomInset: CGFloat = 4
+    /// Everything in the lower body except the text lines.
+    public static let chromeHeight: CGFloat = bodyTopInset + scrubberGap + scrubberHeight + controlsGap + controlsHeight
+        + handleGap + handleBandHeight + bodyBottomInset
+    /// The teleprompter's lower surface for `lines` text lines.
+    public static func lowerSurfaceHeight(lines: Int) -> CGFloat { chromeHeight + CGFloat(clamp(lines)) * lineHeight }
 
-    /// The stopped read's text area: the whole stack above its scrubber, so no blank band sits under the scrubber
-    /// (QA 2026-11-08 S4-F3: "Why is there so much space here?").
+    /// S4-F2/F3: a stopped read fills the same text area as the live reader. In 2.4 the remaining shell
+    /// contains its scrubber, controls and reserved handle band; none of that space becomes a blank strip.
     public static func stoppedBodyHeight(lines: Int) -> CGFloat {
-        panelStackHeight(lines: lines) - scrubberGap - stoppedScrubberRowHeight
+        lowerSurfaceHeight(lines: lines) - chromeHeight
     }
 
     public enum Tier: Equatable {
@@ -70,14 +86,8 @@ public enum TeleprompterA {
 
     public static let pull = Animation.spring(response: 0.38, dampingFraction: 0.86)
 
-    /// The text column alone.
+    /// The text column's height (T1/T3/T6 removed the footer row under it).
     public static func bodyHeight(lines: Int) -> CGFloat { CGFloat(lines) * lineHeight }
-
-    /// T3: everything the panel stacks under its top inset: text, scrubber row, handle band. The stopped read keeps
-    /// the same stack (its handle band stays empty), so Stop never resizes the panel (T2, S4-F2/F3).
-    public static func panelStackHeight(lines: Int) -> CGFloat {
-        bodyHeight(lines: lines) + scrubberGap + scrubberRowHeight + handleGap + handleBandHeight
-    }
 
     /// Handle drag: follows the pointer inside 3–8 lines and rubber-bands past either end (at most one line).
     public static func draggedHeight(startLines: Int, translation: CGFloat) -> CGFloat {
@@ -102,7 +112,17 @@ public enum TeleprompterA {
 
     public static func clamp(_ lines: Int) -> Int { min(lineRange.upperBound, max(lineRange.lowerBound, lines)) }
 
-    public static func queuedChip(_ count: Int) -> String? { count > 0 ? "+\(count) queued" : nil }
+    /// Lane B (Etan, 2026-11-08 "less empty space"): the rows a read needs. The handle's choice (3–8) is an upper
+    /// bound; a read that wraps to fewer lines needs only those (at least one). The shell sizes from this.
+    public static func fittedLines(preferred: Int, textLines: Int) -> Int {
+        max(1, min(clamp(preferred), textLines))
+    }
+
+    /// T3 (Etan QA 2026-11-09: "the reading prose ... can be totally removed"): reading has no status words. A
+    /// pause keeps its words, for VoiceOver only (X1-34: the paused teleprompter stays readable on screen).
+    public static func footerState(isPaused: Bool, isPausedForDictation: Bool) -> String {
+        isPausedForDictation ? "Paused for your dictation · resumes after paste" : isPaused ? "Paused" : ""
+    }
 
     /// Greedy wrap on measured widths. A forced break starts a line; a glued word never takes a space.
     public static func lines(widths: [CGFloat], breaks: [Bool], glues: [Bool], spacing: CGFloat,
@@ -133,6 +153,57 @@ public enum TeleprompterA {
         var upper = at
         while upper < texts.count - 1, !ends(upper) { upper += 1 }
         return texts[lower ... upper].joined(separator: " ")
+    }
+}
+
+/// V3-8 (Etan: no scroll-back in the live teleprompter): follow or browse. Following, the text keeps the spoken line
+/// on the middle row (`TeleprompterA.scrolledLines`). Scrolling takes the text off the reader's clock and holds it at
+/// a browsed top line; the highlight keeps tracking the voice, but the text never moves back on its own. Only an
+/// explicit return (Back to reading, a word click that seeks, or a new read) follows again.
+public struct TeleprompterFollow: Equatable {
+    /// Nil while following; otherwise the browsed top line.
+    public private(set) var browseTop: Int?
+    /// Sub-line trackpad travel not yet worth a whole line.
+    private var pendingPoints: CGFloat = 0
+
+    public init() {}
+
+    public var isBrowsing: Bool { browseTop != nil }
+
+    /// The last top line that still fills the window.
+    public static func maximumTop(lineCount: Int, visibleLines: Int) -> Int { max(0, lineCount - visibleLines) }
+
+    /// The top line drawn now.
+    public func top(followTop: Int, maximumTop: Int) -> Int {
+        browseTop.map { min(max(0, $0), maximumTop) } ?? followTop
+    }
+
+    /// Moves by whole lines; negative goes back toward earlier text. A move that changes nothing starts no browse.
+    public mutating func scroll(byLines delta: Int, followTop: Int, maximumTop: Int) {
+        guard delta != 0 else { return }
+        let start = top(followTop: followTop, maximumTop: maximumTop)
+        let next = min(max(0, start + delta), maximumTop)
+        guard next != start || browseTop != nil else { return }
+        browseTop = next
+    }
+
+    /// A scroll event's travel. Precise (trackpad) deltas are points, a line per `TeleprompterA.lineHeight`; a wheel
+    /// click is one line. AppKit's positive delta reveals earlier text, which is a negative line move here.
+    public mutating func scroll(deltaY: CGFloat, isPrecise: Bool, followTop: Int, maximumTop: Int) {
+        let lines: Int
+        if isPrecise {
+            pendingPoints += deltaY
+            lines = Int((pendingPoints / TeleprompterA.lineHeight).rounded(.towardZero))
+            pendingPoints -= CGFloat(lines) * TeleprompterA.lineHeight
+        } else {
+            lines = deltaY > 0 ? Int(ceil(deltaY)) : deltaY < 0 ? Int(floor(deltaY)) : 0
+        }
+        scroll(byLines: -lines, followTop: followTop, maximumTop: maximumTop)
+    }
+
+    public mutating func returnToReading() {
+        browseTop = nil
+        pendingPoints = 0
     }
 }
 
@@ -183,10 +254,22 @@ public struct SpeechWordTable: Equatable {
         return found
     }
 
-    /// A click seeks only the same text at the same index; anything else is not ours to name.
+    /// A click seeks only the same text at the same index; anything else is not ours to name. C7 L3 V09: a word the
+    /// daemon has not timed yet (its chunk is still synthesizing) is still this read's word, so it is a target; the
+    /// seek waits for its timing and checks the same text then (`VoiceState.seekSpeechWord`).
     public func seekIndex(token: Int, text: String) -> Int? {
-        words.indices.contains(token) && words[token]?.text == text ? token : nil
+        guard token >= 0 else { return nil }
+        // C4 F3: before the first chunk too (the table exists, so this daemon times words): the click waits for the
+        // word's timing. Older daemons send no utterance id, so they have no table and keep the offset seek.
+        guard isTimed(token) else { return token }
+        return words[token]?.text == text ? token : nil
     }
+
+    /// The daemon has sent this word's timing.
+    public func isTimed(_ token: Int) -> Bool { words.indices.contains(token) && words[token] != nil }
+
+    /// The daemon has started timing this read (at least its first chunk).
+    public var hasTimings: Bool { words.contains { $0 != nil } }
 }
 
 /// Words, formatting and wrapped lines for one text at one column width; a clock tick reuses it.
@@ -195,15 +278,31 @@ struct TeleprompterAModel {
     let layouts: [TeleprompterWordLayout]
     /// Display word (a long token's piece) → display-token index, when the pieces partition the tokens.
     let tokenOfWord: [Int]?
+    /// C4 F6: each display word's token for seeking and highlight: `tokenOfWord` when the pieces partition the tokens,
+    /// otherwise a per-word text alignment, so one unmatched word costs only its own target, never the whole read's.
+    let wordTokens: [Int?]
     let tokens: [String]
     let lines: [Range<Int>]
     let lineOfWord: [Int]
     let spacing: CGFloat
-    /// Whether each display piece, decoration included, fits the column. Only a fitting piece is pinned at its
-    /// natural width; one wider than the column sits alone on its line (the wrap never joins it) and may compress.
-    let fitsColumn: [Bool]
+    /// Lane B: measured width of each word as rendered (decoration, separator and text are separate Text views).
+    let widths: [CGFloat]
+    /// Lane B: a single word wider than the column scales down to fit on its own line; it is never cut.
+    let shrinks: [Bool]
+    /// Lane B: no space before this word. Glued punctuation, and every later piece of a long token (the
+    /// document splits tokens over 24 characters; drawn with a space they read "antidisestablishmentaria nism").
+    let glued: [Bool]
+    let column: CGFloat
+
+    #if DEBUG
+    /// Test oracle: availability reads must never build the full word layout.
+    nonisolated(unsafe) static var layoutBuildCount = 0
+    #endif
 
     init(document: TeleprompterRenderedDocument, text: String, column: CGFloat) {
+        #if DEBUG
+        Self.layoutBuildCount += 1
+        #endif
         words = document.words
         layouts = document.layouts
         tokens = TeleprompterContentModel.displayTokens(text)
@@ -211,16 +310,23 @@ struct TeleprompterAModel {
             Array(repeating: index, count: TeleprompterContentModel.displayPieceCount(token))
         }
         tokenOfWord = pieces.count == words.count ? pieces : nil
+        wordTokens = tokenOfWord.map { $0.map(Optional.some) }
+            ?? Self.alignedTokens(words: document.layouts.map(\.displayText), tokens: tokens)
         spacing = Self.width(" ", heading: false)
-        // Each piece is its own Text in the view, rounded on its own; measure it the same way, so a decorated or
-        // separated word can never draw wider than the wrap counted.
-        let widths = layouts.map { layout in
-            [layout.decoration.map { $0 + " " }, layout.separator, layout.displayText].compactMap { $0 }
-                .reduce(CGFloat(0)) { $0 + Self.width($1, heading: layout.isHeading) }
+        let widths = layouts.map(Self.renderedWidth)
+        self.widths = widths
+        self.column = column
+        let usable = max(1, column - TeleprompterA.wrapSlack)
+        shrinks = widths.map { $0 > usable }
+        var glued: [Bool] = []
+        for index in layouts.indices {
+            var sameToken = false
+            if index > 0, let owner = tokenOfWord { sameToken = owner[index] == owner[index - 1] }
+            glued.append(layouts[index].gluesToPrevious || sameToken)
         }
-        fitsColumn = widths.map { $0 <= column }
-        lines = TeleprompterA.lines(widths: widths, breaks: layouts.map { $0.lineBreak != .none },
-                                    glues: layouts.map(\.gluesToPrevious), spacing: spacing, column: column)
+        self.glued = glued
+        lines = TeleprompterA.lines(widths: widths.map { min($0, usable) }, breaks: layouts.map { $0.lineBreak != .none },
+                                    glues: glued, spacing: spacing, column: usable)
         var lineOfWord = Array(repeating: 0, count: words.count)
         for (line, range) in lines.enumerated() { for word in range { lineOfWord[word] = line } }
         self.lineOfWord = lineOfWord
@@ -231,11 +337,49 @@ struct TeleprompterAModel {
         return NSAttributedString(string: text, attributes: [.font: font]).size().width.rounded(.up)
     }
 
+    /// The word as `lineView` draws it: up to three Text views side by side, each rounded up on its own.
+    static func renderedWidth(_ layout: TeleprompterWordLayout) -> CGFloat {
+        let heading = layout.isHeading
+        return (layout.decoration.map { width($0 + " ", heading: heading) } ?? 0)
+            + (layout.separator.map { width($0, heading: heading) } ?? 0)
+            + width(layout.displayText, heading: heading)
+    }
+
+    /// C4 F6: align display words to tokens by text when the counts disagree. A word maps to the token (or the rest
+    /// of a token it continues) containing it, looking a few tokens ahead; a word found nowhere maps to nil alone.
+    static func alignedTokens(words: [String], tokens: [String], lookahead: Int = 3) -> [Int?] {
+        var result: [Int?] = []
+        var cursor = 0
+        var rest: Substring?
+        for word in words {
+            var matched: Int?
+            var probe = cursor
+            var probeRest = rest
+            while probe < tokens.count, probe <= cursor + lookahead, !word.isEmpty {
+                let haystack = probeRest ?? Substring(tokens[probe])
+                if let range = haystack.range(of: word) {
+                    matched = probe
+                    let after = haystack[range.upperBound...]
+                    if after.contains(where: { $0.isLetter || $0.isNumber }) {
+                        cursor = probe; rest = after
+                    } else {
+                        cursor = probe + 1; rest = nil
+                    }
+                    break
+                }
+                probe += 1
+                probeRest = nil
+            }
+            result.append(matched)
+        }
+        return result
+    }
+
     /// The word the clock names: the daemon's table when it covers this text, else the subtitle timeline.
     func focusWord(table: SpeechWordTable?, clock: Int) -> Int? {
-        if let table, let tokenOfWord, !table.words.isEmpty {
+        if let table, !table.words.isEmpty, wordTokens.contains(where: { $0 != nil }) {
             guard let token = table.wordIndex(atMilliseconds: clock) else { return nil }
-            return tokenOfWord.firstIndex(of: token)
+            return wordTokens.firstIndex(of: token)
         }
         guard TeleprompterPlaybackPolicy.usesServerTimestamps(in: words) else { return nil }
         let id = TeleprompterPlaybackPolicy.currentWordIndex(in: words, elapsedMilliseconds: clock)
@@ -245,7 +389,7 @@ struct TeleprompterAModel {
     enum SeekTarget: Equatable { case word(utteranceID: String, index: Int), offset(Int) }
 
     func seekTarget(for word: Int, table: SpeechWordTable?) -> SeekTarget? {
-        if let table, let token = tokenOfWord?[word], let index = table.seekIndex(token: token, text: tokens[token]) {
+        if let table, let token = wordTokens[word], let index = table.seekIndex(token: token, text: tokens[token]) {
             return .word(utteranceID: table.utteranceID, index: index)
         }
         return TeleprompterSeekPolicy.offset(for: words[word], isReadback: false).map(SeekTarget.offset)

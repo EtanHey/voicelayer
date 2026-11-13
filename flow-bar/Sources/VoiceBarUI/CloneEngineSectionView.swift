@@ -10,8 +10,7 @@ struct CloneEngineSection: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    static let startWithVoiceBarDescription = "Starts when VoiceBar opens and restarts by itself if it stops. "
-        + "A change here applies the next time VoiceBar opens."
+    static let startWithVoiceBarDescription = "Starts when VoiceBar opens and restarts by itself if it stops. A change here applies the next time VoiceBar opens."
 
     private var presentation: CloneEnginePresentation {
         viewModel?.presentation() ?? CloneEngineControlModel().presentation(now: Date())
@@ -54,7 +53,7 @@ struct CloneEngineSection: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("speech-clone-engine")
 
-            startWithVoiceBarRow(shown)
+            if shown.startWithVoiceBar != nil { startWithVoiceBarRow(shown) }
         } header: {
             Text("Voice engine")
         }

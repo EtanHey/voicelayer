@@ -146,18 +146,20 @@ final class SettingsHistoryDiagnosticsTests: XCTestCase {
             recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in },
             transcriptionVocabularyLoader: { [] }, transcriptionVocabularyAliasLoader: { [] },
             keepsExpandedInDevState: false)
+        state.isConnected = true
         let initialMode = state.mode
         var commands: [[String: Any]] = []
         state.sendCommand = { commands.append($0) }
         state.retranscribeHistoryEntry(recordingPath: "/synthetic/audio.wav")
         state.retranscribeHistoryEntry(recordingPath: "/synthetic/other.wav")
         XCTAssertEqual(commands.count, 1, "presentation observation must preserve the existing one-request guard")
-        let id = try XCTUnwrap(commands[0]["id"] as? String)
+        let command = try XCTUnwrap(commands.first)
+        let id = try XCTUnwrap(command["id"] as? String)
         XCTAssertEqual(state.historyRunLog.runs.map(\.id), [id])
         state.handleEvent(["type": "ack", "command": "retranscribe_recording", "outcome": "reject", "id": id, "reason": "Synthetic refusal"])
         XCTAssertEqual(state.historyRunLog.runs[0].outcome, .rejected)
         XCTAssertFalse(state.isHistoryRetranscriptionPending)
-        XCTAssertEqual(commands[0]["cmd"] as? String, "retranscribe_recording")
+        XCTAssertEqual(command["cmd"] as? String, "retranscribe_recording")
         XCTAssertEqual(state.mode, initialMode)
     }
 

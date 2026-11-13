@@ -1,0 +1,68 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/clone-engine/CloneEngine.tla": "04980876cc80907aea8a44e059fd7a62693d7025091f88917214356eaff53be3",
+    "formal/clone-engine/checks.json": "51aa705a22474f85ba4b41b962b409a890530bd12618db86e0a96220a260a32f",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
+    "formal/clone-engine/Mutant.cfg": "b48f4e6bd486b6d0c759e1154427ce26febb9cb3794830eb28177262e487b7ad",
+    "formal/clone-engine/Old.cfg": "24fd746713abcf046fab50db1dbfac28a8c953069cb99e2f291c99519869b4e5",
+    "formal/clone-engine/Unreaped.cfg": "66316876834ee5075c11625ce0c0ef79585d700a9363632a78ae60d0d0c1823e",
+    "formal/clone-engine/Fixed.cfg": "689982712718816b94b147ec394b4e0b061d0a9f4d2d3bcfea6cbde913ba94d4",
+    "formal/clone-engine/check.py": "3275c7b178f31ffe3bbdb1dd91f6ef4319cb5070c26cc1fe8485e5a5aa20f27f",
+    "formal/clone-engine/check.sh": "d40680ceab4b7e0e9e44a2cea89a49f76bf726ce7b5fdbaca73b66c208caac9f",
+    "formal/legacy_receipts.py": "83fae1948d340e3e253cbd19aac05814ee2457664397616ffce0de4b502998f0",
+    "formal/tlc.lock.json": "3e37914f1398c6073444c37c6c8df70eb3030c14d269e808791e1d1b25467d34",
+    "formal/tlc_support.py": "8c5dad35602a3a631acc61b07ed2246eeb40ef2b3a6b3a9c72c5b207c95386ec",
+    "formal/setup-tlc.py": "ada6a1d5fa6376d4abd8eb8309900bde02e757f53ee2a97e6614aeaee134c391",
+    "formal/tlc.sh": "18f31feb8bb9421030ca136205ec552a9290b64a8094888c92a9fd8aadbc6936",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
+  },
+  "mutants": {
+    "AtMostOneEngine": [
+      "Mutant"
+    ],
+    "EventuallyRunningIfAutostart": [
+      "Old"
+    ],
+    "EventuallyStopped": [
+      "Unreaped"
+    ]
+  },
+  "graphHashes": {},
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 134,
+      "distinct": 48
+    },
+    "Old": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "EventuallyRunningIfAutostart",
+      "status": "EXPECTED_FAIL",
+      "generated": 55,
+      "distinct": 26
+    },
+    "Mutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "AtMostOneEngine",
+      "status": "EXPECTED_FAIL",
+      "generated": 20,
+      "distinct": 15
+    },
+    "Unreaped": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "EventuallyStopped",
+      "status": "EXPECTED_FAIL",
+      "generated": 126,
+      "distinct": 48
+    }
+  }
+}

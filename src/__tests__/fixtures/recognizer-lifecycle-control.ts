@@ -1,11 +1,16 @@
 import { spyOn } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { testTmp } from "../setup/test-tmp";
 
 const scenario = process.argv[2]!;
 const root = testTmp("recognizer-lifecycle", scenario);
 mkdirSync(root, { recursive: true });
+// Explicit Whisper selection validates configured assets before fake providers.
+if (scenario === "cli-only-sleeping" || scenario === "whisper-failure-status") {
+  process.env.QA_VOICE_WHISPER_MODEL = root + "/fixture-model.bin";
+  writeFileSync(process.env.QA_VOICE_WHISPER_MODEL, "isolated synthetic weights");
+}
 process.env.VOICELAYER_STATE_DIR = root;
 process.env.VOICELAYER_WHISPER_OWNERSHIP_DIR = root;
 process.env.QA_VOICE_WHISPER_SERVER_PORT = "19143";

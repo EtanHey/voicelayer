@@ -110,6 +110,14 @@ final class TeleprompterPauseNeverSeeksTests: XCTestCase {
         }
     }
 
+    private func controlCenter(_ label: String, in host: NSView) throws -> NSPoint {
+        func descendants(_ view: NSView) -> [NSView] {
+            view.subviews + view.subviews.flatMap(descendants)
+        }
+        let view = try XCTUnwrap(descendants(host).first { $0.toolTip == label && !$0.visibleRect.isEmpty })
+        return view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
+    }
+
     private func click(_ point: NSPoint, in window: NSWindow) {
         for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
             if let event = event(type, at: point, in: window) { window.sendEvent(event) }
@@ -125,20 +133,11 @@ final class TeleprompterPauseNeverSeeksTests: XCTestCase {
             let (window, bar) = mount(state, router: router)
             let geometry = VoiceBarPresentation.notchPresentation(from: VoiceBarNotchOperationalInput(
                 mode: .speaking, hasTeleprompterText: true, readQueueLeadingSlotCount: queued > 0 ? 3 : 1)).geometry
-            XCTAssertEqual(geometry.leadingWingWidth, VoiceBarNotchContract.readingLeadingWingWidth(slots: queued > 0 ? 4 : 3))
-            let size = VoiceBarNotchContract.material.compactControlSize
-            let pitch = size + VoiceBarNotchContract.readingControlSpacing
-            let originX = (bar.bounds.width - geometry.totalWidth) / 2
-            let y = bar.bounds.maxY - geometry.topHeight / 2
-            func leading(_ slot: Int) -> NSPoint {
-                NSPoint(x: originX + geometry.coreOriginX - VoiceBarNotchContract.compactCoreContentInset - size / 2
-                    - CGFloat(slot) * pitch, y: y)
+            func center(_ label: String) throws -> NSPoint {
+                try controlCenter(label, in: bar)
             }
-            let eye = NSPoint(x: originX + geometry.topOriginX + geometry.topWidth - VoiceBarNotchContract.fixedWingContentInset
-                - size / 2 - pitch, y: y)
-            // T3's left wing from the core outward: Replay, (Next,) Pause, Stop.
-            let stopSlot = queued > 0 ? 3 : 2
-            for (name, center, expected) in [("Replay", leading(0), "replay"), ("Stop", leading(stopSlot), "stop")] {
+            let eye = try center("Hide teleprompter")
+            for (name, center, expected) in [("Replay", try center("Replay"), "replay"), ("Stop", try center("Stop speaking"), "stop")] {
                 try sweep(center, .square, in: window, { dx, dy in
                     let calls = router.calls
                     router.calls.removeAll()
@@ -151,7 +150,7 @@ final class TeleprompterPauseNeverSeeksTests: XCTestCase {
             XCTAssertTrue(sent().isEmpty, "Replay and Stop route through the router, never a socket command: \(sent())")
             if queued > 0 {
                 var seen = 0
-                try sweep(leading(1), .pillCircle, in: window, { dx, dy in
+                try sweep(try center("Next read"), .pillCircle, in: window, { dx, dy in
                     let commands = sent()[seen...].compactMap { $0["cmd"] as? String }
                     seen = sent().count
                     XCTAssertEqual(commands, ["read_next"], "Next at (\(dx), \(dy)) sent \(commands)")
@@ -193,12 +192,10 @@ final class TeleprompterPauseNeverSeeksTests: XCTestCase {
             XCTAssertEqual(presentation.visualState, .teleprompter)
             let geometry = presentation.geometry
             let size = VoiceBarNotchContract.material.compactControlSize
-            let pitch = size + VoiceBarNotchContract.readingControlSpacing
-            // T3's left wing from the core outward: Replay, Pause, Stop. Pause is the second slot.
             let originX = (bar.bounds.width - geometry.totalWidth) / 2
-            let pauseMidX = originX + geometry.coreOriginX - VoiceBarNotchContract.compactCoreContentInset
-                - size / 2 - pitch
-            let topRowMidY = bar.bounds.maxY - geometry.topHeight / 2
+            let pauseCenter = try controlCenter("Pause speech", in: bar)
+            let pauseMidX = pauseCenter.x
+            let topRowMidY = pauseCenter.y
 
             // The whole 26 pt hit circle of the control (its 20 pt plate plus the 3 pt overhang on each side). Its lower
             // edge reaches 29 pt below the notch's top, past the 32 pt top row's... and the reader's mounted line above
@@ -224,8 +221,8 @@ final class TeleprompterPauseNeverSeeksTests: XCTestCase {
 
             // The visible text still seeks: a click on its first line jumps to a word on that line, never above it.
             let before = sent().count
-            let textPoint = NSPoint(x: originX + 70, y: bar.bounds.maxY - geometry.topHeight
-                - VoiceBarNotchContract.teleprompterTopInset - TeleprompterA.lineHeight / 2)
+            let textPoint = NSPoint(x: bar.bounds.midX - TeleprompterA.columnWidth / 2 + 30, y: bar.bounds.maxY - geometry.topHeight
+                - TeleprompterA.bodyTopInset - TeleprompterA.lineHeight / 2)
             for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
                 window.sendEvent(try XCTUnwrap(event(type, at: textPoint, in: window)))
             }

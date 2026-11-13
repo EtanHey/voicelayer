@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "UnknownBlocks",
+  "status": "EXPECTED_FAIL",
+  "generated": 16,
+  "distinct": 14
+}

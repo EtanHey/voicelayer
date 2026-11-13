@@ -130,8 +130,8 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
         let recordingCanvas = VoiceBarNotchMorphCanvasLayout.resolve(for: recording)
         let teleprompterCanvas = VoiceBarNotchMorphCanvasLayout.resolve(for: teleprompter)
 
-        XCTAssertEqual(recordingCanvas.canvasGeometry.totalWidth, 465)
-        XCTAssertEqual(teleprompterCanvas.canvasGeometry.totalWidth, 465)
+        XCTAssertEqual(recordingCanvas.canvasGeometry.totalWidth, 545)
+        XCTAssertEqual(teleprompterCanvas.canvasGeometry.totalWidth, 545)
         // NOTCH2: each canvas keeps the transient-note band plus clearance (26 + 6 pt) below its resting body.
         XCTAssertEqual(recordingCanvas.canvasGeometry.totalHeight, 32 + VoiceBarNotchContract.transientNoteCanvasReserve)
         // 2.3 U5: the teleprompter canvas holds eight Teleprompter A lines (+5 × 24 pt over the 3-line body).
@@ -165,7 +165,7 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
         let panelBounds = CGRect(origin: .zero, size: layout.panelSize)
 
         XCTAssertEqual(recording.geometry.totalWidth, 362.5)
-        XCTAssertEqual(canvas.canvasGeometry.totalWidth, 465)
+        XCTAssertEqual(canvas.canvasGeometry.totalWidth, 545)
         XCTAssertGreaterThanOrEqual(canvas.canvasGeometry.totalWidth, recording.geometry.totalWidth)
         XCTAssertEqual(canvas.canvasGeometry.lowerSurfaceHeight, VoiceBarNotchContract.transientNoteCanvasReserve)
         XCTAssertTrue(panelBounds.contains(layout.interactiveHitRect))

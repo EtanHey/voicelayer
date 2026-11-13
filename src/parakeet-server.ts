@@ -216,7 +216,7 @@ export class ParakeetServer {
     if (this.closed) throw new Error("Parakeet owner is shut down");
     if (!this.options.command && !this.options.canLaunch?.()) throw new Error("Parakeet must be owned by the VoiceBar MCP daemon");
     if (this.child) {
-      if (this.child.proc.exitCode === null && !this.child.fault) return this.child;
+      if (this.child.proc.exitCode === null && !this.child.fault && !this.child.stopping) return this.child;
       await this.stopChild();
     }
     migrateLegacyParakeetRuntime();
@@ -255,7 +255,7 @@ export class ParakeetServer {
     // queue still orders this non-inference message against unload/inference.
     return this.serial(async () => {
       const child = this.child;
-      if (!child || child.proc.exitCode !== null) return false;
+      if (!child || child.stopping || child.fault || child.proc.exitCode !== null) return false;
       try {
         const reply = await this.command(child, { op: "health" }, this.options.requestMs ?? 5000);
         const healthy = reply.ready === true && reply.pid === child.proc.pid && reply.protocol === 1;
@@ -273,11 +273,14 @@ export class ParakeetServer {
         if (child.fault) throw child.fault;
         if (typeof result.text !== "string" || result.complete !== true || result.sample_rate !== 16000 ||
             !Number.isSafeInteger(result.input_frames) || (result.input_frames as number) <= 0 ||
-            result.covered_frames !== result.input_frames || typeof result.inference_s !== "number" ||
+            !Number.isSafeInteger(result.covered_frames) || (result.covered_frames as number) < 0 ||
+            (result.covered_frames as number) > (result.input_frames as number) || typeof result.inference_s !== "number" ||
             !Number.isFinite(result.inference_s) || result.inference_s < 0 ||
             (result.language !== null && typeof result.language !== "string")) {
           throw new ParakeetServiceError(result.complete === false ? "PARTIAL" : "INVALID", result, "Parakeet incomplete response");
         }
+        // A valid coverage discrepancy belongs to native coverage qualification,
+        // not a protocol failure that destroys usable words and switches engines.
         const end = result.last_token_end_s;
         if (end !== null && (typeof end !== "number" || !Number.isFinite(end) || end < 0 || end > (result.input_frames as number) / 16000)) {
           result.raw_last_token_end_s = end;

@@ -1,0 +1,12 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "DrawerReachableWhileCapturing",
+  "status": "EXPECTED_FAIL",
+  "generated": 4,
+  "distinct": 4,
+  "trace": [
+    "/\\ modal = FALSE\n/\\ settings = FALSE\n/\\ recording = FALSE\n/\\ history = FALSE\n/\\ captureClosedDrawer = FALSE\n/\\ teleprompter = FALSE",
+    "/\\ modal = FALSE\n/\\ settings = FALSE\n/\\ recording = TRUE\n/\\ history = FALSE\n/\\ captureClosedDrawer = FALSE\n/\\ teleprompter = FALSE"
+  ]
+}

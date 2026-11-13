@@ -1,3 +1,4 @@
+import { dlopen, ptr } from "bun:ffi";
 import { residencyBusy } from "./model-residency-busy";
 import { reserveVoiceMaintenance } from "./session-booking";
 import { ModelResidency, modelIdleSeconds } from "./model-residency";
@@ -67,6 +68,8 @@ export interface EnsureSTTPolishServerOptions {
   sleep?: (ms: number) => Promise<void>;
   startupTimeoutMs?: number;
   log?: (message: string) => void;
+  /** Does this mlx_lm.server accept the prompt-cache caps? Tests inject it; default reads `--help` once per binary. */
+  probeCacheCaps?: (binary: string) => Promise<boolean | { size: boolean; bytes: boolean }>;
 }
 
 const DEFAULT_POLISH_HOST = "127.0.0.1";
@@ -74,6 +77,270 @@ import { isDefaultVoiceBarSocketPath } from "./paths";
 
 const DEFAULT_POLISH_PORT = 8080;
 const DEFAULT_STARTUP_TIMEOUT_MS = 120_000;
+
+/**
+ * c8-M2 (round 2): what actually bounds the polish server's memory.
+ *
+ * Read in the installed mlx_lm 0.31.3 (server.py, models/cache.py): our polish requests carry `seed`,
+ * so `_is_batchable` is false and they run through `_serve_single`, whose `LRUPromptCache` is built with
+ * `prompt_cache_size` only (`max_bytes` stays 1 << 63). `--prompt-cache-bytes` is applied solely on the
+ * batched path. So on our path the server enforces an entry count and never a byte count.
+ *
+ * We therefore (1) keep ONE cached sequence: the next request still reuses the shared system-prompt
+ * prefix (fetch_nearest_cache trims the longer cached sequence), and (2) enforce the byte budget
+ * ourselves: after each polish the managed server's physical footprint is measured, and once it has grown
+ * more than POLISH_CACHE_GROWTH_BUDGET_BYTES past its first post-launch sample, or the server's own logged
+ * cache size exceeds the budget, the server is restarted when idle.
+ * One entry can still be large (a long take's prompt plus output), which is what (2) bounds.
+ */
+export const POLISH_PROMPT_CACHE_ENTRIES = 1;
+export const POLISH_PROMPT_CACHE_BYTES = 768 * 1024 * 1024; // passed for batched use; inert on our path
+export const POLISH_CACHE_GROWTH_BUDGET_BYTES = 768 * 1024 * 1024;
+type CacheCapSupport = { size: boolean; bytes: boolean };
+const cacheCapSupport = new Map<string, Promise<CacheCapSupport>>();
+
+/** Older mlx_lm builds reject unknown flags and would never start, so ask the binary first. */
+async function binarySupportsCacheCaps(binary: string): Promise<CacheCapSupport> {
+  try {
+    const proc = Bun.spawn([binary, "--help"], { stdout: "pipe", stderr: "pipe", env: process.env });
+    const timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch {} }, 15_000);
+    const [out] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    clearTimeout(timer);
+    return { size: out.includes("--prompt-cache-size"), bytes: out.includes("--prompt-cache-bytes") };
+  } catch {
+    return { size: false, bytes: false };
+  }
+}
+
+/** The cache arguments for a binary with the given flag support. Exported for the real-server test. */
+export function polishCacheArgs(support: CacheCapSupport): string[] {
+  return [
+    ...(support.size ? ["--prompt-cache-size", String(POLISH_PROMPT_CACHE_ENTRIES)] : []),
+    ...(support.bytes ? ["--prompt-cache-bytes", String(POLISH_PROMPT_CACHE_BYTES)] : []),
+  ];
+}
+
+async function polishCacheCapArgs(binary: string, options: EnsureSTTPolishServerOptions): Promise<string[]> {
+  let support: Promise<CacheCapSupport>;
+  if (options.probeCacheCaps) {
+    support = options.probeCacheCaps(binary).then(value => typeof value === "boolean" ? { size: value, bytes: value } : value);
+  } else {
+    support = cacheCapSupport.get(binary) ?? binarySupportsCacheCaps(binary);
+    cacheCapSupport.set(binary, support);
+  }
+  return polishCacheArgs(await support);
+}
+
+/** Byte budget decision, shared by the daemon and the real-server test. */
+export function polishCacheResetNeeded(baselineRssMb: number, rssMb: number): boolean {
+  return (rssMb - baselineRssMb) * 1024 * 1024 > POLISH_CACHE_GROWTH_BUDGET_BYTES;
+}
+
+let polishBaseline: { pid: number; rssMb: number } | null = null;
+let polishRssProbe: (pid: number) => Promise<number | null> = async pid => processFootprintMb(pid);
+/** Tests only. */
+export function setPolishRssProbeForTests(probe: ((pid: number) => Promise<number | null>) | null): void {
+  polishRssProbe = probe ?? (async pid => processFootprintMb(pid));
+}
+
+export type PolishMemoryCheck =
+  | { action: "none"; reason: "not-running" | "unmeasured" | "within-budget"; rss_mb?: number; baseline_rss_mb?: number }
+  | { action: "owed"; rss_mb: number; baseline_rss_mb: number; logged_cache_gb: number | null };
+
+/**
+ * c8-M2 round 3 (RM-memory-r2 R2-1): the budget restart is a small state machine, so a decision taken while
+ * a take is still transcribing is never forgotten:
+ *
+ *   ok --over budget--> owed --voice idle, no polish user--> restarting --stopped and relaunched--> ok
+ *
+ * `owed` is bound to the server process it was measured on (a server that went away for another reason
+ * clears it). It is retried on a short timer until the voice path is idle and no polish request holds the
+ * server, then runs exactly once. A polish request that arrives while `restarting` waits for the fresh server;
+ * the caller's polish deadline (stt-polish.ts) bounds that wait and delivers the take unpolished at expiry,
+ * so text is never lost.
+ */
+type BudgetState =
+  | { state: "ok" }
+  | { state: "owed"; pid: number; rssMb: number; baselineMb: number }
+  | { state: "restarting"; done: Promise<void> };
+let budget: BudgetState = { state: "ok" };
+let budgetTimer: ReturnType<typeof setTimeout> | undefined;
+let budgetPollMs = 1_000;
+let lastEnsureOptions: EnsureSTTPolishServerOptions = {};
+/** Tests only. */
+export function setPolishBudgetPollMsForTests(ms: number | null): void { budgetPollMs = ms ?? 1_000; }
+export function polishBudgetState(): BudgetState["state"] { return budget.state; }
+
+/** After a polish use: measure; over budget makes a restart owed (it runs at idle, see above). */
+export async function checkPolishMemoryAfterRequest(): Promise<PolishMemoryCheck> {
+  const proc = polishProcess;
+  if (!proc) return { action: "none", reason: "not-running" };
+  const rss = await polishRssProbe(proc.pid);
+  if (rss === null || polishProcess !== proc) return { action: "none", reason: "unmeasured" };
+  // Baseline: the smallest post-use footprint of this process (model plus at most one small entry). A large
+  // first take cannot hide behind itself for long: the server's own logged cache size is checked every time,
+  // and the warm-up request at the next take's start logs the previous take's entry.
+  if (!polishBaseline || polishBaseline.pid !== proc.pid || rss < polishBaseline.rssMb) polishBaseline = { pid: proc.pid, rssMb: rss };
+  const baseline = polishBaseline.rssMb;
+  const loggedGb = lastPolishCache?.gb ?? null;
+  const over = polishCacheResetNeeded(baseline, rss) || (loggedGb ?? 0) * 1e9 > POLISH_CACHE_GROWTH_BUDGET_BYTES;
+  if (!over) return { action: "none", reason: "within-budget", rss_mb: rss, baseline_rss_mb: baseline };
+  if (budget.state === "ok") {
+    budget = { state: "owed", pid: proc.pid, rssMb: rss, baselineMb: baseline };
+    console.error(`[voicelayer] ${JSON.stringify({ event: "polish_cache_restart_owed", rss_mb: rss, baseline_rss_mb: baseline,
+      logged_cache_gb: loggedGb, budget_bytes: POLISH_CACHE_GROWTH_BUDGET_BYTES })}`);
+  }
+  void runOwedPolishRestart();
+  return { action: "owed", rss_mb: rss, baseline_rss_mb: baseline, logged_cache_gb: loggedGb };
+}
+
+function armBudgetTimer(): void {
+  if (budgetTimer) return;
+  budgetTimer = setTimeout(() => { budgetTimer = undefined; void runOwedPolishRestart(); }, budgetPollMs);
+  budgetTimer.unref?.();
+}
+
+/** Runs an owed restart if the server is idle now; otherwise re-arms. Exactly one restart per owed state. */
+async function runOwedPolishRestart(): Promise<void> {
+  const owed = budget;
+  if (owed.state !== "owed") return;
+  if (polishProcess?.pid !== owed.pid) { budget = { state: "ok" }; return; } // that server is gone already
+  if (polishResidency.inUse || polishLaunch || stoppingPolishProcess) { armBudgetTimer(); return; }
+  const release = reserveVoiceMaintenance(residencyBusy);
+  if (!release) { armBudgetTimer(); return; }
+  let finish!: () => void;
+  const done = new Promise<void>(resolve => { finish = resolve; });
+  budget = { state: "restarting", done };
+  const generationBefore = polishGeneration;
+  let next: BudgetState = { state: "ok" };
+  try {
+    try { await stopSTTPolishServerAndWait(); }
+    catch {
+      console.error('[voicelayer] {"event":"polish_cache_restart","outcome":"unload-unconfirmed"}');
+      next = { state: "owed", pid: owed.pid, rssMb: owed.rssMb, baselineMb: owed.baselineMb };
+      return;
+    } finally { release(); }
+    polishBaseline = null;
+    lastPolishCache = null;
+    publishSTTPolishServerStatus({ status: "stopped" });
+    console.error(`[voicelayer] ${JSON.stringify({ event: "polish_cache_restart", outcome: "stopped",
+      rss_mb: owed.rssMb, baseline_rss_mb: owed.baselineMb, bytes_freed: owed.rssMb * 1024 * 1024 })}`);
+    // RM-memory-r3 R3-2: our stop bumps the generation once. Any other stop (polish turned Off, shutdown)
+    // or a current setting of Off supersedes this restart: the server stays down.
+    if (polishGeneration !== generationBefore + 1 || !polishEnabledProbe()) {
+      console.error('[voicelayer] {"event":"polish_cache_restart","outcome":"relaunch-abandoned"}');
+      return;
+    }
+    try {
+      const status = await ensureSTTPolishServer(lastEnsureOptions);
+      console.error(`[voicelayer] ${JSON.stringify({ event: "polish_cache_restart", outcome: "relaunched", status: status.status })}`);
+    } catch {
+      console.error('[voicelayer] {"event":"polish_cache_restart","outcome":"relaunch-failed"}');
+    }
+  } finally {
+    // RM-memory-r3 R3-3: every exit settles the promise waiters hold, then re-arms an owed restart if any.
+    if (budget.state === "restarting" && budget.done === done) budget = next;
+    finish();
+    if (budget.state === "owed") armBudgetTimer();
+  }
+}
+
+/** Current settings, read fresh (never the saved launch snapshot). Tests replace it. */
+let polishEnabledProbe: () => boolean = () => getSTTPolishMode(processingEnv()) !== "off";
+export function setPolishEnabledProbeForTests(probe: (() => boolean) | null): void {
+  polishEnabledProbe = probe ?? (() => getSTTPolishMode(processingEnv()) !== "off");
+}
+
+/**
+ * RM-memory-r3 R3-1: the baseline is the model-only footprint, measured after ready and before any request is
+ * admitted. The server answers health while its generation thread is still loading the model (measured on the
+ * M1: 1048 MiB at ready, 2434 MiB one second later, 2485 MiB after a 1-token request), so we sample until two
+ * readings agree within 32 MiB (at most ~10 s). Without a probe the post-use minimum stays the fallback.
+ */
+async function settlePolishBaseline(proc: ManagedPolishProcess, options: EnsureSTTPolishServerOptions): Promise<void> {
+  let previous: number | null = null;
+  let highest = 0;
+  for (let i = 0; i < 40; i++) {
+    const sample = await polishRssProbe(proc.pid);
+    if (sample === null || polishProcess !== proc) return;
+    highest = Math.max(highest, sample);
+    if (previous !== null && Math.abs(sample - previous) <= 32) { polishBaseline = { pid: proc.pid, rssMb: sample }; return; }
+    previous = sample;
+    await (options.sleep ?? Bun.sleep)(250);
+  }
+  // RM-memory-r4 R4-1: readings that never agree must not leave the first request to become its own baseline.
+  // No request has been admitted yet, so the highest pre-request reading is still model-only.
+  if (polishProcess === proc) polishBaseline = { pid: proc.pid, rssMb: highest };
+}
+
+/** Last `Prompt Cache: N sequences, X GB` line the server logged; sizes only, never prompt text. */
+let lastPolishCache: { sequences: number; gb: number } | null = null;
+let polishCacheLinePending = "";
+export function lastPolishPromptCache(): { sequences: number; gb: number } | null { return lastPolishCache; }
+/** Complete lines only: a `Prompt Cache` line split across two pipe reads is read whole. */
+function notePolishCacheLine(text: string): void {
+  const lines = (polishCacheLinePending + text).split(/\r?\n/u);
+  polishCacheLinePending = (lines.pop() ?? "").slice(-512);
+  for (const line of lines) {
+    const match = /Prompt Cache: (\d+) sequences, ([\d.]+) GB/u.exec(line);
+    if (match) lastPolishCache = { sequences: Number(match[1]), gb: Number(match[2]) };
+  }
+}
+
+/**
+ * Physical footprint in MiB (proc_pid_rusage RUSAGE_INFO_V2 ri_phys_footprint, offset 72). On Apple
+ * Silicon MLX keeps its KV caches in Metal buffers that RSS does not show: measured 2026-11-12 on the
+ * installed server, the logged prompt cache reached 7.56 GB while `ps` RSS stayed near 2.4 GB. The
+ * footprint counts them. Falls back to `ps` RSS only where the call is unavailable.
+ */
+const libproc = (() => {
+  if (process.platform !== "darwin") return null;
+  try {
+    return dlopen("/usr/lib/libSystem.B.dylib", { proc_pid_rusage: { args: ["i32", "i32", "ptr"], returns: "i32" } });
+  } catch { return null; }
+})();
+function processFootprintMb(pid: number | null | undefined): number | null {
+  if (!pid) return null;
+  if (libproc) {
+    const buf = new Uint8Array(512);
+    if (libproc.symbols.proc_pid_rusage(pid, 2, ptr(buf)) === 0) {
+      const bytes = new DataView(buf.buffer).getBigUint64(72, true);
+      if (bytes > 0n) return Math.round(Number(bytes) / (1024 * 1024));
+    }
+    return null;
+  }
+  try {
+    const result = Bun.spawnSync(["ps", "-o", "rss=", "-p", String(pid)], { stdout: "pipe", stderr: "pipe", env: process.env });
+    const kb = Number(result.stdout.toString().trim());
+    return Number.isFinite(kb) && kb > 0 ? Math.round(kb / 1024) : null;
+  } catch { return null; }
+}
+export { processFootprintMb };
+
+export type PolishPressureRelease =
+  | { released: true; cache: { sequences: number; gb: number } | null; rss_mb: number | null }
+  | { released: false; reason: "not-running" | "voice-busy" | "unload-unconfirmed" };
+
+/**
+ * c8-M2: memory pressure releases the polish server (its prompt cache and model) first. It is
+ * relaunched on the next polish (withSTTPolishServer loads on demand). Never while a voice
+ * operation runs: a pressure event is dropped then, not deferred into a dictation.
+ */
+export async function releaseSTTPolishServerForMemoryPressure(): Promise<PolishPressureRelease> {
+  const proc = polishProcess;
+  if (!proc) return { released: false, reason: "not-running" };
+  const release = reserveVoiceMaintenance(residencyBusy);
+  if (!release) return { released: false, reason: "voice-busy" };
+  try {
+    const cache = lastPolishCache;
+    const rss = processFootprintMb(proc.pid);
+    try { await stopSTTPolishServerAndWait(); }
+    catch { return { released: false, reason: "unload-unconfirmed" }; }
+    lastPolishCache = null;
+    publishSTTPolishServerStatus({ status: "stopped" });
+    return { released: true, cache, rss_mb: rss };
+  } finally { release(); }
+}
 
 let polishProcess: ManagedPolishProcess | null = null;
 let stoppingPolishProcess: ManagedPolishProcess | null = null;
@@ -92,12 +359,20 @@ const polishResidency = new ModelResidency(async () => {
 
 export function withSTTPolishServer<T>(work: () => Promise<T>, options: EnsureSTTPolishServerOptions & { loadOnDemand?: boolean } = {}): Promise<T> {
   idleEnv = options.env;
-  return polishResidency.use(async () => {
+  lastEnsureOptions = options;
+  return (async () => {
+    // A budget restart in progress: wait for the fresh server rather than the dying one. The caller's polish
+    // deadline bounds this wait (the take is then delivered unpolished, never lost).
+    if (budget.state === "restarting") await budget.done.catch(() => {});
+  })().then(() => polishResidency.use(async () => {
     if (options.loadOnDemand !== false && (!polishProcess || polishLaunch || stoppingPolishProcess)) {
       try { await ensureSTTPolishServer(options); }
       catch (error: unknown) { console.error("[voicelayer] Lazy polish launch failed:", error); }
     }
     return work();
+  })).finally(() => {
+    // c8-M2: the byte budget the server itself does not enforce on our path (owed until idle, see above).
+    void checkPolishMemoryAfterRequest().catch(() => {});
   });
 }
 
@@ -148,6 +423,14 @@ function resetSTTPolishServerManager(retainReapedOwners: boolean): void {
 
 export function resetSTTPolishServerManagerForTests(): void {
   polishResidency.reset();
+  cacheCapSupport.clear();
+  polishBaseline = null;
+  budget = { state: "ok" };
+  if (budgetTimer) clearTimeout(budgetTimer);
+  budgetTimer = undefined;
+  lastEnsureOptions = {};
+  lastPolishCache = null;
+  polishCacheLinePending = "";
   resetSTTPolishServerManager(false);
 }
 
@@ -290,7 +573,9 @@ async function startAndWaitForPolishServer(
     DEFAULT_POLISH_HOST,
     "--port",
     String(DEFAULT_POLISH_PORT),
+    ...(await polishCacheCapArgs(binary, options)),
   ];
+  if (cancelled()) return { status: "disabled" };
   appendEvent(
     "transcription.polish_server_starting",
     {
@@ -316,11 +601,12 @@ async function startAndWaitForPolishServer(
   void proc.exited?.then(
     () => {
       exited = true;
+      // A normal or unexpected exit is just as final as an explicit stop.
+      // A late callback from a superseded child must not mark its successor stopped.
+      if (polishProcess !== proc && stoppingPolishProcess !== proc) return;
       if (polishProcess === proc) polishProcess = null;
-      if (stoppingPolishProcess === proc) {
-        stoppingPolishProcess = null;
-        publishSTTPolishServerStatus({ status: "stopped" });
-      }
+      if (stoppingPolishProcess === proc) stoppingPolishProcess = null;
+      publishSTTPolishServerStatus({ status: "stopped" });
     },
     () => {},
   );
@@ -358,6 +644,7 @@ async function startAndWaitForPolishServer(
         },
         { topic: "voice.transcription" },
       );
+      await settlePolishBaseline(proc, options);
       return { status: "ready", pid: proc.pid };
     }
     await Promise.race([(options.sleep ?? Bun.sleep)(500), proc.exited ?? new Promise<never>(() => {})]);
@@ -627,7 +914,9 @@ function drainPolishServerLogs(
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        const text = new TextDecoder().decode(value).trim();
+        const raw = new TextDecoder().decode(value);
+        notePolishCacheLine(raw);
+        const text = raw.trim();
         if (text) {
           tail.text = `${tail.text}\n${text}`.trim().slice(-2_000);
           log(`[voicelayer-polish] ${text}`);

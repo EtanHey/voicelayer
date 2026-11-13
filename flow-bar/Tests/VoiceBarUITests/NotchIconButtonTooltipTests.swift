@@ -73,7 +73,8 @@ final class NotchIconButtonTooltipTests: XCTestCase {
     /// Every icon control has a native tooltip over it; `textButtons` controls are labelled by their own visible
     /// text and need none.
     private func assertEveryControlHasATooltip(_ name: String, _ mounted: Mounted, expecting expected: [String],
-                                               textButtons: Int = 0, file: StaticString = #filePath,
+                                               textButtons: Int = 0, disabled: Set<String> = [],
+                                               file: StaticString = #filePath,
                                                line: UInt = #line) {
         let texts = mounted.tooltips.map(\.text)
         for label in expected {
@@ -85,7 +86,8 @@ final class NotchIconButtonTooltipTests: XCTestCase {
         XCTAssertEqual(bare.count, textButtons,
                        "\(name): tooltips at \(mounted.tooltips.map { "\($0.text)@\($0.frame)" }); controls without a tooltip at \(bare.map { frame in "\(frame) \(mounted.controls.firstIndex(of: frame).map { mounted.paths[$0] } ?? "")" }); tooltips \(texts)", file: file, line: line)
         XCTAssertGreaterThanOrEqual(mounted.controls.count, expected.count, name, file: file, line: line)
-        for tip in mounted.tooltips {
+        // A disabled control leaves the key loop but keeps its tooltip (it says what the control would do).
+        for tip in mounted.tooltips where !disabled.contains(tip.text) {
             XCTAssertTrue(mounted.controls.contains { $0.insetBy(dx: -1, dy: -1).contains(CGPoint(x: tip.frame.midX, y: tip.frame.midY)) },
                           "\(name): tooltip \(tip.text) is not over a control", file: file, line: line)
         }
@@ -125,7 +127,9 @@ final class NotchIconButtonTooltipTests: XCTestCase {
         assertEveryControlHasATooltip("history", mounted, expecting: [
             // 2.3 U2 (mic tooltip + chevron) × U4 (row actions, the long row's clipped-text tooltip).
             "Start dictation (F5)", "Choose microphone", "Close history", "Settings",
-            "Copy", "Paste into the app you were using", "Transcribe again", Self.longRow,
+            "Copy", "Paste into the app you were using", "Re-transcribe", Self.longRow,
+            // Lane H: the category selector's three segments.
+            "What you dictated", "Your answers to spoken questions", "Text read aloud to you",
         ], textButtons: 2)
     }
 
@@ -140,26 +144,30 @@ final class NotchIconButtonTooltipTests: XCTestCase {
         let s = state { $0.handleEvent(["type": "state", "state": "recording", "mode": "ptt", "capture_id": 4]) }
         let mounted = try mount(bar(s))
         assertEveryControlHasATooltip("recording ptt", mounted,
-                                     expecting: ["Stop recording", "Pause recording", "Cancel recording"])
+                                     expecting: ["Stop recording", "Mute microphone", "Cancel recording"])
         func frame(_ text: String) throws -> CGRect {
             let tip = try XCTUnwrap(mounted.tooltips.first { $0.text == text }, text)
             return try XCTUnwrap(mounted.controls.first { $0.insetBy(dx: -1, dy: -1).contains(CGPoint(x: tip.frame.midX, y: tip.frame.midY)) }, text)
         }
-        let stop = try frame("Stop recording"), pause = try frame("Pause recording"), cancel = try frame("Cancel recording")
+        let stop = try frame("Stop recording"), pause = try frame("Mute microphone"), cancel = try frame("Cancel recording")
         XCTAssertFalse(pause.intersects(stop), "Pause \(pause) overlaps Stop \(stop)")
         XCTAssertFalse(pause.intersects(cancel), "Pause \(pause) overlaps Cancel \(cancel)")
         XCTAssertEqual(abs(pause.midX - stop.midX) < abs(cancel.midX - stop.midX), true, "Pause sits next to Stop")
 
         s.setRecordingPaused(true)
         assertEveryControlHasATooltip("recording ptt paused", try mount(bar(s)),
-                                     expecting: ["Stop recording", "Resume recording", "Cancel recording"])
+                                     expecting: ["Stop recording", "Unmute microphone", "Cancel recording"])
     }
 
     func testTranscribingAndErrorButtons() throws {
         let transcribing = state { $0.handleEvent(["type": "state", "state": "transcribing"]) }
         assertEveryControlHasATooltip("transcribing", try mount(bar(transcribing)),
-                                     // 2.3 U2: no third control while transcribing; History and Settings stay live.
-                                     expecting: ["History", "Settings"])
+                                     // c9-P: the right wing is the rippling meter (no controls); the microphone
+                                     // control stays on the left (0510 N9).
+                                     expecting: ["Choose microphone"])
+        let transcribingTips = try mount(bar(transcribing)).tooltips.map(\.text)
+        XCTAssertFalse(transcribingTips.contains("History"), "c9-P: History leaves the meter's slot while transcribing")
+        XCTAssertFalse(transcribingTips.contains("Settings"), "c9-P: Settings leaves the meter's slot while transcribing")
         let error = state { $0.handleEvent(["type": "error", "message": "Synthetic diagnostic for the tooltip test."]) }
         assertEveryControlHasATooltip("error", try mount(bar(error)),
                                      expecting: ["Synthetic diagnostic for the tooltip test.", "Dismiss error",
@@ -172,6 +180,11 @@ final class NotchIconButtonTooltipTests: XCTestCase {
                             "playback_id": "tooltips", "generation": 1])
         }
         // U5: each Teleprompter A word is a text-labelled "Jump to:" button, not an icon-only control.
-        assertEveryControlHasATooltip("speaking", try mount(bar(s)), expecting: ["Stop speaking", "Drag to show more or fewer lines"], textButtons: 3)
+        // T1/T6 (Etan QA 2026-11-09): speed, Back, Pause, Forward beside each other; nothing is queued, so Back and
+        // Forward are disabled.
+        assertEveryControlHasATooltip("speaking", try mount(bar(s)),
+                                     expecting: ["Stop speaking", "Drag to show more or fewer lines", "Playback speed",
+                                                 "Previous read", "Pause speech", "Next read"],
+                                     textButtons: 3, disabled: ["Previous read", "Next read"])
     }
 }

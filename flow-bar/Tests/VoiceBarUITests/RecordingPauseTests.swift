@@ -20,14 +20,13 @@ final class RecordingPauseTests: XCTestCase {
     func testPTTWingOffersPauseThenResume() {
         XCTAssertEqual(
             VoiceBarPresentation.recordingPauseControl(mode: .recording, recordingMode: "ptt", isPaused: false),
-            VoiceBarRecordingPauseControl(iconName: "pause.fill", accessibilityLabel: "Pause recording",
-                                          accessibilityHint: "Stop adding audio to this take until you resume",
-                                          isSelected: false)
+            VoiceBarRecordingPauseControl(iconName: "mic.fill", accessibilityLabel: "Mute microphone",
+                                          accessibilityHint: "Mute microphone", isSelected: false)
         )
         XCTAssertEqual(
             VoiceBarPresentation.recordingPauseControl(mode: .recording, recordingMode: "ptt", isPaused: true),
-            VoiceBarRecordingPauseControl(iconName: "play.fill", accessibilityLabel: "Resume recording",
-                                          accessibilityHint: "Continue the same take", isSelected: true)
+            VoiceBarRecordingPauseControl(iconName: "mic.slash.fill", accessibilityLabel: "Unmute microphone",
+                                          accessibilityHint: "Unmute microphone", isSelected: true)
         )
         // VAD takes end on their own silence and keep the Lock slot; nothing else shows Pause.
         XCTAssertNil(VoiceBarPresentation.recordingPauseControl(mode: .recording, recordingMode: "vad", isPaused: false))
@@ -40,7 +39,10 @@ final class RecordingPauseTests: XCTestCase {
         let held = VoiceBarPresentation.notchPresentation(from: .init(mode: .recording, showsRecordingHold: true))
         let plain = VoiceBarPresentation.notchPresentation(from: .init(mode: .recording))
         XCTAssertEqual(paused.geometry.leadingWingWidth, held.geometry.leadingWingWidth)
-        XCTAssertGreaterThan(paused.geometry.leadingWingWidth, plain.geometry.leadingWingWidth)
+        // C7-W: the time/meter wing (102 pt) is already wider than three controls (99.5 pt), so the third slot no
+        // longer widens the band; it still fits inside it.
+        XCTAssertGreaterThanOrEqual(paused.geometry.leadingWingWidth, plain.geometry.leadingWingWidth)
+        XCTAssertGreaterThanOrEqual(paused.geometry.leadingWingWidth, VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl)
     }
 
     func testPauseSendsACaptureBoundIntentAndResumeContinues() throws {

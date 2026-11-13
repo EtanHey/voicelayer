@@ -1,0 +1,367 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/parakeet-residency/ResidentRecognizer.tla": "f1281c67b6b11a7f1d9f89b4bd6508c2558b8e43bdb1135e530d39e4daf3640b",
+    "formal/parakeet-residency/checks.json": "f667ee96a8fef93711e25bb1041a309e643740cf6d1e5ea7ee80c2f034f35e86",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
+    "formal/parakeet-residency/FixedSetupCancel.cfg": "c14059653bb2ced7d767558b2f793dc732691df28463aefd4a1901172677c428",
+    "formal/parakeet-residency/FixedReadyReselect.cfg": "9cb3e1f776400832612450dc68ce9a0c3f6b16bdaed4175a34b45235f8bcee59",
+    "formal/parakeet-residency/OldSetupCancel.cfg": "5daa51ddf8c25aa76ba96dd044d1225192a0efe07c37c7532c7aef548c4f61cb",
+    "formal/parakeet-residency/OldCircularGate.cfg": "af257731cc4b17cea3c0ea7773ce6e6f0f392b6fdffced36fca288d5910e29d8",
+    "formal/parakeet-residency/FixedDelete.cfg": "af4483136b92d5ea33df95a8bb044b80004279ec49dd967c78addca4e2f0b1d4",
+    "formal/parakeet-residency/OldDeleteLoaded.cfg": "4e4f62bd33c590591e033cdaf540305698fd37f6d0cf32118e4a4d07fb45ae10",
+    "formal/parakeet-residency/FixedAssetsGate.cfg": "f9433749ddb16d7d41774ca148979fc8162c9a9f17b8c0bebc2b61772baa6ec0",
+    "formal/parakeet-residency/OldLegacyRace.cfg": "017565005e8669e727ec1ce611f43927af9e3c4db3999054dcadc9674f167fa6",
+    "formal/parakeet-residency/FixedMemoryPressure.cfg": "a347f8ab553df0603968f0d2e2292df120fcf584b510d0831dcc2663411ef77c",
+    "formal/parakeet-residency/OldRecoveryRace.cfg": "88e8bab4e44439e3565f67793e17dd36589fd139fea87ff8ddd24aa1682a98f8",
+    "formal/parakeet-residency/OldDownloadBlocks.cfg": "f05dcea12ecfe8dbe08b49c2c8a95808423c7a84a6cd52de697c4619daa52b44",
+    "formal/parakeet-residency/FixedDownload.cfg": "47ae4be13275e7a72bee7e416b58eef87c0af0b9494077ff0ac183e6bf6f186d",
+    "formal/parakeet-residency/OldReadyReselect.cfg": "246adb98dbf344550be97b3125a9d344df647e01a4379d7a1ec0ea09fae72d6f",
+    "formal/parakeet-residency/FixedArchiveGate.cfg": "abaa3f2c650e4486fc5255d22e4314274f8e53c8c784e6f8f68bb1a1bdd81ced",
+    "formal/parakeet-residency/Fixed.cfg": "e674b9dee4b1de8a722786ca1a6f53ca69f6eaef7bd62015d508feecda5acda6",
+    "formal/legacy_receipts.py": "83fae1948d340e3e253cbd19aac05814ee2457664397616ffce0de4b502998f0",
+    "formal/parakeet-residency/ArchiveGateEvidence.tla": "43a155ab45e49fdaca9b8b129ec119e0c10797e7c757f62d18b05008e085bb79",
+    "formal/parakeet-residency/MemoryPressure.tla": "1389dcafbea73f4e806b138cd87ab9056da52d919bda78e376caac8f070c2114",
+    "formal/parakeet-residency/RuntimeSetup.tla": "263bc84f05eb4c0dfb8415de95c1c71999794274d747b6587e0c2298da646025",
+    "formal/parakeet-residency/check.py": "a6d3d4c17e8e216fd1c5813ca0938840fc3a6d9703577cdaa9ca1697bec0347c",
+    "formal/parakeet-residency/check.sh": "d714f1111f2eba23e2d5e002193cbfbf6157a222c5e1325346f572280a65433c",
+    "formal/parakeet-residency/mutants.json": "ab822b4b0559f200429b76751f9694dd8c473a40d37e77a66f7a7c3180823c63",
+    "formal/parakeet-residency/mutants/BootCaptureAllowed.cfg": "a5cb6a312f62c7d21acc0d4f02b2598789602b5dda4f815a5b4e88867cacdddd",
+    "formal/parakeet-residency/mutants/CancellationFinishes.cfg": "e311851b4baa3ff777935a6bcb680e567684332f4fc35be6eb1f28e75e99557f",
+    "formal/parakeet-residency/mutants/CleanupAfterExit.cfg": "74862f483557d1e447dcd2be37e529cbb62a1666c019fff93c3ef06be0248762",
+    "formal/parakeet-residency/mutants/DefaultNeverIdleEvicts.cfg": "21601acf09efbdb2f215261af19b1be4c2b3c20164fd40167ad40e322eaf83ef",
+    "formal/parakeet-residency/mutants/DeleteExcludesRequest.cfg": "d2cdffa106ce2b5d5c9906bad29ff095f418c293e810b7ca4b60f997bac636a6",
+    "formal/parakeet-residency/mutants/DeletedModelNotResident.cfg": "511ab078fb5154f43295d6e7d47508d7724cc08f0a2d8656896629d87718b60e",
+    "formal/parakeet-residency/mutants/DownloadNeverBlocksAdmittedRequest.cfg": "f0b42cf53f80e2cbd7a7f7c1aa664fa67498dc6a7c8c4777d12f9a47e879345a",
+    "formal/parakeet-residency/mutants/GateDetailOnTranscribed.cfg": "f33815fa8c3e00f0b55a78f79bb80a7cbad7066888deba52b7e7e366362657f5",
+    "formal/parakeet-residency/mutants/GateDoesNotLoad.cfg": "a8fcc0fdbb6f1cfb172c10ff10d77466bdbce0ed6313079d8c4bcd686b193152",
+    "formal/parakeet-residency/mutants/GateMarkerStale.cfg": "df2784869beda29192babd0bf8d34b55ed06d1ef2250c999caa074967e36e234",
+    "formal/parakeet-residency/mutants/GateRecordBeforeCommit.cfg": "0dddf328890ce7604fc355fedfedf8732cbafe102a344b2acdb556c4efc0e940",
+    "formal/parakeet-residency/mutants/IdleLoadedCanDelete.cfg": "0cc83205bd54acabeb4c96c061e2a229704df60e6a519a37041fcbb982abd013",
+    "formal/parakeet-residency/mutants/MissingAssetsBlocked.cfg": "001977f9e84d64d906a8a2b6f99cba9c1574e06dbcfbf6e4d90aa77097b52f6b",
+    "formal/parakeet-residency/mutants/NoDeleteDuringCapture.cfg": "6ddc497c3d1e52fe7c1013c20bc89ceb163afdd28f6682f39006def7b4994029",
+    "formal/parakeet-residency/mutants/OneModel.cfg": "e85133d23e899496a33b9200fc84d467a50cbec9f57bcaade7599a5ffae728c2",
+    "formal/parakeet-residency/mutants/PartialRemovalDropped.cfg": "39dc0afa38d8d3583bda3b8d3d8917d41843f7be816cfef12801aaa231afb2aa",
+    "formal/parakeet-residency/mutants/PressureNeverUnloadsBusy.cfg": "d3755b3d40d7f1442df179895c5f1ff84d64e36c473a88d35d8a1c2c7840d428",
+    "formal/parakeet-residency/mutants/ProvisionedSelectable.cfg": "e0fbfe54e21343f5f6b92a6f78307bcb7a60f4af9056097c861dc3f1b0e12ddf",
+    "formal/parakeet-residency/mutants/ReadyDuplicateKeepsLoaded.cfg": "b9ea7dc03000d887ff11e5e9473dbd810211f12e286a7cfcb0ddb1906cfe1f53",
+    "formal/parakeet-residency/mutants/ReadySelectionIsNoop.cfg": "4ab022ac96ff9096a033342d1dbfb3cc86686b855615f985cf92fcc230876852",
+    "formal/parakeet-residency/mutants/UnknownBlocks.cfg": "4e0d79d08a167f18710abd98872d5e9262266a145bd20233b1b2850bd3cac4ed",
+    "formal/parakeet-residency/mutants/VerifiedDownloadAlwaysPublishable.cfg": "0c76586ae8012a7718e2a8554dc3d20699251cd92a90fe37d27f0669f175c4b0",
+    "formal/parakeet-residency/test_tlc_result.py": "94f871e477398b11b323a1e064d04dd74d454476503749929d37de6f2aecf04e",
+    "formal/parakeet-residency/tlc_result.py": "4e6fe83459788bdc60ce34d3557d77762ab51e564d62aa5d24d113f02314cd50",
+    "formal/setup-tlc.py": "ada6a1d5fa6376d4abd8eb8309900bde02e757f53ee2a97e6614aeaee134c391",
+    "formal/tlc.lock.json": "3e37914f1398c6073444c37c6c8df70eb3030c14d269e808791e1d1b25467d34",
+    "formal/tlc_support.py": "8c5dad35602a3a631acc61b07ed2246eeb40ef2b3a6b3a9c72c5b207c95386ec",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
+  },
+  "mutants": {
+    "BootCaptureAllowed": [
+      "BootCaptureAllowed"
+    ],
+    "CancellationFinishes": [
+      "CancellationFinishes"
+    ],
+    "CleanupAfterExit": [
+      "CleanupAfterExit"
+    ],
+    "DefaultNeverIdleEvicts": [
+      "DefaultNeverIdleEvicts"
+    ],
+    "DeleteExcludesRequest": [
+      "DeleteExcludesRequest"
+    ],
+    "DeletedModelNotResident": [
+      "DeletedModelNotResident"
+    ],
+    "DownloadNeverBlocksAdmittedRequest": [
+      "DownloadNeverBlocksAdmittedRequest"
+    ],
+    "FinalTranscriptEvidence": [
+      "PartialRemovalDropped",
+      "GateRecordBeforeCommit",
+      "GateMarkerStale"
+    ],
+    "GateDoesNotLoad": [
+      "GateDoesNotLoad"
+    ],
+    "IdleLoadedCanDelete": [
+      "IdleLoadedCanDelete"
+    ],
+    "MissingAssetsBlocked": [
+      "MissingAssetsBlocked"
+    ],
+    "NoDeleteDuringCapture": [
+      "NoDeleteDuringCapture"
+    ],
+    "NoFailureDetailOnTranscript": [
+      "GateDetailOnTranscribed"
+    ],
+    "OneModel": [
+      "OneModel"
+    ],
+    "PressureNeverUnloadsBusy": [
+      "PressureNeverUnloadsBusy"
+    ],
+    "ProvisionedSelectable": [
+      "ProvisionedSelectable"
+    ],
+    "ReadyDuplicateKeepsLoaded": [
+      "ReadyDuplicateKeepsLoaded"
+    ],
+    "ReadySelectionIsNoop": [
+      "ReadySelectionIsNoop"
+    ],
+    "UnknownBlocks": [
+      "UnknownBlocks"
+    ],
+    "VerifiedDownloadAlwaysPublishable": [
+      "VerifiedDownloadAlwaysPublishable"
+    ]
+  },
+  "graphHashes": {},
+  "checks": {
+    "Fixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 1002,
+      "distinct": 404
+    },
+    "FixedArchiveGate": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 101,
+      "distinct": 70
+    },
+    "FixedAssetsGate": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 5,
+      "distinct": 3
+    },
+    "FixedDelete": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 50,
+      "distinct": 22
+    },
+    "FixedDownload": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 44,
+      "distinct": 24
+    },
+    "FixedMemoryPressure": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 34,
+      "distinct": 14
+    },
+    "FixedReadyReselect": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 8,
+      "distinct": 4
+    },
+    "FixedSetupCancel": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 5,
+      "distinct": 5
+    },
+    "OneModel": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "OneModel",
+      "status": "EXPECTED_FAIL",
+      "generated": 404,
+      "distinct": 192
+    },
+    "UnknownBlocks": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "UnknownBlocks",
+      "status": "EXPECTED_FAIL",
+      "generated": 16,
+      "distinct": 14
+    },
+    "ProvisionedSelectable": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ProvisionedSelectable",
+      "status": "EXPECTED_FAIL",
+      "generated": null,
+      "distinct": null
+    },
+    "MissingAssetsBlocked": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "MissingAssetsBlocked",
+      "status": "EXPECTED_FAIL",
+      "generated": null,
+      "distinct": null
+    },
+    "GateDoesNotLoad": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "GateDoesNotLoad",
+      "status": "EXPECTED_FAIL",
+      "generated": 3,
+      "distinct": 3
+    },
+    "DownloadNeverBlocksAdmittedRequest": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "DownloadNeverBlocksAdmittedRequest",
+      "status": "EXPECTED_FAIL",
+      "generated": 6,
+      "distinct": 6
+    },
+    "VerifiedDownloadAlwaysPublishable": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "VerifiedDownloadAlwaysPublishable",
+      "status": "EXPECTED_FAIL",
+      "generated": 29,
+      "distinct": 19
+    },
+    "IdleLoadedCanDelete": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "IdleLoadedCanDelete",
+      "status": "EXPECTED_FAIL",
+      "generated": null,
+      "distinct": null
+    },
+    "DeletedModelNotResident": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "DeletedModelNotResident",
+      "status": "EXPECTED_FAIL",
+      "generated": 21,
+      "distinct": 13
+    },
+    "DeleteExcludesRequest": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "DeleteExcludesRequest",
+      "status": "EXPECTED_FAIL",
+      "generated": 8,
+      "distinct": 8
+    },
+    "NoDeleteDuringCapture": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoDeleteDuringCapture",
+      "status": "EXPECTED_FAIL",
+      "generated": 23,
+      "distinct": 15
+    },
+    "ReadyDuplicateKeepsLoaded": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ReadyDuplicateKeepsLoaded",
+      "status": "EXPECTED_FAIL",
+      "generated": 5,
+      "distinct": 5
+    },
+    "ReadySelectionIsNoop": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "ReadySelectionIsNoop",
+      "status": "EXPECTED_FAIL",
+      "generated": 58,
+      "distinct": 38
+    },
+    "CleanupAfterExit": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "CleanupAfterExit",
+      "status": "EXPECTED_FAIL",
+      "generated": 4,
+      "distinct": 4
+    },
+    "CancellationFinishes": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "CancellationFinishes",
+      "status": "EXPECTED_FAIL",
+      "generated": 2,
+      "distinct": 2
+    },
+    "PartialRemovalDropped": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "FinalTranscriptEvidence",
+      "status": "EXPECTED_FAIL",
+      "generated": 56,
+      "distinct": 50
+    },
+    "GateRecordBeforeCommit": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "FinalTranscriptEvidence",
+      "status": "EXPECTED_FAIL",
+      "generated": 52,
+      "distinct": 44
+    },
+    "GateMarkerStale": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "FinalTranscriptEvidence",
+      "status": "EXPECTED_FAIL",
+      "generated": 59,
+      "distinct": 54
+    },
+    "GateDetailOnTranscribed": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoFailureDetailOnTranscript",
+      "status": "EXPECTED_FAIL",
+      "generated": 56,
+      "distinct": 50
+    },
+    "PressureNeverUnloadsBusy": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "PressureNeverUnloadsBusy",
+      "status": "EXPECTED_FAIL",
+      "generated": 14,
+      "distinct": 10
+    },
+    "DefaultNeverIdleEvicts": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "DefaultNeverIdleEvicts",
+      "status": "EXPECTED_FAIL",
+      "generated": 10,
+      "distinct": 9
+    },
+    "BootCaptureAllowed": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "BootCaptureAllowed",
+      "status": "EXPECTED_FAIL",
+      "generated": null,
+      "distinct": null
+    }
+  }
+}

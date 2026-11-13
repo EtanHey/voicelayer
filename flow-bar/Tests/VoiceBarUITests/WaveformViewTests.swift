@@ -35,14 +35,16 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertEqual(WaveformLayout.leadingX(coreMaxX: 220), 244)
     }
 
-    /// 2.3 U2 (3-wings mock): the transcribing and reading-aloud right wings are the fixed 73.5 pt wing and hold
-    /// History + Settings or the time + Stop, not a waveform; their content sits between equal 8 pt insets whatever
-    /// the hardware calibration. Only recording draws level bars (2.2.61's 46 pt meter, in the same fixed wing).
-    func testTranscribingAndReadingRightWingsAreTheFixedWingAtEveryCalibration() {
+    /// c9-P (Etan, 2026-11-12): the transcribing right wing keeps the recording wing (its meter ripples in place;
+    /// was 2.3 U2's fixed 73.5 pt History + Settings wing). T5/T7 (Etan QA 2026-11-09:
+    /// "the waveform is blue but is consistent with the same waveform and time stuff that we have when recording"):
+    /// reading keeps its time/meter wing and physical-notch clearance when F2 narrows recording.
+    func testTranscribingKeepsTheRecordingWingAndReadingIsTheRecordingWingAtEveryCalibration() {
         let processing = VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(mode: .transcribing, statusText: "Transcribing")
         )
-        XCTAssertEqual(processing.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth)
+        XCTAssertEqual(processing.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth)
+        XCTAssertEqual(processing.geometry.leadingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth)
 
         let calibratedInset = VoiceBarNotchContract.hardwareHorizontalCalibrationInset
         let speaking = VoiceBarPresentation.notchPresentation(
@@ -60,8 +62,10 @@ final class WaveformViewTests: XCTestCase {
         )
         XCTAssertEqual(speakingSlot.coreInset, VoiceBarNotchContract.fixedWingContentInset)
         XCTAssertEqual(speakingSlot.outerInset, VoiceBarNotchContract.fixedWingContentInset)
-        XCTAssertEqual(speaking.geometry.trailingWingWidth, VoiceBarNotchContract.readingTrailingWingWidth,
-                       "the reading wing keeps its width when calibration changes")
+        XCTAssertEqual(speaking.geometry.trailingWingWidth,
+                       VoiceBarPresentation.readingTransportWingWidth,
+                       "X4: reading mirrors the transport wing at every calibration; its row centres in the visible part")
+        XCTAssertLessThanOrEqual(speaking.geometry.trailingWingWidth, VoiceBarNotchContract.morphCanvasWingCapacity)
         XCTAssertLessThanOrEqual(
             WaveformLayout.viewportWidth,
             VoiceBarNotchContract.fixedWingWidth - 2 * VoiceBarNotchContract.fixedWingContentInset,
@@ -77,9 +81,11 @@ final class WaveformViewTests: XCTestCase {
         let source = try barViewSource()
         let trailing = try XCTUnwrap(source.components(separatedBy: "private var notchTrailingContent").dropFirst().first)
             .components(separatedBy: "private var notchCompactStatusContent")[0]
-        let recording = try XCTUnwrap(trailing.components(separatedBy: "case .recording:").dropFirst().first)
-            .components(separatedBy: "case .compactStatus")[0]
-        XCTAssertTrue(recording.contains("notchWaveform"), "the recording wing draws the shared notch meter")
+        // c9-P: recording and transcribing share one meter row.
+        let recording = try XCTUnwrap(trailing.components(separatedBy: "private var recordingMeterRow").dropFirst().first)
+            .components(separatedBy: "private var notchTrailingStatusContent")[0]
+        XCTAssertTrue(recording.contains("notchWaveform(isPaused: isPaused)"),
+                      "the recording wing draws the shared notch meter")
         XCTAssertFalse(recording.contains("style:"), "no thinner recording-only bar style")
         XCTAssertEqual(WaveformLayout.barCount, 7)
         XCTAssertEqual(WaveformLayout.barWidth, 4)
@@ -90,7 +96,8 @@ final class WaveformViewTests: XCTestCase {
             from: VoiceBarNotchOperationalInput(mode: .recording, statusText: "Recording")
         ).geometry
         let slot = VoiceBarNotchContract.material.wingContentLayout(for: .trailing, state: .recording)
-        XCTAssertEqual(slot.coreInset, slot.outerInset, "the meter stays centred in the wing")
+        XCTAssertEqual(slot.outerInset, VoiceBarNotchContract.material.compactContentInset,
+                       "C7-W: the meter ends at the left wing's outer inset")
         XCTAssertLessThanOrEqual(WaveformLayout.viewportWidth,
                                  recordingWing.trailingWingWidth - slot.coreInset - slot.outerInset)
         XCTAssertLessThanOrEqual(WaveformLayout.viewportHeight, recordingWing.topHeight)
@@ -108,20 +115,20 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertFalse(barSource.contains("Color.clear\n                    .frame"))
         XCTAssertFalse(barSource.contains("horizontalPadding:"))
         let compact = try XCTUnwrap(barSource.components(separatedBy: "private var notchCompactStatusContent").dropFirst().first)
-            .components(separatedBy: "private var notchReadingTrailingContent")[0]
-        let speaking = try XCTUnwrap(barSource.components(separatedBy: "private var notchReadingTrailingContent").dropFirst().first)
+            .components(separatedBy: "private var notchSpeakingTrailingContent")[0]
+        let speaking = try XCTUnwrap(barSource.components(separatedBy: "private var notchSpeakingTrailingContent").dropFirst().first)
             .components(separatedBy: "private var notchWaveform")[0]
-        XCTAssertTrue(compact.contains("case .speaking:\n            notchReadingTrailingContent"))
-        XCTAssertTrue(speaking.contains("return HStack("))
-        // 2.3 U2: the reading wing shows the time, not a waveform.
-        XCTAssertEqual(speaking.components(separatedBy: "notchWaveform").count - 1, 0)
-        XCTAssertTrue(speaking.contains("VoiceBarReadingTimeLabel("))
+        XCTAssertTrue(compact.contains("case .speaking:\n            notchSpeakingTrailingContent"))
+        XCTAssertTrue(speaking.contains("return VoiceBarReadingTrailingRow("))
+        // T5: the reading wing draws the same notch meter as recording, beside the recording-style time.
+        XCTAssertEqual(speaking.components(separatedBy: "notchWaveform").count - 1, 1)
+        XCTAssertTrue(speaking.contains("VoiceBarReadingTimeRegion("))
     }
 
     @MainActor
-    func testRenderedTranscribingAndReadingRightWingsDrawNoWaveform() throws {
-        // 2.3 U2: History + Settings (transcribing) and the time + Stop (reading) replace the blue waveform; the
-        // right wing never carries a third element.
+    func testRenderedTranscribingWingDrawsTheRippleAndReadingWingDrawsTheBlueMeter() throws {
+        // c9-P (Etan, 2026-11-12): the meter stays and ripples blue while transcribing (2.3 U2 had History + Settings
+        // there). T5 (Etan QA 2026-11-09): reading draws the blue speech meter, the same component as recording.
         let calibratedInset = VoiceBarNotchContract.hardwareHorizontalCalibrationInset
 
         let processingState = VoiceState()
@@ -160,9 +167,9 @@ final class WaveformViewTests: XCTestCase {
             )
         )
 
-        for (state, presentation, label) in [
-            (processingState, processingPresentation, "processing"),
-            (speakingState, speakingPresentation, "speaking"),
+        for (state, presentation, label, drawsMeter) in [
+            (processingState, processingPresentation, "processing", true),
+            (speakingState, speakingPresentation, "speaking", true),
         ] {
             let image = try renderBar(
                 state: state,
@@ -179,10 +186,12 @@ final class WaveformViewTests: XCTestCase {
             )
             // The top row only: a teleprompter body below the wing is not the wing.
             let topRow = Int((presentation.geometry.topHeight * scale).rounded())
-            XCTAssertNil(
-                blueHorizontalBounds(in: image, xRange: wingMinX ..< min(wingMaxX, image.width), rowLimit: topRow),
-                "no blue waveform pixels in the \(label) trailing wing"
-            )
+            let blue = blueHorizontalBounds(in: image, xRange: wingMinX ..< min(wingMaxX, image.width), rowLimit: topRow)
+            if drawsMeter {
+                XCTAssertNotNil(blue, "[T5/c9-P] blue meter pixels in the \(label) trailing wing")
+            } else {
+                XCTAssertNil(blue, "no blue waveform pixels in the \(label) trailing wing")
+            }
         }
     }
 
@@ -419,7 +428,9 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertFalse(source.contains("centerOutHistory"))
     }
 
-    func testTranscribingShowsTheSpinnerLeftAndHistorySettingsRight() throws {
+    /// c9-P (Etan, 2026-11-12): the spinner stays left; on the right the recording meter row stays and ripples (the
+    /// same row as recording, outside the band switch so it keeps its identity), and History + Settings leave it.
+    func testTranscribingShowsTheSpinnerLeftAndTheRecordingMeterRippleRight() throws {
         let source = try barViewSource()
         let leading = try XCTUnwrap(source.components(separatedBy: "private var notchLeadingContent").dropFirst().first)
             .components(separatedBy: "private var playbackPauseControl")[0]
@@ -429,18 +440,25 @@ final class WaveformViewTests: XCTestCase {
         let trailingBranch = try XCTUnwrap(source.components(separatedBy: "private var notchTrailingContent").dropFirst().first)
             .components(separatedBy: "private var notchCompactStatusContent")[0]
         let compact = try XCTUnwrap(source.components(separatedBy: "private var notchCompactStatusContent").dropFirst().first)
-            .components(separatedBy: "private var notchReadingTrailingContent")[0]
+            .components(separatedBy: "private var notchSpeakingTrailingContent")[0]
 
-        XCTAssertTrue(leadingCompactStatusBranch.contains("if notchPresentation.visualState == .compactStatus, state.mode == .transcribing {"))
-        XCTAssertTrue(leadingCompactStatusBranch.contains("ProcessingSpinner()"))
+        // 0510 R3: the band (not the shell) decides the wings, so the same transcribing controls sit above a drawer.
+        let transcribingBranch = try XCTUnwrap(leadingCompactStatusBranch.components(
+            separatedBy: "if notchPresentation.bandState == .compactStatus, state.mode == .transcribing {").dropFirst().first)
+            .components(separatedBy: "} else if")[0]
+        let spinner = try XCTUnwrap(transcribingBranch.range(of: "transcriptionSpinner")).lowerBound
+        let chevron = try XCTUnwrap(transcribingBranch.range(of: "microphonePickerButton")).lowerBound
+        XCTAssertLessThan(spinner, chevron, "the spinner sits left of the 0510 N9 microphone control")
+        XCTAssertTrue(leadingCompactStatusBranch.contains("ProcessingSpinner(color: Theme.processingRippleColor(for: notchAppearance))"))
         XCTAssertFalse(leadingCompactStatusBranch.contains("statusLabel"))
         XCTAssertFalse(leadingCompactStatusBranch.contains("WaveformView("))
-        XCTAssertTrue(trailingBranch.contains("notchWaveform"))
-        // 2.3 N1: the recording wing's 2.2.61 level meter; transcribing keeps History + Settings, no waveform.
+        XCTAssertTrue(trailingBranch.contains("if showsRecordingMeterRow {\n            recordingMeterRow"))
+        XCTAssertTrue(trailingBranch.contains("case .compactStatus: state.mode == .transcribing"))
         XCTAssertFalse(trailingBranch.contains("notchWaveform(style:"))
-        XCTAssertTrue(trailingBranch.contains("} else if notchPresentation.visualState == .compactStatus {\n                notchCompactStatusContent"))
-        XCTAssertTrue(compact.contains("historyButton\n                settingsButton"))
-        XCTAssertFalse(compact.contains("notchWaveform"))
+        let compactTranscribing = try XCTUnwrap(compact.components(separatedBy: "case .transcribing, .recording:")
+            .dropFirst().first).components(separatedBy: "case .speaking:")[0]
+        XCTAssertFalse(compactTranscribing.contains("historyButton"))
+        XCTAssertFalse(compactTranscribing.contains("settingsButton"))
         XCTAssertTrue(source.contains("private var notchWaveform"))
         XCTAssertTrue(source.contains("VoiceBarNotchWaveform("))
     }
@@ -773,7 +791,10 @@ final class WaveformViewTests: XCTestCase {
             height: WaveformLayout.viewportHeight
         )
         let makeRootView = { (sample: Int) in
+            // Full motion, whatever the host says: the hosted runner has Reduce Motion ON, where the ripple
+            // deliberately holds a still arch, and this census measures the moving ripple (PR #905).
             waveform
+                .environment(\.voiceBarReduceMotionOverride, false)
                 .frame(width: size.width, height: size.height)
                 .background(Color(red: 0.08, green: 0.08, blue: 0.10))
                 .id(sample)

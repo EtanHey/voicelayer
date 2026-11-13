@@ -1,3 +1,4 @@
+import { isPlaybackSpeed } from "./playback/session";
 import type { StructuredChunkDisplay } from "./tts/structured-display";
 /**
  * Socket protocol types for VoiceLayer <-> Voice Bar communication.
@@ -66,10 +67,21 @@ export interface StateEvent extends RecordingJobIdentity, RecordingJobsSnapshot 
   preserves_paused_read?: boolean;
   /** Capture admission released: restore only the named paused presentation, without audio. */
   restores_paused_read?: boolean;
+  /** Previous Read lends the surface to this player; its correlated return is already paused. */
+  previous_read_return?: { from_playback_id: string; offset_ms: number; pause_owner: "user" };
+  /** The read whose presentation is temporarily lent to Previous Read. */
+  previous_read_hold?: { playback_id: string; generation: number; utterance_id?: string };
   /** Synthesized duration available for seeking; grows during long reads. */
   duration_ms?: number;
   /** This player's whole audio (chunk or utterance), measured from long_read.chunk_start_ms (0 without one). */
   chunk_duration_ms?: number;
+  /** Lane B: audio ms per wall ms for this player (absent = 1×). The client clock runs at this speed. */
+  playback_rate?: number;
+  /** Lane B: the NarrationSource that produced this narration ("voicelayer-engines" today, "narrationlayer" later). */
+  narration_source?: string;
+  /** Lane B: why this edge moves the clock (a seek, a resume, a replay, or a resync of a lost edge). A client clock
+   * never moves backwards for an edge without one. */
+  reanchor?: "seek" | "resume" | "replay" | "resync";
   /** Present when state is "transcribing" after a capture: decoded audio length the STT deadline scales with. */
   stt_audio_ms?: number;
   /** Retained span a readback-scope seek can reach once this read ends (≤ duration_ms when stopped early). */
@@ -316,13 +328,46 @@ export interface PlaybackStateEvent {
   /** Global utterance position (chunk start + chunk-local offset). */
   offset_ms: number;
   chunk_offset_ms: number;
-  pause_owner?: "user" | "f5";
+  pause_owner?: "user" | "f5" | "ask";
   duration_ms?: number;
   /** This player's whole audio, from long_read.chunk_start_ms (0 without one). */
   chunk_duration_ms?: number;
   word_index?: number;
   word_count?: number;
   long_read?: StateEvent["long_read"];
+}
+
+/** Lane B (2.4): the playing player's authoritative position, about 4 times a second (QA 11:47 clock rows). */
+export interface PlaybackPositionEvent {
+  type: "playback_position";
+  playback_id: string;
+  generation: number;
+  utterance_id: string;
+  /** Read-global audio position (chunk start + chunk-local). */
+  offset_ms: number;
+  chunk_start_ms: number;
+  chunk_duration_ms?: number;
+  /** The whole read's known total. */
+  duration_ms?: number;
+  playback_rate?: number;
+  word_index: number;
+}
+
+/** Lane B (2.4): the one PlaybackSession on screen, from the daemon's engine (formal/playback-session).
+ * Additive: an older VoiceBar ignores it. Positions are read-global word indices. */
+export interface PlaybackSessionEvent {
+  type: "playback_session";
+  session_id: string | null;
+  /** Named `phase`, not `state`: existing listeners treat any `state` field as the pill state. */
+  phase: "idle" | "queued" | "preparing" | "playing" | "paused" | "seeking" | "parked" | "ended";
+  word_index: number;
+  word_count: number;
+  pause_owner?: "user" | "f5" | "ask";
+  ask: "none" | "waiting" | "prompt" | "capturewait" | "capture" | "closing";
+  /** The read a voice_ask parked; it is restored to this word when the ask ends. */
+  parked_by_ask: string | null;
+  previous_available: boolean;
+  speed: number;
 }
 
 export type CommandModePhase =
@@ -362,6 +407,9 @@ export type AckCommand =
   | "stop"
   | "cancel"
   | "replay"
+  | "previous_read"
+  | "set_playback_speed"
+  | "resync_playback"
   | "retranscribe_last"
   | "retranscribe_recording"
   | "toggle"
@@ -467,6 +515,8 @@ export type SocketEvent = RecordingJobIdentity & (
   | QueueEvent
   | PlaybackOutcomeEvent
   | PlaybackStateEvent
+  | PlaybackSessionEvent
+  | PlaybackPositionEvent
   | PlaybackDurationEvent
   | CommandModeEvent
   | ClipMarkerEvent
@@ -534,6 +584,22 @@ export interface CancelCommand extends SocketCommandBase {
 
 export interface ReplayCommand extends SocketCommandBase {
   cmd: "replay";
+}
+
+/** Lane B: replay the previous finished narration from its first word; the read on screen waits, paused at its word. */
+export interface PreviousReadCommand extends SocketCommandBase {
+  cmd: "previous_read";
+}
+
+/** Lane B (S-01): VoiceBar heard a read it is not showing; the daemon re-sends that read's edge and word table. */
+export interface ResyncPlaybackCommand extends SocketCommandBase {
+  cmd: "resync_playback";
+}
+
+/** Lane B: the listening speed for every player (0.75, 1, 1.25, 1.5, 2). A playing read continues from its word. */
+export interface SetPlaybackSpeedCommand extends SocketCommandBase {
+  cmd: "set_playback_speed";
+  speed: number;
 }
 
 export interface RetranscribeLastCommand extends SocketCommandBase {
@@ -688,6 +754,9 @@ export type SocketCommand =
   | StopCommand
   | CancelCommand
   | ReplayCommand
+  | PreviousReadCommand
+  | SetPlaybackSpeedCommand
+  | ResyncPlaybackCommand
   | RetranscribeLastCommand
   | RetranscribeRecordingCommand
   | ToggleCommand
@@ -998,6 +1067,13 @@ export function parseCommand(line: string): SocketCommand | null {
         );
       case "replay":
         return withCommandId<ReplayCommand>({ cmd: "replay" }, id);
+      case "previous_read":
+        return withCommandId<PreviousReadCommand>({ cmd: "previous_read" }, id);
+      case "resync_playback":
+        return withCommandId<ResyncPlaybackCommand>({ cmd: "resync_playback" }, id);
+      case "set_playback_speed":
+        if (!isPlaybackSpeed(parsed.speed)) return null;
+        return withCommandId<SetPlaybackSpeedCommand>({ cmd: "set_playback_speed", speed: parsed.speed }, id);
       case "retranscribe_last":
         return withCommandId<RetranscribeLastCommand>(
           { cmd: "retranscribe_last" },

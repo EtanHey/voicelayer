@@ -1,0 +1,32 @@
+[
+  {
+    "auxiliaryTopLeftArea": {
+      "x": 0,
+      "y": 950,
+      "width": 663,
+      "height": 32
+    },
+    "auxiliaryTopRightArea": {
+      "x": 848,
+      "y": 950,
+      "width": 664,
+      "height": 32
+    },
+    "frame": {
+      "x": 0,
+      "y": 0,
+      "width": 1512,
+      "height": 982
+    },
+    "name": "Built-in Retina Display",
+    "provenance": {
+      "model": "MacBookPro18,3",
+      "source": "REVIEW-813 reviewer NSScreen measurement",
+      "capturedAt": "2026-11-08",
+      "backingScale": 2,
+      "displayMode": "1512x982 points; reviewer did not record CGDisplay mode ID",
+      "backingScaleSource": "Retina panel nominal; not re-probed by this worker"
+    },
+    "safeAreaTop": 32
+  }
+]

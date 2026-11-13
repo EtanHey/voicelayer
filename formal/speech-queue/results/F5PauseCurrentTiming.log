@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "TimingNeverBlankWhilePlaying",
+  "status": "EXPECTED_FAIL",
+  "generated": 7,
+  "distinct": 7
+}

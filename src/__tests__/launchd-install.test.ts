@@ -12,7 +12,8 @@ import {
 } from "fs";
 import { join } from "path";
 
-// Subprocess fixtures exceeded the 5 s budget on the shared M4; allow scheduling under load.
+// Functional subprocess cases need scheduling room on shared hosts (subprocess fixtures exceeded the 5 s
+// budget on the shared M4). The E2E gate retains its 900 s outer deadline.
 const SUBPROCESS_TEST_TIMEOUT_MS = 30_000;
 
 const repoRoot = join(import.meta.dir, "..", "..");

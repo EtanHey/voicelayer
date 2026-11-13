@@ -3,13 +3,47 @@
   "sources": [
     "flow-bar/Sources/VoiceBarUI/TeleprompterAView.swift",
     "flow-bar/Sources/VoiceBarUI/VoiceState.swift",
-    "flow-bar/Tests/VoiceBarUITests/TeleprompterAWiringTests.swift"
+    "flow-bar/Tests/VoiceBarUITests/TeleprompterAWiringTests.swift",
+    "flow-bar/Sources/VoiceBarUI/TeleprompterPlaybackScrubBar.swift",
+    "flow-bar/Sources/VoiceBarUI/TeleprompterAModel.swift"
   ],
   "checks": {
-    "Fixed": {"role": "positive", "target": null, "kind": "pass"},
-    "StaleTableMutant": {"role": "mutant", "target": "TableIsCurrent", "kind": "invariant"},
-    "PausedSeekMutant": {"role": "mutant", "target": "NoPausedSeek", "kind": "invariant"},
-    "StaleSlideMutant": {"role": "mutant", "target": "SettledShowsClock", "kind": "invariant"}
+    "Fixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "StaleTableMutant": {
+      "role": "mutant",
+      "target": "TableIsCurrent",
+      "kind": "invariant"
+    },
+    "PausedSeekMutant": {
+      "role": "mutant",
+      "target": "NoPausedSeek",
+      "kind": "invariant"
+    },
+    "StaleSlideMutant": {
+      "role": "mutant",
+      "target": "SettledShowsClock",
+      "kind": "invariant"
+    },
+    "OldPausedSliderMutant": {
+      "role": "mutant",
+      "target": "NoPausedSliderSend",
+      "kind": "invariant"
+    },
+    "OldTimingNoticeMutant": {
+      "role": "mutant",
+      "target": "TruthfulTimingNotice",
+      "kind": "invariant"
+    }
   },
-  "acceptance": ["TableIsCurrent", "NoPausedSeek", "SettledShowsClock"]
+  "acceptance": [
+    "TableIsCurrent",
+    "NoPausedSeek",
+    "SettledShowsClock",
+    "NoPausedSliderSend",
+    "TruthfulTimingNotice"
+  ]
 }

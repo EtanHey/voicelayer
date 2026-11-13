@@ -243,80 +243,105 @@ final class AppLifecycleTests: XCTestCase {
             )
         )
 
+        // C7-W: the recording row sits out from the core by the wing's spare width (flat display: 102 - 14 - 72).
+        let recordingCoreInset = VoiceBarPresentation.recordingLeadingCoreInset(
+            wingWidth: VoiceBarPresentation.recordingWingWidth(
+                showsThirdControl: true, showsEarlierTakeProcessing: false, visibleCoreOcclusionInset: 0),
+            showsEarlierTakeProcessing: false)
+        XCTAssertEqual(recordingCoreInset, 16)
         state.mode = .recording
         state.recordingMode = "ptt"
         // Recording pause: Stop · Pause · ✕, so Stop stays inside the hit region on a PTT take.
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .recording),
-            VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
+            VoiceBarNotchInteractionConfiguration(leadingControlCount: 3, leadingCoreInset: recordingCoreInset)
         )
         state.recordingMode = nil
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .recording),
-            VoiceBarNotchInteractionConfiguration(leadingControlCount: 2)
+            VoiceBarNotchInteractionConfiguration(leadingControlCount: 2, leadingCoreInset: recordingCoreInset)
         )
         state.recordingMode = "vad"
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .recording),
-            VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
+            VoiceBarNotchInteractionConfiguration(leadingControlCount: 3, leadingCoreInset: recordingCoreInset)
         )
 
         state.mode = .transcribing
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus),
-            // 2.3 U2: History and Settings stay live while transcribing.
-            VoiceBarNotchInteractionConfiguration(trailingControlCountFromCore: 2)
+            // 0510 N9: the microphone control stays live. c9-P: the right wing is the rippling meter, no controls.
+            VoiceBarNotchInteractionConfiguration(leadingControlCount: 1)
         )
+        // 0510 R3: a drawer open while recording keeps the recording wing's controls live, over a live drawer body.
+        state.mode = .recording
+        state.recordingMode = nil
+        XCTAssertEqual(
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .history, bandState: .recording),
+            VoiceBarNotchInteractionConfiguration(leadingControlCount: 2, lowerSurfaceIsInteractive: true,
+                                                  leadingCoreInset: recordingCoreInset)
+        )
+        state.recordingMode = "ptt"
+        XCTAssertEqual(
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .history, bandState: .recording),
+            VoiceBarNotchInteractionConfiguration(leadingControlCount: 3, lowerSurfaceIsInteractive: true,
+                                                  leadingCoreInset: recordingCoreInset)
+        )
+        state.mode = .transcribing
 
         state.mode = .speaking
         state.statusText = "Speaking read"
         state.canReplay = true
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter),
-            // T3: Replay, Pause and Stop in the left wing; 1× and the eye on the right; no lower control row.
+            // T1/T6 (Etan QA 2026-11-09): speed, Back, Pause, Forward on the left. T4/T7: Replay + Hide centred in
+            // the lower row with the live Stop beside them; the right wing is time + meter only.
             VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 3,
-                trailingControlCountFromOuter: 2,
-                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset,
+                leadingControlCount: VoiceBarPresentation.readingTransportSlotCount,
+                lowerControlCount: 2,
                 lowerSurfaceIsInteractive: true,
-                controlSpacing: VoiceBarNotchContract.readingControlSpacing
+                leadingOutermostControlWidth: VoiceBarPresentation.readingSpeedChipWidth,
+                lowerTerminalControl: true,
+                lowerControlBottomInset: VoiceBarPresentation.teleprompterLowerControlBottomInset
             )
         )
 
-        // T3: a hidden-but-playing read keeps the same wings, collapsed.
+        // Collapsed: Stop in the reading wing's outer region; the hidden read's eye joins it.
         state.dismissTeleprompter()
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus),
             VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 3,
+                leadingControlCount: VoiceBarPresentation.readingTransportSlotCount,
                 trailingControlCountFromOuter: 2,
-                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset,
-                lowerSurfaceIsInteractive: false,
-                controlSpacing: VoiceBarNotchContract.readingControlSpacing
+                trailingOuterInset: VoiceBarPresentation.readingStopOuterInset(visibleCoreOcclusionInset: 0),
+                leadingOutermostControlWidth: VoiceBarPresentation.readingSpeedChipWidth
             )
         )
     }
 
-    func testReadQueueWidensTheLeadingWingForNextAndTheCount() {
+    /// T1 (Etan QA 2026-11-09): the transport never reshuffles with the queue; Forward is disabled, not removed.
+    func testReadQueueKeepsTheWholeTransportWhateverIsQueued() {
         let state = VoiceState()
+        let transport = VoiceBarPresentation.readingTransportSlotCount
         state.handleEvent(["type": "state", "state": "speaking", "text": "Queued read", "request_id": "r-A"])
         state.handleEvent(["type": "read_queue", "count": 2, "current_request_id": "r-A"])
         XCTAssertEqual(
-            AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter).leadingControlCount, 4,
-            "T3: Replay, Next (with its badge), Pause, Stop")
-        // PILL1: the last item has nothing waiting, so Next and its slot go.
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter).leadingControlCount, transport)
+        XCTAssertTrue(VoiceBarPresentation.readingForwardControl(for: state).isEnabled)
         state.handleEvent(["type": "read_queue", "count": 0, "current_request_id": "r-A"])
         XCTAssertEqual(
-            AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter).leadingControlCount, 3)
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter).leadingControlCount, transport)
+        XCTAssertFalse(VoiceBarPresentation.readingForwardControl(for: state).isEnabled, "nothing queued: Forward disabled")
         state.dismissTeleprompter()
         state.handleEvent(["type": "read_queue", "count": 1, "current_request_id": "r-A"])
         XCTAssertEqual(
-            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, 4)
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, transport)
         state.handleEvent(["type": "read_queue", "count": 0, "current_request_id": NSNull()])
         XCTAssertEqual(
-            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, 3)
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, transport)
     }
 
+    /// X1-34 (C6 L3): paused hidden keeps the eye one pitch inside the terminal X, so two controls from the outer edge.
     func testPausedSpeechKeepsPlayAndStopReachable() {
         let state = VoiceState()
         state.handleEvent(["type": "state", "state": "speaking", "text": "Paused read", "playback_id": "p", "generation": 1])
@@ -327,13 +352,11 @@ final class AppLifecycleTests: XCTestCase {
         ])
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus),
-            // T3: paused keeps Replay, Play and Stop on the left; the eye's slot stays in the region but is hidden.
             VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 3,
+                leadingControlCount: VoiceBarPresentation.readingTransportSlotCount,
                 trailingControlCountFromOuter: 2,
-                trailingOuterInset: VoiceBarNotchContract.fixedWingContentInset,
-                lowerSurfaceIsInteractive: false,
-                controlSpacing: VoiceBarNotchContract.readingControlSpacing
+                trailingOuterInset: VoiceBarPresentation.readingStopOuterInset(visibleCoreOcclusionInset: 0),
+                leadingOutermostControlWidth: VoiceBarPresentation.readingSpeedChipWidth
             )
         )
     }

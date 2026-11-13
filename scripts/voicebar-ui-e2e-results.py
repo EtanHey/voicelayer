@@ -3,6 +3,7 @@
 import argparse
 import html
 import json
+import math
 import pathlib
 import plistlib
 import re
@@ -11,8 +12,12 @@ import subprocess
 import sys
 
 
-SCENARIOS = {'full': 'testFullUIOnlyFlow', 'focused-338': 'testFocused338StateGallery', 'hide1': 'testHide1VisualFlow', 'gate2246': 'testGate2246Flow', 'wings-u2': 'testWingsU2Flow'}
+SCENARIOS = {'e2e24': 'testE2E24AllFlows', 'full': 'testFullUIOnlyFlow', 'focused-338': 'testFocused338StateGallery', 'hide1': 'testHide1VisualFlow', 'gate2246': 'testGate2246Flow', 'wings-u2': 'testWingsU2Flow'}
 
+
+# 0510 N rows are fixed and verified normally; Q2 is the open recording-wing part of N9 (Etan's decision).
+# T1-T8 were fixed on feat/2.4-teleprompter-etan; they verify like any other row now.
+QA_ROW_PACKETS = {'Q2'}
 
 def selected_scenario(output, scenario=None):
     path = output / 'scenario.json'
@@ -37,10 +42,13 @@ def expected_packet(step):
         return None
     packet = expected.get('packet')
     descriptions = expected.get('descriptions')
-    if (step.get('passed') is not True or packet not in {'P14b', 'SEL1', 'P1e', 'P1f'}
+    if (step.get('passed') is not True or packet not in ({'P14b', 'SEL1', 'P1e', 'P1f'} | QA_ROW_PACKETS)
             or not isinstance(descriptions, list) or not descriptions
             or not all(isinstance(d, str) and '[' + packet + ']' in d for d in descriptions)):
         raise ValueError('Invalid or unmatched expected product failure')
+    if re.fullmatch(r'(N(?:[1-9]|10)|Q2)', packet):
+        if expected.get('surface') != 'e2e24:' + packet or expected.get('surfaces') != ['e2e24:' + packet]:
+            raise ValueError('QA row failure lacks its exact e2e24 surface')
     if 'surfaces' in expected:
         surfaces = expected['surfaces']
         if (not isinstance(surfaces, list) or not surfaces
@@ -188,6 +196,31 @@ def report(directory, steps, manifest, recording=None, issues=(), limitations=()
     return all_passed
 
 
+def timing_receipts(directory, manifest, required):
+    cases = {}
+    for test in manifest:
+        for attachment in test['attachments']:
+            match = re.match(r'^UIE2E-E2E24-TIMING-([a-z0-9-]+)(?=[_.]|$)', attachment['suggestedHumanReadableName'])
+            if not match:
+                continue
+            path = (directory / attachment['exportedFileName']).resolve()
+            if (not path.is_relative_to(directory.resolve()) or not path.is_file()
+                    or attachment['isAssociatedWithFailure']):
+                raise ValueError('Missing/unsafe/failed timing attachment')
+            data = json.loads(path.read_text())
+            name = match[1]
+            seconds = data.get('seconds')
+            if (data.get('case') != name or name in cases or type(seconds) not in (int, float)
+                    or not math.isfinite(seconds) or seconds < 0):
+                raise ValueError('Invalid/duplicate timing case')
+            cases[name] = dict(case=name, seconds=seconds, attachment=attachment['exportedFileName'])
+    if {'e2e24:' + name for name in cases} != set(required):
+        raise ValueError('Timing attachments differ from required native cases')
+    return dict(schema='voicelayer.e2e24-timings.v1', scenario='e2e24',
+                cases=[cases[name] for name in sorted(cases)],
+                totalSeconds=sum(row['seconds'] for row in cases.values()))
+
+
 def receipts(directory, manifest):
     """Read only retained XCTest JSON attachments; the signed runner writes no scratch files."""
     steps, ledgers, issues = {}, [], []
@@ -224,6 +257,8 @@ def receipts(directory, manifest):
         if ledger['version'] != 1 or ledger['steps'] != ordered:
             raise ValueError('Final ledger differs from individual action receipts')
         coverage = ledger['coverage']
+        if set(coverage.get('verifiedSurfaces', [])) & {'e2e24:' + row for row in QA_ROW_PACKETS}:
+            raise ValueError('Known QA expected-failure row cannot be verified; remove its XFAIL contract after fixing it')
         expected_surfaces = coverage.get('expectedSurfaces', {})
         for step in ordered:
             if expected_packet(step) == 'P1f':
@@ -379,9 +414,19 @@ def export(output, sandbox, scenario=None):
                     '--output-path', str(directory), '--filter', 'UIE2E-*'], check=True)
     manifest = json.loads((directory / 'manifest.json').read_text())
     steps, ledger, issues = receipts(directory, manifest)
+    if scenario == 'e2e24':
+        coverage = ledger['coverage'] if ledger is not None else {}
+        required = set(coverage.get('verifiedSurfaces', [])) | set(coverage.get('missingSurfaces', [])) | set(coverage.get('expectedSurfaces', {}))
+        try:
+            if not required:
+                raise ValueError('Missing native case inventory for timings')
+            timings = timing_receipts(directory, manifest, required)
+            (output / 'timings.json').write_text(json.dumps(timings, indent=2) + '\n')
+        except (OSError, ValueError, TypeError, KeyError) as error:
+            issues.append('FAIL per-case timing export: ' + str(error))
     if ledger is not None:
         labels = [ledger.get('scenario'), ledger.get('scope'), ledger['coverage'].get('scenario')]
-        if ((scenario in {'focused-338', 'hide1', 'gate2246', 'wings-u2'} and labels != [scenario] * 3)
+        if ((scenario in {'e2e24', 'focused-338', 'hide1', 'gate2246', 'wings-u2'} and labels != [scenario] * 3)
                 or any(label is not None and label != scenario for label in labels)):
             raise ValueError('Ledger scenario/scope differs from selected scenario: ' + scenario)
     if scenario == 'focused-338':
@@ -446,7 +491,7 @@ def export(output, sandbox, scenario=None):
                     ledger.get('limitations', []) if ledger else [], scenario)
     write_scenario(output, scenario)
     qa = dict(version=1, scenario=scenario, scope=scenario, scenarioPassed=passed,
-              verdict=('FOCUSED_SCENARIO_PASS' if scenario in {'focused-338', 'hide1', 'gate2246', 'wings-u2'} else 'FULL_UI_SCENARIO_PASS') if passed else 'FAIL',
+              verdict=('FOCUSED_SCENARIO_PASS' if scenario in {'e2e24', 'focused-338', 'hide1', 'gate2246', 'wings-u2'} else 'FULL_UI_SCENARIO_PASS') if passed else 'FAIL',
               fullReleasePass=False, fullReleaseCoverage='NOT_PROVEN', issues=issues,
               # Steps with no proven QA window to capture: no frame was taken (never a desktop crop).
               visualNotProven=[s['number'] for s in steps if (s.get('capture') or {}).get('status') == 'NOT_PROVEN'])

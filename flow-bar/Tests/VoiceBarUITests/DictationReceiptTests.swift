@@ -227,6 +227,7 @@ final class DictationReceiptTests: XCTestCase {
                 dictationReceipt: original
             ),
         ])
+        state.isConnected = true
         var command: [String: Any]?
         state.sendCommand = { command = $0 }
 
