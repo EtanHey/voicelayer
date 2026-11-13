@@ -1,0 +1,5 @@
+{"t":0,"type":"state","state":"recording","mode":"ptt"}
+{"t":0.1,"type":"audio_level","rms":0.5}
+{"t":0.2,"type":"error","recoverable":true,"message":"Try again"}
+{"t":1,"type":"state","state":"transcribing"}
+{"t":1.3,"type":"transcription","text":"Neutral fixture sentence."}
