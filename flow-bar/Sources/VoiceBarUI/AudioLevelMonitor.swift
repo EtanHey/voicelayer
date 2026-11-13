@@ -23,12 +23,13 @@ public protocol AudioLevelMonitoringEngine {
 /// test that forgot to opened the microphone on every suite run (#906). The refusal is loud: the default reporter
 /// raises, which XCTest records as that test's failure.
 enum RealMicrophoneMeterGuard {
-    /// True only where XCTest itself is loaded or the process is the `xctest` runner. Deliberately NOT the
+    /// True only where XCTest itself is loaded or the process is a test runner (`xctest`, or SwiftPM's
+    /// `swiftpm-testing-helper`, which runs Swift Testing suites and need not load XCTest). Deliberately NOT the
     /// `XCTestConfigurationFilePath` environment variable: a child process can inherit it, and an app launched
     /// from a test runner must keep its real meter (Codex review of #909, claim 3).
     static let runsInsideTests: Bool =
         NSClassFromString("XCTestCase") != nil
-            || ProcessInfo.processInfo.processName == "xctest"
+            || ["xctest", "swiftpm-testing-helper"].contains(ProcessInfo.processInfo.processName)
 
     static let refusal =
         "AudioLevelMonitor: the real AVAudioEngine meter refuses to start inside a test process. Inject a fake engine."
