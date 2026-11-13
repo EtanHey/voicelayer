@@ -4,8 +4,20 @@ use std::{collections::BTreeMap, path::Path};
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SettingsSnapshot {
+    /// Monotonic settings revision supplied by the app feed (zero until connected).
+    pub revision: u64,
+    /// Daemon polish mode: off/on from the store; shadow is environment-only.
+    pub polish: Option<Polish>,
+    /// WhisperPerformanceStore's effective environment lock, if valid.
+    pub effort_lock: Option<String>,
+    /// SpeechControlsState's threshold environment lock.
+    pub threshold_lock: Option<String>,
+    /// SpeechSettingsView's allowed rate bounds and increment, supplied by the app.
+    pub rate_min: Option<i32>,
+    pub rate_max: Option<i32>,
+    pub rate_step: Option<i32>,
     /// PermissionHealthMonitor: microphone, accessibility, input monitoring, listener.
-    pub setup: Option<BTreeMap<String, bool>>,
+    pub setup: Option<Vec<(String, bool)>>,
     /// HotkeyManager's current dictation binding (UserDefaults plus runtime remapping).
     pub dictation_key: Option<String>,
     /// HotkeyManager F5 helper probe; false means the inline repair is needed.
@@ -51,6 +63,10 @@ pub struct SettingsSnapshot {
     /// Bundle version from the running app's Info.plist.
     pub version: Option<String>,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Polish { Off, Shadow, On }
+impl Polish { pub fn name(self) -> &'static str { match self { Self::Off => "off", Self::Shadow => "shadow", Self::On => "on" } } }
 pub fn fixture() -> SettingsSnapshot {
     serde_json::from_str(include_str!("../../fixtures/settings.json")).expect("neutral snapshot")
 }
@@ -78,11 +94,15 @@ pub fn read(home: &Path, env: &BTreeMap<String, String>) -> SettingsSnapshot {
     .iter()
     .enumerate()
     {
-        s.processing[i] = p[key].as_bool();
+        s.processing[i] = if i == 0 {
+            s.polish = match p[key].as_str() { Some("off") => Some(Polish::Off), Some("on") => Some(Polish::On), _ => None };
+            s.polish.map(|p| p == Polish::On)
+        } else { p[key].as_bool() };
         if let Some(v) = env.get(*var) {
             s.processing_locks[i] = Some((*var).into());
             // These controls use the daemon's opt-in/out semantics.
             let raw = v.trim().to_lowercase();
+            if i == 0 { s.polish = Some(match raw.as_str() { "off" => Polish::Off, "shadow" => Polish::Shadow, _ => Polish::On }); }
             s.processing[i] = Some(match i {
                 0 => raw != "off",
                 1 => ["", "1", "true", "on", "yes"].contains(&raw.as_str()),
@@ -90,12 +110,11 @@ pub fn read(home: &Path, env: &BTreeMap<String, String>) -> SettingsSnapshot {
             });
         }
     }
-    s.configured_effort = env
-        .get("QA_VOICE_WHISPER_PERFORMANCE_EFFORT")
-        .map(String::as_str)
-        .or(w["effort"].as_str())
-        .filter(|v| ["fast", "balanced", "accurate"].contains(v))
-        .map(str::to_owned);
+    let effort_var = "QA_VOICE_WHISPER_PERFORMANCE_EFFORT";
+    let valid = |v: &&str| ["fast", "balanced", "accurate"].contains(v);
+    let override_effort = env.get(effort_var).map(|v| v.trim()).filter(valid);
+    s.effort_lock = override_effort.map(|_| effort_var.into());
+    s.configured_effort = Some(override_effort.or(w["effort"].as_str().filter(valid)).unwrap_or("accurate").into());
     let voices = home.join(".voicelayer/voices");
     if std::fs::symlink_metadata(&voices).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink()) {
         if let Ok(entries) = std::fs::read_dir(voices) {

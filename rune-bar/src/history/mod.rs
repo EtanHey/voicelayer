@@ -167,10 +167,10 @@ fn pager(s: &mut History, d: &mut Drag, tx: &mut rune::Tx) {
         }
     };
 }
-fn entry<S: HistoryHost>(s: &History, i: usize, dark: bool) -> El {
+fn entry<S: HistoryHost>(s: &History, category: usize, i: usize, dark: bool) -> El {
     let k = Kit::neutral(dark);
     let t = rune::tok::theme(dark);
-    let e = &s.lists[s.category][i];
+    let e = &s.lists[category][i];
     let expanded = s.expanded == Some(i);
 
     let body_style = rune::tok::type_::BODY;
@@ -407,13 +407,14 @@ impl HistoryHost for History {
 pub fn view(s: &History, cx: &mut Cx<History>) -> El {
     embedded::<History>(s, cx)
 }
-pub fn embedded<S: HistoryHost>(s: &History, cx: &mut Cx<S>) -> El {
+pub fn embedded<S: HistoryHost>(s: &History, cx: &mut Cx<S>) -> El { embedded_page::<S>(s, s.category, cx) }
+pub fn embedded_page<S: HistoryHost>(s: &History, category: usize, cx: &mut Cx<S>) -> El {
     let dark = cx.system_dark();
     let reduce = s.reduce_motion || cx.system_reduced_motion();
     cx.reduced_motion(reduce);
     let k = Kit::neutral(dark);
     let t = rune::tok::theme(dark);
-    let count = s.count();
+    let count = s.lists[category].len().min(s.limits[category]);
     let at_end = s.at_end.clone();
 
     // One stable virtual run: expansion never reparents rows into another run.
@@ -431,11 +432,11 @@ pub fn embedded<S: HistoryHost>(s: &History, cx: &mut Cx<S>) -> El {
                 },
                 move |host: &S, j| {
                     let s = host.history_ref();
-                    col().w_full().pb(8.0).child(entry::<S>(s, j, dark))
+                    col().w_full().pb(8.0).child(entry::<S>(s, category, j, dark))
                 },
             ),
     );
-    if count < s.lists[s.category].len() {
+    if count < s.lists[category].len() {
         list = list.child(
             Button::new("Load older")
                 .on_press(|host: &mut S| {
@@ -514,9 +515,9 @@ pub fn embedded<S: HistoryHost>(s: &History, cx: &mut Cx<S>) -> El {
             text("History").font(rune::tok::type_::TITLE).color(t.text)
         })
         .child(
-            SegmentedControl::new(&["Dictations", "Ask", "Speech"], Some(s.category))
+            SegmentedControl::new(&["Dictations", "Ask", "Speech"], Some(category))
                 .label("History category")
-                .width(None)
+                .width(if S::hosted() { Some(260.0) } else { None })
                 .on_pick(|host: &mut S, i, _| {
                     let s = host.history_mut();
                     s.select(i)

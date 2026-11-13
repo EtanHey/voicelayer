@@ -56,7 +56,7 @@ fn initial() -> Settings {
     }
     if std::env::var_os("VOICELAYER_RUNE_SETTINGS_BROKEN").is_some() {
         if let Some(steps) = &mut s.snapshot.setup {
-            steps.insert("Microphone".into(), false);
+            steps.iter_mut().find(|(name,_)| name == "Microphone").unwrap().1 = false;
         }
     }
     s

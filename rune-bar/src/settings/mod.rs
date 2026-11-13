@@ -6,7 +6,7 @@ use crate::{
 };
 use rune::{Cx, Drag, El, Key, Phase, ScrollSpec, col, el, row, text};
 use rune_kit::{Button, Kit, SegmentedControl, Select, Switch};
-use snapshot::SettingsSnapshot;
+use snapshot::{SettingsSnapshot, Polish};
 use std::path::PathBuf;
 pub const TABS: [&str; 5] = [
     "General",
@@ -97,6 +97,9 @@ impl Settings {
         println!("{line}");
         self.intents.push(line);
     }
+    pub fn change(&mut self, operation: &str, from: &str, to: &str) {
+        self.emit(&format!("{operation} from={from} to={to} rev={}", self.snapshot.revision));
+    }
     pub fn page(&self) -> usize {
         if self.tab == 4 {
             4 + self.history.category
@@ -161,7 +164,13 @@ fn pager(s: &mut Settings, d: &mut Drag, tx: &mut rune::Tx) {
 }
 fn button(label: &str, action: String, k: &Kit) -> El {
     Button::new(label)
-        .on_press(move |s: &mut Settings| s.emit(&action))
+        .on_press(move |s: &mut Settings| {
+            match action.as_str() {
+                "hide 1h" | "show" => { if let Some(v) = s.snapshot.visible { s.change("set-visibility", if v {"shown"} else {"hidden"}, if action == "show" {"shown"} else {"hidden-1h"}); } }
+                "recognizer-toggle" => { if let Some(v) = s.snapshot.resident { s.change("set-residency", if v {"loaded"} else {"unloaded"}, if v {"unloaded"} else {"loaded"}); } }
+                _ => s.emit(&action),
+            }
+        })
         .build(k)
         .h(36.0)
         .key(action_key(label))
@@ -193,6 +202,7 @@ fn setting(label: &str, control: El, dark: bool) -> El {
         )
         .child(control)
 }
+fn tag(label: &str, dark: bool) -> El { text(label).font(rune::tok::type_::LABEL).color(rune::tok::theme(dark).text_secondary) }
 fn section(title: &str, dark: bool) -> El {
     text(title)
         .font(rune::tok::type_::LABEL)
@@ -235,7 +245,9 @@ fn choice(
         })
         .on_close(|s: &mut Settings| s.open = None)
         .on_choose(move |s: &mut Settings, v: &str, _| {
-            s.emit(&format!("set-{b} {v}"));
+            let i = usize::from(b.starts_with("Long"));
+            let from = s.snapshot.voices[i].clone();
+            if s.snapshot.speech_locks[i*2].is_none() { if let Some(from) = from { s.change(&format!("set-{b}"), &from, v); } }
             s.open = None;
         })
         .build(k, overlays)
@@ -286,7 +298,7 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
     match tab {
         0 => {
             if let Some(steps) = &v.setup {
-                let broken: Vec<_> = steps.iter().filter(|(_, ok)| !**ok).collect();
+                let broken: Vec<_> = steps.iter().filter(|(_, ok)| !*ok).collect();
                 if !broken.is_empty() {
                     content = content.section("Setup", dark);
                 }
@@ -320,29 +332,19 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
                             v.visible.map(|b| if b { "Shown" } else { "Hidden" }),
                             dark,
                         ))
-                        .child(button("Hide for 1 hour", "hide 1h".into(), k))
-                        .child(button("Show", "show".into(), k)),
+                        .child(match v.visible { Some(true) => button("Hide for 1 hour", "hide 1h".into(), k), Some(false) => button("Show", "show".into(), k), None => el() }),
                     dark,
                 ))
                 .section("Microphone priority", dark);
             if let Some(mics) = &v.microphones {
                 for (i, mic) in mics.iter().enumerate() {
-                    content = content.child(setting(
-                        mic,
-                        row()
-                            .gap(8.0)
-                            .center_y()
-                            .child(value(
-                                if v.default_microphone.as_ref() == Some(mic) {
-                                    Some("Default")
-                                } else {
-                                    Some("")
-                                },
-                                dark,
-                            ))
-                            .child(button("Make default", format!("microphone-default {i}"), k)),
-                        dark,
-                    ));
+                    let mut controls = row().gap(8.0).center_y();
+                    if i == 0 { controls = controls.child(tag("Default", dark)); }
+                    else {
+                        let to = mic.clone();
+                        controls = controls.child(Button::new("Make default").on_press(move |s: &mut Settings| { if let Some(from) = s.snapshot.default_microphone.clone() { s.change("microphone-default", &from, &to); } }).build(k).h(36.0).key(format!("make-default-{i}")));
+                    }
+                    content = content.child(setting(mic, controls, dark).child(tag(&(i+1).to_string(), dark)));
                 }
             } else {
                 content = content.child(value(None, dark));
@@ -363,7 +365,7 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
                     .center_y()
                     .gap(8.0)
                     .child(value(v.recognizer.as_deref(), dark))
-                    .child(button(
+                    .child(if v.resident.is_none() { el() } else { button(
                         if v.resident == Some(true) {
                             "Unload"
                         } else {
@@ -371,13 +373,14 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
                         },
                         "recognizer-toggle".into(),
                         k,
-                    )),
+                    ) }),
                 dark,
             ));
             if v.resident.is_none() {
                 content = content.child(setting("Residency", value(None, dark), dark));
             }
-            content = content.section("Recognizer details", dark);
+            content = content.section("Recognizer details", dark).child(row().w_full().gap(12.0)
+                .child(el().w(90.0)).child(tag("Configured", dark).w(215.0)).child(tag("Active", dark).grow(1.0)));
             for (label, a, b) in [
                 (
                     "Model",
@@ -395,18 +398,8 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
                         .w_full()
                         .gap(12.0)
                         .child(text(label).w(90.0).color(rune::tok::theme(dark).text))
-                        .child(
-                            col()
-                                .grow(1.0)
-                                .child(value(Some("Configured"), dark))
-                                .child(value(a, dark)),
-                        )
-                        .child(
-                            col()
-                                .grow(1.0)
-                                .child(value(Some("Active"), dark))
-                                .child(value(b, dark)),
-                        ),
+                        .child(value(a, dark).w(215.0))
+                        .child(row().grow(1.0).center_y().gap(8.0).child(value(b, dark)).child(if label == "Effort" { lock(&v.effort_lock, dark) } else { el() })),
                 );
             }
             content = content.section("Processing", dark);
@@ -419,53 +412,40 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
             .enumerate()
             {
                 let key = key.to_string();
-                let enabled = v.processing[i].unwrap_or(false);
-                let control = Switch::new(enabled)
-                    .label(*label)
-                    .hide_label()
-                    .on_toggle(move |s: &mut Settings| {
-                        s.emit(&format!(
-                            "set-processing {key}={}",
-                            if enabled { "off" } else { "on" }
-                        ))
-                    })
-                    .build(k)
-                    .key(format!("toggle-{i}"));
                 let mut controls = row().center_y().gap(8.0);
-                if i == 2 {
-                    controls = controls.child(value(Some("Experimental"), dark));
-                }
-                if v.processing[i].is_none() {
-                    controls = controls.child(value(None, dark));
-                }
-                content = content.child(setting(
-                    label,
-                    controls
-                        .child(lock(&v.processing_locks[i], dark))
-                        .child(control),
-                    dark,
-                ));
+                if let Some(enabled) = v.processing[i] {
+                    if i == 0 && v.polish == Some(Polish::Shadow) {
+                        controls = controls.child(tag("Shadow", dark));
+                    } else {
+                        controls = controls.child(Switch::new(enabled).label(*label).hide_label()
+                            .on_toggle(move |s: &mut Settings| {
+                                if s.snapshot.processing_locks[i].is_none() {
+                                    s.change(&format!("set-processing {key}"), if enabled {"on"} else {"off"}, if enabled {"off"} else {"on"});
+                                }
+                            }).build(k).key(format!("toggle-{i}")));
+                    }
+                    controls = controls.child(lock(&v.processing_locks[i], dark));
+                } else { controls = controls.child(value(None, dark)); }
+                let label = if i == 2 { row().grow(1.0).gap(8.0).center_y().child(value(Some(label), dark)).child(tag("Experimental", dark)) } else { value(Some(label), dark).grow(1.0) };
+                content = content.child(row().w_full().min_h(44.0).center_y().gap(12.0).child(label).child(controls));
             }
         }
         3 => {
             for (i, label) in ["Short", "Long"].iter().enumerate() {
                 content = content.section(label, dark);
-                let voice = choice(
-                    s,
-                    &format!("{label}-voice"),
-                    v.voices[i].as_deref(),
-                    &v.available_voices,
-                    k,
-                    overlays,
-                );
-                let rate = choice(
-                    s,
-                    &format!("{label}-rate"),
-                    v.rates[i].as_deref(),
-                    &["-10%".into(), "+0%".into(), "+10%".into(), "+20%".into()],
-                    k,
-                    overlays,
-                );
+                let voice = if v.voices[i].is_some() { choice(s, &format!("{label}-voice"), v.voices[i].as_deref(), &v.available_voices, k, overlays) } else { value(None, dark) };
+                let mut rate = row().center_y().gap(12.0);
+                if let (Some(raw),Some(min),Some(max),Some(step)) = (v.rates[i].as_deref(),v.rate_min,v.rate_max,v.rate_step) {
+                    if let Ok(n) = raw.trim_end_matches('%').parse::<i32>() {
+                        for (name, delta) in [("−", -step), ("+", step)] {
+                            if delta > 0 { rate = rate.child(value(Some(raw), dark)); }
+                            let operation = format!("set-{label}-rate"); let from = raw.to_string();
+                            rate = rate.child(Button::new(name).disabled(n+delta < min || n+delta > max)
+                                .on_press(move |s: &mut Settings| { if s.snapshot.speech_locks[i*2+1].is_none() { s.change(&operation, &from, &format!("{:+}%", (n+delta).clamp(min,max))); } })
+                                .build(k).h(36.0).key(format!("{label}-rate-{}",if delta<0 {"minus"} else {"plus"})));
+                        }
+                    } else { rate = rate.child(value(None,dark)); }
+                } else { rate = rate.child(value(None,dark)); }
                 content = content
                     .child(
                         setting(
@@ -492,35 +472,24 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
                         .key(format!("{label}-rate-row")),
                     );
             }
-            let field = rune::text_input(&s.threshold, rune::tok::type_::BODY)
-                .color(rune::tok::theme(dark).text)
-                .on_edit(|s: &mut Settings| &mut s.threshold)
-                .on_input_change(|s: &mut Settings, _| s.emit("threshold-draft"))
-                .label("Long-text threshold")
-                .placeholder("Unavailable here", rune::tok::theme(dark).text_secondary)
-                .w(100.0)
-                .h(36.0)
-                .padding(8.0)
-                .fill(rune::tok::theme(dark).control_track)
-                .radius(6.0)
-                .key("threshold");
-            content = content
-                .section("Long-text threshold", dark)
-                .child(
-                    row()
-                        .key("threshold-row")
-                        .center_y()
-                        .gap(8.0)
-                        .child(field)
-                        .child(value(Some("characters"), dark))
-                        .child(button("Apply", "threshold-apply".into(), k))
-                        .child(button("Revert", "threshold-revert".into(), k)),
-                )
-                .child(setting(
-                    "Clone",
-                    value(v.clone_status.as_deref(), dark),
-                    dark,
-                ));
+            let field = row().w(100.0).h(36.0).center_y().px(8.0).fill(k.c.bg_base).border(1.0, k.c.border_base).radius(6.0).key("threshold")
+                .child(rune::text_input(&s.threshold, rune::TextStyle { line_height: 20.0, ..rune::tok::type_::BODY })
+                    .color(rune::tok::theme(dark).text).single_line()
+                    .on_edit(|s: &mut Settings| &mut s.threshold).label("Long text from").w_full().h(20.0).key("threshold-text"));
+            let mut threshold = row().center_y().gap(8.0).child(lock(&v.threshold_lock,dark));
+            if v.threshold.is_some() {
+                threshold = threshold.child(field).child(value(Some("characters"),dark));
+                if s.threshold.text != v.threshold.unwrap().to_string() {
+                    threshold = threshold.child(Button::new("Apply").on_press(|s: &mut Settings| {
+                        if s.snapshot.threshold_lock.is_none() { if let (Some(from),Ok(to))=(s.snapshot.threshold,s.threshold.text.parse::<u64>()) { s.change("set-threshold", &from.to_string(), &to.to_string()); } }
+                    }).build(k).h(36.0).key("apply"))
+                    .child(Button::new("Revert").on_press(|s: &mut Settings| { s.threshold = rune::TextEdit::new(s.snapshot.threshold.map(|n|n.to_string()).unwrap_or_default()); }).build(k).h(36.0).key("revert"));
+                }
+            } else { threshold = threshold.child(value(None,dark)); }
+            content = content.section("Playback",dark)
+                .child(setting("Long text from",threshold,dark).key("threshold-row"))
+                .child(setting("Clone",value(v.clone_status.as_deref(),dark),dark))
+                .child(setting("",button("Preview","speech-preview".into(),k),dark));
         }
         _ => {}
     }
@@ -566,11 +535,7 @@ pub fn view(s: &Settings, cx: &mut Cx<Settings>) -> El {
         let tab = page.min(4);
         let body = match tab {
             2 => crate::embedded::<Settings>(&s.dictionary, cx),
-            4 => {
-                let mut h = s.history.clone();
-                h.category = page - 4;
-                history::embedded::<Settings>(&h, cx)
-            }
+            4 => history::embedded_page::<Settings>(&s.history, page - 4, cx),
             _ => panel(s, tab, dark, &k, &mut overlays),
         };
         col().w(s.width).h_full().instant_changes().child(body)
