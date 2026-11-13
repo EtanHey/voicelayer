@@ -124,7 +124,8 @@ const QUESTION_LEAD_INS = new Set([
   "actually", "hey", "wait", "oh", "um", "uh",
 ]);
 
-const IMPERATIVE_CAPABLE_AUX = new Set(["do", "have", "had", "may", "might", "shall", "don't", "dont"]);
+// "can" is here because "Can the build" may be an instruction (cancel it).
+const IMPERATIVE_CAPABLE_AUX = new Set(["do", "have", "had", "may", "might", "shall", "don't", "dont", "can"]);
 const NOUN_PHRASE_OPENERS = new Set([
   "the", "a", "an", "my", "your", "our", "their", "his", "her", "its", "any", "all", "some",
 ]);

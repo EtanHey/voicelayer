@@ -106,6 +106,7 @@ describe("digits that are separate things stay separate", () => {
     ["That was fixed in PR number? Nine zero six. Then we shipped.", "That was fixed in PR number? 906. Then we shipped."],
     ["Do the rebase for PR number? Two eight four.", "Do the rebase for PR number? 284."],
     ["Have a look at PR number? Two eight four.", "Have a look at PR number? 284."],
+    ["Can the build for PR number? Two eight four.", "Can the build for PR number? 284."],
   ] as const) {
     it(`keeps the marks of a statement: ${spoken}`, () => {
       expect(finalize(spoken)).toBe(expected);
@@ -116,6 +117,7 @@ describe("digits that are separate things stay separate", () => {
     ["Also, is it necessary for PR number? Two eight four nine eight.", "Also, is it necessary for PR number 28498?"],
     ["So why did we change ten files for PR number? Two eight four.", "So why did we change 10 files for PR number 284?"],
     ["I merged it, did you see PR number? Two eight four.", "I merged it, did you see PR number 284?"],
+    ["Can you check PR number? Two eight four.", "Can you check PR number 284?"],
   ] as const) {
     it(`moves the mark of a direct question: ${spoken}`, () => {
       expect(finalize(spoken)).toBe(expected);
