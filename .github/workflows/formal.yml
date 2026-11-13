@@ -63,6 +63,8 @@ jobs:
               "selection-snapshot-startup": 1.549,
               "speech-queue": 732.794,
               "teleprompter-handoff": 19.257,
+              # M1 Pro wall seconds with the Homebrew JDK, 2026-11-14.
+              "ui-mode-switch": 4.632,
               "update-gate": 10.201,
               "update-gate-cancel": 0.566,
               "voice-ask-no-answer": 2.077,
