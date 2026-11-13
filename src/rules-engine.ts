@@ -1,3 +1,4 @@
+import { hasDirectQuestionOpener } from "./stt-interrogative";
 import { dictionarySurfacePattern, dictionaryOccurrencePattern, dictionaryReplacement, isWholeDictionarySurface } from "./stt-dictionary-matching";
 
 /**
@@ -1354,7 +1355,12 @@ function joinSpokenIdentifierDigits(text: string): string {
         ?.toLowerCase().replace("’", "'");
       const sentenceStart = /(?:^|[.!?\n])[ \t]*$/u.test(before);
       const endsSentence = period !== undefined || /^\s*$/u.test(whole.slice(offset + match.length));
-      if (!sentenceStart && previous && !COMPLETE_NOUN_PHRASE_BEFORE_HEAD.has(previous) && endsSentence) {
+      // Etan's law: a "." never becomes "?" without an interrogative signal
+      // from that sentence. "I checked PR number? 2 8 4." keeps its marks.
+      const sentence = before.slice(Math.max(
+        before.lastIndexOf("."), before.lastIndexOf("!"), before.lastIndexOf("?"), before.lastIndexOf("\n")) + 1);
+      if (!sentenceStart && previous && !COMPLETE_NOUN_PHRASE_BEFORE_HEAD.has(previous) && endsSentence
+        && hasDirectQuestionOpener(sentence)) {
         return `${head}${gap}${number}?`;
       }
       return `${head}${mark}${gap}${number}${period ?? ""}`;

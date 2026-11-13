@@ -96,6 +96,32 @@ describe("digits that are separate things stay separate", () => {
     expect(finalize("PR number? Two eight four.")).toBe("PR number? 284.");
   });
 
+  // Codex review of T6 (P1): a statement may not be turned into a question.
+  // The mark moves only when a clause of that sentence opens as a direct
+  // question; otherwise the digits join and every mark stays where it was.
+  for (const [spoken, expected] of [
+    ["I checked PR number? Two eight four.", "I checked PR number? 284."],
+    ["We merged it in PR number? Four seven one three six.", "We merged it in PR number? 47136."],
+    ["When I checked PR number? Two eight four.", "When I checked PR number? 284."],
+    ["That was fixed in PR number? Nine zero six. Then we shipped.", "That was fixed in PR number? 906. Then we shipped."],
+    ["Do the rebase for PR number? Two eight four.", "Do the rebase for PR number? 284."],
+    ["Have a look at PR number? Two eight four.", "Have a look at PR number? 284."],
+  ] as const) {
+    it(`keeps the marks of a statement: ${spoken}`, () => {
+      expect(finalize(spoken)).toBe(expected);
+    });
+  }
+
+  for (const [spoken, expected] of [
+    ["Also, is it necessary for PR number? Two eight four nine eight.", "Also, is it necessary for PR number 28498?"],
+    ["So why did we change ten files for PR number? Two eight four.", "So why did we change 10 files for PR number 284?"],
+    ["I merged it, did you see PR number? Two eight four.", "I merged it, did you see PR number 284?"],
+  ] as const) {
+    it(`moves the mark of a direct question: ${spoken}`, () => {
+      expect(finalize(spoken)).toBe(expected);
+    });
+  }
+
   it("keeps the ? where it is when more words follow the number (no guessing the sentence end)", () => {
     expectControl();
     expect(finalize("Is it in PR number? Four seven one three six and the other one")).toBe(
