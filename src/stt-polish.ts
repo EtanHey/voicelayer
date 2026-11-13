@@ -1376,21 +1376,59 @@ function isAllowedSpokenListRewrite(
   return normalizedSimilarity(cleanedText, candidate) >= SPOKEN_LIST_SIMILARITY_FLOOR;
 }
 
-// A spoken slash command ("you just /compact.") is a standalone token: it
-// starts the text or follows whitespace and ends at whitespace, sentence
-// punctuation or the end. Polish may not glue, split, re-case or chain it.
-const SLASH_COMMAND_TOKEN = /(?<=^|\s)\/[A-Za-z0-9][A-Za-z0-9-]*(?=$|\s|[.,!?;:](?=\s|$))/gu;
+// A spoken slash command ("you just /compact.") is a standalone token. Polish
+// may wrap it in or follow it with sentence punctuation, but may not glue,
+// split, re-space, re-case, drop, add or reorder command occurrences.
+const SLASH_COMMAND_OPENERS = `("“‘'`;
+const SLASH_COMMAND_TOKEN = new RegExp(
+  `(?<=^|\\s|[${SLASH_COMMAND_OPENERS}])\\/[A-Za-z0-9][A-Za-z0-9-]*(?=[.,!?;:)"”’']*(?:$|\\s))`,
+  "gu",
+);
+const SLASH_COMMAND_RUN = /\/[A-Za-z0-9][A-Za-z0-9-]*/gu;
 
-function changedSlashCommandTokens(cleanedText: string, candidate: string): boolean {
-  const counts = new Map<string, number>();
-  for (const token of cleanedText.match(SLASH_COMMAND_TOKEN) ?? []) {
-    counts.set(token, (counts.get(token) ?? 0) + 1);
+type SlashCommandOccurrence = { token: string; left: string; rightOk: boolean };
+
+/**
+ * The boundary left of a command, ignoring one opening punctuation mark:
+ * "start" (text or line), "space" (exactly one space after a non-space), or
+ * "other" (glued, or more than one space).
+ */
+function slashCommandLeftBoundary(text: string, index: number): string {
+  let at = index;
+  if (at > 0 && SLASH_COMMAND_OPENERS.includes(text[at - 1])) at -= 1;
+  if (at === 0 || text[at - 1] === "\n") return "start";
+  if (text[at - 1] === " " && at >= 2 && !/\s/u.test(text[at - 2])) return "space";
+  return "other";
+}
+
+function slashCommandOccurrences(text: string, tokens: ReadonlySet<string>): SlashCommandOccurrence[] {
+  const occurrences: SlashCommandOccurrence[] = [];
+  for (const match of text.matchAll(SLASH_COMMAND_RUN)) {
+    if (!tokens.has(match[0])) continue;
+    const after = text.slice(match.index + match[0].length);
+    occurrences.push({
+      token: match[0],
+      left: slashCommandLeftBoundary(text, match.index),
+      rightOk: /^[.,!?;:)"”’']*(?:$|\s)/u.test(after),
+    });
   }
-  if (!counts.size) return false;
-  for (const token of candidate.match(SLASH_COMMAND_TOKEN) ?? []) {
-    if (counts.has(token)) counts.set(token, counts.get(token)! - 1);
-  }
-  return [...counts.values()].some((left) => left > 0);
+  return occurrences;
+}
+
+/** Exported for tests. */
+export function changedSlashCommandTokens(cleanedText: string, candidate: string): boolean {
+  const commands = new Set(cleanedText.match(SLASH_COMMAND_TOKEN) ?? []);
+  if (!commands.size) return false;
+  // Every maximal "/word" run spelling one of those commands, in both texts: a
+  // glued or re-cased command spells something else and goes missing, and the
+  // same command used inside a path is compared too, so unchanged text passes.
+  const cleaned = slashCommandOccurrences(cleanedText, commands);
+  const polished = slashCommandOccurrences(candidate, commands);
+  if (polished.length !== cleaned.length) return true;
+  return cleaned.some((occurrence, index) => {
+    const other = polished[index];
+    return other.token !== occurrence.token || other.left !== occurrence.left || other.rightOk !== occurrence.rightOk;
+  });
 }
 
 function validatePolishCandidate(

@@ -1,6 +1,7 @@
 import { dictionarySurfacePattern, isWholeDictionarySurface } from "./stt-dictionary-matching";
 import { requireIsolatedOverride } from "./test-isolation";
-import { existsSync, readdirSync, readFileSync, statSync } from "fs";
+import { existsSync, readFileSync, statSync } from "fs";
+import { loadInstalledSlashCommandNames } from "./stt-slash-command-names";
 import { homedir } from "os";
 import { join } from "path";
 import { applyRules, type RulesConfig } from "./rules-engine";
@@ -308,107 +309,6 @@ const BUNDLED_HARNESS_SLASH_COMMANDS = [
   "/mcp", "/model", "/resume", "/review",
 ] as const;
 
-function commandNameFromMarkdownEntry(name: string): string | null {
-  if (!name || name.startsWith(".")) return null;
-  if (!name.endsWith(".md")) return null;
-  if (name.toLowerCase() === "readme.md") return null;
-  const commandName = name.endsWith(".md") ? name.slice(0, -3) : name;
-  if (!/^[a-z0-9][a-z0-9-]*$/i.test(commandName)) return null;
-  if (commandName.toLowerCase() === "skill") return null;
-  return commandName;
-}
-
-function commandNameFromDirectoryEntry(name: string): string | null {
-  if (!name || name.startsWith(".")) return null;
-  if (!/^[a-z0-9][a-z0-9-]*$/i.test(name)) return null;
-  if (name.toLowerCase() === "skill") return null;
-  return name;
-}
-
-type SlashCommandCacheEntry = {
-  key: string;
-  loadedAtMs: number;
-  commands: string[];
-};
-
-const SLASH_COMMAND_CACHE_TTL_MS = 1000;
-const SLASH_COMMAND_SUPPORT_DIRS = new Set(["assets", "references"]);
-let slashCommandCache: SlashCommandCacheEntry | null = null;
-
-function loadInstalledSlashCommands(env: STTCleanupEnv): string[] {
-  const roots = getSlashCommandRoots(env);
-  const key = roots.join("\0");
-  if (
-    slashCommandCache &&
-    slashCommandCache.key === key &&
-    Date.now() - slashCommandCache.loadedAtMs < SLASH_COMMAND_CACHE_TTL_MS
-  ) {
-    return slashCommandCache.commands;
-  }
-
-  const commands: string[] = [];
-  const seen = new Set<string>();
-
-  const visit = (dir: string) => {
-    let entries;
-    try {
-      entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-
-    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      const entryPath = join(dir, entry.name);
-      const isDirectory =
-        entry.isDirectory() ||
-        (entry.isSymbolicLink() &&
-          (() => {
-            try {
-              return statSync(entryPath).isDirectory();
-            } catch {
-              return false;
-            }
-          })());
-
-      if (isDirectory) {
-        if (entry.name.startsWith(".")) continue;
-        if (SLASH_COMMAND_SUPPORT_DIRS.has(entry.name.toLowerCase())) continue;
-        const commandName = existsSync(join(entryPath, "SKILL.md"))
-          ? commandNameFromDirectoryEntry(entry.name)
-          : null;
-        if (commandName) {
-          const command = `/${commandName}`;
-          if (!seen.has(command)) {
-            seen.add(command);
-            commands.push(command);
-          }
-          continue;
-        }
-        visit(entryPath);
-        continue;
-      }
-      if (!entry.isFile() && !entry.isSymbolicLink()) continue;
-
-      const commandName = commandNameFromMarkdownEntry(entry.name);
-      if (!commandName) continue;
-
-      const command = `/${commandName}`;
-      if (!seen.has(command)) {
-        seen.add(command);
-        commands.push(command);
-      }
-    }
-  };
-
-  for (const root of roots) {
-    if (!existsSync(root)) continue;
-    visit(root);
-  }
-
-  slashCommandCache = { key, loadedAtMs: Date.now(), commands };
-  return commands;
-}
-
 function spokenSlashCommandForms(command: string): string[] {
   const commandName = command.replace(/^\/+/, "");
   if (!commandName) return [];
@@ -427,7 +327,7 @@ function spokenSlashCommandForms(command: string): string[] {
   ]);
 }
 
-function buildSlashCommandAliases(commands: string[]): Record<string, string> {
+function buildSlashCommandAliases(commands: readonly string[]): Record<string, string> {
   const aliases: Record<string, string> = {};
   for (const command of commands) {
     if (!/^\/[A-Za-z0-9][A-Za-z0-9-]*$/.test(command)) continue;
@@ -438,22 +338,38 @@ function buildSlashCommandAliases(commands: string[]): Record<string, string> {
   return sortAliasesBySourceLength(aliases);
 }
 
+type SlashCommandSets = {
+  /** Converted wherever spoken: dictionary entries and multi-word names. */
+  always: string[];
+  /** Single-word names: a command only in command context. */
+  contextual: string[];
+};
+
+const SLASH_COMMAND_PATTERN = /^\/[A-Za-z0-9][A-Za-z0-9-]*$/;
+
 function collectSlashCommands(
   env: STTCleanupEnv,
-  promptTerms: string[] = [],
-): string[] {
-  const commands = new Set<string>();
-  for (const term of promptTerms) {
+  snapshot: LoadedVocabularySnapshot | null,
+): SlashCommandSets {
+  // His own dictionary entries stay exactly as before: an explicit opt-in.
+  const always = new Set<string>();
+  for (const term of [...(snapshot?.promptTerms ?? []), ...Object.values(snapshot?.aliases ?? {})]) {
     const trimmed = term.trim();
-    if (/^\/[A-Za-z0-9][A-Za-z0-9-]*$/.test(trimmed)) {
-      commands.add(trimmed);
-    }
+    if (SLASH_COMMAND_PATTERN.test(trimmed)) always.add(trimmed);
   }
-  for (const command of loadInstalledSlashCommands(env)) {
-    commands.add(command);
+  const lowerAlways = new Set([...always].map((command) => command.toLowerCase()));
+  const contextual = new Set<string>();
+  for (const command of [
+    ...loadInstalledSlashCommandNames(getSlashCommandRoots(env)),
+    ...BUNDLED_HARNESS_SLASH_COMMANDS,
+  ]) {
+    if (lowerAlways.has(command.toLowerCase())) continue;
+    // A name of two or more spoken words cannot be ordinary prose; a single
+    // word ("model", "review", "help") often is.
+    if (/[-_]/.test(command)) always.add(command);
+    else contextual.add(command);
   }
-  for (const command of BUNDLED_HARNESS_SLASH_COMMANDS) commands.add(command);
-  return [...commands].sort();
+  return { always: [...always].sort(), contextual: [...contextual].sort() };
 }
 
 type RuntimeAliasesCacheEntry = {
@@ -464,10 +380,9 @@ type RuntimeAliasesCacheEntry = {
 let runtimeAliasesCache: RuntimeAliasesCacheEntry | null = null;
 
 function buildRuntimeAliases(
-  env: STTCleanupEnv,
+  slashCommands: readonly string[],
   snapshot: LoadedVocabularySnapshot | null,
 ): Record<string, string> {
-  const slashCommands = collectSlashCommands(env, snapshot?.promptTerms);
   const snapshotAliases = snapshot?.aliases ?? {};
   const key = JSON.stringify({
     slashCommands,
@@ -661,7 +576,8 @@ export function cleanupTranscriptionText(
   if (!trimmed) return "";
 
   const snapshot = loadVocabularySnapshot(env);
-  const aliases = buildRuntimeAliases(env, snapshot);
+  const slashCommands = collectSlashCommands(env, snapshot);
+  const aliases = buildRuntimeAliases(slashCommands.always, snapshot);
   const rulesConfig: RulesConfig = {
     aliases,
     possessiveAliasSources: new Set(Object.keys(snapshot?.aliases ?? {}).map((source) => source.toLowerCase())),
@@ -683,10 +599,7 @@ export function cleanupTranscriptionText(
   );
   // A spoken command ("you just slash compact.") is its own token: the path
   // pass below would glue it to the word before ("just/compact.").
-  const commandTokens = protectSlashCommandTokens(
-    normalized,
-    collectSlashCommands(env, snapshot?.promptTerms),
-  );
+  const commandTokens = protectSlashCommandTokens(normalized, slashCommands);
   const pathNormalized = normalizePathTokens(commandTokens.text);
   const sentenceCased = normalizeSentenceStarts(pathNormalized);
   // Must run LAST: after the canonical-term pass folds "voice layer Codex"
@@ -696,36 +609,90 @@ export function cleanupTranscriptionText(
   return isMeaningfulTranscription(flagNormalized) ? flagNormalized : "";
 }
 
+// Words directly before a single-word command that make it a command
+// (lead ruling, lane c11-T8 round 2).
+const SLASH_COMMAND_CUE_WORDS = [
+  "run", "ran", "running", "use", "used", "using", "type", "typed", "typing",
+  "do", "did", "try", "tried", "just", "then", "enter", "hit", "send",
+  "invoke", "call", "say", "with", "via", "the command",
+];
+const SLASH_COMMAND_CUE = new RegExp(
+  `(?:^|[^\\p{L}\\p{N}'’_-])(?:${SLASH_COMMAND_CUE_WORDS.join("|")})$`,
+  "iu",
+);
+const SLASH_COMMAND_OPENERS = new Set(["(", "\"", "“", "‘", "'"]);
+const SLASH_COMMAND_RIGHT_EDGE = /^[.,!?;:)"”’']*(?=$|\s)/u;
+const SLASH_COMMAND_NEXT_SEGMENT = /^[ \t]*\/[ \t]?([A-Za-z0-9][A-Za-z0-9-]*)?/u;
+
 /**
- * Hide known command tokens from the path pass. A token is a known command
- * that starts the text or a line or follows whitespace, and ends the text or
- * is followed by whitespace or sentence punctuation. Commands in a row
- * ("/a /b") stay one space apart. A command that continues into a path
- * ("src /config / index") is not a token, so paths normalize as before.
+ * Command context for a single-word name: start of the text, a line or a
+ * sentence; after `, : ; (` or an opening quote; after another command token;
+ * or after a cue word ("just", "run", "type", "the command", …).
+ */
+function isSlashCommandContext(before: string, acceptedEnds: ReadonlySet<number>): boolean {
+  const pre = before.replace(/[ \t]+$/u, "");
+  if (pre === "" || pre.endsWith("\n")) return true;
+  if (acceptedEnds.has(pre.length)) return true;
+  if (/[.!?]["”’')]*$/u.test(pre)) return true;
+  if (/[,:;(]$/u.test(pre)) return true;
+  if (/(?:^|\s)["“‘']$/u.test(pre)) return true;
+  return SLASH_COMMAND_CUE.test(pre);
+}
+
+/**
+ * Find command tokens and hide them from the path pass, which would otherwise
+ * glue them to the word before ("you just/compact."). Dictionary entries and
+ * multi-word names are tokens wherever they stand alone; a single-word name
+ * becomes `/name` only in command context, and is left byte-for-byte to the
+ * rest of cleanup everywhere else ("view slash model" stays "View / model").
+ * A name followed by another slash and a non-command word is a path.
  */
 function protectSlashCommandTokens(
   text: string,
-  commands: readonly string[],
+  commands: SlashCommandSets,
 ): { text: string; restore: (value: string) => string } {
-  const names = commands
-    .filter((command) => /^\/[A-Za-z0-9][A-Za-z0-9-]*$/u.test(command))
-    .sort((a, b) => b.length - a.length)
-    .map((command) => command.slice(1));
-  if (!names.length || !text.includes("/")) return { text, restore: (value) => value };
-  const name = `\\/(?:${names.join("|")})(?![A-Za-z0-9-])`;
-  const pattern = new RegExp(
-    `(^|[ \\t\\n])(${name}(?:[ \\t]+${name})*)(?=$|[ \\t\\n](?![ \\t]*\\/)|[.,!?;:](?=\\s|$))`,
-    "gu",
-  );
+  const unchanged = { text, restore: (value: string) => value };
+  if (!text.includes("/")) return unchanged;
+  const canonical = new Map<string, { command: string; contextual: boolean }>();
+  for (const command of commands.always) canonical.set(command.slice(1).toLowerCase(), { command, contextual: false });
+  for (const command of commands.contextual) canonical.set(command.slice(1).toLowerCase(), { command, contextual: true });
+  if (!canonical.size) return unchanged;
+  const names = [...canonical.keys()].sort((a, b) => b.length - a.length);
+  const pattern = new RegExp(`\\/([ \\t]?)(${names.join("|")})(?![A-Za-z0-9-])`, "giu");
+
   const tokens: string[] = [];
-  const protectedText = text.replace(pattern, (_match, before: string, run: string) => {
-    tokens.push(run);
-    return `${before}\uE400${String.fromCodePoint(0xE500 + tokens.length - 1)}\uE401`;
-  });
+  const acceptedEnds = new Set<number>();
+  let output = "";
+  let cursor = 0;
+  for (const match of text.matchAll(pattern)) {
+    const start = match.index;
+    const end = start + match[0].length;
+    const spaced = match[1] !== "";
+    const known = canonical.get(match[2].toLowerCase())!;
+    const left = start === 0 ? "" : text[start - 1];
+    if (left !== "" && !/\s/u.test(left) && !SLASH_COMMAND_OPENERS.has(left)) continue;
+    if (!known.contextual && (spaced || match[2] !== known.command.slice(1))) continue;
+
+    const rest = text.slice(end);
+    const next = SLASH_COMMAND_NEXT_SEGMENT.exec(rest);
+    if (next) {
+      if (!next[1] || !canonical.has(next[1].toLowerCase())) continue;
+    } else if (!SLASH_COMMAND_RIGHT_EDGE.test(rest)) {
+      continue;
+    }
+    if (known.contextual && !isSlashCommandContext(text.slice(0, start), acceptedEnds)) continue;
+
+    tokens.push(known.contextual ? known.command : match[0]);
+    output += `${text.slice(cursor, start)}${String.fromCodePoint(0xE500 + tokens.length - 1)}`;
+    cursor = end;
+    acceptedEnds.add(end);
+  }
+  if (!tokens.length) return unchanged;
+  output += text.slice(cursor);
   return {
-    text: protectedText,
+    text: output,
     restore: (value) => tokens.reduce(
-      (result, token, index) => result.split(`\uE400${String.fromCodePoint(0xE500 + index)}\uE401`).join(token),
+      (result, token, index) => result.split(`${String.fromCodePoint(0xE500 + index)}`).join(token),
       value,
     ),
   };

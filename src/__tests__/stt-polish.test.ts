@@ -1611,6 +1611,63 @@ describe("stt-polish", () => {
     });
   }
 
+  // Round 2: the guard compares command occurrences in order with their
+  // boundary, not token counts.
+  const polishSlash = async (cleanedText: string, candidate: string) => {
+    server = createMockPolishServer(() => ({ text: candidate }));
+    return polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+  };
+  for (const [name, cleanedText, candidate] of [
+    ["re-spaced with a double space", "Run /compact now.", "Run  /compact now."],
+    ["swapped with another command", "Run /compact, then /review.", "Run /review, then /compact."],
+    ["moved across a line start", "Run /compact now.\n/compact again.", "Run\n/compact now. /compact again."],
+    ["dropped when used twice", "Run /compact, then /compact again.", "Run /compact, then again."],
+  ] as const) {
+    it(`rejects a slash command occurrence ${name}`, async () => {
+      const result = await polishSlash(cleanedText, candidate);
+      expect(result.status).toBe("rejected");
+      expect(result.text).toBe(cleanedText);
+    });
+  }
+  it("compares command occurrences by order and boundary, not by count", () => {
+    // Direct check of the guard: end to end, a swap or a drop is also caught
+    // earlier by the protected-token and code-punctuation guards.
+    expect(sttPolish.changedSlashCommandTokens("Run /compact now.", "Run  /compact now.")).toBe(true);
+    expect(sttPolish.changedSlashCommandTokens("Run /compact, then /review.", "Run /review, then /compact.")).toBe(true);
+    expect(sttPolish.changedSlashCommandTokens("Run /compact now.\n/compact again.", "Run\n/compact now. /compact again.")).toBe(true);
+    expect(sttPolish.changedSlashCommandTokens("Run /compact, then /compact again.", "Run /compact, then again.")).toBe(true);
+    expect(sttPolish.changedSlashCommandTokens("Run /compact now.", "Run(/compact) now.")).toBe(true);
+    expect(sttPolish.changedSlashCommandTokens("Run /compact now.", "Run /compact-now.")).toBe(true);
+    expect(sttPolish.changedSlashCommandTokens("Run /compact now.", "Run (/compact) now.")).toBe(false);
+    expect(sttPolish.changedSlashCommandTokens("Run /compact then rest.", "Run /compact, then rest.")).toBe(false);
+    expect(sttPolish.changedSlashCommandTokens("Run /compact now.", "Run /compact now.")).toBe(false);
+    expect(sttPolish.changedSlashCommandTokens(
+      "Run /compact, see src/compact/x and /compact.",
+      "Run /compact, see src/compact/x and /compact.",
+    )).toBe(false);
+  });
+
+  for (const [name, cleanedText, candidate] of [
+    ["wrapped in parentheses", "Run /compact now.", "Run (/compact) now."],
+    ["followed by an added comma", "Run /compact then rest.", "Run /compact, then rest."],
+    ["unchanged", "Run /compact now.", "Run /compact now."],
+    ["unchanged with the same name inside a path", "Run /compact, see src/compact/x and /compact.", "Run /compact, see src/compact/x and /compact."],
+  ] as const) {
+    it(`accepts a slash command ${name}`, async () => {
+      const result = await polishSlash(cleanedText, candidate);
+      expect(result.status, result.error ?? "").not.toBe("rejected");
+      expect(result.text).toBe(candidate);
+    });
+  }
+
   it("rejects a numbered list that deletes spoken First and Second", async () => {
     const cleanedText = "First, verify the recording state before release. Second, inspect the transcript before sending it.";
     const candidate = "1. Verify the recording state before release.\n2. Inspect the transcript before sending it.";
