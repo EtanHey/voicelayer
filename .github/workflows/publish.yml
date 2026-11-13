@@ -52,7 +52,10 @@ jobs:
       # R2, one release, one step: from v2.4.0 on, no npm package without the app's
       # installed-candidate T3 Option+F5 proof for this exact build, committed at
       # release-proofs/<tag>.json (docs/voicebar-release-runbook.md). First check, before any
-      # build or publish step. The gate runs from this workflow revision; no bypass input.
+      # build or publish step. It has no input or env to skip it, but a tag-triggered workflow is
+      # read from the tagged commit: The gate binds every tag whose tree contains it. A `v*` tag on
+      # a tree without the gate is not stopped by this workflow. Create tags only with
+      # scripts/tag-voicebar-release.sh, which refuses a tree without the gate or its proof.
       - name: Release gate (installed-candidate proof)
         env:
           RELEASE_TAG: ${{ inputs.ref || github.ref_name }}

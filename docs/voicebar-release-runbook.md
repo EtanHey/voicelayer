@@ -29,8 +29,18 @@ the tag unless `release-proofs/<tag>.json` is committed and passes:
   build commit, and the tag adds nothing but the proof);
 - the build time is not before that build commit was made.
 
-Tags older than `v2.4.0` are not gated, so `workflow_dispatch` can still republish them; any
-ref that is not `vMAJOR.MINOR.PATCH[-pre]` is refused. There is no bypass input. A hosted
+Before the version rule, every ref must be a tag that resolves to the checked-out commit,
+and `package.json` there must equal the tag's version. Then tags older than `v2.4.0` are not
+gated, so `workflow_dispatch` can still republish them (a `v2.3.0` tag whose tree packs 2.4.0
+is refused); any ref that is not `vMAJOR.MINOR.PATCH[-pre]` without leading zeros is refused.
+
+**The limit:** the gate binds every tag whose tree contains it. A `v*` tag on a tree without
+the gate is not stopped by this workflow, because a tag-triggered workflow is read from the
+tagged commit. The gate has no skip input or env, but that is all it can promise. So tags are
+created **only** with `scripts/tag-voicebar-release.sh <version>`, which refuses unless the
+working tree is clean, HEAD carries the gate script and the gate step, `package.json` is that
+version, and the committed `release-proofs/v<version>.json` passes the same gate. It creates
+the annotated tag locally and prints the push command without running it. A hosted
 runner has no app, so it cannot recompute the bundle digest: that digest is checked against
 the real app by `record` and again by promotion, which must be given the committed file.
 
@@ -50,7 +60,9 @@ the real app by `record` and again by promotion, which must be given the committ
    git add release-proofs/vX.Y.Z.json && git commit -m "release: vX.Y.Z installed-candidate proof"
    ```
    `record` runs `check` against the app first. Land that commit (it may only add the file),
-   then tag it `vX.Y.Z`; CI's gate passes and publishes the npm package.
+   then tag it with `scripts/tag-voicebar-release.sh X.Y.Z` (never `git tag` by hand). Push
+   the tag it printed only when you mean to publish; CI's gate passes and publishes the npm
+   package.
 5. **Promote** with the committed file as the proof:
    ```bash
    NPM_SHA="$(curl -fsSL https://registry.npmjs.org/voicelayer-mcp/-/voicelayer-mcp-X.Y.Z.tgz | shasum -a 256 | awk '{print $1}')"
@@ -143,8 +155,12 @@ not proven to reach the F5 relay; use the M1's own keyboard.
 
 ## Producing the proof
 
-The helper reads the resident's real artifacts only. It never presses keys: the operator, or
-a harness that sends a real CGEvent, does the Option+F5.
+The helper reads the resident's real artifacts only. It never presses keys. For a release
+proof the Option+F5 is **one real press by a person at the proving Mac's own keyboard**; no
+synthesized key event (CGEvent or otherwise) counts. The repository has no key-sending
+harness. A synthesized press is acceptable only in a non-release experiment, and its output
+is never recorded or committed; automated tests use the preload's fixture paths, whose proofs
+are `test` receipts that every verifier refuses.
 
 0. **Quit and relaunch T3 Code first** (RULINGS 2026-10-18T14:40:22Z). T3 is Electron, and
    Chromium keeps its accessibility tree off until an assistive client turns it on. A T3

@@ -7,7 +7,7 @@
 // halves of the gate:
 //
 //   start  — snapshot the installed app, T3 build, log offset and time BEFORE the keypress.
-//   finish — after the operator (or a harness) selects the synthetic paragraph in a rendered
+//   finish — after the operator (one real press; no synthesized key) selects the synthetic paragraph in a rendered
 //            T3 assistant message and presses Option+F5, read only what the resident wrote
 //            since `start` and write the proof JSON. This script never sends input itself.
 //   check  — called by scripts/verify-voicebar-release.sh before the cask bump. Refuses a
@@ -35,7 +35,7 @@ import {
   writeFileSync,
 } from "fs";
 import { homedir, tmpdir } from "os";
-import { join, resolve } from "path";
+import { dirname, join, resolve } from "path";
 
 export const PROOF_SCHEMA = "voicelayer.t3-optf5-proof.v2";
 const T3_BUNDLE_ID = "com.t3tools.t3code";
@@ -148,7 +148,8 @@ export function checkProof(
 
 export const RELEASE_GATE_FROM = [2, 4, 0];
 export const RELEASE_PROOF_DIR = "release-proofs";
-const TAG_RE = /^v(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?$/;
+// No leading zeros: `v02.4.0` is malformed, not a second spelling of v2.4.0.
+const TAG_RE = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?$/;
 
 // Prereleases of a gated version are gated too: npm publishes them all the same.
 export function releaseGateApplies(tag: string): boolean {
@@ -202,16 +203,26 @@ function git(repo: string, ...args: string[]) {
   return { ok: r.exitCode === 0, out: r.stdout.toString().trim() };
 }
 
+// The binding checks come before the pre-2.4.0 exemption, so an old-looking tag on a tree that
+// packs a gated version is refused. `--before-tag` (scripts/tag-voicebar-release.sh only) checks
+// HEAD as the tag-to-be; the workflow never passes it and then the tag must already be HEAD.
 function releaseGate(args: Map<string, string>) {
   const tag = need(args, "--tag").replace(/^refs\/tags\//, "");
   const repo = args.get("--repo") ?? process.cwd();
-  if (!releaseGateApplies(tag)) {
+  const applies = releaseGateApplies(tag);
+  const head = git(repo, "rev-parse", "HEAD").out;
+  const tagged = git(repo, "rev-parse", "--verify", "-q", `refs/tags/${tag}^{commit}`);
+  if (args.get("--before-tag") === "HEAD") {
+    if (tagged.ok) fail(`tag ${tag} already exists`);
+  } else if (!tagged.ok || tagged.out !== head) fail(`tag ${tag} does not resolve to the checked-out commit ${head}`);
+  const packageVersion = String(JSON.parse(readFileSync(join(repo, "package.json"), "utf8")).version);
+  if (packageVersion !== tag.slice(1)) {
+    fail(`package.json version '${packageVersion}' at ${tag} is not ${tag.slice(1)}: the package packed would not be the tagged release`);
+  }
+  if (!applies) {
     console.log(`[t3-optf5-proof] release gate not applied: ${tag} is older than v${RELEASE_GATE_FROM.join(".")}`);
     return;
   }
-  const head = git(repo, "rev-parse", "HEAD").out;
-  const tagged = git(repo, "rev-parse", "--verify", "-q", `refs/tags/${tag}^{commit}`);
-  if (!tagged.ok || tagged.out !== head) fail(`tag ${tag} does not resolve to the checked-out commit ${head}`);
   const path = join(repo, RELEASE_PROOF_DIR, `${tag}.json`);
   if (!existsSync(path)) fail(`${RELEASE_PROOF_DIR}/${tag}.json is missing: no installed-candidate T3 Option+F5 proof for this release`);
   let raw: unknown;
@@ -220,7 +231,6 @@ function releaseGate(args: Map<string, string>) {
   } catch {
     fail(`${RELEASE_PROOF_DIR}/${tag}.json is not valid JSON`);
   }
-  const packageVersion = String(JSON.parse(readFileSync(join(repo, "package.json"), "utf8")).version);
   const p = checkReleaseRecord(raw, {
     tag,
     tagCommit: head,
@@ -677,6 +687,7 @@ function record(args: Map<string, string>) {
     buildTimeUTC: readPlistString(plist, "BuildTimeUTC"),
     bundleSha256: bundleDigest(app),
   };
+  mkdirSync(dirname(resolve(out)), { recursive: true }); // first record on a clean checkout
   writeFileSync(out, `${JSON.stringify({ ...proof, release }, null, 2)}\n`);
   console.log(`[t3-optf5-proof] recorded ${out}: commit only this file, then tag v${version} on that commit`);
 }
@@ -727,7 +738,7 @@ const USAGE = `Usage:
   bun scripts/t3-optf5-proof.ts run    (start's arguments) --out PROOF.json   start, wait for the press, finish
   bun scripts/t3-optf5-proof.ts check  --proof PROOF.json --app VoiceBar.app
   bun scripts/t3-optf5-proof.ts record --proof PROOF.json --app VoiceBar.app --out release-proofs/vX.Y.Z.json
-  bun scripts/t3-optf5-proof.ts release-gate --tag vX.Y.Z [--repo DIR]   (publish.yml)
+  bun scripts/t3-optf5-proof.ts release-gate --tag vX.Y.Z [--repo DIR] [--before-tag HEAD]   (publish.yml; --before-tag: tag-voicebar-release.sh)
   bun scripts/t3-optf5-proof.ts zip-matches-app --app VoiceBar.app --zip VoiceBar.zip
   bun scripts/t3-optf5-proof.ts bundle-digest --app VoiceBar.app`;
 

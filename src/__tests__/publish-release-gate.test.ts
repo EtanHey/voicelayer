@@ -1,6 +1,6 @@
 import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { createHash } from "crypto";
 import { bundleDigest, checkReleaseRecord, releaseGateApplies, type BuildCommitFacts } from "../../scripts/t3-optf5-proof";
@@ -82,6 +82,10 @@ describe("release gate rule (checkReleaseRecord)", () => {
     for (const tag of ["v2.3.0", "v2.2.11", "v2.3.99", "v1.9.9"]) expect(releaseGateApplies(tag)).toBe(false);
     for (const tag of ["main", "2.4.0", "v2.4", "v2.4.0;x"]) expect(() => releaseGateApplies(tag)).toThrow("not a release tag");
   });
+
+  test("a tag with a leading zero is malformed, not a gated spelling of v2.4.0", () => {
+    for (const tag of ["v02.4.0", "v2.04.0", "v2.4.00"]) expect(() => releaseGateApplies(tag)).toThrow("not a release tag");
+  });
 });
 
 // ---- the CLI the workflow runs, against a real git history ----------------------------------
@@ -111,9 +115,15 @@ function commitAll(message: string) {
   git("commit", "-q", "-m", message);
   return git("rev-parse", "HEAD");
 }
-function buildRepo(version = "2.4.0") {
+function buildRepo(version = "2.4.0", withGate = false) {
   git("init", "-q", "-b", "main");
   writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "voicelayer-mcp", version }));
+  if (withGate) {
+    mkdirSync(join(dir, "scripts"));
+    mkdirSync(join(dir, ".github", "workflows"), { recursive: true });
+    writeFileSync(join(dir, "scripts", "t3-optf5-proof.ts"), readFileSync(proofScript));
+    writeFileSync(join(dir, ".github", "workflows", "publish.yml"), readFileSync(join(repoRoot, ".github", "workflows", "publish.yml")));
+  }
   mkdirSync(join(dir, "src"));
   writeFileSync(join(dir, "src", "tts.ts"), "export {};\n");
   return commitAll("build");
@@ -201,6 +211,35 @@ describe("release-gate CLI (publish.yml's first step)", () => {
     expect(r.out).toContain("release gate not applied: v2.3.0 is older than v2.4.0");
   });
 
+  test("an old-looking tag on a tree that packs a gated version refuses before the exemption (one line)", () => {
+    buildRepo("2.4.0");
+    git("tag", "v2.3.0");
+    const r = runGate("v2.3.0");
+    expect(r.code).toBe(1);
+    expect(r.out).toBe("");
+    expect(r.err.trim().split("\n")).toEqual([
+      "[t3-optf5-proof] REFUSED: npm publish release gate: package.json version '2.4.0' at v2.3.0 is not 2.3.0: the package packed would not be the tagged release",
+    ]);
+  });
+
+  test("an old tag that is not the checked-out commit refuses before the exemption", () => {
+    buildRepo("2.3.0");
+    git("tag", "v2.3.0");
+    writeFileSync(join(dir, "README"), "later\n");
+    commitAll("later");
+    const r = runGate("v2.3.0");
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("does not resolve to the checked-out commit");
+  });
+
+  test("a leading-zero tag refuses as malformed", () => {
+    buildRepo();
+    git("tag", "v02.4.0");
+    const r = runGate("v02.4.0");
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("'v02.4.0' is not a release tag");
+  });
+
   test("a ref that is not a release tag refuses", () => {
     buildRepo();
     const r = runGate("main");
@@ -230,7 +269,7 @@ describe("record writes the committed proof from the proven app", () => {
     const wrongOut = cli("record", "--proof", proofPath, "--app", app, "--out", "proof.json");
     expect(wrongOut.exitCode).toBe(1);
     expect(wrongOut.stderr.toString()).toContain("--out must be release-proofs/v2.4.0.json");
-    mkdirSync(join(dir, "release-proofs"));
+    expect(existsSync(join(dir, "release-proofs"))).toBe(false); // a clean checkout has no release-proofs/ yet
     const rec = cli("record", "--proof", proofPath, "--app", app, "--out", "release-proofs/v2.4.0.json");
     expect(rec.stderr.toString()).toBe("");
     expect(rec.exitCode).toBe(0);
@@ -265,5 +304,108 @@ describe("publish.yml wiring", () => {
     expect(yml).not.toMatch(/^\s+[A-Z_]*(SKIP|BYPASS|UNPROVEN|FORCE)[A-Z_]*:/m);
     const gateStep = yml.slice(yml.indexOf("- name: Release gate"), yml.indexOf("run: bun ../workflow-tools/scripts/t3-optf5-proof.ts release-gate"));
     expect(gateStep.match(/^ {10}[A-Z_]+:/gm)).toEqual(["          RELEASE_TAG:"]);
+  });
+});
+
+// ---- the single tagging entry point (honest-mistake guard; the workflow cannot gate an ungated tree)
+
+const tagScript = join(repoRoot, "scripts", "tag-voicebar-release.sh");
+function runTag(version: string) {
+  const r = Bun.spawnSync(["bash", tagScript, version], {
+    cwd: dir, stdout: "pipe", stderr: "pipe",
+    env: { ...gitEnv, BUN: process.execPath, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "tag.gpgSign", GIT_CONFIG_VALUE_0: "false" },
+  });
+  return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
+}
+function provenRepo(version = "2.4.0") {
+  const build = buildRepo(version, true);
+  writeRecord(`v${version}`, recordFor({ gitCommit: build }, { gitCommit: build, version }));
+  commitAll("release proof");
+  return build;
+}
+const tags = () => git("tag", "--list");
+
+describe("scripts/tag-voicebar-release.sh", () => {
+  test("success: annotated tag created locally, push command printed, nothing pushed", () => {
+    const origin = join(dir, ".origin.git");
+    provenRepo();
+    Bun.spawnSync(["git", "init", "-q", "--bare", origin], { env: gitEnv });
+    git("remote", "add", "origin", origin);
+    writeFileSync(join(dir, ".git", "info", "exclude"), ".origin.git/\n");
+    const r = runTag("2.4.0");
+    expect(r.err).toBe("");
+    expect(r.code).toBe(0);
+    expect(git("cat-file", "-t", "refs/tags/v2.4.0")).toBe("tag");
+    expect(git("rev-parse", "v2.4.0^{commit}")).toBe(git("rev-parse", "HEAD"));
+    expect(r.out).toContain("NOT pushed");
+    expect(r.out).toContain("  git push origin v2.4.0");
+    expect(git("ls-remote", "--tags", "origin")).toBe("");
+  });
+
+  test("the script never runs git push (it only prints the command)", () => {
+    const pushLines = readFileSync(tagScript, "utf8").split("\n").filter((l) => /git\s+push/.test(l) && !/^\s*(#|echo )/.test(l));
+    expect(pushLines).toEqual([]);
+  });
+
+  test("refuses a dirty working tree", () => {
+    provenRepo();
+    writeFileSync(join(dir, "stray.txt"), "x\n");
+    const r = runTag("2.4.0");
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("working tree is not clean");
+    expect(tags()).toBe("");
+  });
+
+  test("refuses a tree without the gate script or without the gate step", () => {
+    provenRepo();
+    rmSync(join(dir, ".github"), { recursive: true });
+    commitAll("drop workflow");
+    expect(runTag("2.4.0").err).toContain("publish.yml has no release gate step");
+    rmSync(join(dir, "scripts"), { recursive: true });
+    commitAll("drop gate");
+    const r = runTag("2.4.0");
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("HEAD's tree has no release gate");
+    expect(tags()).toBe("");
+  });
+
+  test("refuses a version that package.json does not carry, or a malformed version", () => {
+    provenRepo();
+    expect(runTag("2.4.1").err).toContain("package.json at HEAD is '2.4.0', not 2.4.1");
+    expect(runTag("v2.4.0").err).toContain("is not MAJOR.MINOR.PATCH");
+    expect(runTag("02.4.0").err).toContain("is not MAJOR.MINOR.PATCH");
+    expect(tags()).toBe("");
+  });
+
+  test("refuses without a committed proof, or with one the gate refuses", () => {
+    buildRepo("2.4.0", true);
+    expect(runTag("2.4.0").err).toContain("release-proofs/v2.4.0.json is not committed at HEAD");
+    writeRecord("v2.4.0", recordFor({}, {})); // names a build commit not in this history
+    commitAll("bad proof");
+    const r = runTag("2.4.0");
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("is not in this repository");
+    expect(r.err).toContain("the release gate refused HEAD");
+    expect(tags()).toBe("");
+  });
+
+  test("refuses when the tag already exists", () => {
+    provenRepo();
+    git("tag", "v2.4.0");
+    const r = runTag("2.4.0");
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("tag v2.4.0 already exists");
+  });
+});
+
+describe("the stated limit (lead ruling: no tree change can gate an ungated tagged tree)", () => {
+  test("workflow, runbook and AGENTS.md state it; none claims an unqualified no-bypass for the npm gate", () => {
+    const flat = (p: string) => readFileSync(join(repoRoot, p), "utf8").replace(/\n\s*#?\s*/g, " ");
+    for (const p of [".github/workflows/publish.yml", "docs/voicebar-release-runbook.md", "AGENTS.md"]) {
+      expect(flat(p)).toMatch(/the gate binds every tag whose tree contains it\. A `v\*` tag on a tree without the gate is not stopped by this workflow/i);
+      expect(flat(p)).toContain("tag-voicebar-release.sh");
+    }
+    expect(flat(".github/workflows/publish.yml")).not.toContain("no bypass");
+    expect(flat("docs/voicebar-release-runbook.md")).not.toContain("There is no bypass input");
   });
 });
