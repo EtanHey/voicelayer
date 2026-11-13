@@ -131,11 +131,14 @@ fn pager(s: &mut Settings, d: &mut Drag, tx: &mut rune::Tx) {
             if s.axis == 1 {
                 // Consume each page of a continuous drag, including History's three lists.
                 let step = (-d.dx / s.width).round() as isize;
-                s.select_page((s.drag_origin as isize + step).rem_euclid(7) as usize);
+                s.select_page((s.drag_origin as isize + step).clamp(0, 6) as usize);
                 s.slide = if s.reduce_motion {
                     0.0
                 } else {
-                    d.dx + (step as f32) * s.width
+                    {
+                        let raw = d.dx + (s.page() as f32 - s.drag_origin as f32) * s.width;
+                        if (s.page() == 0 && raw > 0.0) || (s.page() == 6 && raw < 0.0) { raw / (1.0 + raw.abs() / 120.0) } else { raw }
+                    }
                 };
             }
         }
@@ -143,7 +146,7 @@ fn pager(s: &mut Settings, d: &mut Drag, tx: &mut rune::Tx) {
             if !d.cancelled() && s.axis == 1 && (d.dx / s.width).round() == 0.0 && d.dx.abs() > 70.0
             {
                 s.select_page(
-                    (s.drag_origin as isize + if d.dx < 0.0 { 1 } else { -1 }).rem_euclid(7)
+                    (s.drag_origin as isize + if d.dx < 0.0 { 1 } else { -1 }).clamp(0, 6)
                         as usize,
                 );
             }
@@ -572,25 +575,14 @@ pub fn view(s: &Settings, cx: &mut Cx<Settings>) -> El {
         };
         col().w(s.width).h_full().instant_changes().child(body)
     };
-    let moving = !reduce && s.slide.abs() > 0.01;
-    let previous = if moving {
-        page_body((s.page() + 6) % 7)
-    } else {
-        el().w(s.width).h_full()
-    };
-    let current = page_body(s.page());
-    let next = if moving {
-        page_body((s.page() + 1) % 7)
-    } else {
-        el().w(s.width).h_full()
-    };
-    let body = row()
-        .w(s.width * 3.0)
-        .h_full()
-        .child(previous.key("previous"))
-        .child(current.key("current"))
-        .child(next.key("next"))
-        .offset(-s.width + if reduce { 0.0 } else { s.slide }, 0.0);
+    // Absolute page positions retain identity when release changes the selected page.
+    let mut body = row().w(s.width * 7.0).h_full();
+    for page in 0usize..7 {
+        body = body.child(if page.abs_diff(s.page()) <= 1 {
+            page_body(page).key(format!("page-{page}"))
+        } else { el().w(s.width).h_full().key(format!("page-{page}")) });
+    }
+    let body = body.offset(-(s.page() as f32) * s.width + if reduce { 0.0 } else { s.slide }, 0.0);
     col()
         .key("settings")
         .w_full()
