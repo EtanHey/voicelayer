@@ -9,6 +9,11 @@
       "target": null,
       "kind": "pass"
     },
+    "FixedHealthyChild": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
     "MutantHotSwitch": {
       "role": "mutant",
       "target": "ModeSetOnce",
@@ -38,6 +43,26 @@
       "role": "mutant",
       "target": "CrashRecovers",
       "kind": "temporal"
+    },
+    "MutantGiveUpAfterCrash": {
+      "role": "mutant",
+      "target": "CrashRestarts",
+      "kind": "temporal"
+    },
+    "MutantLaunchingDrawsSwift": {
+      "role": "mutant",
+      "target": "LaunchingNeverDrawsSwift",
+      "kind": "invariant"
+    },
+    "MutantRestartDuringQuit": {
+      "role": "mutant",
+      "target": "NoRestartAfterQuit",
+      "kind": "invariant"
+    },
+    "MutantUnhealthyChild": {
+      "role": "mutant",
+      "target": "CrashRecovers",
+      "kind": "temporal"
     }
   },
   "acceptance": [
@@ -46,6 +71,9 @@
     "ModeSetOnce",
     "NoOrphanChild",
     "NoFallbackDrawing",
-    "CrashRecovers"
+    "CrashRecovers",
+    "LaunchingNeverDrawsSwift",
+    "NoRestartAfterQuit",
+    "CrashRestarts"
   ]
 }

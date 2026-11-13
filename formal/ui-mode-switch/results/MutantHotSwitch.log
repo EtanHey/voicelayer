@@ -3,8 +3,8 @@
   "kind": "invariant",
   "target": "ModeSetOnce",
   "status": "EXPECTED_FAIL",
-  "generated": 41,
-  "distinct": 24,
+  "generated": 48,
+  "distinct": 27,
   "trace": [
     "/\\ runeChild = \"none\"\n/\\ runeCrashSeen = FALSE\n/\\ mode = \"unset\"\n/\\ pref = \"swift\"\n/\\ app = \"down\"\n/\\ launchMode = \"unset\"\n/\\ swiftUI = \"none\"",
     "/\\ runeChild = \"none\"\n/\\ runeCrashSeen = FALSE\n/\\ mode = \"swift\"\n/\\ pref = \"swift\"\n/\\ app = \"launching\"\n/\\ launchMode = \"swift\"\n/\\ swiftUI = \"none\"",

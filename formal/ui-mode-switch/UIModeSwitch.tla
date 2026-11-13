@@ -39,9 +39,9 @@ FinishLaunch ==
     /\ app' = "running"
     /\ UNCHANGED <<mode, pref, swiftUI, runeChild, launchMode, runeCrashSeen>>
 
-\* Unexpected exit 0 and a crash both require supervision (no disable flag).
+\* Unexpected exit 0 and a crash, even before ready, require supervision.
 RuneChildCrash ==
-    /\ Active /\ runeChild = "live" /\ runeChild' = "crashed"
+    /\ Active /\ runeChild \in {"starting", "live"} /\ runeChild' = "crashed"
     /\ runeCrashSeen' = TRUE
     /\ swiftUI' = IF Variant = "LazySwiftFallback" THEN "live" ELSE swiftUI
     /\ UNCHANGED <<mode, pref, app, launchMode>>
@@ -49,8 +49,9 @@ RuneChildCleanExit == RuneChildCrash
 
 \* The fallback mutant replaces recovery with drawing: no restart is pending.
 RestartRuneChild ==
-    /\ Active /\ mode = "rune" /\ runeChild = "crashed"
-    /\ Variant # "LazySwiftFallback"
+    /\ (Active \/ (Variant = "RestartDuringQuit" /\ app = "quitting"))
+    /\ mode = "rune" /\ runeChild = "crashed"
+    /\ Variant \notin {"LazySwiftFallback", "GiveUpAfterCrash"}
     /\ runeChild' = "starting"
     /\ UNCHANGED <<mode, pref, swiftUI, app, launchMode, runeCrashSeen>>
 
@@ -80,13 +81,27 @@ Spec == Init /\ [][Next]_vars
         /\ WF_vars(RestartRuneChild) /\ WF_vars(RuneChildReady)
         /\ WF_vars(StopRuneChild) /\ WF_vars(FinishQuit)
 
-\* Five safety acceptance properties; the snapshot and crash bit are ghosts.
+\* Environment assumption, NOT an unconditional application guarantee:
+\* a repeatedly started child eventually comes up. Weak fairness alone lets
+\* crashes interrupt every starting interval before ready is continuously enabled.
+HealthyChildSpec == Spec /\ SF_vars(RuneChildReady)
+
+\* Safety acceptance properties; the snapshot and crash bit are ghosts.
 NeverBoth == ~(swiftUI = "live" /\ runeChild \in {"starting", "live"})
 InactiveNeverExists == /\ (mode = "rune" => swiftUI = "none")
                        /\ (mode = "swift" => runeChild = "none")
 ModeSetOnce == app = "down" \/ mode = launchMode
 NoOrphanChild == app = "down" => runeChild = "none"
 NoFallbackDrawing == (mode = "rune" /\ runeCrashSeen) => swiftUI = "none"
+LaunchingNeverDrawsSwift == (app = "launching" /\ mode = "rune") =>
+                           swiftUI = "none"
+\* Stronger than observing states: neither start nor restart is enabled at quit,
+\* including when Quit preserves an already-starting or crashed child.
+NoRestartAfterQuit == app = "quitting" =>
+                     ~ENABLED (StartRuneChild \/ RestartRuneChild)
+CrashRestarts == (mode = "rune" /\ runeChild = "crashed") ~>
+                (runeChild = "starting" \/ app = "down")
+\* Checked only under HealthyChildSpec; Spec alone does NOT imply this.
 CrashRecovers == (mode = "rune" /\ runeChild = "crashed") ~>
                 (runeChild = "live" \/ app = "down")
 =============================================================================

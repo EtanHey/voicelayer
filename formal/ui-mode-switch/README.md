@@ -25,8 +25,9 @@ view models, behind the Swift-only gate. `StartRuneChild` admits exactly one
 child in Rune mode; `RuneChildReady` completes startup; `FinishLaunch` marks
 the selected UI ready. Each is blocked once quitting begins.
 
-`RuneChildCrash` and `RuneChildCleanExit` both mark unexpected termination for
-restart. `RestartRuneChild` owns the delayed replacement. These are obligations
+`RuneChildCrash` and `RuneChildCleanExit` both mark unexpected termination
+while starting or live for restart. `RestartRuneChild` owns the delayed
+replacement. These are obligations
 for the future Rune supervisor, using the controller's `launch`,
 `terminationHandler`, `scheduleRestart`, `stopping` and duplicate-start guards
 as the pattern. `VoiceBarDaemonLauncher.swift` is the simpler start/stop helper;
@@ -39,13 +40,38 @@ only after that acknowledgement and releases the Swift UI. This corresponds
 to `VoiceBarApp.swift`'s termination path and the future Rune controller's stop
 and exit-wait path. A late ready/restart event is refused after Quit.
 
-Weak fairness applies to restart, ready, stop and finishing quit. A crashed
-child cannot remain crashed by scheduler starvation: it restarts and becomes
-live, or quitting completes. There is no fairness assumption forcing the user
-to quit. Preference changes may continue forever and launch cycles are
-unbounded; the state space is finite without bounding user events. The model
-abstracts successful spawn/readiness and acknowledged termination; crashes are
-modelled after ready, not an endless series of pre-ready startup failures.
+Weak fairness applies to restart, ready, stop and finishing quit. Under `Spec`
+alone, `CrashRestarts` holds: every crashed Rune child eventually returns to
+starting, or the app reaches down. There is no assumption forcing the user to
+quit. `Fixed.cfg` checks this obligation and all seven safety invariants.
+Preference changes may continue forever and launch cycles are unbounded; the
+state space is finite without bounding user events.
+
+Weak fairness of ready does **not** guarantee a live child: startup crashes may
+interrupt every starting interval, so ready is never continuously enabled.
+`HealthyChildSpec` explicitly adds the **environment assumption**
+`SF_vars(RuneChildReady)`: a child started again and again eventually comes up.
+`FixedHealthyChild.cfg` checks both `CrashRestarts` and `CrashRecovers` under
+that assumption, with the same safety invariants. This is not an unconditional
+application recovery promise, nor a bounded startup deadline.
+`MutantUnhealthyChild.cfg` retains the startup-crash counterexample under the
+ordinary `Spec`, with the **Fixed** implementation. It is an assumption-removal
+negative control registered as a mutant for the receipt gate, not a faulty
+implementation. Its cycle remains launching and alternates starting/crashed.
+
+In a launch crash loop nothing is drawn: Rune never comes up, Swift objects
+remain absent, and the app keeps restarting the child. `LaunchingNeverDrawsSwift`
+states this safety requirement explicitly even though `InactiveNeverExists`
+implies it. Open product question for the lead: where would a visible
+"Rune UI failed to start" notice come from Swift **without creating the Swift
+UI**? No notice or exception to the allocation rule is modelled here.
+
+`StopRuneChild` accepts every non-none child state, including starting and
+crashed. Weak fairness then completes stopping and quit. `NoRestartAfterQuit`
+checks the stronger admission condition that neither start nor restart is
+**enabled** while quitting; an already-starting child may remain starting
+until stopped. Ready is also gated by `Active`. This is not a requirement to
+clear the child atomically in the Quit action.
 
 ## Properties and mutation proof
 
@@ -56,20 +82,28 @@ modelled after ready, not an endless series of pre-ready startup failures.
 | `ModeSetOnce` | The active selection equals its launch snapshot until down. | `MutantHotSwitch` |
 | `NoOrphanChild` | A down app has no owned child in any state. | `MutantNoStopOnQuit` |
 | `NoFallbackDrawing` | After a Rune exit, Swift objects remain absent throughout that Rune launch. | `MutantLazySwiftFallback` |
-| `CrashRecovers` | A Rune crash eventually reaches a live child or a down app. | `MutantLazySwiftFallbackStuck` |
+| `LaunchingNeverDrawsSwift` | A Rune launch allocates no Swift UI, including during a startup crash loop. | `MutantLaunchingDrawsSwift` |
+| `NoRestartAfterQuit` | Start and restart admission is closed while quitting. | `MutantRestartDuringQuit` |
+| `CrashRestarts` | Under weak fairness, a Rune crash eventually reaches starting or down. | `MutantGiveUpAfterCrash` |
+| `CrashRecovers` | Under the healthy-child environment assumption, a Rune crash eventually reaches live or down. | `MutantLazySwiftFallbackStuck`, `MutantUnhealthyChild` (assumption removed) |
 
-There are **four fault variants**, as requested: HotSwitch applies preferences
-while running without tearing down the old UI; LazySwiftFallback creates Swift
-on a Rune exit and substitutes fallback for restart; NoStopOnQuit allows down
-without stopping; SwiftAlwaysCreated allocates Swift regardless of selection.
-Each requested mutant config isolates exactly its named property. Two extra
-configs reuse HotSwitch and LazySwiftFallback to prove NeverBoth and
-CrashRecovers respectively: the repository receipt gate requires a named
-failing config for every acceptance property. They introduce no additional
-fault variants. An isolated failing config does not claim that its fault could
-violate no other property. Fixed checks all five invariants and the temporal
-property together. `results/MUTANTS.md` and `results/run.json` record the gate;
-`results/TIMING.md` retains Fixed's raw TLC count/time lines.
+The four original fault variants remain: HotSwitch applies preferences while
+running without tearing down the old UI; LazySwiftFallback creates Swift on an
+exit and suppresses restart; NoStopOnQuit allows down without stopping;
+SwiftAlwaysCreated allocates Swift regardless of selection. The six original
+configs still fail on exactly their original named properties.
+`MutantLazySwiftFallbackStuck` now uses `HealthyChildSpec`, retaining its
+`CrashRecovers` target: readiness fairness cannot help a child never restarted.
+
+Two new fault variants are GiveUpAfterCrash (suppresses restart without drawing
+Swift, violating `CrashRestarts`) and RestartDuringQuit (admits restart after
+Quit, violating `NoRestartAfterQuit`). `MutantLaunchingDrawsSwift` reuses
+SwiftAlwaysCreated to isolate the explicit launch invariant. With the
+assumption-removal control there are two positive configs and ten negative
+configs. Each negative config checks exactly one named property; it does not
+claim that its fault could violate no other property. `results/MUTANTS.md` and
+`results/run.json` record the gate; `results/TIMING.md` retains the positive
+configs' raw TLC count/time lines.
 
 ## Scope and remaining implementation gates
 
@@ -80,7 +114,8 @@ checkout only; it is not a product-conformance receipt.
 
 This models event order, not pixels or elapsed backoff. It does not cover
 drawing, the socket protocol, permissions, audio, native windows, PIDs or
-cross-process ownership fencing, signing, app crashes/force-kill, spawn failure,
+cross-process ownership fencing, signing, app crashes/force-kill, OS spawn-call
+failure,
 failed kill acknowledgement or cross-machine behaviour. A single child-valued
 variable represents one owned process; it cannot prove real OS process counts.
 The existing daemon controller suppresses activation/restart when disabled,
