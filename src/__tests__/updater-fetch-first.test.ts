@@ -15,7 +15,7 @@ function exercise(offer: string, fail = false, dry = false) {
 print_plan() { :; }; validate_args() { :; }; ensure_command() { :; }
 detect_install_type() { echo git-checkout; }; voicebar_app_update_mode() { echo cask-sync; }
 bcs_tap_repo_path() { echo /stub/tap; }; bcs_preflight_tap_refresh() { :; }
-vl_update_gate() { echo gate >> "$CALLS"; export VOICELAYER_INSTALL_OPERATION=stub; }
+vl_update_gate() { echo gate >> "$CALLS"; bash -c 'echo "pin=\${VOICELAYER_UPDATE_PREFETCHED_CASK_VERSION:-unset}"' >> "$CALLS"; export VOICELAYER_INSTALL_OPERATION=stub; }
 update_package() { :; }; update_voicebar_app() { bcs_brew install --cask example; }
 update_formula() { :; }; run_qwen3_model_step() { :; }; sync_personal_data() { :; }
 repair_and_verify_voicebar_hotkey_path() { :; }; verify_voicebar_stack() { :; }
@@ -35,6 +35,8 @@ test('fetch precedes gate and install', () => {
   expect(lines.findIndex(x => x.startsWith('fetch --cask'))).toBeGreaterThanOrEqual(0);
   expect(lines.findIndex(x => x.startsWith('fetch --cask'))).toBeLessThan(lines.indexOf('gate'));
   expect(lines.indexOf('gate')).toBeLessThan(lines.findIndex(x => x.startsWith('install --cask')));
+  // The gated run is a child process: the version the preflight fetched must be exported to it.
+  expect(lines).toContain('pin=2.4.1');
 });
 test('refuses downgrade before gate', () => {
   const { result, output, lines } = exercise('2.2.61');
