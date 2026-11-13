@@ -5,4 +5,4 @@
 {"t":5,"type":"audio_level","rms":0.43}
 {"t":6,"type":"state","state":"transcribing"}
 {"t":8,"type":"transcription","text":"Neutral fixture sentence."}
-{"t":10,"type":"state","state":"idle"}
+{"t":8.01,"type":"state","state":"idle","source":"recording"}

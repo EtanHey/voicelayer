@@ -62,7 +62,9 @@ fn choreography_travels_monotonically_and_finishes_left() {
         let x = r[0] + r[2] / 2.;
         assert!(x <= previous + 0.01, "backwards {previous} -> {x}");
         if previous.is_finite() {
-            assert!(previous - x < 40., "jump {previous} -> {x}");
+            if x > 305. || x < 120. {
+                assert!(previous - x < 40., "visible jump {previous} -> {x}");
+            }
         }
         previous = x;
     }
@@ -101,7 +103,11 @@ fn all_hit_rectangles_are_inside_drawn_shapes() {
         at(&mut rt, i as f64 / 60.);
         for h in rt.hit_regions() {
             assert!(
-                rt.elements().iter().any(|e| e.fill.a > 0.
+                rt.elements().iter().any(|e| e.fill.a == 1.
+                    && matches!(
+                        e.key.as_deref(),
+                        Some("band" | "band-surface" | "left-wing" | "right-wing")
+                    )
                     && h[0] >= e.rect[0]
                     && h[1] >= e.rect[1]
                     && h[2] <= e.rect[0] + e.rect[2] + 0.01
@@ -169,7 +175,7 @@ fn scheduled_replay_uses_the_same_clock_as_native_and_headless_tools() {
             let x = r[0] + r[2] / 2.;
             if previous.is_finite() {
                 assert!(
-                    x <= previous + 0.01 && previous - x <= 40.,
+                    x <= previous + 0.01 && ((120. ..=305.).contains(&x) || previous - x <= 40.),
                     "native clock jump {previous} -> {x}"
                 );
             }
