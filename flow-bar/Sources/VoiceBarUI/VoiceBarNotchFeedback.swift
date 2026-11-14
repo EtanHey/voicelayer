@@ -70,8 +70,8 @@ public struct VoiceBarNotchFeedback: Equatable {
         let overflow = text.components(separatedBy: "\n").count > allowedLines || measured > available
         let confirmation = input.confirmationText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let note = input.transientNote.flatMap { $0.isEmpty ? nil : $0 }
-        // 2.3 N1 (formal/notch-presentation N6ConfirmationInWing; Etan, QA round 1: "Typed" belongs in the right
-        // wing, not a lobe underneath): a one-line idle confirmation that fits the wing, alone in a compact
+        // Status acknowledgements use the transient status surface; history contains substantive responses.
+        // wing, without an extra lobe; use a compact
         // notch, is the wing's own label. Multi-line recovery copy, overflowing copy and a confirmation that
         // shares the notch with a note or History stay the tab.
         let isWingConfirmation = input.mode == .idle && !confirmation.isEmpty && !confirmation.contains("\n") &&

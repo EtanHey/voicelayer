@@ -63,8 +63,8 @@ struct VoiceBarSetupAttentionDot: View {
     }
 }
 
-/// X1-30 (Etan QA 2026-11-10: "the indicator is not beautiful ... or not the best located. It's not rounded
-/// properly" / "when there is 1 in the queue, it is actually rounded"). The queued count on Forward's corner as a
+/// Reported 2026-11-10 (X1-30): queue-count placement and rounding need consistent geometry.
+/// Place the count on Forward as a
 /// real badge: a true circle for 1-9, an evenly rounded pill beyond, a fixed height whatever the digits, and a ring of
 /// the notch's own fill. It never changes layout or hit rects.
 /// M4 defects (lead, 2026-11-11): on the glyph it hid Forward; lifted above it, the screen's top edge (the wing's row
@@ -201,8 +201,8 @@ public struct VoiceBarReadingTimeLabel: View {
     /// width so Stop never moves.
     var showsClock: () -> Bool = { true }
 
-    /// X1-23 (Etan QA 2026-11-10: "it's become minutes because it's long should probably still have the full like
-    /// seconds and minutes"): every clock keeps its seconds. "m:ss" to 9:59, "mm:ss" to 59:59, then "h:mm:ss" (capped
+    /// Reported 2026-11-10 (X1-23): retain seconds even for long reads. Use m:ss through 9:59,
+    /// mm:ss through 59:59, then h:mm:ss capped
     /// at 99:59:59). The longer forms keep the region's width by drawing narrower (`VoiceBarClockFace`), never by
     /// dropping the seconds the old "10m" / "1h" forms lost.
     public static func text(elapsedMilliseconds: Int) -> String {
@@ -304,7 +304,7 @@ public enum VoiceBarRecordingWingLabel {
     /// QA 0449: 4 layout points plus digit side-bearing paint a clear 6 pt gap. X4: reading uses it too, so the time
     /// and the meter sit the same way whether VoiceBar is listening or reading aloud.
     public static let recordingTimeGap: CGFloat = 4
-    /// C7-W (Etan, QA 2026-11-11: "there's no enough gap" between the seconds and the waveform): the recording row's
+    /// Reported 2026-11-11 (C7-W): increase recording time-to-meter separation. The row has its
     /// own gap. 8 layout points plus the digits' side bearing paint 9.5 pt, more than three meter-bar spacings, so the
     /// time and the meter read as two things. The reading row keeps `recordingTimeGap` (its wing has no room to spare).
     public static let recordingMeterGap: CGFloat = 8
@@ -321,7 +321,7 @@ public enum VoiceBarRecordingWingLabel {
     public static let timeFont = NSFont.monospacedDigitSystemFont(ofSize: timeFontSize, weight: .medium)
 }
 
-/// X4 (Etan, PR #860: "too much space on the right"): the reading right wing is the recording row (time, gap, meter),
+/// X4 QA: use the recording time-gap-meter layout for the reading right wing,
 /// centred in the wing with no blank outer region. Collapsed (paused or hidden), Stop follows the meter one control
 /// spacing out, and the whole row stays centred.
 struct VoiceBarReadingTrailingRow<Time: View, Meter: View, Stop: View>: View {
@@ -412,8 +412,7 @@ struct VoiceBarRecordingClockTextKey: PreferenceKey {
     static func reduce(value: inout String?, nextValue: () -> String?) { value = nextValue() ?? value }
 }
 
-/// T5/T7 (Etan QA 2026-11-09: "consistent with the same waveform and time stuff that we have when recording"): the
-/// reading time drawn exactly like the recording time (same region, font and ink), beside the same level meter.
+/// Reported 2026-11-09 (T5/T7): share recording time geometry, typography, and meter layout when reading.
 public struct VoiceBarReadingTimeRegion: View {
     let elapsedMilliseconds: () -> Int
     let color: Color

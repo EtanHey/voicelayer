@@ -62,8 +62,8 @@ public struct SettingsSetupStep: Equatable, Sendable {
     var markKind: SettingsSetupMark.Kind { isDone ? .done : isPending ? .pending : .attention }
 }
 
-/// General › Setup (R2: setup is folded into General), as permission health (Etan, 2026-11-07: "Why the fuck not just
-/// detect what needs to be re set????"). Healthy shows nothing at all: no header, no ready row. Anything broken shows
+/// Reported 2026-11-07: show setup as detected permission-health problems within General.
+/// Healthy state is empty; failures show
 /// only the broken steps, each with its single fix.
 public struct SettingsGeneralSetup: Equatable, Sendable {
     /// Every step in spec order, healthy ones included. Only `steps` is shown.

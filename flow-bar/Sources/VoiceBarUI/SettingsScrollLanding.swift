@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// C9-N item 3 (Etan, 2026-11-12: "why when I click the mic picker icon in the hovered notch does it go to the right
-/// settings but the title is right where the fade is?"). `scrollTo(_, anchor: .top)` put the section title flush with
+/// Reported 2026-11-12 (C9-N): the microphone-priority title landed under the drawer fade.
+/// With `scrollTo(_, anchor: .top)`,
 /// the scrolled-to header ROW's top edge, so where the title text landed depended on the Form's own header padding:
 /// 20 pt below the top on the M1 (macOS 26.5), inside the drawer's 20 pt top fade (`NotchScrollEdgeFade`) on Etan's
 /// M4. A landing measures the title text itself and puts it `lead` points below the visible top: the fade's height

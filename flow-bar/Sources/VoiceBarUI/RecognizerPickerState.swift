@@ -55,7 +55,7 @@ public struct RecognizerDownloadProgress: Equatable, Sendable {
     public var isActive: Bool { ["downloading", "verifying", "runtime"].contains(state) }
 }
 
-/// Keep-warm switch (Etan ruling: Parakeet stays resident; "Unload when idle" is OFF by default). Lane K2's contract
+/// Etan's ruling: Parakeet stays resident by default. Lane K2 contract
 /// (K2-CONTRACT.md): `recognizer_status` carries flat `unload_when_idle: Bool`, `unload_when_idle_locked: Bool` and
 /// `unload_when_idle_env_var: String?`; it governs Parakeet's idle eviction. Writes are
 /// `{"cmd": "set_model_unload_when_idle", "value": Bool, "id": …}`, acked with a fresh `recognizer_status`.

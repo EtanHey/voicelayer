@@ -278,7 +278,7 @@ struct SettingsHistoryDiagnosticsCopy {
         return line.outcome == unchangedOutcome ? unchangedOutcome : nil
     }
 
-    /// Etan, 2026-11-05: one take listed ~20 identical "Retry · New text received" rows after repeated
+    /// Reported 2026-11-05: repeated retranscription produced about twenty duplicate retry rows.
     /// Re-transcribe clicks. Consecutive requests with the same outcome fold into one "Re-transcribed ×N" row
     /// spanning their first and last times; the row expands to the individual requests. Different outcomes
     /// never fold, so a failure between two successes stays visible where it happened.

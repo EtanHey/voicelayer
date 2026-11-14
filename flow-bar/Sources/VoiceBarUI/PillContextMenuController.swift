@@ -580,7 +580,7 @@ public struct MicrophonePickerRow: Equatable {
     }
 }
 
-/// Etan's D2 (2026-09-25): every surface shows the microphone-priority default read-only; "Change…" leads to
+/// Etan's ruling, 2026-09-25: show the microphone-priority default read-only; its action leads to
 /// Settings › Microphone priority, the one place the default is chosen.
 public enum MicrophoneDefaultPresentation {
     public static func title(_ name: String?) -> String {
