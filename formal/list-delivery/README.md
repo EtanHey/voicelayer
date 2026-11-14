@@ -44,7 +44,7 @@ this model certifies. All example text is invented: `1. Alpha`, `2. Beta`.
 | check | issue / worker reply | successful current element check | read or finish | proposed `.elementChecked(id, step, same)`; replace synchronous `Target.isUnchanged`; main atomically guards and posts |
 | read | editor handles break | pending break | read | editor nondeterministically inserts marker or plain break |
 | read | editor value visible | break landed | read | arbitrary visibility lag; no editor fairness |
-| read | issue / worker reply | id + step match | check | proposed `.readback(id, step, ListContinuationReading)`; `ListContinuationTyping.read` gives inserted/plain/unknown |
+| read | issue / worker reply | id + step match | read (unknown/foreign) or check (definite) | proposed `.readback(id, step, ListContinuationReading)`; `ListContinuationTyping.read` gives inserted/plain/unknown |
 | check | guarded post | secure off, captured PID, fresh check | read / finish | `SynthesizedKeyEvents.postGuardedBatch`, with pure cached match closure; no AX inside `matchesCapturedTarget` |
 | any AX state | hard deadline | deadline reached | finish / done | post all markers if an already completed fresh check exists; otherwise refuse/partial; no worker dependency |
 | batch | guarded post | secure off, captured PID | finish / done | existing `VoiceBarApp.typeTextGuarded`, no segment-check claim |
@@ -261,3 +261,5 @@ Fresh; its trace must include capture and Issue(check) at app=0, then User
 app=1, worker same, and Post with ax >= 2. It cannot fail on a batch.
 
 Round 2: unknown readback remains in read before expiry. LateRead deliberately issues a read at expiry and must fail NoAXAfterExpiry. Swift requires two identical inserted-marker values before omission. The delivery budget is min(0.25 + 0.15 * breaks, 2.0) seconds. Unreadable Swift capture declines into the existing guarded host route without a machine post.
+
+The model capture-unread batch abstracts the delegated legacy guarded host route: Swift reports declined without posting, then the caller continues that host route after its existing guards. It does not authorize typing before eligibility.

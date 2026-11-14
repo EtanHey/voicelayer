@@ -3,8 +3,8 @@
   "kind": "temporal",
   "target": "NoteNeverStuck",
   "status": "EXPECTED_FAIL",
-  "generated": 131328,
-  "distinct": 25192,
+  "generated": 140274,
+  "distinct": 26150,
   "trace": [
     "/\\ shown = [ shell |-> \"hoverLauncher\",\n  visible |-> FALSE,\n  band |-> FALSE,\n  wingText |-> \"none\",\n  leading |-> 48,\n  trailing |-> 78,\n  core |-> 185,\n  feedbackWidth |-> 311,\n  bandHeight |-> 0,\n  bandLines |-> 0,\n  text |-> \"none\",\n  historyInline |-> FALSE,\n  transient |-> FALSE ]\n/\\ s = [ mode |-> \"idle\",\n  updateBusy |-> FALSE,\n  preview |-> FALSE,\n  status |-> \"none\",\n  details |-> FALSE,\n  lines |-> 1,\n  note |-> \"none\",\n  timer |-> 0,\n  collapsed |-> FALSE,\n  engaged |-> FALSE,\n  teleprompter |-> FALSE,\n  history |-> FALSE,\n  raised |-> {} ]",
     "/\\ shown = [ shell |-> \"hoverLauncher\",\n  visible |-> TRUE,\n  band |-> TRUE,\n  wingText |-> \"none\",\n  leading |-> 48,\n  trailing |-> 78,\n  core |-> 185,\n  feedbackWidth |-> 311,\n  bandHeight |-> 26,\n  bandLines |-> 1,\n  text |-> \"none\",\n  historyInline |-> FALSE,\n  transient |-> TRUE ]\n/\\ s = [ mode |-> \"idle\",\n  updateBusy |-> FALSE,\n  preview |-> FALSE,\n  status |-> \"none\",\n  details |-> FALSE,\n  lines |-> 1,\n  note |-> \"rejection\",\n  timer |-> 2,\n  collapsed |-> FALSE,\n  engaged |-> FALSE,\n  teleprompter |-> FALSE,\n  history |-> FALSE,\n  raised |-> {\"rejection\"} ]",
