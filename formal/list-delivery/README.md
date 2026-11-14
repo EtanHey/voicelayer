@@ -10,7 +10,7 @@ this model certifies. All example text is invented: `1. Alpha`, `2. Beta`.
    worker, which may answer after any delay or never. Main handles callbacks with
    a delivery id and segment step. Old ids and steps are discarded.
 2. A single deadline covers all AX work, including capture and checks. Unknown
-   readback switches to an unmodified remainder. At expiry main posts that
+   readback retries before the deadline; a definite plain break selects the unmodified remainder. At expiry main posts that
    remainder only if its final guard can pass; otherwise it refuses/stops partial.
    It never starts another AX wait or drops another marker after expiry.
 3. Every post checks secure input and the captured frontmost PID in its own main
@@ -44,7 +44,7 @@ this model certifies. All example text is invented: `1. Alpha`, `2. Beta`.
 | check | issue / worker reply | successful current element check | read or finish | proposed `.elementChecked(id, step, same)`; replace synchronous `Target.isUnchanged`; main atomically guards and posts |
 | read | editor handles break | pending break | read | editor nondeterministically inserts marker or plain break |
 | read | editor value visible | break landed | read | arbitrary visibility lag; no editor fairness |
-| read | issue / worker reply | id + step match | check | proposed `.readback(id, step, ListContinuationReading)`; `ListContinuationTyping.read` gives inserted/plain/unknown |
+| read | issue / worker reply | id + step match | read (unknown/foreign) or check (definite) | proposed `.readback(id, step, ListContinuationReading)`; `ListContinuationTyping.read` gives inserted/plain/unknown |
 | check | guarded post | secure off, captured PID, fresh check | read / finish | `SynthesizedKeyEvents.postGuardedBatch`, with pure cached match closure; no AX inside `matchesCapturedTarget` |
 | any AX state | hard deadline | deadline reached | finish / done | post all markers if an already completed fresh check exists; otherwise refuse/partial; no worker dependency |
 | batch | guarded post | secure off, captured PID | finish / done | existing `VoiceBarApp.typeTextGuarded`, no segment-check claim |
@@ -89,7 +89,7 @@ there is at most **one additional post and one finalization main transition**
 (two main transitions), or one refusal transition; all waiting consumes no main
 step. This is the precise bound, rather than a wall-time scheduling guarantee.
 Before expiry there are at most `Segments` posts. Drain/quit closes in its own
-transition, even with a silent worker. The production 250 ms budget and two-second
+transition, even with a silent worker. The production list-sized budget and two-second
 watchdog are parameters to validate natively, not values established by TLC.
 
 ## Properties
@@ -187,7 +187,7 @@ so fairness is still Main and Clock only, never the worker.
 A Clock tick ages every pending reply; `Fresh` rejects aged replies (abstracting
 completion more than 100 ms ago). Before expiry, an aged check is consumed without
 posting and main issues a new check when the serial worker is free. At expiry,
-an aged check refuses or stops partial. The 250 ms overall timer and 100 ms age
+an aged check refuses or stops partial. The list-sized overall timer and 100 ms age
 limit require real timestamp tests in Swift: these ticks are an ordering
 abstraction, not a physical clock measurement.
 
@@ -203,7 +203,7 @@ PR wording: **the same app, checked just before typing**. No same-field guarante
 Readback must read the captured element, or carry the identity of the element it
 read; a mismatch counts as unknown. A foreign-element worker can return any of
 inserted/plain/unknown but cannot certify a landed target marker. Main drops a
-marker only for inserted AND same. Every other readback (including plain, unknown or foreign) selects fallback.
+marker only for inserted AND same. Unknown or foreign readback schedules another read before the deadline; definite plain readback selects fallback.
 
 | State/event | Guard and effect | Proposed Swift home |
 | --- | --- | --- |
@@ -259,3 +259,7 @@ the element check. Stale removes the id/step check but retains the app guard.
 CheckAwaitPost removes only the final app guard of segmented posting and keeps
 Fresh; its trace must include capture and Issue(check) at app=0, then User
 app=1, worker same, and Post with ax >= 2. It cannot fail on a batch.
+
+Round 2: unknown readback remains in read before expiry. LateRead deliberately issues a read at expiry and must fail NoAXAfterExpiry. Swift requires two identical inserted-marker values before omission. The delivery budget is min(0.25 + 0.15 * breaks, 2.0) seconds. Unreadable Swift capture declines into the existing guarded host route without a machine post.
+
+The model capture-unread batch abstracts the delegated legacy guarded host route: Swift reports declined without posting, then the caller continues that host route after its existing guards. It does not authorize typing before eligibility.

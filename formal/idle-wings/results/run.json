@@ -9,9 +9,9 @@
     "formal/idle-wings/Old.cfg": "8a29643e67030a73aa7c571a78561b6223a7ab48c926f6fa9a57aeb547a86fae",
     "formal/idle-wings/MutantNoResume.cfg": "b16f546b1729de2adea5b5fbdaa60eb44ae298a6a94e60a85bc5325668b26ddf",
     "formal/idle-wings/Fixed.cfg": "3b502f7dd707b735a8838b2e942ecb303227c20edbf12c11063070aeae375996",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "58f90e0459215e2a128ff849611a20795c5b34c172ffa850f50d1ba6bc72736c",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "a878c488542a7bc5cf2255db206ec6d128b44cb3629e59d4f1ed9ce7d9e325c6",
     "flow-bar/Sources/VoiceBarUI/FloatingPanel.swift": "3f0d78d16b5bb804820f0a8a120d98afd52c8762b7254835e0c5f3e42aa365db",
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "42dab7fa42799b377cd70d25b89d708acf2380e9c153f4d964db0db7c44cc7d5",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "6a0ccf561e39b29b91f08c026f9f66086e33a8eba20ed23cc0be6450e3031140",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {

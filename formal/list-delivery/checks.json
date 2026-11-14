@@ -151,6 +151,11 @@
       "role": "mutant",
       "target": "ExactlyOneOutcome",
       "kind": "invariant"
+    },
+    "LateRead": {
+      "role": "mutant",
+      "target": "NoAXAfterExpiry",
+      "kind": "invariant"
     }
   },
   "acceptance": [

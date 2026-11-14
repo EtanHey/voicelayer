@@ -5,7 +5,7 @@
 | DrainBounded | DrainWorker |
 | ExactlyOneOutcome | NoQuitReceipt, PartialPosted, TwoReceipts, PartialUnsupported |
 | MainNeverWaits | MainWait |
-| NoAXAfterExpiry | LateAX |
+| NoAXAfterExpiry | LateAX, LateRead |
 | NoLostCharacter | DropUnknown, ForeignRead, PreBreak |
 | NoPostToChangedApp | BatchUnguarded, CheckAwaitPost, FallbackUnguarded, FirstUnguarded |
 | NoSegmentWithoutFreshCheck | AgedCheck, Stale |
