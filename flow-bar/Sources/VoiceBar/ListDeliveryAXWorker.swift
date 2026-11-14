@@ -10,13 +10,17 @@ final class ListDeliveryAXWorker {
     private var enabledManualAccessibility = false
     private let focusReader: (() -> AXUIElement?)?
     private let subroleReader: ((AXUIElement) -> String?)?
+    private let roleReader: ((AXUIElement) -> String?)?
+    private let protectedReader: ((AXUIElement) -> Bool)?
     private let valueReader: ((AXUIElement) -> String?)?
     private let enableManualAccessibility: (() -> Void)?
     private let chromium: () -> Bool
     init(pid: pid_t, focusReader: (() -> AXUIElement?)? = nil,
          subroleReader: ((AXUIElement) -> String?)? = nil, valueReader: ((AXUIElement) -> String?)? = nil,
-         chromium: (() -> Bool)? = nil, enableManualAccessibility: (() -> Void)? = nil) {
+         chromium: (() -> Bool)? = nil, enableManualAccessibility: (() -> Void)? = nil,
+         roleReader: ((AXUIElement) -> String?)? = nil, protectedReader: ((AXUIElement) -> Bool)? = nil) {
         self.pid = pid; self.focusReader = focusReader; self.subroleReader = subroleReader
+        self.roleReader = roleReader; self.protectedReader = protectedReader
         self.valueReader = valueReader; self.enableManualAccessibility = enableManualAccessibility
         self.chromium = chromium ?? { ChromiumFamilyApps.contains(bundleURL: NSRunningApplication(processIdentifier: pid)?.bundleURL) }
     }
@@ -43,12 +47,22 @@ final class ListDeliveryAXWorker {
         if focusReader == nil { AXUIElementSetMessagingTimeout(element, 0.25) }
         return element
     }
+    private func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
+        return value
+    }
+    /// The same secure predicate as typing eligibility (subrole or AXProtectedContent)
+    /// plus a secure role: the value of such a field is never read.
+    private func isSecure(_ element: AXUIElement) -> Bool {
+        let secure = kAXSecureTextFieldSubrole as String
+        let subrole = subroleReader.map { $0(element) } ?? attribute(element, kAXSubroleAttribute) as? String
+        let role = roleReader.map { $0(element) } ?? attribute(element, kAXRoleAttribute) as? String
+        let protected = protectedReader.map { $0(element) } ?? (attribute(element, "AXProtectedContent") as? Bool == true)
+        return subrole == secure || role == secure || protected
+    }
     private func read(_ element: AXUIElement) -> String? {
-        var subrole: CFTypeRef?
-        let role: String?
-        if let subroleReader { role = subroleReader(element) }
-        else { AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subrole); role = subrole as? String }
-        guard role != kAXSecureTextFieldSubrole as String else { return nil }
+        guard !isSecure(element) else { return nil }
         if let valueReader { return valueReader(element) }
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value) == .success else { return nil }
