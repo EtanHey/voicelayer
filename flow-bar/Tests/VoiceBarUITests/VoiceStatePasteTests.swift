@@ -2638,7 +2638,7 @@ final class VoiceStatePasteTests: XCTestCase {
             "text": "typed without touching the clipboard",
         ])
 
-        // Etan's spec in one test: "original clipboard" is what he copied, and it
+        // Clipboard conservation: preserve the contents captured before delivery; they
         // must still be there after the dictation lands.
         XCTAssertEqual(captureAttempts, 2)
         XCTAssertEqual(insertedTexts, [])

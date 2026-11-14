@@ -105,7 +105,7 @@ final class SpeechReviewRegressionTests: XCTestCase {
         XCTAssertEqual(SpeechSettingsView.rateLabel("+10%"), "+10% faster")
         XCTAssertEqual(SpeechSettingsView.rateLabel("+0%"), "Normal")
         // Lane S PR 3: the slider's ends carry a tortoise and a hare, so the value beside it reads "Normal" at 0 and
-        // the signed percent otherwise (Etan's video, 303.8 s: a stray "0%" beside the slider).
+        // the signed percent otherwise (reported 2026-11-11, video 303.8 s: redundant zero-percent label).
         XCTAssertEqual(SpeechSettingsView.rateValueLabel("+0%"), "Normal")
         XCTAssertEqual(SpeechSettingsView.rateValueLabel("+10%"), "+10%")
         XCTAssertEqual(SpeechSettingsView.rateValueLabel("-20%"), "-20%")

@@ -3,8 +3,8 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// C6 lane L3, X1-30 (Etan QA 2026-11-10: "not rounded properly" / "when there is 1 in the queue, it is actually
-/// rounded"): the queued count on Forward's corner is a circle for 1-9 and an evenly rounded pill beyond, at one height,
+/// Reported 2026-11-10 (X1-30): queue-badge rounding varied incorrectly. Use a circle for 1–9,
+/// a rounded pill for larger counts, and a constant height,
 /// and it never moves Forward or the wing.
 @MainActor
 final class QueueBadgeL3Tests: XCTestCase {

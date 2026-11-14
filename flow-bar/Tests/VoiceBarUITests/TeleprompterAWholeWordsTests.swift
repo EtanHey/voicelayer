@@ -4,8 +4,8 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// QA 2026-11-08 (Etan, live on 870b1617): the narration said "Codex", the teleprompter showed "cod…". Teleprompter A
-/// wraps whole words to its column, but each line's HStack could still tail-truncate a last word that fit
+/// Reported 2026-11-08 on 870b1617: the final word could truncate despite fitting the column.
+/// Teleprompter A wraps whole words, but each line HStack could tail-truncate a word
 /// (154 pt measured in a 160 pt column, "Codex." drawn at 46.5 of its 55 pt). Every word renders whole; lines wrap.
 @MainActor
 final class TeleprompterAWholeWordsTests: XCTestCase {
@@ -87,7 +87,7 @@ final class TeleprompterAWholeWordsTests: XCTestCase {
             // 160 pt puts "Codex." at the end of a line that fits (the QA shape); the others are the widths where base
             // truncated a line-ending word, plus the live column.
             try assertWholeWordsWithinTheColumn(
-                "I asked Codex to review it, then Claude Code and Codex again. Did codex agree with Codex? Ask Codex.",
+                "l asked Codex to review it, then Claude Code and Codex again. Did codex agree with Codex? Ask Codex.",
                 columns: [150, 152, 160, 172, 404], expectedWords: 19)
         }
     }

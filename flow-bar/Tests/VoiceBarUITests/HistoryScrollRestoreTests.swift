@@ -4,7 +4,7 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// QA-06 fix round (Etan 2026-11-02: "the state is not kept between just traveling within the app"):
+/// Reported 2026-11-02 (QA-06): tab changes must preserve visible scroll positions:
 /// leaving History and coming back restores the list's and the detail pane's ACTUAL visible positions,
 /// independent of the selected row. Scrolling here moves the real NSScrollView clip views without
 /// selecting anything, exactly as a trackpad scroll would.

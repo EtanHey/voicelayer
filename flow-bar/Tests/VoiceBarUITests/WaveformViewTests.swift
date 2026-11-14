@@ -36,8 +36,7 @@ final class WaveformViewTests: XCTestCase {
     }
 
     /// c9-P (Etan, 2026-11-12): the transcribing right wing keeps the recording wing (its meter ripples in place;
-    /// was 2.3 U2's fixed 73.5 pt History + Settings wing). T5/T7 (Etan QA 2026-11-09:
-    /// "the waveform is blue but is consistent with the same waveform and time stuff that we have when recording"):
+    /// previously used the fixed 73.5 pt History/Settings wing). Reported 2026-11-09 (T5/T7):
     /// reading keeps its time/meter wing and physical-notch clearance when F2 narrows recording.
     func testTranscribingKeepsTheRecordingWingAndReadingIsTheRecordingWingAtEveryCalibration() {
         let processing = VoiceBarPresentation.notchPresentation(
@@ -73,7 +72,7 @@ final class WaveformViewTests: XCTestCase {
         )
     }
 
-    /// 2.3 N1 (Etan, QA round 1, WAVE-F1: the recording waveform is "thin, much shorter than before"): the
+    /// WAVE-F1 QA: restore the earlier meter proportions. The
     /// recording wing draws 2.2.61's meter again (`git show 1dc0c174`: seven 4 pt bars, 3 pt gaps, 46 × 24 pt,
     /// 3 pt floor), not U2's six 3 pt bars at 33 × 16 pt. It still fits the fixed wing's 57.5 pt content lane,
     /// centred between its equal 8 pt insets, and the wing's height.

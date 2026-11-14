@@ -38,8 +38,7 @@ final class NotchSurfaceMachineTests: XCTestCase {
         XCTAssertEqual(machine.send(.dismiss(.toggle)), .refused(.noDrawer))
     }
 
-    /// Etan, QA 0510 R3: "as long as there's no teleprompter of speech or asking, settings and history should be
-    /// pulled down", while recording too. A drawer opens during a capture and stays through it.
+    /// QA 0510 R3: allow drawers throughout capture unless an Ask or speech teleprompter excludes them.
     func testRecordingNeitherClosesNorRefusesADrawer() {
         for drawerOpen in [NotchSurfaceEvent.openHistory, .openSettings(.transcription)] {
             var machine = NotchSurfaceMachine()

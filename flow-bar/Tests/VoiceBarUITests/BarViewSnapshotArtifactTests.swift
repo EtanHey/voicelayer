@@ -92,7 +92,7 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
             [
                 "type": "state",
                 "state": "speaking",
-                "text": "Etan runs supabase cmuxlayer golems and BrainLayer on version 2.1",
+                "text": "Zorb runs supabase cmuxlayer golems and BrainLayer on version 2.1",
             ],
             playbackAmplitude: PlaybackAmplitudeEnvelope(
                 source: .decodedRMS,
@@ -101,7 +101,7 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
             )
         )
         state.wordBoundaries = [
-            (0, 220, "Etan"),
+            (0, 220, "Zorb"),
             (240, 180, "runs"),
             (440, 300, "supabase"),
             (760, 280, "cmuxlayer"),

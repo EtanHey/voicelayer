@@ -2,9 +2,7 @@ import AppKit
 @testable import VoiceBarUI
 import XCTest
 
-/// AIDEV-NOTE: Etan's spec for how a transcript reaches the target, 2026-09-13:
-/// *"the transcription is my paste instead of only Shift+F5 being paste of last
-/// transcript and Command+V being kept for only actual clipboard use."*
+/// Delivery policy, 2026-09-13: keep automatic dictation independent of the clipboard.
 ///
 ///   - Shift+F5 pastes the last transcript.
 ///   - Cmd+V is his clipboard, only ever his clipboard.

@@ -10,7 +10,7 @@ import XCTest
 final class NotchHistoryMorphTests: XCTestCase {
     // MARK: Morph B values
 
-    /// 2.4 Lane A (Etan: "one spring, no multi-stage"): open, close and the handle share one critically damped spring.
+    /// 2.4 design: opening, closing, and handle movement share one critically damped spring.
     func test0449ClosingFlightNeverMovesBackOrOvershootsAfterAReversal() {
         for speed in [-80.0, -8, 0, 8, 80] {
             let flight = NotchHistorySpringFlight(from: 0.8, to: 0, velocity: speed, start: 0,
