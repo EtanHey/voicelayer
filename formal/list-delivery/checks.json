@@ -141,6 +141,16 @@
       "role": "positive",
       "target": null,
       "kind": "pass"
+    },
+    "LegacyPartial": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "PartialUnsupported": {
+      "role": "mutant",
+      "target": "ExactlyOneOutcome",
+      "kind": "invariant"
     }
   },
   "acceptance": [

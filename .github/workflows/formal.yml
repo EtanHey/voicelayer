@@ -41,6 +41,7 @@ jobs:
           # Fresh-HOME M4 wall seconds, including each job's explicit replay steps.
           seconds = {
               # E7 local wall seconds, measured with the Homebrew JDK on 2026-11-08.
+              "list-delivery": 142.279,  # M1 Pro, 2026-11-14 (Homebrew JDK)
               "clone-engine": 2.27,
               "speech-word-seek": 1.611,
               "teleprompter-a-seek": 2.155,

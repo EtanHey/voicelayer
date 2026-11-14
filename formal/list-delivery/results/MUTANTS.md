@@ -1,12 +1,14 @@
 | Property | Exact-property failing mutant configs |
 | --- | --- |
 | BoundedDelivery | NoDeadline |
+| DeadlineBound | LateMain |
 | DrainBounded | DrainWorker |
-| ExactlyOneOutcome | TwoReceipts, NoQuitReceipt, PartialPosted |
+| ExactlyOneOutcome | NoQuitReceipt, PartialPosted, TwoReceipts, PartialUnsupported |
 | MainNeverWaits | MainWait |
-| NoLostCharacter | DropUnknown, PreBreak |
-| NoPostToChangedApp | CheckAwaitPost, FirstUnguarded, FallbackUnguarded |
-| NoSegmentWithoutFreshCheck | Stale |
-| OnlyDoubledMarkerWhenSlow | DropSlow |
+| NoAXAfterExpiry | LateAX |
+| NoLostCharacter | DropUnknown, ForeignRead, PreBreak |
+| NoPostToChangedApp | BatchUnguarded, CheckAwaitPost, FallbackUnguarded, FirstUnguarded |
+| NoSegmentWithoutFreshCheck | AgedCheck, Stale |
 | PlainTextUntouched | PlainList |
 | RecordingNeverBlocked | BlockRecording |
+| SlowNeverLoses | DropSlow |

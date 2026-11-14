@@ -134,12 +134,17 @@ property. It does not assert that the mutation could break no other property.
 ## Configs, evidence and limits
 
 Async explores answering/arbitrarily delayed workers; Silent forbids all worker
-answers; Plain exercises the no-list route; Serialized explores two successive
-ids with old outstanding work. ThreeSegments uses three segments (two breaks); FocusGeneration enables the
-main-local generation check. Queued uses three deliveries and a silent worker,
-so both FIFO slots can fill. Serialized and ThreeSegments use one deadline tick to keep combined exploration
-within the runner's per-case limit; the two-tick Async config covers aged replies
-before expiry and re-checks. Other configs use two segments, two deadline ticks,
+answers; Plain exercises the no-list route. Serialized uses two deliveries, one
+segment and one deadline tick: it covers both arrival before and after closure,
+FIFO dequeue, per-delivery app capture, old outstanding workers/callbacks,
+quit/drain with a queued delivery, and recording during either delivery.
+Async (two segments/two ticks) and ThreeSegments (three segments/one tick)
+retain readback, marker omission, partial-prefix and aged-recheck exploration;
+together these smaller configs separate serialization from within-text breaks.
+Queued uses three deliveries and a silent worker so both FIFO slots can fill;
+it retains quit/drain receipts for multiple queued transcripts. FocusGeneration
+enables the main-local generation check. LegacyPartial repeats Async without
+the delivery_partial capability. Other configs use two segments/two deadline ticks,
 two apps and two element identities, including change-and-change-back.
 This is finite exhaustive exploration, not a parameterized proof for all lengths.
 All positive configs check every property. `results/run.json` records counts,
@@ -164,13 +169,10 @@ within the same app. This design proves the stated fresh-check contract, **not**
 that no event ever reaches a changed element. Neither limitation is solved by
 hashes or an atomic model transition.
 
-R2 acceptance is **incomplete**: Serialized exceeded the common runner's 180 s
-per-case limit, including after unused-field normalization and a one-tick
-serialization config. No successful R2 receipt has been recorded. Existing
-results are the prior R1 evidence and are stale against these inputs. The CI
-budget is pending a successful complete check.sh wall-time measurement. A lead
-must resolve the runtime gate before accepting this candidate; no native claim
-follows from the mutant traces.
+R2 Serialized timed out at 180 seconds and produced no acceptance receipt.
+R3 narrows its text to one segment; the recorded R3 evidence supersedes the stale
+R1 results only after a complete successful runner pass. Native acceptance is
+still outside this model.
 
 ## Round-two implementation contract
 
@@ -225,7 +227,7 @@ without dropping events or reducing the configured deadline.
 
 All list posts on owned, guarded and manual/other routes must enter this machine's
 final synchronous guard. Owned uses ownedTextTypingHandler / postToPid; guarded
-uses the HID-tap typeTextGuarded; manual/other currently uses textTypingHandler
+uses the HID-tap typeTextGuarded; manual Shift+F5 currently uses textTypingHandler
 without the guard and must gain it for list delivery. Plain text retains today's
 route and plan unchanged. IsSecureEventInputEnabled() currently runs earlier in
 VoiceState's scheduled block; it must move into the same synchronous final guard
@@ -238,8 +240,14 @@ GuardedTypingResult on main remains posted/focusChanged/failed; partial is a
 proposed propagation contract. The daemon advertises delivery_partial in hello.
 New app/new daemon: send partial. New app/old daemon without the capability:
 send unverified and keep the local History partition. Old app/new daemon never
-produces partial. The wire-version gate is documented here, not modeled or
-verified by this model: the mechanism PR must pin both supported pairs in tests.
+produces partial. PartialCapable is a constant: Async explores TRUE and
+LegacyPartial explores FALSE. Finish maps a stopped prefix to partial only with
+the capability; otherwise unverified. historyDelivered retains the delivered
+logical count for every closed id (remaining = Text[count+1...]); History also
+retains the original text. ExactlyOneOutcome checks the label/count partition
+and rejects partial without the capability. PartialUnsupported bypasses only
+that gate and must fail ExactlyOneOutcome. Native hello negotiation and wire
+transport still require the mechanism PR's supported-pair tests.
 
 Additional exact oracles: DeadlineBound checks late <= 2 and posts <= Segments;
 NoAXAfterExpiry checks a sticky flag recording any AX issue at expiry. Their mutants are LateMain
