@@ -194,14 +194,14 @@ describe("findOutroCandidates", () => {
 
   test("offers every 1-5 token tail the corpus actually produced", () => {
     const cases: Array<[string, string]> = [
-      ["The velvet lantern crossed the orchard. So..", "So."],
-      ["The velvet lantern crossed the orchard. Okay..", "Okay."],
-      ["The velvet lantern crossed the orchard. Thank you..", "Thank you."],
-      ["The velvet lantern crossed the orchard. You..", "You."],
-      ["The velvet lantern crossed the orchard. I..", "I."],
-      ["The velvet lantern crossed the orchard. and..", "and."],
+      ["...lantern? And the orchard path is still not so clear to me. So.", "So."],
+      ["...hand you the ribbon from the fountain: Okay.", "Okay."],
+      ["...thus making the garden much quieter? Thank you.", "Thank you."],
+      ["...on a new lantern. You.", "You."],
+      ["Are we actually watering it? I.", "I."],
+      ["...where's that ribbon coming from, friend? and.", "and."],
       [
-        "The velvet lantern crossed the orchard. So, so, so, so, so..",
+        "...not really finding anything outside of the orchard, though. So, so, so, so, so.",
         "So, so, so, so, so.",
       ],
     ];
