@@ -15,7 +15,7 @@ const TEST_RECORDING_STATE_FILE = `${TEST_TMP}/voicelayer-display-text-${process
 const TEST_PRONUNCIATION_FILE = `${TEST_TMP}/voicelayer-display-text-${process.pid}-pronunciation.yaml`;
 
 const pronunciations: Record<string, string> = {
-  Etan: "Eh tahn",
+  Zorb: "Zo rbxx",
   supabase: "Soopa base",
   golems: "Go lems",
   BrainLayer: "Brain Layer",
@@ -255,7 +255,7 @@ describe("TTS display text stays separate from pronunciation text", () => {
   it("maps a substituted token to the full spoken timing span", async () => {
     const { speak } = await import("../tts");
 
-    await speak("Etan");
+    await speak("Zorb");
     await waitFor(
       () => broadcasts.some((event) => event.type === "subtitle"),
       "substituted subtitle event",
@@ -263,30 +263,30 @@ describe("TTS display text stays separate from pronunciation text", () => {
 
     const subtitle = broadcasts.find((event) => event.type === "subtitle");
     expect(subtitle?.words).toEqual([
-      { offset_ms: 0, duration_ms: 220, text: "Etan" },
+      { offset_ms: 0, duration_ms: 220, text: "Zorb" },
     ]);
   });
 
   it("broadcasts original tokens on the real subtitle render surface", async () => {
     const { speak } = await import("../tts");
 
-    await speak("Etan runs supabase cmuxlayer golems and BrainLayer");
+    await speak("Zorb runs supabase cmuxlayer golems and BrainLayer");
     await waitFor(
       () => broadcasts.some(
         (event) => event.type === "state" &&
           event.state === "speaking" &&
-          event.text === "Etan runs supabase cmuxlayer golems and BrainLayer",
+          event.text === "Zorb runs supabase cmuxlayer golems and BrainLayer",
       ),
       "full display-text speaking event",
     );
 
     const synthesis = spawnCalls.find((call) => call.cmd[0].includes("python3"));
     expect(synthesis?.cmd).toContain(
-      "--text=Eh tahn runs Soopa base cmuxlayer Go lems and Brain Layer",
+      "--text=Zo rbxx runs Soopa base cmuxlayer Go lems and Brain Layer",
     );
     const subtitle = broadcasts.find((event) => event.type === "subtitle");
     expect(subtitle?.words.map((word: { text: string }) => word.text)).toEqual([
-      "Etan",
+      "Zorb",
       "runs",
       "supabase",
       "cmuxlayer",
@@ -298,7 +298,7 @@ describe("TTS display text stays separate from pronunciation text", () => {
       (event) => event.type === "state" && event.state === "speaking",
     );
     expect(speaking?.text).toBe(
-      "Etan runs supabase cmuxlayer golems and BrainLayer",
+      "Zorb runs supabase cmuxlayer golems and BrainLayer",
     );
   });
 
@@ -375,9 +375,9 @@ describe("TTS display text stays separate from pronunciation text", () => {
     const { alignWordBoundariesToDisplayText } = await import("../tts");
 
     expect(
-      alignWordBoundariesToDisplayText("Etan", "Eh tahn", [
-        { offset_ms: 40, duration_ms: 160, text: "Eh" },
+      alignWordBoundariesToDisplayText("Zorb", "Zo rbxx", [
+        { offset_ms: 40, duration_ms: 160, text: "Zo" },
       ]),
-    ).toEqual([{ offset_ms: 40, duration_ms: 160, text: "Etan" }]);
+    ).toEqual([{ offset_ms: 40, duration_ms: 160, text: "Zorb" }]);
   });
 });
