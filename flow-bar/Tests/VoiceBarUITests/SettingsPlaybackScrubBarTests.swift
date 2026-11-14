@@ -442,8 +442,7 @@ final class SettingsPlaybackScrubBarTests: XCTestCase {
     /// The minute and hour clock boundaries, growing and final.
     private let boundaryDurations: [TimeInterval] = [36, 599, 600, 3599, 3600, 35999, 36000]
 
-    /// NOTCH2 (Etan: "Solid bar + 'so far'", no ellipsis): while the total grows, the track is the same solid
-    /// bar as a final one, with no dotted tail, and "so far" sits next to the total. Final drops the label.
+    /// NOTCH2 design: use one solid track throughout synthesis and put the growth label beside the total.
     func testGrowingTrackIsTheSolidFinalBarAndOnlyTheSoFarLabelDiffers() throws {
         XCTAssertEqual(SettingsPlaybackScrubBar.growingNote, "so far")
         let width: CGFloat = 437
@@ -498,8 +497,7 @@ final class SettingsPlaybackScrubBarTests: XCTestCase {
                                     "Sol measured \"1:00:00 so far\" at 82.22 pt")
     }
 
-    /// Etan (10-14, 10-20): "the dotted end of seek". No scrub state, teleprompter or Settings History, draws dots
-    /// or dashes: along every row the bar's ink is one unbroken run.
+    /// Reported in October: scrub tracks must remain unbroken across every row and playback state.
     func testNoScrubStateDrawsADashOrDotPattern() throws {
         let states: [(String, Double, Double, Bool, Bool, Bool, Bool)] = [
             // name, time, duration, growing, playing, seekable, teleprompter

@@ -1,7 +1,7 @@
 @testable import VoiceBarUI
 import XCTest
 
-/// Lane B P0 (Etan, 2026-11-08 4:40 pm: "the read clock is broken statewise, really broken"). One case per FAIL row of
+/// Reported 2026-11-08: playback clocks disagreed across states. One case per failing QA row of
 /// the rigorous QA of 6d03eae7 (qa-1147-rigorous/inventory-all.md), each fail-first on 849483ae. The daemon side is
 /// formal/playback-session (TeleTracksAudio, ResumeExact) plus playback-engine.test.ts.
 ///

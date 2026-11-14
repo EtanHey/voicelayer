@@ -4,8 +4,8 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// C9-N item 3 (Etan, 2026-11-12, on candidate 7: "why when I click the mic picker icon in the hovered notch does it
-/// go to the right settings but the title is right where the fade is?"). At 92d7ab5b "Change…" scrolled the header
+/// C9-N item 3, reported 2026-11-12: microphone navigation put the title under the
+/// fade. At 92d7ab5b the navigation scrolled the header
 /// row to the top; on the M1 that left the title text exactly at the fade's lower edge (20.0 pt, no clearance), on
 /// Etan's M4 inside it. It now lands the fade's height plus a section gap below the visible top in the drawer.
 /// Measured on the real SettingsView, offscreen, from the title's accessibility frame (not from the landing code).

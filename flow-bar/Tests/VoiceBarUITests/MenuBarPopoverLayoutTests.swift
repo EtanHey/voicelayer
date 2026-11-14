@@ -88,15 +88,15 @@ final class MenuBarPopoverLayoutTests: XCTestCase {
     }
 
     func testNumberedListPreviewCollapsesNewlinesWithoutChangingOriginal() {
-        let original = "Three things.\n1. Fix the popover.\n2. Ship it.\n3. Tell Etan."
+        let original = "Three things.\n1. Fix the popover.\n2. Ship it.\n3. Water plants."
         XCTAssertEqual(popoverTranscriptPreview(original),
-                       "Three things. 1. Fix the popover. 2. Ship it. 3. Tell Etan.")
+                       "Three things. 1. Fix the popover. 2. Ship it. 3. Water plants.")
         XCTAssertTrue(original.contains("\n"))
     }
 
     func testLongNumberedListPreviewUsesThreeLines() throws {
         let original = "Three things.\n1. Fix the popover and its focus ring.\n" +
-            "2. Ship it with a clean preview.\n3. Tell Etan."
+            "2. Ship it with a clean preview.\n3. Water plants."
         var frames: [String: CGRect] = [:]
         let (window, _) = makeHost(transcript: original) { frames = $0 }
         defer { window.contentView = nil }

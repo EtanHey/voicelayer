@@ -449,7 +449,7 @@ final class VoiceBarPresentationTests: XCTestCase {
     }
 
     func testTextBearingCompactStatusKeepsTrailingSafetyPaddingInsideStableCanvas() {
-        let text = "But I don't understand why"
+        let text = "The lantern needs more room"
         let presentation = VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(
                 mode: .idle,

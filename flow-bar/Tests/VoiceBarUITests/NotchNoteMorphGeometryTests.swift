@@ -2,8 +2,8 @@ import CoreGraphics
 @testable import VoiceBarUI
 import XCTest
 
-/// NOTCH2: Etan saw the busy note's notch clipped "when the animation is leaving, or when the animation is on
-/// its other side". These sample the shell animation at many progress points and require the shell and the note
+/// NOTCH2 QA: the busy note clipped during its exit transition. Sample animation progress
+/// and require the shell and note
 /// to stay inside the window and the reveal mask at every one of them.
 final class NotchNoteMorphGeometryTests: XCTestCase {
     private let note = "Busy recording. Selection not read"

@@ -3,8 +3,8 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// V27 (Etan, 2026-11-04): History rows were clipped, "only the last in the list in a given date… right before the
-/// title of the next date". Cause: each day header's opaque cover reached 18 pt above it (sized for the Ask list's
+/// Reported 2026-11-04 (V27): the final row of each day was clipped by the next header.
+/// Cause: the opaque header cover used Ask's 18 pt spacing while
 /// 18 pt section spacing) while the Dictations list spaces rows 2 pt apart, so the next day's header painted over the
 /// bottom 16 pt of the previous day's last row: its time line vanished.
 ///

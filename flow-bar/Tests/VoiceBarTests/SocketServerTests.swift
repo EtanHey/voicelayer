@@ -633,7 +633,7 @@ final class SocketServerTests: XCTestCase {
         fixture.state.sendCommand = { fixture.server.sendCommandToOwner(command: $0) }
 
         try writeLine(
-            #"{"type":"state","state":"speaking","text":"Etan runs supabase cmuxlayer golems and BrainLayer"}"#,
+            #"{"type":"state","state":"speaking","text":"Zorb runs supabase cmuxlayer golems and BrainLayer"}"#,
             to: fixture.legacyClient
         )
         XCTAssertTrue(waitForMode(fixture.state, mode: .speaking, timeout: 1))
@@ -757,7 +757,7 @@ final class SocketServerTests: XCTestCase {
         dispatchHotkeyAction(f18, onKeyDown: { f18DownCount += 1 }, onCancel: { router.handleEscape() })
         XCTAssertTrue(waitForCondition(timeout: 1) { f18DownCount == 1 })
 
-        try writeLine(#"{"type":"state","state":"speaking","text":"Etan"}"#, to: fixture.legacyClient)
+        try writeLine(#"{"type":"state","state":"speaking","text":"Zorb"}"#, to: fixture.legacyClient)
         XCTAssertTrue(waitForMode(fixture.state, mode: .speaking, timeout: 1))
         let escape = hotkeyAction(
             type: .keyDown,

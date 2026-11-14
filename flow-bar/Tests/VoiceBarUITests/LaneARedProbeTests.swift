@@ -65,7 +65,7 @@ final class LaneARedProbeTests: XCTestCase {
         XCTAssertEqual(closes, 1, "Esc reaching VoiceBar must close History")
     }
 
-    /// Etan, 2.4: "collapsed 6, expanded 8, scrolls to 20" and "one spring, no multi-stage".
+    /// 2.4 design: six collapsed rows, eight expanded, twenty scrollable, and one shared spring.
     func testProbeRowsAndOneSpring() {
         XCTAssertEqual(NotchHistoryMorph.visibleRows, 6, "collapsed 6")
         XCTAssertEqual(NotchHistoryMorph.maximumRows, 8, "expanded 8")

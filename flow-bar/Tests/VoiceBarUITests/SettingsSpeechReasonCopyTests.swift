@@ -125,7 +125,7 @@ final class SettingsSpeechReasonCopyTests: XCTestCase {
         let output = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("docs.local/n1a")
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-        let rows = [("stopped", "USER_STOP", "Etan, the build is green and the PR is open."),
+        let rows = [("stopped", "USER_STOP", "The garden catalogue is ready for the spring fair."),
                     ("completed", "PLAYBACK_COMPLETED", "Orchestrator Claude here. Which song would you like?")]
         for (index, (state, reason, text)) in rows.enumerated() {
             let id = "2026-10-26T12-00-0\(index)-000Z-abcdef1\(index)"

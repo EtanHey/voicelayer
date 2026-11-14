@@ -1,7 +1,7 @@
 @testable import VoiceBarUI
 import XCTest
 
-/// Etan's 2.2.24 review #5: "make default on click, or drag to reorder, instead of up/up/up arrows".
+/// 2.2.24 review: choose the default directly by clicking, and reorder devices by dragging.
 /// SwiftUI builds no drag session or AX tree offscreen, so the layout is pinned here and the ordering
 /// logic is covered behaviourally in MicrophonePrioritySnapshotTests.
 final class MicrophonePrioritySettingsTests: XCTestCase {

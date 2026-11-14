@@ -4,9 +4,7 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// X4 (Etan, PR #860 pictures and the 12:57 M4 recording, 2026-11-10): "no gap between timer and waveform, too much
-/// space on the right, waveform sitting high, stop / eye / replay not centred with the drag bar"; J2 "the seconds and
-/// the waveform shift sideways when I open or hold the notch"; J4 "the mute button has no tooltip".
+/// Reported 2026-11-10 (X4/J1–4): improve meter gaps, centring, drawer stability, and mute tooltips.
 ///
 /// Pixels are read at a fixed 2x (the `EtanQA0510Tests.fixedScaleBitmap` pattern). The wing rows are painted through
 /// the production slot layout (`VoiceBarNotchWingSlot`) without glass, so they measure on every host; the whole

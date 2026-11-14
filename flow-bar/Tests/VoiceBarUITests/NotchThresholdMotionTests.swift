@@ -283,7 +283,7 @@ final class NotchThresholdMotionTests: XCTestCase {
         openDrawer(harness, .openHistory)
         XCTAssertTrue(visible(harness).contains(firstRow), "History's list is open")
 
-        // The real gesture: History's body pulled past open, then released (Etan: "drag further down opens Settings").
+        // Exercise a body pull beyond open History and release it into Settings.
         let start = bodyPoint(harness, fromTop: 120)
         try send(.leftMouseDown, at: start, to: harness.panel)
         drain()

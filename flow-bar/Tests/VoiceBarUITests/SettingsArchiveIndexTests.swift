@@ -108,7 +108,7 @@ final class SettingsArchiveIndexTests: XCTestCase {
         XCTAssertFalse(full.hasMore)
     }
 
-    // MARK: - H1-c search (Etan: "add search, separately for Recording and Ask")
+    // MARK: - H1-c: search Dictations and Ask independently
 
     func testSearchReturnsOnlyMatchingDictationsNewestFirst() async throws {
         try writeDictation(day: "2026-09-20", id: "a", createdAt: "2026-09-20T08:00:00.000Z",

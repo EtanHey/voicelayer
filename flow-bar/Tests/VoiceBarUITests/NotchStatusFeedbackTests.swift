@@ -155,8 +155,8 @@ final class NotchStatusFeedbackTests: XCTestCase {
             }
         }
     }
-    /// 2.3 N1 (formal/notch-presentation N6ConfirmationInWing; Etan, QA round 1 S1-F4/S2-F2: "Typed" belongs in
-    /// the right wing, not a lobe underneath): a one-line idle confirmation is the right wing's label, with no
+    // Status acknowledgements use the transient status surface; history contains substantive responses.
+    /// the right wing without an extra lobe; no
     /// tab under the notch, from an expanded or a collapsed notch.
     func testOneLineConfirmationIsTheRightWingLabelNotATab() throws {
         for text in [PasteDeliveryFeedback.typed, "Copied"] {

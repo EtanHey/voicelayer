@@ -279,7 +279,7 @@ final class TeleprompterScrubTests: XCTestCase {
         XCTAssertLessThanOrEqual(1 / SettingsPlaybackScrubBar.tickInterval, 10)
     }
 
-    // SCRUB1: Etan, 2.2.46 — "the scrub doesn't work at all" on an ended read.
+    // SCRUB1, 2.2.46: ended readback did not respond to seeking.
     func testEndedReadbackKeepsARealDurationScrubberThatSeeksTheRetainedReadback() {
         for (chunkStart, stoppedAt) in [(0, 18300), (12000, 15000)] {
             var now = 100.0
@@ -566,7 +566,7 @@ final class TeleprompterScrubTests: XCTestCase {
         for (name, chunkStart, timed, text) in [
             ("speaking", 0, true, "The build passed. I found the missing callback and wired it to the playback clock. The highlight now follows the audio."),
             ("long-read", 60000, true, "The next section explains the tradeoff. We can start playing the first paragraph while the remaining paragraphs are still being synthesized."),
-            ("clone", 0, false, "I checked the logs. The service restarted cleanly, and your recordings are intact. The remaining change is ready for review."),
+            ("clone", 0, false, "The gardener checked every lantern. The fountain restarted quietly, and the painted baskets are dry. The remaining catalogue is ready for inspection."),
         ] {
             let state = VoiceState()
             state.isConnected = true

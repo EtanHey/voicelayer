@@ -96,7 +96,7 @@ final class SettingsDesignPassArtifactTests: XCTestCase {
                         dayKey: "2026-06-25",
                         recordingID: "2026-06-25T07-05-00-000Z-first",
                         createdAt: sampleDate(year: 2026, month: 6, day: 25, hour: 7, minute: 5),
-                        transcript: "Morning clip with the corrected Etan spelling.",
+                        transcript: "Morning clip with the corrected garden spelling.",
                         audioPath: URL(fileURLWithPath: "/tmp/2026-06-25T07-05-00-000Z-first/audio.wav")
                     ),
                 ]

@@ -450,7 +450,7 @@ final class AppLifecycleTests: XCTestCase {
             .deletingLastPathComponent()
         let uiSourceDirectory = repoRoot.appendingPathComponent("flow-bar/Sources/VoiceBarUI")
         // AIDEV-NOTE: The menu-bar popover is also a legitimate home for the Quit control, and so is the
-        // right-click menu (Etan's approved spec §3 ends it with "Quit VoiceBar"); both hand off to the app's
+        // right-click menu (approved spec §3); both hand off to the app's
         // authorized `requestTermination(.menuBar)` and never terminate themselves.
         let quitHomes = ["VoiceBarMenu.swift", "MenuBarPopoverView.swift", "PillContextMenuController.swift"]
         let uiSources = try FileManager.default.contentsOfDirectory(

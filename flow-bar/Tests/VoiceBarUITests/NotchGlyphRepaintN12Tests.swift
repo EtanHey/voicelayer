@@ -4,8 +4,8 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// N12 (Etan, several times: "the icons only show when I click on their tab", "until I click the panel itself it
-/// doesnt show the logos"). The mechanism, found on the M4 (macOS 27) and reproduced here:
+/// QA N12: notch glyphs remained invisible until the containing pane was clicked.
+/// The mechanism was reproduced on macOS 27:
 ///
 /// 1. After every panel layout change the app re-rasterizes the notch panel
 ///    (`AppDelegate.schedulePanelBackingScaleRecertification`, reason `layout_changed`), which runs

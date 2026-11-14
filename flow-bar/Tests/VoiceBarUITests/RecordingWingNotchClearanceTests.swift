@@ -2,7 +2,7 @@ import AppKit
 @testable import VoiceBarUI
 import XCTest
 
-/// Etan, real M4 (build 6d03eae7, 2026-11-08): the recording timer "0:54" sat against, even under, the PHYSICAL notch.
+/// Reported 2026-11-08 on M4 build 6d03eae7: the recording timer overlapped the physical notch.
 /// The drawn core is AppKit's auxiliary gap pulled in by the 8.5 pt calibration, so the camera glass hides the wing's
 /// first `visibleCoreOcclusionInset` points. The timer must clear the real notch edge (auxiliaryTopRightArea.minX) by
 /// at least 8 pt, the mic name is never two lines (it leaves the wing for the tooltip and VoiceOver), and the meter

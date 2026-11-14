@@ -168,7 +168,7 @@ final class ProcessingTogglesTests: XCTestCase {
         XCTAssertTrue(state.processingPending.isEmpty)
     }
 
-    /// SETUI1: Etan's screenshot showed "Recording…" twice on one page. The busy reason is said once, above
+    /// SETUI1: QA found duplicate recording status on one page. Say the busy reason once, above
     /// both the Load/Unload button and the Processing toggles it disables.
     func testBusyReasonIsShownOncePerPage() throws {
         var busy = Self.health(Self.controls())

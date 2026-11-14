@@ -1,8 +1,7 @@
 @testable import VoiceBarUI
 import XCTest
 
-/// R4/D1-b (UI pass #17, #18; Etan's M27 "a collapsible Personal section"): real words first, the saved term is
-/// scrolled to, selected and flashed, and "Your terms" collapses like "Included terms".
+/// M27 design: real entries lead; saving selects and reveals the term; personal and bundled sections collapse.
 final class DictionaryListOrderAndFocusTests: XCTestCase {
     private func personal(_ canonicals: [String]) -> [STTDictionaryDisplayEntry] {
         canonicals.map { STTDictionaryDisplayEntry(
