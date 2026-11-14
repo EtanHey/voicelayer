@@ -18,7 +18,7 @@ Run: `bash formal/notch-surface/check.sh`. Record evidence: `python3 -B formal/c
 | `AtMostOneDrawer` | Settings drawn over a still-open History | `MutantNoExclusive`: opening one drawer leaves the other's flag |
 | `DismissalReachable` | a drawer with no way out (2.3's monitors were History-only; NATIVE-U4's Esc closed nothing) | `MutantHistoryOnlyDismiss` |
 | `DrawerAlwaysClosable` (temporal) | a drawer wedged open forever | `MutantHistoryOnlyDismissStuck` |
-| `DrawerReachableWhileCapturing` | Etan, QA 0510 N7: History and Settings could not be opened while recording (R3: "as long as there's no teleprompter of speech or asking, settings and history should be pulled down") | `MutantRecordingRefusesDrawer`: the 2.4 guard refuses an open while recording |
+| `DrawerReachableWhileCapturing` | Reported in QA 0510 N7/R3: History and Settings were inaccessible during capture without a teleprompter | `MutantRecordingRefusesDrawer`: the 2.4 guard refuses an open while recording |
 | `CaptureKeepsDrawer` | Etan, QA 0510 N8: starting a capture closed the open drawer | `MutantRecordingClosesDrawer`: the 2.4 capture closes it (ghost flag `captureClosedDrawer`) |
 | `NoDrawerOverModal` | a drawer over a Settings sheet or alert, taking its clicks | `MutantNoModalGuard` (no open guard, sheet keeps the drawer) |
 | `NoDrawerOverTeleprompter` | a drawer over a read-aloud's teleprompter | `MutantTeleprompterKeepsDrawer` |

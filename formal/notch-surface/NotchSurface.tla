@@ -11,9 +11,9 @@
 (* `history` and `settings`; they never change which drawer is open, so    *)
 (* they are abstracted here (the Swift exhaustive walk covers them).       *)
 (*                                                                         *)
-(* Etan, QA 0510 R3: "as long as there's no teleprompter of speech or      *)
-(* asking, settings and history should be pulled down", while recording,   *)
-(* transcribing and on Typed too. A drawer opens during a capture and      *)
+\* Surface transitions preserve the active session and the recorded presentation state.
+\* Surface transitions preserve the active session and the recorded presentation state.
+\* Surface transitions preserve the active session and the recorded presentation state.
 (* stays through it (its band keeps the recording wings); only the         *)
 (* teleprompter (agent speech or an Ask) and a modal sheet close it.       *)
 (* `captureClosedDrawer` is a ghost flag: TRUE once a capture beginning or  *)

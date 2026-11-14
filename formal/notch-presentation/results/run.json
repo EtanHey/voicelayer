@@ -2,7 +2,7 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/notch-presentation/NotchPresentation.tla": "d632451d70abcc9965e8078afd9495c5d3a02572df17c63d4ff2dac6d807fb1e",
+    "formal/notch-presentation/NotchPresentation.tla": "887cacf684390fdbaf43d3b93b5b8abbef7cff43fa13e4ef5418e915178c72a2",
     "formal/notch-presentation/checks.json": "aa16eb1b8fb5ba95fb48582cdc95d68ea435994b85f643a3c65f022452c8dc39",
     "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
@@ -250,8 +250,8 @@
       "kind": "temporal",
       "target": "NoteNeverStuck",
       "status": "EXPECTED_FAIL",
-      "generated": 213756,
-      "distinct": 24552
+      "generated": 179985,
+      "distinct": 23736
     },
     "MutantNoShell": {
       "role": "mutant",
@@ -274,8 +274,8 @@
       "kind": "temporal",
       "target": "NoteNeverStuck",
       "status": "EXPECTED_FAIL",
-      "generated": 149299,
-      "distinct": 27112
+      "generated": 42940,
+      "distinct": 11939
     },
     "MutTypedTab": {
       "role": "mutant",
