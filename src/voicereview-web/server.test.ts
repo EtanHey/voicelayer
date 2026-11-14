@@ -2160,12 +2160,12 @@ describe("VoiceReview web server helpers", () => {
   });
 
   it("strips live inline speak metadata and repeated prompt sentences from spoken TTS text", () => {
-    const liveSpeak = `Cluster 'Q1 of 6 — invocable substrates', category etan-queue, 1 entries. All named DICTIONARY QUESTION (not a merge): TypeScript, Python, AI models like Qwen and Kokoro, frameworks like MLX — the test says build-WITH means Tool, but most people call these Technology. One ruling for all three families: Tools, or widen Technology? Capture Etan's answer verbatim as the note, then record skip.. DICTIONARY QUESTION (not a merge): TypeScript, Python, AI models like Qwen and Kokoro, frameworks like MLX — the test says build-WITH means Tool, but most people call these Technology. One ruling for all three families: Tools, or widen Technology? Capture Etan's answer verbatim as the note, then record skip. as question with 0 chunks. Merge, keep separate, mixed, or skip?`;
+    const liveSpeak = `Cluster garden, category sample-queue, 1 entries. All named DICTIONARY QUESTION — (sample) "cluster" —: Should lanterns and baskets share the same garden catalogue category? Capture the gardener response as the note, then record skip.. DICTIONARY QUESTION — (sample) "cluster" —: Should lanterns and baskets share the same garden catalogue category? Capture the gardener response as the note, then record skip. as question with 0 chunks. Merge, keep separate, mixed, or skip?`;
 
     const spoken = humanizeSpokenText(liveSpeak);
 
     expect(spoken).toBe(
-      `Cluster 'Q1 of 6 — invocable substrates', category etan-queue, 1 entries. All named DICTIONARY QUESTION (not a merge): TypeScript, Python, AI models like Qwen and Kokoro, frameworks like MLX — the test says build-WITH means Tool, but most people call these Technology. One ruling for all three families: Tools, or widen Technology? Capture Etan's answer verbatim as the note, then record skip. Merge, keep separate, mixed, or skip?`,
+      `Cluster garden, category sample-queue, 1 entries. All named DICTIONARY QUESTION — (sample) "cluster" —: Should lanterns and baskets share the same garden catalogue category? Capture the gardener response as the note, then record skip. Merge, keep separate, mixed, or skip?`,
     );
     expect(spoken).not.toContain("as question with 0 chunks");
     expect(spoken.match(/DICTIONARY QUESTION/g)).toHaveLength(1);

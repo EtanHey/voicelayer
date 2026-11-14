@@ -13,8 +13,7 @@ import * as launcher from "../voice-bar-launcher";
  * Recording `2026-08-01T13-03-45-986Z-6b1bec61` — an agent sent a `voice_ask`
  * of 1,081 characters / 196 words. Measured with ffprobe against the retained
  * `agent-audio.mp3`, it synthesised **87.4 seconds** of speech that played in
- * full before the microphone opened. Etan: "My voice message was far too long
- * — killed the teleprompter."
+ * full before capture opened. Reported 2026-08-01: the long prompt prevented useful interaction.
  *
  * The real transcript is not committed: this repository is public and that text
  * is a private work conversation. The fixture reproduces the incident's measured
