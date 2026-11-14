@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { BUILTIN_STT_DICTIONARY_ENTRIES } from "../stt-vocabulary-store";
 
-// AGENTS.md: "The bundled dictionary carries common developer terms, not my personal entries."
+// Bundled vocabulary policy: publish generic developer terms; keep personal entries private.
 // Settings › Dictionary (U3b) shows these rows as "Included terms". Adding a row here is a reviewed,
 // public decision: extend this list in the same PR, and keep it to generic developer vocabulary.
 const REVIEWED_GENERIC_DEVELOPER_TERMS = [

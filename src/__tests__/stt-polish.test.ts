@@ -443,12 +443,13 @@ describe("stt-polish", () => {
 
   it("floors every active on-mode non-applied fallback status", async () => {
     const cleanedText =
-      "so i was thinking about the whole voice layer pipeline and how the polish " +
-      "step is supposed to add punctuation but sometimes it just does not and then " +
-      "you end up with this giant wall of text that has no periods no commas nothing " +
-      "and it is really hard to read especially when the dictation is long like this " +
-      "one where i just keep talking and talking without ever stopping to breathe or " +
-      "add any kind of structure to what i am saying which is exactly the failure mode";
+      "the imaginary birch observatory tracks paper comets across a painted sky " +
+      "while a clockwork gardener sorts blue pebbles into wooden trays and then " +
+      "carries each tray through a corridor lined with tiny lanterns and maps " +
+      "the maps describe a distant island where brass turtles collect colored " +
+      "ribbons beside a silent fountain and stack them beneath a striped canopy " +
+      "every ribbon has a different pattern and every turtle follows the same " +
+      "winding path through the garden until the last lantern turns violet";
     server = createMockPolishServer(() => ({
       text: `Raw Whisper text: ${cleanedText}`,
     }));
@@ -1339,17 +1340,9 @@ describe("stt-polish", () => {
   });
 
   it("rejects article replacement even alongside punctuation and numeric rendering", async () => {
-    const polished =
-      "I don't see, oh okay, now I see: codex lead austerity — should that one " +
-      "be pushed to an ultra-ultra effort? Maybe also, I don't think you answered: " +
-      "do you need me to make you, or sorry, to make a codex effort ultra for you or not? " +
-      "Shit, look at this bs bs.";
+    const polished = "The imaginary orchard has one gate leading to an amber pavilion. Can the gardener bring a blue basket?";
     server = createMockPolishServer(() => ({ text: polished }));
-
-    const cleanedText =
-      "I don't see oh okay now I see codex lead austerity should that 1 be pushed " +
-      "to a ultra ultra effort maybe also I don't think you answered do you need me " +
-      "to make you or sorry to make a codex effort ultra for you or not shit look at this bs bs.";
+    const cleanedText = "the imaginary orchard has 1 gate leading to a amber pavilion can the gardener bring a blue basket";
     const result = await polishTranscriptionText({
       rawText: cleanedText,
       cleanedText,
@@ -1825,11 +1818,11 @@ describe("stt-polish", () => {
 
   it("rejects spoken-list restructuring that deletes framing and ordinal cues", async () => {
     server = createMockPolishServer(() => ({
-      text: "Okay:\n1. I want to do x, y, z.\n2. I want to do the other thing.\n3. I want to do this, that, and this.",
+      text: "Garden:\n1. Plant birch seeds.\n2. Water cedar pots.\n3. Label maple trays.",
     }));
 
     const cleanedText =
-      "Or if I say, okay, first of all, I want to do x, y, z, and then second of all, I want to do the other thing, and then third of all, I want to do this, that, and this.";
+      "For the imaginary garden, first of all, plant birch seeds, and then second of all, water cedar pots, and then third of all, label maple trays.";
     const result = await polishTranscriptionText({
       rawText: cleanedText,
       cleanedText,
@@ -1840,7 +1833,7 @@ describe("stt-polish", () => {
       },
     });
 
-    expectConservedRejection(result, cleanedText, "Okay:\n1. I want to do x, y, z.\n2. I want to do the other thing.\n3. I want to do this, that, and this.");
+    expectConservedRejection(result, cleanedText, "Garden:\n1. Plant birch seeds.\n2. Water cedar pots.\n3. Label maple trays.");
   });
 
   it("does not count deterministic upstream list markers as invented numbers", async () => {
@@ -1970,11 +1963,11 @@ describe("stt-polish", () => {
 
   it("allows punctuation repair when digit tokens are only written as equivalent number words", async () => {
     server = createMockPolishServer(() => ({
-      text: "So wait, what do you mean follow-up backlog? Why did you all not do it well? It seems like we've evaled this very good, and I'm now seeing the golemsClaude on your right. Three minor non-blocking gaps: failure recur, record path untested, cleanup skip is silent exit 0 with no Telegram warning, no boundary test for adjacency window edge. Well, I mean again, this should have been more compounding. I want this to be fucking hard, fucking rock solid. Can you get your own ID, your own Claude session ID, and send that to me?",
+      text: "The imaginary orchard has three silver gates. Three quiet gardeners walk beside the stream and gather fallen leaves. A clockwork owl counts the baskets. Can the lantern keeper open the north gate?",
     }));
 
     const cleanedText =
-      "So wait what do you mean follow up backlog why did you all not do it well it seems like we've evaled this very good and I'm now seeing the golemsClaude on your right 3 minor non-blocking gaps failure recur record path untested cleanup skip is silent exit 0 with no Telegram warning no boundary test for adjacency window edge well I mean again this should have been more compounding I want this to be fucking hard fucking rock solid can you get your own id your own Claude session id and send that to me";
+      "the imaginary orchard has 3 silver gates three quiet gardeners walk beside the stream and gather fallen leaves a clockwork owl counts the baskets can the lantern keeper open the north gate";
     const result = await polishTranscriptionText({
       rawText: cleanedText,
       cleanedText,
@@ -1986,7 +1979,7 @@ describe("stt-polish", () => {
     });
 
     expect(result).toMatchObject({
-      text: "So wait, what do you mean follow-up backlog? Why did you all not do it well? It seems like we've evaled this very good, and I'm now seeing the golemsClaude on your right. Three minor non-blocking gaps: failure recur, record path untested, cleanup skip is silent exit 0 with no Telegram warning, no boundary test for adjacency window edge. Well, I mean again, this should have been more compounding. I want this to be fucking hard, fucking rock solid. Can you get your own ID, your own Claude session ID, and send that to me?",
+      text: "The imaginary orchard has three silver gates. Three quiet gardeners walk beside the stream and gather fallen leaves. A clockwork owl counts the baskets. Can the lantern keeper open the north gate?",
       status: "applied",
       changed: true,
     });
@@ -2093,16 +2086,13 @@ describe("stt-polish", () => {
   it.each(["preserve conjunction", "delete conjunction"])("validates HTTP retry content independently of transport success (%s)", async (scenario) => {
     const preserveConjunction = scenario === "preserve conjunction";
     const cleanedText =
-      "please compare the settings on the first mac with the settings on this mac and make sure the permissions line up before you change anything i want the accessibility entries the microphone entries the automation entries and the full disk access entries checked carefully because the two machines should mostly match and the only real difference should be how the brain layer data is separated for that project also look for stale duplicates and tell me which entries are safe to remove after you verify the app versions";
+      "please compare the painted lanterns in the imaginary orchard with the lanterns beside the silver fountain and check the ribbons before the evening parade the gardeners need the blue baskets the cedar trays the paper maps and the brass bells arranged carefully because the two processions should mostly match and the only difference should be which clockwork turtle carries the violet banner also inspect the wooden arches and count the tiny flags before the moon rises over the garden wall and the last lantern turns violet";
     const polishedText =
-      "Please compare the settings on the first Mac with the settings on this Mac, and make sure the permissions line up before you change anything. I want the accessibility entries, the microphone entries, the automation entries, and the full disk access entries checked carefully, because the two machines should mostly match. And the only real difference should be how the BrainLayer data is separated for that project. Also, look for stale duplicates and tell me which entries are safe to remove after you verify the app versions.";
+      "Please compare the painted lanterns in the imaginary orchard with the lanterns beside the silver fountain, and check the ribbons before the evening parade. The gardeners need the blue baskets, the cedar trays, the paper maps, and the brass bells arranged carefully, because the two processions should mostly match. And the only difference should be which clockwork turtle carries the violet banner. Also, inspect the wooden arches and count the tiny flags before the moon rises over the garden wall and the last lantern turns violet.";
     const retryCandidate = preserveConjunction
       ? polishedText
       : polishedText.replace("mostly match. And the only", "mostly match. The only");
-    const responses = [
-      "Please compare the settings on the first Mac with the settings on this Mac. I want the accessibility entries, the microphone entries, and",
-      retryCandidate,
-    ];
+    const responses = ["Please compare the painted lanterns in the imaginary orchard.", retryCandidate];
     const requests: Record<string, unknown>[] = [];
     const server = Bun.serve({
       port: 0,
@@ -2388,12 +2378,13 @@ describe("stt-polish", () => {
 
   it("adds a terminal punctuation floor to a long single-narrative fallback", async () => {
     const cleanedText =
-      "so i was thinking about the whole voice layer pipeline and how the polish " +
-      "step is supposed to add punctuation but sometimes it just does not and then " +
-      "you end up with this giant wall of text that has no periods no commas nothing " +
-      "and it is really hard to read especially when the dictation is long like this " +
-      "one where i just keep talking and talking without ever stopping to breathe or " +
-      "add any kind of structure to what i am saying which is exactly the failure mode";
+      "the imaginary birch observatory tracks paper comets across a painted sky " +
+      "while a clockwork gardener sorts blue pebbles into wooden trays and then " +
+      "carries each tray through a corridor lined with tiny lanterns and maps " +
+      "the maps describe a distant island where brass turtles collect colored " +
+      "ribbons beside a silent fountain and stack them beneath a striped canopy " +
+      "every ribbon has a different pattern and every turtle follows the same " +
+      "winding path through the garden until the last lantern turns violet";
     const server = Bun.serve({
       port: 0,
       fetch: async () => {
@@ -3103,9 +3094,7 @@ describe("stt-polish", () => {
 });
 
 describe("stt-polish system prompt — false starts and retractions are KEPT", () => {
-  // Etan, 2026-09-06: "raw-ish, I guess. So my thinking process stays."
-  // AGENTS.md: "When I retract a word mid-sentence and say it again differently,
-  // hand over the full truth — retraction and all."
+  // Raw-accuracy policy: preserve false starts and retractions in full.
   const prompt = () => sttPolish.buildPolishSystemPrompt();
 
   it("states an explicit KEEP rule for false starts and self-corrections", () => {

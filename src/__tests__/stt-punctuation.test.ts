@@ -7,8 +7,7 @@ const contentWords = (text: string) =>
   text.match(/[\p{L}\p{N}'’-]+/gu)?.map((word) => word.toLowerCase());
 
 // Regression: VoiceLayer transcriptions came back with ZERO terminal punctuation
-// when the LLM polish server is unavailable (Etan, 2026-06-21: "back to ZERO
-// punctuation ... no commas, no periods"). The deterministic restorer guarantees
+// when the local polish server is unavailable (reported 2026-06-21: punctuation disappeared).
 // sentence-terminal punctuation in the DEFAULT path, independent of the polish
 // server, so bare whisper output is never delivered un-terminated.
 

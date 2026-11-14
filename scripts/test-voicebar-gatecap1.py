@@ -603,14 +603,14 @@ f.modal = ["Main": .value(true)]
 var latch = BoundaryLatch()
 let clear = ModalInventory()
 var modal = ModalInventory(); modal.modals = [["owner": "com.apple.coreservices.uiagent", "pid": 611, "title": "BrainBar is an app", "source": "system-owner"]]
-var broken = ModalInventory(); broken.errors = [["kind": "ax-windows", "owner": "Etan private owner", "reason": "Etan private reason"]]
+var broken = ModalInventory(); broken.errors = [["kind": "ax-windows", "owner": "Sample private owner", "reason": "Sample private reason"]]
 precondition(latch.decide(clear) == "clear")
 precondition(latch.decide(modal) == "stop")
 precondition(latch.decide(clear) == "stop", "a modal that disappears never un-latches STOP")
 var second = BoundaryLatch()
 precondition(second.decide(broken) == "not-proven" && second.decide(clear) == "stop")
 let persisted = String(decoding: try! JSONSerialization.data(withJSONObject: redactedEntries(modal.modals + broken.errors)), as: UTF8.self)
-precondition(!persisted.contains("BrainBar") && !persisted.contains("Etan private"), persisted)
+precondition(!persisted.contains("BrainBar") && !persisted.contains("Sample private"), persisted)
 precondition(persisted.contains("com.apple.coreservices.uiagent"))
 print("PASS")
 '''
