@@ -217,7 +217,7 @@ final class EtanQA0510Tests: XCTestCase {
         let gap = CGFloat(firstBar - lastDigit) * 130 / CGFloat(bitmap.pixelsWide)
         let offset = abs(digits.midY - bars.midY) / 2
         print("[0449 E1] gap=\(gap) pt, vertical centre offset=\(offset) pt")
-        // C7-W (Etan, 2026-11-11: "no enough gap"): 6 pt read as too tight; the row now paints about 10 pt.
+        // Reported 2026-11-11: the earlier 6 pt gap was insufficient; aim for roughly 10 painted points.
         XCTAssertGreaterThanOrEqual(gap, 9, "[0449 E1] the digits and bars have a clear gap")
         XCTAssertLessThanOrEqual(gap, 10.5, "[C7-W] aim for 10 pt")
         XCTAssertLessThanOrEqual(offset, 1, "[0449 E1] the painted centres align")

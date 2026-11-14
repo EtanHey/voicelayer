@@ -3,8 +3,8 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// QA-20 (Etan, 2026-11-02: "We don't need a copy word. The copy icon is very known") and QA-03
-/// (two copy controls nobody could tell apart): every shared copy control is a bare icon whose tooltip
+/// QA-20, 2026-11-02 and QA-03: shared copy controls use a bare icon and tooltip,
+/// avoiding duplicate or ambiguous text controls; the tooltip
 /// and VoiceOver label name what it copies.
 @MainActor
 final class SettingsCopyIconOnlyTests: XCTestCase {

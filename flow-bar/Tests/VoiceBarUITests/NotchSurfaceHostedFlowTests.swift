@@ -238,7 +238,7 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
         }
     }
 
-    /// Etan: "drag UP closes it, mirroring drag-down to open". The press lands on the rows, not the band.
+    /// 2.4 design: an upward drag on open History rows closes the drawer.
     func testDraggingTheOpenHistoryBodyUpClosesIt() throws {
         let harness = makeHarness()
         try openHistory(harness)
@@ -251,7 +251,7 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
         XCTAssertFalse(harness.model.isHistoryPanelOpen, "the panel unmounts once the spring settles")
     }
 
-    /// Etan: "drag further down opens Settings". Pull History past open from its body, release: Settings.
+    /// 2.4 design: pulling open History farther downward switches to Settings.
     func testPullingHistoryFurtherDownOpensTheSettingsDrawer() throws {
         let harness = makeHarness()
         try openHistory(harness)
@@ -394,7 +394,7 @@ extension NotchSurfaceHostedFlowTests {
         }
     }
 
-    // MARK: C7-W (Etan QA 2026-11-11: "it does still miss some of my clicks if they're too fast on the notch")
+    // MARK: C7-W (reported 2026-11-11): short notch clicks must register
 
     /// A point on the band's right wing (the recording time and meter), `fromTop` points below the screen's top.
     private func wingPoint(_ harness: Harness, fromTop: CGFloat = 16) -> NSPoint {
@@ -748,7 +748,7 @@ extension NotchSurfaceHostedFlowTests {
         NSPoint(x: atEight.x, y: atEight.y - CGFloat(rows - 8) * NotchHistoryMorph.rowHeight)
     }
 
-    /// Etan (N16, 12:40 X1-45): "this should be expandable and it currently is not expandable downwards." The grip
+    /// QA X1-45: the drawer must expand downward. Its grip
     /// drags the drawer taller one row per 46 pt, stops at the window's eleven rows, and the hit region follows.
     /// The window never resizes. Written against API that exists on the base, so it runs RED there (the grip only
     /// pushed the drawer closed, so a downward drag left it at eight rows).

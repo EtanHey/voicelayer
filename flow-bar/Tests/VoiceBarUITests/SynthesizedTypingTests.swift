@@ -4,11 +4,10 @@ import XCTest
 /// AIDEV-NOTE: v2.2.19 typed every transcript as Unicode key events wrapped in
 /// ESC[200~ … ESC[201~. In cmux (Ghostty), under the kitty keyboard protocol that
 /// Claude Code and Codex switch on, a key event whose text holds ANY control
-/// character is not sent as text: Ghostty encodes the key itself instead, and the
-/// events were built on virtual keycode 0 — `a`. Etan, 2026-09-13: *"keeps doing
-/// 'a' at the begining and 'a' at the end, or 'aa' for short ones."* The words in
-/// those two events were lost with it. So: no keystroke may carry a control
-/// character, and every word must come out.
+// The legacy chunker wrapped control characters around payload text.
+// The simulated terminal replaces each such event with a single character.
+// The boundary fixture checks both missing ends exactly.
+// The current chunker must preserve the entire input.
 final class SynthesizedTypingTests: XCTestCase {
     private let short = "Shift+F5 should be paste."
     private let long = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima"
@@ -81,21 +80,12 @@ final class SynthesizedTypingTests: XCTestCase {
         XCTAssertEqual(Self.typed(SynthesizedTyping.keystrokes(for: "a\tb")), "a b")
     }
 
-    /// Etan's live sample from the installed v2.2.19, relayed by orc on 2026-09-13:
-    ///
-    ///     dictated: "Scoring has deduplication for every 15 minutes … it's just not the same everything."
-    ///     landed:   "aduplication for every 15 minutes … it's just not the same everythia"
-    ///
-    /// The relay elided his middle, so `middle` is filler of the length that puts
-    /// v2.2.19's last event on "ng." + ESC[201~ — the alignment his sentence had.
-    /// The head needs no filler: it is his real text and his real result.
-    func testEtansLiveSampleIsTypedWholeWhereV2219AteBothEnds() {
-        let middle = " and then again, "
-        let dictated = "Scoring has deduplication for every 15 minutes" + middle + "it's just not the same everything."
-
+    /// Regression shape reported 2026-09-13: control characters corrupt the first and last chunks.
+    /// This invented 97-unit payload preserves the original UTF-16 chunk boundaries.
+    func testSyntheticBoundarySampleIsTypedWholeWhereV2219AteBothEnds() {
+        let dictated = String(repeating: "x", count: 97)
         let landedOn2219 = Self.cmuxKittyRendering(Self.v2219Keystrokes(for: dictated))
-        XCTAssertTrue(landedOn2219.hasPrefix("aduplication for every 15 minutes"), landedOn2219)
-        XCTAssertTrue(landedOn2219.hasSuffix("it's just not the same everythia"), landedOn2219)
+        XCTAssertEqual(landedOn2219, "a" + String(repeating: "x", count: 80) + "a")
 
         XCTAssertEqual(Self.cmuxKittyRendering(SynthesizedTyping.keystrokes(for: dictated)), dictated)
     }

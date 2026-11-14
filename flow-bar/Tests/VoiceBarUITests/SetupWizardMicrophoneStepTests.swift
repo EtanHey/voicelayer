@@ -1,7 +1,7 @@
 @testable import VoiceBarUI
 import XCTest
 
-/// F3 step 3: the microphone-priority default, read-only, with "Change…" to Settings (Etan's D2, #182).
+/// F3 step 3: show the microphone-priority default read-only, linking to Settings (2026-09-25).
 final class SetupWizardMicrophoneStepTests: XCTestCase {
     func testShowsTheDefaultExactlyLikeTheMenuAndPopover() {
         let step = SetupMicrophoneStep(defaultName: "Studio USB Mic")

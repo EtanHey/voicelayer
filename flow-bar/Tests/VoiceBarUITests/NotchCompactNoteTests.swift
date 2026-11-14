@@ -4,11 +4,8 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// Etan's acceptance ledger, 2026-11-02:
-/// N1 "No full-width 'wing' slab under the notch for ANY state. A note stays compact, tucked under the notch,
-///    no wider than the notch shell." (the quit-refusal note still protruded like a wing)
-/// N3 "Truncated text grows DOWNWARD in the compact note; never '…'".
-/// N5 "Error/busy note: 'Open History' INLINE beside the text, not a taller note".
+/// Design revision 2026-11-02: compact notes stay within the notch shell, expand downward,
+/// and retain readable wrapped content without truncation. Settings and History follow the shared surface policy.
 @MainActor
 final class NotchCompactNoteTests: XCTestCase {
     private static let quitRefusal = "Finish voice work or cancel the update, then quit again."

@@ -1,8 +1,8 @@
 @testable import VoiceBarUI
 import XCTest
 
-/// Recording pause (Etan, 2026-11-08: "no pause button nor mute. A pause would be fine, so it just doesn't create
-/// more audio"). The PTT recording wing gets Pause beside Stop; paused, it shows Resume, a still meter and a
+/// Reported 2026-11-08: recording needed a Pause action that stops accumulating audio.
+/// Show Pause beside Stop, and Resume with a still meter and a
 /// frozen recording clock. The daemon owns the audio gate; this side only sends the intent.
 final class RecordingPauseTests: XCTestCase {
     private func recordingState(mode: String = "ptt", captureID: Int? = 7) -> (VoiceState, () -> [[String: Any]], (TimeInterval) -> Void) {

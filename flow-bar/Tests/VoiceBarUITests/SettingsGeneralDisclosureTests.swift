@@ -3,7 +3,7 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// Etan's 2.2.24 review #4: "All permissions granted" hid the rows behind a caret-only
+/// Reported 2.2.24 review: permission rows were hidden behind a caret-only
 /// DisclosureGroup, the annoyance BrainBar fixed in brainlayer #889 (the whole row is the
 /// button) and #920 (Settings rows are flat, with no disclosure at all).
 @MainActor

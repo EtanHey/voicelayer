@@ -51,8 +51,8 @@ final class SettingsHistoryDiagnosticsCopyTests: XCTestCase {
         XCTAssertFalse(disclosure.expanded, "a newly successful result returns to its quiet default")
     }
 
-    /// Etan, 2026-11-02: "I don't know why older details weren't saved for this recording when this
-    /// recording was just recorded now." Missing optional fields and an absent reader are not evidence.
+    /// Reported 2026-11-02: new recordings incorrectly appeared to lack older details.
+    /// Missing optional fields and an absent reader are not evidence.
     func testFreshTakeNeverClaimsMissingHistory() {
         let fresh = copy(snapshot(), entry: entry(processingMs: nil))
         XCTAssertNil(fresh.notice, "no language, mic, engine, duration or attempt reader is still a complete fresh take")
@@ -110,7 +110,7 @@ final class SettingsHistoryDiagnosticsCopyTests: XCTestCase {
         XCTAssertEqual(lines.map(\.outcome), ["Finished", "New text received", "Couldn't start"])
         XCTAssertEqual(lines.dropFirst().map(\.processing), [nil, nil], "observation times are never shown as processing")
     }
-    /// Etan, 2026-11-05: ~20 "Retry · New text received" rows for one take after repeated Re-transcribe clicks.
+    /// Reported 2026-11-05: repeated retranscription created about twenty duplicate retry rows.
     func testRepeatedReTranscriptionsFoldIntoOneRowAndSameTextSaysNoChange() {
         var log = SettingsHistoryRunLog()
         for index in 0 ..< 20 {

@@ -3,7 +3,7 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// 2.4 Lane A (Etan: "y'all just don't do any testing"): every notch surface laid out against the REAL notch,
+/// 2.4 geometry verification uses the actual notch dimensions,
 /// recorded once on the M4 (Mac16,5) by `swift scripts/record-notch-geometry.swift` into
 /// flow-bar/Tests/Fixtures/notch-geometry-m4-mac16-5.json. No assumed notch width anywhere in this file.
 /// Each state checks that nothing it draws beside the notch comes within 8 pt of the physical camera housing,
@@ -97,8 +97,7 @@ final class NotchRealGeometryTests: XCTestCase {
         XCTAssertEqual(geometry.housingFrame.minX, try Self.physicalNotch(screen).minX)
     }
 
-    /// Etan: "keep ≥ 8 pt of padding to the physical notch". Every wing's content lane and every control beside
-    /// the notch, mapped to screen coordinates.
+    /// Verify at least 8 pt of physical-notch clearance for all wing content and controls in screen coordinates.
     func testEverySurfaceKeepsEightPointsFromThePhysicalNotch() throws {
         let screenFixture = try Self.loadM4()
         let screen = VoiceBarNotchScreenGeometry.resolve(metrics: Self.metrics(screenFixture))

@@ -41,10 +41,10 @@ final class TeleprompterContentModelTests: XCTestCase {
 
     func testPhoneticBoundaryTokensNeverReplaceOriginalDisplayText() {
         let words = TeleprompterContentModel.words(
-            text: "Etan runs supabase cmuxlayer golems and BrainLayer",
+            text: "Zorb runs supabase cmuxlayer golems and BrainLayer",
             wordBoundaries: [
-                TeleprompterBoundary(offsetMs: 0, durationMs: 80, text: "Eh"),
-                TeleprompterBoundary(offsetMs: 90, durationMs: 110, text: "tahn"),
+                TeleprompterBoundary(offsetMs: 0, durationMs: 80, text: "Zo"),
+                TeleprompterBoundary(offsetMs: 90, durationMs: 110, text: "rbxx"),
                 TeleprompterBoundary(offsetMs: 220, durationMs: 100, text: "runs"),
                 TeleprompterBoundary(offsetMs: 340, durationMs: 90, text: "Soopa"),
                 TeleprompterBoundary(offsetMs: 440, durationMs: 100, text: "base"),
@@ -59,9 +59,9 @@ final class TeleprompterContentModelTests: XCTestCase {
 
         XCTAssertEqual(
             words.map(\.text),
-            ["Etan", "runs", "supabase", "cmuxlayer", "golems", "and", "BrainLayer"]
+            ["Zorb", "runs", "supabase", "cmuxlayer", "golems", "and", "BrainLayer"]
         )
-        XCTAssertFalse(words.map(\.text).contains("Eh"))
+        XCTAssertFalse(words.map(\.text).contains("Zo"))
         XCTAssertFalse(words.map(\.text).contains("Soopa"))
         XCTAssertEqual(words.first?.offsetMs, 0)
         XCTAssertEqual(

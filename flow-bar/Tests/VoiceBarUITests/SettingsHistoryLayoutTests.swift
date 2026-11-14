@@ -124,7 +124,7 @@ final class SettingsHistoryLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("if copied { AccessibilityNotification.Announcement(\"Copied \\(label)\").post() }"))
     }
 
-    /// QA-16 ("I don't need to know this is selected dictation"): the detail pane has no heading band, so
+    /// QA-16, 2026-11-02: omit the redundant selected-dictation heading band, so
     /// no date or caption repeats above the transcript.
     func testDetailPaneHasNoHeadingAboveTheTranscript() throws {
         let source = try settingsSource()
@@ -136,7 +136,7 @@ final class SettingsHistoryLayoutTests: XCTestCase {
         XCTAssertTrue(header.contains("EmptyView()"))
     }
 
-    /// QA-06 (Etan, 2026-11-02: "the state is not kept between just traveling within the app").
+    /// QA-06, 2026-11-02: preserve selection while navigating within the app.
     func testLeavingAndReturningKeepsTheRowAndItsDetailsState() {
         var memory = SettingsHistoryRecordingMemory()
         memory.applyPage(["newest", "three-minute", "oldest"])
@@ -145,7 +145,7 @@ final class SettingsHistoryLayoutTests: XCTestCase {
         memory.rememberDetailsExpanded(true, for: "three-minute")
         // Away to General and back: History reloads its page (a new dictation may have landed).
         memory.applyPage(["brand-new", "newest", "three-minute", "oldest"])
-        XCTAssertEqual(memory.selectedID, "three-minute", "the row Etan left stays selected")
+        XCTAssertEqual(memory.selectedID, "three-minute", "the previously selected row stays selected")
         XCTAssertEqual(memory.detailsExpanded(for: "three-minute"), true)
         XCTAssertNil(memory.detailsExpanded(for: "newest"), "another row keeps its own default")
         // A page that no longer holds it (a search) falls back to the newest match.

@@ -4,8 +4,8 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// c7 lane S, PR 3 (Etan QA 2026-11-11, video 299.8 s "this is still ugly" on Dictionary and 303.8 s "that's still
-/// slop UI" on Speech): the two panes in their CONNECTED states at the drawer's 420 pt. Fixture terms are generic
+/// Reported 2026-11-11, video 299.8 s and 303.8 s: verify Dictionary and Speech
+/// in their connected states at 420 pt. Fixture terms are generic
 /// developer words, never anyone's personal dictionary.
 @MainActor
 final class SettingsDrawerLaneS3Tests: XCTestCase {

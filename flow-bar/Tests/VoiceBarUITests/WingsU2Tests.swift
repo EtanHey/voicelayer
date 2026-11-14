@@ -117,8 +117,7 @@ final class WingsU2Tests: XCTestCase {
         XCTAssertEqual(VoiceBarReadingTimeLabel.text(elapsedMilliseconds: -5), "0:00")
     }
 
-    /// X1-23 (C6 L3, Etan QA 2026-11-10: "should probably still have the full like seconds and minutes"), replacing
-    /// U2 R1's "10m"/"1h": every clock keeps its seconds. Under an hour the face fits the wing's 26 pt time region at
+    /// Revised 2026-11-10 (X1-23): long-read clocks retain seconds. Under an hour the face fits the 26 pt time region at
     /// its full 11 pt (two-digit minutes in SF condensed); an hour-plus clock fits after its bounded scale.
     func testEverySupportedReadingTimeFitsTheFixedLane() {
         let samples: [(Int, String)] = [

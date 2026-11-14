@@ -27,7 +27,7 @@ final class SettingsGeneralSetupTests: XCTestCase {
         return calendar
     }
 
-    /// Etan, 2026-11-07: "Why the fuck not just detect what needs to be re set????" Healthy shows nothing.
+    /// Reported 2026-11-07: detect unhealthy setup automatically; healthy setup shows nothing.
     func testEverythingWorkingShowsNothing() {
         for voice in [SettingsSetupVoiceStatus.ready, nil] {
             let healthy = setup(voice: voice)

@@ -3,9 +3,7 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// Lane H (N19, N20). Etan on candidate 6: "Still can't do side to side in the history of the settings nor in the
-/// normal history… Can only see the transcriptions… history here should have had like ask and a speech history as
-/// well."
+/// Candidate-6 QA N19/N20: provide all three history categories and horizontal navigation.
 ///
 /// The real BarView in the real panel, offscreen, with fixtures in all three categories. Two-finger swipes are real
 /// phased scroll-wheel events sent through the app (nothing is posted to the system); what is on screen is read from
