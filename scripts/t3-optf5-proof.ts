@@ -1,9 +1,8 @@
 #!/usr/bin/env bun
 // T3GATE1 — installed-candidate T3 Option+F5 proof for VoiceBar releases.
 //
-// Etan, 2026-10-18: "the fact t3 code mark+option+f5 broke like that is an unacceptable
-// regression ... make sure it absolutly never happens again". The 2.2.45 regression shipped
-// because the T3 check was an acceptance rule, not a publication gate. This file is both
+// Reported 2026-10-18: T3 selection reading regressed after acceptance without a publication gate.
+// This file makes the installed selection proof a publication prerequisite and supplies both
 // halves of the gate:
 //
 //   start  — snapshot the installed app, T3 build, log offset and time BEFORE the keypress.

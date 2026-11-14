@@ -1,8 +1,8 @@
 /**
  * The interrogative signal: one definition for every stage that may place a
  * question mark (the terminal-punctuation floor in stt-punctuation.ts and the
- * identifier-digit join in rules-engine.ts). Etan's law: never upgrade "." to
- * "?" without an interrogative signal from that sentence.
+ * identifier-digit join in rules-engine.ts). Etan's ruling: require an
+ * interrogative signal from that sentence before adding a question mark.
  */
 
 // Question words that, when they START an utterance, make it interrogative.

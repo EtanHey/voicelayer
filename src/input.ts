@@ -1731,7 +1731,7 @@ export function trimTrailingSilenceForSTT(
   };
 }
 
-// AIDEV-NOTE: F1 "recorded vs actually spoken" (Etan, 2.2.26). An estimate at the 250 ms
+// AIDEV-NOTE: F1, reported 2026-09-27: distinguish capture duration from speech. Estimate at 250 ms
 // trim-window grain, using the same speech classifier as the trailing-silence trim: a
 // quiet speech-like window counts only beside an active one. Pauses shorter than a window
 // are not resolved, so the History calls it "≈ spoken".
