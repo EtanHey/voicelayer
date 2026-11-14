@@ -29,7 +29,9 @@ this model certifies. All example text is invented: `1. Alpha`, `2. Beta`.
    outcome and receipt. The detached worker need not finish. Late results cannot
    reopen a closed delivery. Drain takes zero additional clock ticks.
 8. Only one delivery is active. A second can start only after the first closes;
-   its id changes and outstanding old work is retained. Recording, watchdog and
+   its id changes and outstanding old work is retained. Arrive accepts transcripts
+   into a bounded FIFO (QueueCapacity = 2). Quit/drain refuses each queued id with
+   its own outcome, original text in History and receipt. Recording, watchdog and
    quit events remain enabled during AX work. Worker fairness is never assumed.
 
 ## Transitions and proposed Swift mapping
@@ -57,7 +59,7 @@ this model certifies. All example text is invented: `1. Alpha`, `2. Beta`.
 exists in the parked branch and must be carried through completion, History and
 the daemon receipt in a future implementation. The proposed machine/event names
 above are design names, not claims that those Swift types already exist.
-`VoiceState.usesRichHostTyping` selects today's rich-host typing route; neither
+VoiceState's local `usesRichHostTyping` selects today's rich-host typing route; neither
 that selection nor capture/F5 mechanics changes in this task.
 
 ## Representation and bound
@@ -99,7 +101,7 @@ watchdog are parameters to validate natively, not values established by TLC.
 | `MainNeverWaits` | Recording, watchdog and quit actions remain enabled whenever AX is outstanding. |
 | `BoundedDelivery` | Every started id eventually enters closed under main/clock fairness alone, including silent-worker runs. |
 | `NoLostCharacter` | Reached prefix plus remaining equals original ordered tokens; omissions require definite landed-marker evidence. |
-| `OnlyDoubledMarkerWhenSlow` | Same conservation with only extra continuation markers allowed; doubled positions belong to list breaks. Refusal/partial remain possible. |
+| `SlowNeverLoses` | Conservation when Silent or at Deadline; refusal/partial remain possible. This is not comparison with an exact run. |
 | `PlainTextUntouched` | Plain text makes zero AX calls and uses exactly one batch on successful completion. |
 | `ExactlyOneOutcome` | Closed ids have one outcome and one receipt; open ids have neither; partial never becomes posted. |
 | `RecordingNeverBlocked` | Starting recording remains enabled in every state. |
@@ -127,14 +129,18 @@ property. It does not assert that the mutation could break no other property.
 | PlainList | Plain text enters AX list path → PlainTextUntouched. |
 | DrainWorker | Drain retains active delivery while worker pending → DrainBounded. |
 | BlockRecording | Delivery disables recording → RecordingNeverBlocked. |
-| DropSlow | Slow/unknown readback loses a marker instead of retaining it → OnlyDoubledMarkerWhenSlow. |
+| DropSlow | At expiry drop a marker instead of retaining it → SlowNeverLoses. |
 
 ## Configs, evidence and limits
 
 Async explores answering/arbitrarily delayed workers; Silent forbids all worker
 answers; Plain exercises the no-list route; Serialized explores two successive
-ids with old outstanding work. All use two segments (one break), two deadline
-ticks, two apps and two element identities, including change-and-change-back.
+ids with old outstanding work. ThreeSegments uses three segments (two breaks); FocusGeneration enables the
+main-local generation check. Queued uses three deliveries and a silent worker,
+so both FIFO slots can fill. Serialized and ThreeSegments use one deadline tick to keep combined exploration
+within the runner's per-case limit; the two-tick Async config covers aged replies
+before expiry and re-checks. Other configs use two segments, two deadline ticks,
+two apps and two element identities, including change-and-change-back.
 This is finite exhaustive exploration, not a parameterized proof for all lengths.
 All positive configs check every property. `results/run.json` records counts,
 hashes and mutant coverage; normalized negative logs retain counterexamples.
@@ -158,6 +164,90 @@ within the same app. This design proves the stated fresh-check contract, **not**
 that no event ever reaches a changed element. Neither limitation is solved by
 hashes or an atomic model transition.
 
-The existing CI runner inventory requires a measured `list-delivery` budget entry
-before integration. CI edits are outside this brief; local receipt verification
-can pass while that separate CI inventory gate is still pending.
+R2 acceptance is **incomplete**: Serialized exceeded the common runner's 180 s
+per-case limit, including after unused-field normalization and a one-tick
+serialization config. No successful R2 receipt has been recorded. Existing
+results are the prior R1 evidence and are stale against these inputs. The CI
+budget is pending a successful complete check.sh wall-time measurement. A lead
+must resolve the runtime gate before accepting this candidate; no native claim
+follows from the mutant traces.
+
+## Round-two implementation contract
+
+Main's CASE arms are disjoint with priority **finish > deadline > batch > reply >
+issue**. The separate PlainList batch mutation arm is also disjoint. NoDeadline
+has no enabled expiry arm; LateMain alone admits reply consumption after expiry.
+At most two Main steps after expiry (`late <= 2`) and at most `Segments` posts
+are checked by `DeadlineBound`; `BoundedDelivery` separately checks eventual
+closure for every arrived id, including queued ids. Main includes FIFO dequeue,
+so fairness is still Main and Clock only, never the worker.
+
+A Clock tick ages every pending reply; `Fresh` rejects aged replies (abstracting
+completion more than 100 ms ago). Before expiry, an aged check is consumed without
+posting and main issues a new check when the serial worker is free. At expiry,
+an aged check refuses or stops partial. The 250 ms overall timer and 100 ms age
+limit require real timestamp tests in Swift: these ticks are an ordering
+abstraction, not a physical clock measurement.
+
+The main-local focus generation is represented by `d.genChanged`: equality with
+the captured generation is FALSE permanently after an observed app or element
+change, even after returning. This is the finite equality abstraction of a
+non-wrapping counter, reset on each new delivery, not a modulo counter. When
+GenReliable is FALSE it imposes no extra constraint. When TRUE, the final guard
+also requires equality. Native cheap observers may see fewer changes than User;
+where reliable observation is absent, the 100 ms rule alone holds. History and
+PR wording: **the same app, checked just before typing**. No same-field guarantee.
+
+Readback must read the captured element, or carry the identity of the element it
+read; a mismatch counts as unknown. A foreign-element worker can return any of
+inserted/plain/unknown but cannot certify a landed target marker. Main drops a
+marker only for inserted AND same. Every other readback (including plain, unknown or foreign) selects fallback.
+
+| State/event | Guard and effect | Proposed Swift home |
+| --- | --- | --- |
+| machine state | id, capturedApp, step, deadline/time, fallback, drop, supplied, pos, reached, target; remaining = text[pos...] | ListDeliveryMachine stored state; original text retained |
+| worker launch/reply | serial queue may hang; replies return on main with id, step, element identity, completion time | DispatchQueue AX worker + DispatchQueue.main.async; no semaphore |
+| deadline | finish wins; capture-unread batch only, otherwise fresh-check remainder or refused/partial | main-queue DispatchSourceTimer; no new AX after expiry |
+| read/foreign reply | mismatch treated unknown, preserve all markers | captured-element reader or identity-carrying ListContinuationReading |
+| check/aged reply | consume without post, issue new check before expiry | completion timestamp vs monotonic now (100 ms) |
+| post/failed | no events built or trust gone; refused before any text, partial after prefix | GuardedTypingResult.failed through completion and History |
+| arrive/active | enqueue original text in FIFO, do not start second delivery | ListDeliveryMachine queue (capacity >= 2) |
+| quit/drain with queue | refuse each queued id, original retained, one receipt each | synchronous finalization; active finish phase reports posted |
+| next delivery/hung old worker | new captured app; serial slot still occupied, capture may time out to old batch | serial AX queue is shared; old result id discarded |
+
+Worker replies normalize unused fields (target only for capture, marker/landed
+only for read); disabled generation tracking stays FALSE. Old-delivery replies
+normalize their unused contents (current delivery discards their id). ax saturates
+at 2 (meaning 2 or more); its consumers distinguish only zero/nonzero, and B1
+requires at least two requests. Exact expiry violations use a separate sticky flag. These fields cannot
+affect an enabled transition. This keeps serialization exploration bounded
+without dropping events or reducing the configured deadline.
+
+All list posts on owned, guarded and manual/other routes must enter this machine's
+final synchronous guard. Owned uses ownedTextTypingHandler / postToPid; guarded
+uses the HID-tap typeTextGuarded; manual/other currently uses textTypingHandler
+without the guard and must gain it for list delivery. Plain text retains today's
+route and plan unchanged. IsSecureEventInputEnabled() currently runs earlier in
+VoiceState's scheduled block; it must move into the same synchronous final guard
+with captured PID and cached element/generation checks. postGuardedBatch itself
+does not currently provide that secure-input check. Cached match closures must
+never call AX. PID-targeted posting changes the event-routing residual compared
+to the HID tap; the model does not prove OS routing for either route.
+
+GuardedTypingResult on main remains posted/focusChanged/failed; partial is a
+proposed propagation contract. The daemon advertises delivery_partial in hello.
+New app/new daemon: send partial. New app/old daemon without the capability:
+send unverified and keep the local History partition. Old app/new daemon never
+produces partial. The wire-version gate is documented here, not modeled or
+verified by this model: the mechanism PR must pin both supported pairs in tests.
+
+Additional exact oracles: DeadlineBound checks late <= 2 and posts <= Segments;
+NoAXAfterExpiry checks a sticky flag recording any AX issue at expiry. Their mutants are LateMain
+(consume repeated old callbacks beyond expiry) and LateAX (issue instead of taking the deadline route). Additional mutants: BatchUnguarded removes only the app guard for
+batch; ForeignRead removes only the same-element requirement for marker drop;
+AgedCheck removes only the age requirement. FirstUnguarded applies only to the
+first segmented post, FallbackUnguarded only to segmented fallback; both retain
+the element check. Stale removes the id/step check but retains the app guard.
+CheckAwaitPost removes only the final app guard of segmented posting and keeps
+Fresh; its trace must include capture and Issue(check) at app=0, then User
+app=1, worker same, and Post with ax >= 2. It cannot fail on a batch.

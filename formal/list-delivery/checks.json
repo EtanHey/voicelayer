@@ -7,44 +7,39 @@
     "formal/tlc.lock.json"
   ],
   "checks": {
-    "Async": {
-      "role": "positive",
-      "target": null,
-      "kind": "pass"
+    "AgedCheck": {
+      "role": "mutant",
+      "target": "NoSegmentWithoutFreshCheck",
+      "kind": "invariant"
     },
-    "Silent": {
-      "role": "positive",
-      "target": null,
-      "kind": "pass"
+    "BatchUnguarded": {
+      "role": "mutant",
+      "target": "NoPostToChangedApp",
+      "kind": "invariant"
     },
-    "Plain": {
-      "role": "positive",
-      "target": null,
-      "kind": "pass"
-    },
-    "Serialized": {
-      "role": "positive",
-      "target": null,
-      "kind": "pass"
+    "BlockRecording": {
+      "role": "mutant",
+      "target": "RecordingNeverBlocked",
+      "kind": "invariant"
     },
     "CheckAwaitPost": {
       "role": "mutant",
       "target": "NoPostToChangedApp",
       "kind": "invariant"
     },
-    "MainWait": {
+    "DrainWorker": {
       "role": "mutant",
-      "target": "MainNeverWaits",
+      "target": "DrainBounded",
       "kind": "invariant"
     },
-    "Stale": {
+    "DropSlow": {
       "role": "mutant",
-      "target": "NoSegmentWithoutFreshCheck",
+      "target": "SlowNeverLoses",
       "kind": "invariant"
     },
-    "FirstUnguarded": {
+    "DropUnknown": {
       "role": "mutant",
-      "target": "NoPostToChangedApp",
+      "target": "NoLostCharacter",
       "kind": "invariant"
     },
     "FallbackUnguarded": {
@@ -52,25 +47,35 @@
       "target": "NoPostToChangedApp",
       "kind": "invariant"
     },
+    "FirstUnguarded": {
+      "role": "mutant",
+      "target": "NoPostToChangedApp",
+      "kind": "invariant"
+    },
+    "ForeignRead": {
+      "role": "mutant",
+      "target": "NoLostCharacter",
+      "kind": "invariant"
+    },
+    "LateAX": {
+      "role": "mutant",
+      "target": "NoAXAfterExpiry",
+      "kind": "invariant"
+    },
+    "LateMain": {
+      "role": "mutant",
+      "target": "DeadlineBound",
+      "kind": "invariant"
+    },
+    "MainWait": {
+      "role": "mutant",
+      "target": "MainNeverWaits",
+      "kind": "invariant"
+    },
     "NoDeadline": {
       "role": "mutant",
       "target": "BoundedDelivery",
       "kind": "temporal"
-    },
-    "DropUnknown": {
-      "role": "mutant",
-      "target": "NoLostCharacter",
-      "kind": "invariant"
-    },
-    "PreBreak": {
-      "role": "mutant",
-      "target": "NoLostCharacter",
-      "kind": "invariant"
-    },
-    "TwoReceipts": {
-      "role": "mutant",
-      "target": "ExactlyOneOutcome",
-      "kind": "invariant"
     },
     "NoQuitReceipt": {
       "role": "mutant",
@@ -87,20 +92,55 @@
       "target": "PlainTextUntouched",
       "kind": "invariant"
     },
-    "DrainWorker": {
+    "PreBreak": {
       "role": "mutant",
-      "target": "DrainBounded",
+      "target": "NoLostCharacter",
       "kind": "invariant"
     },
-    "BlockRecording": {
+    "Stale": {
       "role": "mutant",
-      "target": "RecordingNeverBlocked",
+      "target": "NoSegmentWithoutFreshCheck",
       "kind": "invariant"
     },
-    "DropSlow": {
+    "TwoReceipts": {
       "role": "mutant",
-      "target": "OnlyDoubledMarkerWhenSlow",
+      "target": "ExactlyOneOutcome",
       "kind": "invariant"
+    },
+    "Async": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "FocusGeneration": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Plain": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Queued": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Silent": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "ThreeSegments": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Serialized": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
     }
   },
   "acceptance": [
@@ -109,10 +149,12 @@
     "MainNeverWaits",
     "BoundedDelivery",
     "NoLostCharacter",
-    "OnlyDoubledMarkerWhenSlow",
+    "SlowNeverLoses",
     "PlainTextUntouched",
     "ExactlyOneOutcome",
     "RecordingNeverBlocked",
-    "DrainBounded"
+    "DrainBounded",
+    "DeadlineBound",
+    "NoAXAfterExpiry"
   ]
 }
