@@ -65,7 +65,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             ("remote-stt-configured", .idle, ""),
             ("unknown-locality", .idle, ""),
             ("numbered-list", .idle,
-             "Three things.\n1. Fix the popover and its focus ring.\n2. Ship it with a clean preview.\n3. Tell Etan."),
+             "Three things.\n1. Fix the popover and its focus ring.\n2. Ship it with a clean preview.\n3. Water plants."),
             (
                 "long-transcript",
                 .idle,

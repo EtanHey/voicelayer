@@ -147,9 +147,8 @@ public enum SettingsDictionarySource: Hashable, Sendable {
     }
 }
 
-/// S1 (Etan, 2026-11-02): one quiet place for the version, "VoiceBar 2.2.61 · Up to date". 2.4 Lane A: the full
-/// build line, never truncated: the version and short SHA on the first line, the status ("Ahead of release by 14
-/// commits") on its own line, wrapping rather than ending in "…" in the narrow sidebar.
+/// Reported 2026-11-02: keep version and update status together. Lane A shows the full
+/// version, short SHA and status without truncation.
 struct SettingsVersionFooter: View {
     let installed: VoiceBarInstalledVersion
     let status: VoiceBarVersionStatus?

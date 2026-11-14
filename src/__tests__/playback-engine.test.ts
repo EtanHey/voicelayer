@@ -65,7 +65,7 @@ afterEach(async () => {
 
 const lastState = () => events.filter(e => e.type === "playback_state").at(-1);
 
-describe("Etan bug: pause jumps back (QA 2026-11-08, pause button → 0:00)", () => {
+describe("Reported 2026-11-08: pause resets to the beginning", () => {
   it("a client clock reset to 0 (VoiceBar 'preparing') pauses at the daemon's word, not word 0", async () => {
     tts.playAudioNonBlocking(`${TEST_TMP}/jump.mp3`, { text, voice: "test", durationMs: 10_000, wordBoundaries: words });
     await players.at(0);
@@ -486,7 +486,7 @@ describe("socket E2E: voice_ask over a read (parks and restores, twice back to b
     void handle.exited;
   });
 
-  /** Lane B night item 2 (Etan: "resume the read when the voice_ask answer capture ENDS"): the read comes back at
+  /** Decision 2026-11-08: resume the parked read when answer capture ends,
    * the recorder's exit, from its word, while the answer is still transcribing; never only after the whole ask. */
   it("capture-end r2: the read resumes from its word at recorder exit, before the answer finishes transcribing", async () => {
     const recordingState = asks[3] as ReturnType<typeof spyOn>;

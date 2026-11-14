@@ -34,7 +34,7 @@ final class SettingsVersionFooterTests: XCTestCase {
         XCTAssertTrue(shell.contains(".accessibilityValue(status?.message ?? \"\")"))
     }
 
-    /// S1 (Etan, 2026-11-02): "VoiceBar build is here and down here" — one quiet sidebar line, nowhere else.
+    /// Reported 2026-11-02: consolidate repeated version information into one sidebar status line.
     func testSidebarLineReadsLikeAStatusBar() {
         let installed = VoiceBarInstalledVersion(version: "2.3.0", commit: "abcdef0123")
         XCTAssertEqual(SettingsVersionFooter.line(installed: installed, status: .latest), "VoiceBar 2.3.0 · Up to date")

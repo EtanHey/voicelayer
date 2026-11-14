@@ -3,8 +3,8 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// R0856-09/10 (Etan, 2026-11-02: "There's no tooltip, so how is someone supposed to know that this is paste?";
-/// tooltips worked on some notch buttons and not on the mic/record button). Every button in the notch and its
+/// Reported 2026-11-02: several notch controls lacked discoverable native tooltips.
+/// Every button in the notch and its
 /// History dropdown, in every state, must carry an accessibility label AND a native tooltip registered over the
 /// button itself. Buttons are enumerated from the real accessibility tree of the mounted `BarView`, not from a
 /// hand-kept list, so a new button without a tooltip fails here.

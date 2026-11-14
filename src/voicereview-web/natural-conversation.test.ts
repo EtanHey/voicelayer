@@ -224,7 +224,7 @@ describe("VoiceReview natural conversation redesign", () => {
   it("builds an update-first interpret prompt with per-member deltas", () => {
     const messages = buildInterpretMessages({
       transcript:
-        "the person is not relevant, I still need company versus project",
+        "the velgaora is not velgbora, I still need velgcora velgdora velgeora",
       cluster: naturalCluster,
       understanding: {
         member_updates: {

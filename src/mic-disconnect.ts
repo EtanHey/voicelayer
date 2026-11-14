@@ -1,5 +1,5 @@
 /**
- * Mid-recording microphone loss (MICDROP2/3, Etan 2026-10-19: "my mic died mid-transcript").
+ * Mid-recording microphone loss, reported 2026-10-19 (MICDROP2/3).
  *
  * AIDEV-NOTE: only OS evidence counts, never the signal alone:
  *   - "recorder-ended": the recorder's stdout reached EOF (sox exited) before we tore it down. This

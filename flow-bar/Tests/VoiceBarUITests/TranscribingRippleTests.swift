@@ -5,9 +5,8 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// c9-P (Etan, 2026-11-12, verbatim): "when recording the right side has the wave form, it would be nice if the red
-/// waveform would just become the rippling one when it's transcribing ... make sure that it's more prominent or more
-/// obvious that it's like transcribing without putting [prose] like transcribing or processing."
+/// Reported 2026-11-12 (c9-P): transcription needs a prominent ripple in the recording meter's place,
+/// with no extra status prose.
 ///
 /// The production BarView, offscreen, driven by a frozen render clock so every frame is deterministic. The M1 cannot
 /// render the M4's glass; these tests measure the bars, their frames and their colours, never the glass.

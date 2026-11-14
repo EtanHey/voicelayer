@@ -201,10 +201,8 @@ function removeFillers(text: string, aggressive: boolean): string {
   const patterns = aggressive
     ? [...DISFLUENCY_PATTERNS, ...AGGRESSIVE_FILLER_PATTERNS]
     : DISFLUENCY_PATTERNS;
-  // A filler that opens the take takes its own comma or full stop with it; otherwise
-  // "Um, I'm confused" is delivered as ", I'm confused" (Etan, take 2026-11-12T10-24-45-799Z). Only the
-  // punctuation attached to the removed filler goes: never a word, and never an ellipsis or dash (a cut-off).
-  // "ER" and other all-capital spellings are words (the emergency room), never a hesitation: they stay.
+  // Reported 2026-11-12: leading filler removal left orphaned punctuation.
+  // Remove only that filler's comma or full stop; retain words, cut-off marks, and uppercase abbreviations.
   const isAcronym = (match: string) => /\b(?:UM|UH|ER)\b/.test(match);
   // Only at the very start: after a sentence the existing period-comma collapse already decides the join.
   // One token at a time, so a protected word ("ER") ends the run without keeping an earlier filler's comma;
@@ -223,19 +221,9 @@ function removeFillers(text: string, aggressive: boolean): string {
 
 // --- Stage 2: Spoken punctuation ---
 
-// AIDEV-NOTE: This used to be one always-on PUNCTUATION_MAP. Every entry fired
-// unconditionally, and roughly a third of them are ordinary English words, so
-// they ate real speech: "there's still sometimes a new line on codex agents"
-// shipped as "...sometimes a. On codex agents" (polish-shadow line 7004,
-// clip 2026-09-05T11-46-00-495Z-81090f01), and "some space to think" lost the
-// word outright because "space" is the one command that deletes a word.
-// AGENTS.md law: a fix that loses Etan's words is worse than the bug. So the
-// map is split — ALWAYS entries are phrases or words nobody uses as a noun
-// mid-sentence; AMBIGUOUS entries stay verbatim unless their neighbours prove
-// the speaker dictated a symbol. That includes multi-word mark names such as
-// "question mark": they are commands in "is it done question mark", but nouns
-// in "that was a question mark". See the stricter mark-name evidence in
-// isSpokenAsNoun below.
+// Reported 2026-09-05: unconditional symbol substitutions consumed ordinary prose.
+// Separate unambiguous commands from ambiguous words; require contextual evidence before replacing the latter.
+// Preserve noun mentions of mark names and never discard genuine spoken words.
 
 /** Never ordinary prose: multi-word phrases, or single words only ever dictated as symbols. */
 const ALWAYS_PUNCTUATION_MAP: [RegExp, string][] = [
@@ -272,10 +260,8 @@ const ALWAYS_PUNCTUATION_MAP: [RegExp, string][] = [
  * Ordinary English words that double as symbol commands. Each fires only when
  * the surrounding words show the speaker did not mean the noun.
  *
- * "tab" is deliberately absent and must stay absent: of the 41 corpus
- * dictations containing the word, 33 shipped a literal tab character
- * ("The tab is named run 9" -> "The \t is named run 9", polish-shadow 6490).
- * Etan effectively never dictates it as a command, so the word stays verbatim.
+ * The tab command is deliberately excluded: the 2026-09-06 corpus review found
+ * 33 unwanted tab substitutions among 41 dictations containing that ordinary word.
  */
 const AMBIGUOUS_PUNCTUATION_MAP: [RegExp, string][] = [
   [/\bfull stop\b/gi, "."],
@@ -315,8 +301,8 @@ const NOUN_FOLLOWERS_AFTER = new Set([
 ]);
 
 // "plus"/"minus" are arithmetic operators, but in speech they are far more
-// often the conjunction ("the readme plus updating the about", shadow 6461;
-// "the smoke plus listen to section 3", shadow 6685). They fire only between
+// often conjunctions in ordinary prose (reported shadow rows 6461 and 6685).
+// They fire only between
 // operands — a number or a code identifier on both sides.
 const ARITHMETIC_ONLY = new Set(["plus", "minus"]);
 
@@ -328,25 +314,10 @@ const BINARY_OPERATOR_COMMANDS = new Set([
   "colon", "dash", "arrow", "equals", "plus", "minus", "slash", "pipe",
 ]);
 
-// AIDEV-NOTE: Whisper punctuates each spoken command as its own comma-delimited
-// token. "update colon Q3 ... new line hey Sarah comma new paragraph" came back
-// as "update, colon, Q3, ... new line, hey, Sarah, comma, new paragraph."
-// (Etan's v2.2.12 acceptance dictation, shadow row 2026-09-06T14:42:25Z). Those
-// delimiters are whisper's, not Etan's, and they broke stage 2 twice over: the
-// attach-left cleanup collapsed ", : ," to ",:,", and it ate every "\n" that
-// "new line" produced. The identical words without the commas already cleaned
-// correctly.
-//
-// A command whisper isolated between two of its OWN delimiters is a command.
-// That isolation is stronger evidence than isSpokenAsNoun, which sees a comma
-// on both sides, finds neither a determiner nor a preposition, and abstains —
-// and it is evidence prose never carries, because whisper does not wrap
-// "a new line on codex agents" in commas. So this pass substitutes the symbol
-// directly and drops both delimiters, leaving the #17/#20 ALWAYS/AMBIGUOUS
-// policy to decide every command it does not match.
-//
-// "comma" is the one command whose own replacement is a comma, so the speaker's
-// single comma survives while whisper's two do not.
+// Reported 2026-09-06: recognizer-inserted commas around spoken commands broke punctuation and line breaks.
+// Substitute comma-isolated commands before number folding and drop only their recognizer delimiters.
+// Isolation supplies stronger evidence than the noun guard; all other commands retain the normal context policy.
+// The spoken comma command still produces exactly one comma.
 
 /** The literal phrase each spoken-command pattern matches ("\bnew line\b" -> "new line"). */
 function spokenPhraseOf(pattern: RegExp): string {
@@ -366,11 +337,8 @@ const COMMAND_REPLACEMENTS: Map<string, string> = new Map(
       spokenPhraseOf(pattern),
       replacement,
     ])
-    // "Plus," and "Minus," open a sentence as ordinary connectives — "Plus, I
-    // don't know if we can match it" (5 shadow rows, e.g. the MLX-vs-Flex
-    // dictation). Comma-isolation is not operand evidence, and ARITHMETIC_ONLY
-    // demands operands on both sides, so these keep the #17 guard and never
-    // unwrap. AGENTS.md: a fix that loses Etan's words is worse than the bug.
+    // Arithmetic connectives in prose need operands on both sides before substitution.
+    // Comma isolation alone is insufficient evidence for an arithmetic command.
     .filter(([phrase]) => !ARITHMETIC_ONLY.has(phrase)),
 );
 
@@ -407,22 +375,10 @@ function endsWithSpokenCommand(text: string): boolean {
   return COMMAND_TRAILING_PATTERN.test(text);
 }
 
-// Lead's ruling (2026-09-06): "DROP the comma whisper inserted immediately
-// before a newline/paragraph command — Etan said 'update new line', not 'update
-// comma new line'; a comma survives only when he actually dictated 'comma'".
-//
-// unwrapCommaWrappedCommands already drops it wherever whisper supplied BOTH
-// delimiters. This covers the rest — a leading comma with no trailing one, as in
-// "Here are a few things, new line first of all", which kept the comma.
-//
-// AIDEV-NOTE: order is load-bearing. This runs BEFORE the unwrap and before any
-// substitution, while a comma Etan actually dictated is still the *word*
-// "comma" and cannot be matched here. Run it afterwards and it eats the real
-// comma in "hey, Sarah, comma, new paragraph" — the v2.2.12 specimen.
-//
-// The command still has to fire: isSpokenAsNoun is consulted on the text as it
-// will look with the comma gone, so prose ("if you want a break, new line is
-// what you need") keeps both its comma and its words.
+// Decision 2026-09-06: discard recognizer punctuation immediately before a spoken layout command.
+// This pass handles a leading delimiter without the trailing delimiter handled by the unwrap pass.
+// Run before substitution, while a genuinely spoken comma is still a word and cannot be deleted here.
+// Consult the noun guard after removing the candidate delimiter so prose keeps both punctuation and words.
 function dropWhisperCommaBeforeNewline(text: string): string {
   return text.replace(
     /,(\s*)(new paragraph|new line)\b/gi,
@@ -525,13 +481,9 @@ function restoreNewlinePlaceholders(text: string): string {
     .replaceAll(NEWLINE_PLACEHOLDER, "\n");
 }
 
-// AIDEV-NOTE: the mirror of dropWhisperCommaBeforeNewline, and it must run in
-// WORD space, before any substitution. An earlier version deleted any delimiter
-// sitting after a restored placeholder, which cannot tell whisper's leftover
-// comma from one Etan dictated: "foo new line comma bar" shipped as "Foo \n Bar"
-// — his comma gone, and the lead's ruling is that a comma survives wherever he
-// actually said "comma" (Macroscope, PR #32). Here every "," and "." still
-// belongs to whisper, because no command has produced one yet.
+// Companion to the leading-delimiter pass: remove recognizer delimiters after spoken layout commands.
+// Run before substitution so a genuinely spoken comma cannot be confused with an inserted delimiter.
+// A restored newline alone does not establish delimiter provenance (PR #32).
 function dropWhisperDelimiterAfterNewline(text: string): string {
   return text.replace(
     /\b(new paragraph|new line)((?:\s*[,.])+)/gi,
@@ -619,12 +571,8 @@ function isOperandToken(token: string): boolean {
   return /^[a-z]$/.test(token) || /^[a-z][\w$]*[A-Z][\w$]*$/.test(token);
 }
 
-// AIDEV-NOTE: Etan talks ABOUT dictation commands, and whisper punctuates a
-// meta-mention exactly like a dictated one: "The words colon, comma, and period
-// are punctuation" lost the word "comma" outright (Macroscope, PR #32). A
-// mention cue in front, or membership in a list of other command words, is what
-// separates talking about a command from issuing one. AGENTS.md: a fix that
-// loses Etan's words is worse than the bug, so this outranks every substitution.
+// A command mentioned as a noun or in a list of punctuation names is ordinary speech.
+// Recognizer commas do not turn that mention into a command; mention cues outrank substitution (PR #32).
 
 /**
  * Noun cues count only when a determiner introduces them — "the word", "The
@@ -728,8 +676,7 @@ const MARK_LABEL_CLOSER =
  * That cannot work: "that question mark was wrong" (noun) and "should we use
  * this question mark is that right" (command) are the same shape, so the
  * fallback only chose which one to break, and it broke the command — the one
- * present in the real corpus (shadow 5025 "good faith question mark is ...",
- * 6543-6547 "digest this question mark"). The noun reading it protected has
+ * observed in shadow rows 5025 and 6543–6547. The noun reading it protected has
  * not appeared in the full shadow corpus. Article-only follows the lead's
  * ruling on PR #42.
  *
@@ -927,7 +874,7 @@ function applyPunctuation(text: string): string {
   // AIDEV-NOTE: the gate is the SHAPE of the utterance, never the fact that
   // some other command fired. Arming it on "a command fired somewhere" made
   // every sentence ending in a dictated "period" a candidate for word loss:
-  // "I saw outer space period" -> "I saw outer." (Macroscope, PR #17).
+  // A sentence about the night sky lost its final noun (Macroscope, PR #17).
   // The shape is read off `result` rather than `text` so the symbols the maps
   // above just produced count — "foo space bar open paren close paren" is code
   // only once "open paren" has become "(".
@@ -1355,8 +1302,8 @@ function joinSpokenIdentifierDigits(text: string): string {
         ?.toLowerCase().replace("’", "'");
       const sentenceStart = /(?:^|[.!?\n])[ \t]*$/u.test(before);
       const endsSentence = period !== undefined || /^\s*$/u.test(whole.slice(offset + match.length));
-      // Etan's law: a "." never becomes "?" without an interrogative signal
-      // from that sentence. "I checked PR number? 2 8 4." keeps its marks.
+      // Etan's ruling: punctuation requires an interrogative signal from this sentence.
+      // Preserve existing marks when only identifier digits are being joined.
       const sentence = before.slice(Math.max(
         before.lastIndexOf("."), before.lastIndexOf("!"), before.lastIndexOf("?"), before.lastIndexOf("\n")) + 1);
       if (!sentenceStart && previous && !COMPLETE_NOUN_PHRASE_BEFORE_HEAD.has(previous) && endsSentence

@@ -1,8 +1,8 @@
 import CoreGraphics
 import Foundation
 
-/// C6 L2c (N16, Etan 12:40 X1-45: "this should be expandable and it currently is not expandable downwards"): the
-/// Settings drawer's height. It opens at expanded History's eight rows and its grip drags it taller, one whole row
+/// QA X1-45 (C6 L2c): allow vertical expansion of the Settings drawer.
+/// It opens at the expanded History height of eight rows; its grip grows it in whole rows,
 /// at a time, up to eleven. The height it is let go at is remembered.
 ///
 /// History's window grows to hold the tallest drawer (`NotchHistoryMorph.historyCanvasLowerSurfaceHeight`, 528 →

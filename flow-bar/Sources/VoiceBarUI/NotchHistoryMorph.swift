@@ -2,15 +2,15 @@ import CoreGraphics
 import Foundation
 import SwiftUI
 
-/// VoiceBar 2.3 lane U4: History morph B, exactly as Etan chose it in the approved mock (2-morph.html,
-/// 5-history.html; "the best we've ever done", 2026-11-03). One progress value `p` drives everything:
+/// Approved 2026-11-03: History morph B from 2-morph.html and 5-history.html.
+/// One progress value `p` controls the complete transition:
 /// p = 0 is the closed launcher, p = 1 the open panel. The shell's size follows `p` unclamped (the open
 /// spring may overshoot a hair), the radii follow it clamped, and the rows come out of the notch with it.
 /// 2.4 Lane A made the motion one stage: one spring, the rows' opacity following `p`.
 /// Every morph is a spring on `p`, so a new target retargets from the current position and velocity and
 /// the morph reverses from wherever it is.
 public enum NotchHistoryMorph {
-    // MARK: Spring (2.4 Lane A, Etan: "simplify the History pull animation: one spring, no multi-stage")
+    // MARK: Spring (2.4 design: one stage shared by every History transition)
 
     /// THE spring: opening, closing, a released pull, the extend handle settling and the History/Settings drawer
     /// swap all ride it. Critically damped: it lands without a bounce and reverses cleanly from wherever it is.
@@ -34,7 +34,7 @@ public enum NotchHistoryMorph {
     public static let rowsStartBlur: CGFloat = 0
     public static let rowsFadeStart: CGFloat = 0
 
-    // MARK: Panel (2.4 Lane A, Etan: "collapsed 6, expanded 8, scrolls to 20")
+    // MARK: Panel (2.4 design: six collapsed rows, eight expanded, twenty scrollable)
 
     public static let bodyWidth: CGFloat = 420
     public static let rowHeight: CGFloat = 46
@@ -99,8 +99,8 @@ public enum NotchHistoryMorph {
         return rows
     }
 
-    /// Etan, QA 0510 N4: "a clean drag-to-close that follows the pointer". Above the collapsed rows the handle
-    /// stretches the rows as before; below them it no longer rubber-bands (the panel used to sit still while the
+    /// QA 0510 N4: closing follows the pointer continuously rather than rubber-banding. Above collapsed rows,
+    /// the handle still stretches the panel. Below them,
     /// pointer climbed, then close on release). The rows stay at six and the panel closes with the pointer: its open
     /// progress falls by one row's travel for every row the pointer climbs. `openTravel` is the panel's close travel
     /// (open height minus the 32 pt band).

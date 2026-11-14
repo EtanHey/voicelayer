@@ -105,7 +105,7 @@ public struct SettingsHistoryDiagnosticsPanel: View {
         return copy
     }
 
-    /// Etan, 2026-11-05: "can't close" the open Recording details. The chevron alone did not read as a close, so
+    /// Reported 2026-11-05: Recording details lacked an obvious close action. Therefore
     /// the open section carries a visible close button, and Esc closes it from anywhere in the window. No motion on
     /// the keyboard path (the header's own rule).
     private var closeButton: some View {

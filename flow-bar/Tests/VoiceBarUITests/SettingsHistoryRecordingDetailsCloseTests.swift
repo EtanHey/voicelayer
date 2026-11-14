@@ -3,7 +3,7 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// Etan, 2026-11-05 (01:44Z recording): he "can't close" the open Recording details. The open section now draws a
+/// Reported 2026-11-05: Recording details could not be closed. The open section now draws a
 /// close button (×) and Esc, its keyboard shortcut, closes it. Driven offscreen with a key event sent to this test's
 /// own window: no pointer, no system-wide event. (The native click is the UIE2E History flow, run on the M1 rig.)
 @MainActor

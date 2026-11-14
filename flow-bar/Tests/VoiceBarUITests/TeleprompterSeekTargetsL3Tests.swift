@@ -3,7 +3,7 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// C7 L3, V09 (Etan's candidate-6 recording, 26-31 s): repeated clicks on "Copy" in a read-aloud numbered list did
+/// C7 L3 V09, reported 2026-11-11 at 26–31 s: repeated clicks on a word in a numbered list did
 /// not seek while a nearby word did. The fixture is the daemon's own payload for that text: its structured display
 /// (projectStructuredSpeech + structuredReadDisplay) and its speech_words table (SpeechWordTimeline), generated from
 /// src/tts so the client sees exactly what the daemon sends.

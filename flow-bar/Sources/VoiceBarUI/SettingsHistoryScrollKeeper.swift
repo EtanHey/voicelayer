@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// QA-06 (Etan, 2026-11-02: "the state is not kept between just traveling within the app"): where each
-/// History scroll view was left. SettingsView owns one instance, so it outlives the History tab. It is a
+/// Reported 2026-11-02 (QA-06): preserve each History scope scroll position across tab changes.
+/// SettingsView owns the memory for the lifetime of its window. This is a
 /// plain class, not observable, so scrolling records positions without re-rendering Settings.
 @MainActor
 final class SettingsHistoryScrollMemory {

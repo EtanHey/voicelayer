@@ -1,8 +1,8 @@
 @testable import VoiceBarUI
 import XCTest
 
-/// 2.3 N1 (Etan, queued-recording clip F1: "there is no queuing sign"): while a new recording runs and an earlier
-/// take is still transcribing, the left wing shows the transcribing spinner to the LEFT of the red Stop, beside the
+/// Queued-recording QA F1: make an earlier take's pending transcription visible beside the current capture.
+/// Show its spinner left of Stop, beside the
 /// recording controls, never instead of them. Presentation only: it reads the daemon's job snapshot.
 @MainActor
 final class RecordingEarlierTakeSpinnerTests: XCTestCase {

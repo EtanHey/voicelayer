@@ -133,7 +133,7 @@ test("a paused same-text read dedupes (keeps its position) while paused queued d
   paused = true;
   expect(await handleSocketCommand({ cmd: "speak_text", id: "duplicate", text: "Bravo", source: "selection", queue: true }))
     .toMatchObject({ outcome: "noop", reason: "Already queued" });
-  // Etan, 2026-11-08 4:40 pm: the same text over a paused read is "Already reading this"; nothing restarts.
+  // Etan's ruling, 2026-11-08: dedupe a paused read without restarting it.
   expect(await handleSocketCommand({ cmd: "speak_text", id: "fresh", text: "Alpha", source: "selection" }))
     .toMatchObject({ outcome: "noop", reason: "Already reading this" });
   expect(started).toEqual(["Alpha"]);
@@ -175,7 +175,7 @@ for (let offset = 0; offset < rows.length; offset += batchSize) {
       const response = await (row.event === "selection" ? press(row.selected, "- [x] ")
         : handleSocketCommand({ cmd: "stop", ...(row.event === "f5" ? { retain_read_queue: true } : {}) }));
       expect(response, `row ${index}`).toMatchObject(row.decision === "hint"
-        // Etan 2026-11-08: the read on screen (playing or paused) answers "Already reading this"; a pending one "Already queued".
+        // Etan's ruling, 2026-11-08: distinguish active and pending duplicates.
         ? { outcome: "noop", reason: row.selected === row.playing ? ALREADY_READING : "Already queued" } : { outcome: row.event === "stop" && (!row.playing || row.suspended) ? "noop" : "accept" });
       expect(count, `row ${index}`).toBe(row.afterPending.length);
       const launch = row.decision === "read_next" ? row.afterPlaying

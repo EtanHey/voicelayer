@@ -120,7 +120,7 @@ final class PlaybackEngineTeleprompterTests: XCTestCase {
     }
 
     func testNoReadingProseAndTheSpeedIsItsOwnControl() {
-        // T3 (Etan QA 2026-11-09): no "Reading" prose.
+        // Reported 2026-11-09: omit reading-status prose.
         XCTAssertEqual(TeleprompterA.footerState(isPaused: false, isPausedForDictation: false), "")
         XCTAssertEqual(VoiceState.speedLabel(1), "1×")
         XCTAssertEqual(VoiceState.speedLabel(1.25), "1.25×")
@@ -155,7 +155,7 @@ final class PlaybackEngineTeleprompterTests: XCTestCase {
         return event
     }
 
-    /// Etan's QA 2026-11-08 "pause jumps back to 0:00": the clock reads 0 while a read prepares, and that 0 was sent.
+    /// Reported 2026-11-08: a preparing read sent a zero clock and rewound playback on Pause.
     func testPauseWhileThereIsNoPlayerSendsNoClockSoTheDaemonPausesAtItsOwnPosition() {
         let (state, sent) = makeState()
         state.handleEvent(speaking(preparing: true))

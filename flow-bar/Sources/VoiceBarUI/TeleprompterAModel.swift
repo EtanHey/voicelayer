@@ -17,8 +17,8 @@ public enum TeleprompterA {
     public static let handleSize = CGSize(width: 34, height: 4)
     /// The handle's hit band under the eye row.
     public static let handleBandHeight: CGFloat = 14
-    /// T2/T8 (Etan QA 2026-11-09: "The drag bar ... can go underneath the eye and the replay row. Scrub would have
-    /// less gap"): the lower body, top to bottom, is text, scrubber, eye row, height handle. No footer row; the gaps
+    /// Reported 2026-11-09 (T2/T8): compact the gaps and order the lower body as
+    /// text, scrubber, eye row, then height handle. No footer row; the gaps
     /// are tight so the text keeps the room.
     public static let bodyTopInset: CGFloat = 16
     /// Text to scrubber.
@@ -112,13 +112,13 @@ public enum TeleprompterA {
 
     public static func clamp(_ lines: Int) -> Int { min(lineRange.upperBound, max(lineRange.lowerBound, lines)) }
 
-    /// Lane B (Etan, 2026-11-08 "less empty space"): the rows a read needs. The handle's choice (3–8) is an upper
+    /// Reported 2026-11-08: size to the rows a read needs. The handle choice (3–8) is an upper
     /// bound; a read that wraps to fewer lines needs only those (at least one). The shell sizes from this.
     public static func fittedLines(preferred: Int, textLines: Int) -> Int {
         max(1, min(clamp(preferred), textLines))
     }
 
-    /// T3 (Etan QA 2026-11-09: "the reading prose ... can be totally removed"): reading has no status words. A
+    /// Reported 2026-11-09 (T3): omit visible reading-status prose. A
     /// pause keeps its words, for VoiceOver only (X1-34: the paused teleprompter stays readable on screen).
     public static func footerState(isPaused: Bool, isPausedForDictation: Bool) -> String {
         isPausedForDictation ? "Paused for your dictation · resumes after paste" : isPaused ? "Paused" : ""

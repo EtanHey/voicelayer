@@ -292,7 +292,7 @@ describe("archived recording metadata carries provenance", () => {
           agentAudioFormat: "mp3" as const,
           agentTranscript: "what did you mean?",
           agentTtsEngine: "qwen3-tts" as const,
-          agentTtsVoice: "etan-clone",
+          agentTtsVoice: "sample-clone",
           createdAt: new Date("2026-09-05T10:11:12.000Z"),
         },
       },

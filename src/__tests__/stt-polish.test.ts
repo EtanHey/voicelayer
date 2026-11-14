@@ -14,6 +14,8 @@ import {
 } from "../stt-polish";
 import * as sttPolish from "../stt-polish";
 import * as polishServerManager from "../stt-polish-server";
+import { guardPolishQuestionMarks } from "../stt-polish-question-marks";
+import * as questionMarkGuard from "../stt-polish-question-marks";
 import { finalizeTranscriptionResultForSurface } from "../input";
 
 let TEST_DIR = "";
@@ -443,12 +445,13 @@ describe("stt-polish", () => {
 
   it("floors every active on-mode non-applied fallback status", async () => {
     const cleanedText =
-      "so i was thinking about the whole voice layer pipeline and how the polish " +
-      "step is supposed to add punctuation but sometimes it just does not and then " +
-      "you end up with this giant wall of text that has no periods no commas nothing " +
-      "and it is really hard to read especially when the dictation is long like this " +
-      "one where i just keep talking and talking without ever stopping to breathe or " +
-      "add any kind of structure to what i am saying which is exactly the failure mode";
+      "the imaginary birch observatory tracks paper comets across a painted sky " +
+      "while a clockwork gardener sorts blue pebbles into wooden trays and then " +
+      "carries each tray through a corridor lined with tiny lanterns and maps " +
+      "the maps describe a distant island where brass turtles collect colored " +
+      "ribbons beside a silent fountain and stack them beneath a striped canopy " +
+      "every ribbon has a different pattern and every turtle follows the same " +
+      "winding path through the garden until the last lantern turns violet";
     server = createMockPolishServer(() => ({
       text: `Raw Whisper text: ${cleanedText}`,
     }));
@@ -505,7 +508,7 @@ describe("stt-polish", () => {
     }));
 
     const cleanedText =
-      "For fuck's sake. If BrainLayer hybrid is done, then it can just merge. Come on. I want to review the PR later. We need to make sure that they're all synced. BrainLayer will be responsive and usable?";
+      "For velaaora's velabora. If Velacora veladora is done, then it can just velaeora. Velafora on. I want to velagora the PR velahora. We need to make sure that they're all velaiora. Velacora will be velajora and velakora?";
     const result = await polishTranscriptionText({
       rawText: cleanedText,
       cleanedText,
@@ -624,11 +627,11 @@ describe("stt-polish", () => {
 
   it("rejects same-length long rewrites in on mode", async () => {
     server = createMockPolishServer(() => ({
-      text: "After merge, the app is faster, cleaner, safer, simpler, stable, ready, reviewed, documented, tested, and deployable without me reading the pull request again today safely.",
+      text: "After velaeora, the app is not velalora, velamora, velanora, velaoora, velapora, velaqora, velarora, velasora, velatora, and velauora velavora me velawora the velaxora velayora velazora velbaora velbbora.",
     }));
 
     const cleanedText =
-      "For fuck's sake. If BrainLayer hybrid is done, then it can just merge. Come on. I do not want to look at the PR. We need to make sure that they are all synced.";
+      "For velaaora's velabora. If Velacora veladora is done, then it can just velaeora. Velafora on. I do not want to velbcora at the PR. We need to make sure that they are all velaiora.";
     const result = await polishTranscriptionText({
       rawText: cleanedText,
       cleanedText,
@@ -817,8 +820,8 @@ describe("stt-polish", () => {
   });
 
   it("rejects a negation inversion even when the total negation count is unchanged", async () => {
-    const cleanedText = "I don't have a session ID before today.";
-    const polishedText = "I have no session ID before today.";
+    const cleanedText = "I don't have a lantern ID before sunrise.";
+    const polishedText = "I have no lantern ID before sunrise.";
     server = createMockPolishServer(() => ({ text: polishedText }));
 
     const result = await polishTranscriptionText({
@@ -841,8 +844,8 @@ describe("stt-polish", () => {
   });
 
   it("allows apostrophe-only negation spelling normalization", async () => {
-    const cleanedText = "I dont have a session ID before today.";
-    const polishedText = "I don't have a session ID before today.";
+    const cleanedText = "I dont have a veldbora ID before velbaora.";
+    const polishedText = "I don't have a veldbora ID before velbaora.";
     server = createMockPolishServer(() => ({ text: polishedText }));
 
     const result = await polishTranscriptionText({
@@ -1086,9 +1089,9 @@ describe("stt-polish", () => {
 
   it("rejects an arbitrary split-word join even alongside valid prose dash formatting", async () => {
     const cleanedText =
-      "As in if Astra is actually usable for that I think Astra should be it because it can also understand that we're working on d3 or d4 and what to leave for later and don't ask me questions yet wait until you get all the sub-agents back and then everything at once or atomically but don't put things where I won't see them once your sub-ag ents come back okay - Okay.";
+      "As in if Velbdora is actually velakora for that I think Velbdora should be it because it can also velbeora that we're velbfora on d3 or d4 and what to velbgora for velahora and don't ask me velbhora yet velbiora velbjora you get all the sub-velbkora velblora and then velbmora at velbnora or velboora but don't put velbpora where I won't see them velbnora your sub-ag velbqora velafora velblora okay - Okay.";
     const polishedText =
-      "As in if Astra is actually usable for that, I think Astra should be it because it can also understand that we're working on d3 or d4 and what to leave for later and don't ask me questions yet — wait until you get all the sub-agents back and then everything at once or atomically, but don't put things where I won't see them once your sub-agents come back. Okay — Okay.";
+      "As in if Velbdora is actually velakora for that, I think Velbdora should be it because it can also velbeora that we're velbfora on d3 or d4 and what to velbgora for velahora and don't ask me velbhora yet — velbiora velbjora you get all the sub-velbkora velblora and then velbmora at velbnora or velboora, but don't put velbpora where I won't see them velbnora your sub-velbkora velafora velblora. Okay — Okay.";
     server = createMockPolishServer(() => ({ text: polishedText }));
 
     const result = await polishTranscriptionText({
@@ -1172,9 +1175,9 @@ describe("stt-polish", () => {
       },
       {
         cleanedText:
-          "FYI, I was toggling it on and off, yeah, it wasn't flick ering, like, through all the states for no reason, it was me. Just wanted to make sure that you don't think that it's having a seizure, it's just how I was F5-ing on and off-ing.",
+          "FYI, I was velbrora it on and off, yeah, it velbsora't velbtora velbuora, like, velbvora all the velbwora for no velbxora, it was me. Just velbyora to make sure that you don't think that it's velbzora a velcaora, it's just how I was F5-ing on and off-ing.",
         polishedText:
-          "FYI, I was toggling it on and off, yeah, it wasn't flickering, like, through all the states for no reason, it was me. Just wanted to make sure that you don't think that it's having a seizure—it's just how I was F5-ing on and off.",
+          "FYI, I was velbrora it on and off, yeah, it velbsora't velcbora, like, velbvora all the velbwora for no velbxora, it was me. Just velbyora to make sure that you don't think that it's velbzora a velcaora—it's just how I was F5-ing on and off.",
       },
     ];
     const responses = cases.map(({ polishedText }) => polishedText);
@@ -1248,9 +1251,9 @@ describe("stt-polish", () => {
 
   it("rejects a candidate that splits an in-token hyphen", async () => {
     const cleanedText =
-      "Kind of yes. I want to make sure that our cc usage function, there's a cc-usage and just cc usage 1 word. 1 of them is our own function. 1 of them is someone else's function. I want to make sure both of them still read everything, so we need to somehow wire that upright. And I also want to understand how that all works. When I am speaking with you right now, the JSON-L watcher is supposed to watch every chunk that comes from you, basically every turn or every tool call, right? Or how does that work? Is it only when the session is dorm ant and then it goes over all the chunks? What happens when a conversation is compacted? Because I've been told lately that a compaction doesn't really delete everything before the compaction locally from the JSON-L, but it only creates a checkpoint where the compact happened, and then the summary is on top of it, and then the conversation kind of restarts, but everything before the checkpoint and compaction is still stored in the JSON-L. Can you send a brain worker or just a sub-agent to figure that out while we keep talking? Yes.";
+      "Velccora of yes. I want to make sure that our cc velcdora velceora, there's a cc-velcdora and just cc velcdora 1 velcfora. 1 of them is our own velceora. 1 of them is velcgora velchora's velceora. I want to make sure velciora of them still velcjora velbmora, so we need to velckora velclora that velcmora. And I also want to velbeora how that all velcnora. When I am velcoora with you right now, the Velcpora-L velcqora is velcrora to velcsora velctora velcuora that velcvora from you, velcwora velctora velcxora or velctora velcyora velczora, right? Or how does that veldaora? Is it only when the veldbora is veldcora ant and then it velddora over all the veldeora? What veldfora when a veldgora is veldhora? Because I've been veldiora veldjora that a veldkora veldlora't really veldmora velbmora before the veldkora veldnora from the Velcpora-L, but it only veldoora a veldpora where the veldqora veldrora, and then the veldsora is on top of it, and then the veldgora velccora of veldtora, but velbmora before the veldpora and veldkora is still velduora in the Velcpora-L. Can you veldvora a veldwora veldxora or just a sub-veldyora to veldzora that out veleaora we velebora velecora? Yes.";
     const polishedText =
-      "Kind of yes. I want to make sure that our cc usage function—there's a cc-usage and just cc usage, one word. One of them is our own function. One of them is someone else's function. I want to make sure both of them still read everything, so we need to somehow wire that upright. And I also want to understand how that all works. When I am speaking with you right now, the JSON-L watcher is supposed to watch every chunk that comes from you, basically every turn or every tool call, right? Or how does that work? Is it only when the session is dormant and then it goes over all the chunks? What happens when a conversation is compacted? Because I've been told lately that a compaction doesn't really delete everything before the compaction locally from the JSON- L, but it only creates a checkpoint where the compact happened, and then the summary is on top of it, and then the conversation kind of restarts, but everything before the checkpoint and compaction is still stored in the JSON-L. Can you send a brain worker or just a sub-agent to figure that out while we keep talking? Yes.";
+      "Velccora of yes. I want to make sure that our cc velcdora velceora—there's a cc-velcdora and just cc velcdora, one velcfora. One of them is our own velceora. One of them is velcgora velchora's velceora. I want to make sure velciora of them still velcjora velbmora, so we need to velckora velclora that velcmora. And I also want to velbeora how that all velcnora. When I am velcoora with you right now, the Velcpora-L velcqora is velcrora to velcsora velctora velcuora that velcvora from you, velcwora velctora velcxora or velctora velcyora velczora, right? Or how does that veldaora? Is it only when the veldbora is veledora and then it velddora over all the veldeora? What veldfora when a veldgora is veldhora? Because I've been veldiora veldjora that a veldkora veldlora't really veldmora velbmora before the veldkora veldnora from the Velcpora- L, but it only veldoora a veldpora where the veldqora veldrora, and then the veldsora is on top of it, and then the veldgora velccora of veldtora, but velbmora before the veldpora and veldkora is still velduora in the Velcpora-L. Can you veldvora a veldwora veldxora or just a sub-veldyora to veldzora that out veleaora we velebora velecora? Yes.";
     server = createMockPolishServer(() => ({ text: polishedText }));
 
     const result = await polishTranscriptionText({
@@ -1376,17 +1379,9 @@ describe("stt-polish", () => {
   });
 
   it("rejects article replacement even alongside punctuation and numeric rendering", async () => {
-    const polished =
-      "I don't see, oh okay, now I see: codex lead austerity — should that one " +
-      "be pushed to an ultra-ultra effort? Maybe also, I don't think you answered: " +
-      "do you need me to make you, or sorry, to make a codex effort ultra for you or not? " +
-      "Shit, look at this bs bs.";
+    const polished = "The imaginary orchard has one gate leading to an amber pavilion. Can the gardener bring a blue basket?";
     server = createMockPolishServer(() => ({ text: polished }));
-
-    const cleanedText =
-      "I don't see oh okay now I see codex lead austerity should that 1 be pushed " +
-      "to a ultra ultra effort maybe also I don't think you answered do you need me " +
-      "to make you or sorry to make a codex effort ultra for you or not shit look at this bs bs.";
+    const cleanedText = "the imaginary orchard has 1 gate leading to a amber pavilion can the gardener bring a blue basket";
     const result = await polishTranscriptionText({
       rawText: cleanedText,
       cleanedText,
@@ -1862,11 +1857,11 @@ describe("stt-polish", () => {
 
   it("rejects spoken-list restructuring that deletes framing and ordinal cues", async () => {
     server = createMockPolishServer(() => ({
-      text: "Okay:\n1. I want to do x, y, z.\n2. I want to do the other thing.\n3. I want to do this, that, and this.",
+      text: "Garden:\n1. Plant birch seeds.\n2. Water cedar pots.\n3. Label maple trays.",
     }));
 
     const cleanedText =
-      "Or if I say, okay, first of all, I want to do x, y, z, and then second of all, I want to do the other thing, and then third of all, I want to do this, that, and this.";
+      "For the imaginary garden, first of all, plant birch seeds, and then second of all, water cedar pots, and then third of all, label maple trays.";
     const result = await polishTranscriptionText({
       rawText: cleanedText,
       cleanedText,
@@ -1877,7 +1872,7 @@ describe("stt-polish", () => {
       },
     });
 
-    expectConservedRejection(result, cleanedText, "Okay:\n1. I want to do x, y, z.\n2. I want to do the other thing.\n3. I want to do this, that, and this.");
+    expectConservedRejection(result, cleanedText, "Garden:\n1. Plant birch seeds.\n2. Water cedar pots.\n3. Label maple trays.");
   });
 
   it("does not count deterministic upstream list markers as invented numbers", async () => {
@@ -2007,11 +2002,11 @@ describe("stt-polish", () => {
 
   it("allows punctuation repair when digit tokens are only written as equivalent number words", async () => {
     server = createMockPolishServer(() => ({
-      text: "So wait, what do you mean follow-up backlog? Why did you all not do it well? It seems like we've evaled this very good, and I'm now seeing the golemsClaude on your right. Three minor non-blocking gaps: failure recur, record path untested, cleanup skip is silent exit 0 with no Telegram warning, no boundary test for adjacency window edge. Well, I mean again, this should have been more compounding. I want this to be fucking hard, fucking rock solid. Can you get your own ID, your own Claude session ID, and send that to me?",
+      text: "The imaginary orchard has three silver gates. Three quiet gardeners walk beside the stream and gather fallen leaves. A clockwork owl counts the baskets. Can the lantern keeper open the north gate?",
     }));
 
     const cleanedText =
-      "So wait what do you mean follow up backlog why did you all not do it well it seems like we've evaled this very good and I'm now seeing the golemsClaude on your right 3 minor non-blocking gaps failure recur record path untested cleanup skip is silent exit 0 with no Telegram warning no boundary test for adjacency window edge well I mean again this should have been more compounding I want this to be fucking hard fucking rock solid can you get your own id your own Claude session id and send that to me";
+      "the imaginary orchard has 3 silver gates three quiet gardeners walk beside the stream and gather fallen leaves a clockwork owl counts the baskets can the lantern keeper open the north gate";
     const result = await polishTranscriptionText({
       rawText: cleanedText,
       cleanedText,
@@ -2023,7 +2018,7 @@ describe("stt-polish", () => {
     });
 
     expect(result).toMatchObject({
-      text: "So wait, what do you mean follow-up backlog? Why did you all not do it well? It seems like we've evaled this very good, and I'm now seeing the golemsClaude on your right. Three minor non-blocking gaps: failure recur, record path untested, cleanup skip is silent exit 0 with no Telegram warning, no boundary test for adjacency window edge. Well, I mean again, this should have been more compounding. I want this to be fucking hard, fucking rock solid. Can you get your own ID, your own Claude session ID, and send that to me?",
+      text: "The imaginary orchard has three silver gates. Three quiet gardeners walk beside the stream and gather fallen leaves. A clockwork owl counts the baskets. Can the lantern keeper open the north gate?",
       status: "applied",
       changed: true,
     });
@@ -2130,16 +2125,13 @@ describe("stt-polish", () => {
   it.each(["preserve conjunction", "delete conjunction"])("validates HTTP retry content independently of transport success (%s)", async (scenario) => {
     const preserveConjunction = scenario === "preserve conjunction";
     const cleanedText =
-      "please compare the settings on the first mac with the settings on this mac and make sure the permissions line up before you change anything i want the accessibility entries the microphone entries the automation entries and the full disk access entries checked carefully because the two machines should mostly match and the only real difference should be how the brain layer data is separated for that project also look for stale duplicates and tell me which entries are safe to remove after you verify the app versions";
+      "please compare the painted lanterns in the imaginary orchard with the lanterns beside the silver fountain and check the ribbons before the evening parade the gardeners need the blue baskets the cedar trays the paper maps and the brass bells arranged carefully because the two processions should mostly match and the only difference should be which clockwork turtle carries the violet banner also inspect the wooden arches and count the tiny flags before the moon rises over the garden wall and the last lantern turns violet";
     const polishedText =
-      "Please compare the settings on the first Mac with the settings on this Mac, and make sure the permissions line up before you change anything. I want the accessibility entries, the microphone entries, the automation entries, and the full disk access entries checked carefully, because the two machines should mostly match. And the only real difference should be how the BrainLayer data is separated for that project. Also, look for stale duplicates and tell me which entries are safe to remove after you verify the app versions.";
+      "Please compare the painted lanterns in the imaginary orchard with the lanterns beside the silver fountain, and check the ribbons before the evening parade. The gardeners need the blue baskets, the cedar trays, the paper maps, and the brass bells arranged carefully, because the two processions should mostly match. And the only difference should be which clockwork turtle carries the violet banner. Also, inspect the wooden arches and count the tiny flags before the moon rises over the garden wall and the last lantern turns violet.";
     const retryCandidate = preserveConjunction
       ? polishedText
       : polishedText.replace("mostly match. And the only", "mostly match. The only");
-    const responses = [
-      "Please compare the settings on the first Mac with the settings on this Mac. I want the accessibility entries, the microphone entries, and",
-      retryCandidate,
-    ];
+    const responses = ["Please compare the painted lanterns in the imaginary orchard.", retryCandidate];
     const requests: Record<string, unknown>[] = [];
     const server = Bun.serve({
       port: 0,
@@ -2425,12 +2417,13 @@ describe("stt-polish", () => {
 
   it("adds a terminal punctuation floor to a long single-narrative fallback", async () => {
     const cleanedText =
-      "so i was thinking about the whole voice layer pipeline and how the polish " +
-      "step is supposed to add punctuation but sometimes it just does not and then " +
-      "you end up with this giant wall of text that has no periods no commas nothing " +
-      "and it is really hard to read especially when the dictation is long like this " +
-      "one where i just keep talking and talking without ever stopping to breathe or " +
-      "add any kind of structure to what i am saying which is exactly the failure mode";
+      "the imaginary birch observatory tracks paper comets across a painted sky " +
+      "while a clockwork gardener sorts blue pebbles into wooden trays and then " +
+      "carries each tray through a corridor lined with tiny lanterns and maps " +
+      "the maps describe a distant island where brass turtles collect colored " +
+      "ribbons beside a silent fountain and stack them beneath a striped canopy " +
+      "every ribbon has a different pattern and every turtle follows the same " +
+      "winding path through the garden until the last lantern turns violet";
     const server = Bun.serve({
       port: 0,
       fetch: async () => {
@@ -2465,7 +2458,7 @@ describe("stt-polish", () => {
 
   it("does not fragment embedded question clauses when HTTP polish is unavailable", async () => {
     const cleanedText =
-      "can you tell me what you did and how you did it because i need to know now for the report tomorrow";
+      "can you veleeora me what you did and how you did it because i need to know now for the velefora velegora";
     const server = Bun.serve({
       port: 0,
       fetch: async () => {
@@ -3140,9 +3133,7 @@ describe("stt-polish", () => {
 });
 
 describe("stt-polish system prompt — false starts and retractions are KEPT", () => {
-  // Etan, 2026-09-06: "raw-ish, I guess. So my thinking process stays."
-  // AGENTS.md: "When I retract a word mid-sentence and say it again differently,
-  // hand over the full truth — retraction and all."
+  // Raw-accuracy policy: preserve false starts and retractions in full.
   const prompt = () => sttPolish.buildPolishSystemPrompt();
 
   it("states an explicit KEEP rule for false starts and self-corrections", () => {
@@ -3219,5 +3210,353 @@ describe("stt-polish system prompt — false starts and retractions are KEPT", (
       expect(text).toContain("every supplied word, fragment, and repetition in order");
       expect(text).not.toContain("safe dictation cleanup");
     }
+  });
+});
+
+// Lane T9 (reported 2026-11-13): polish keeps every "?" it writes except on a
+// statement or request that only contains a question clause. Synthetic only.
+describe("stt-polish terminal question marks", () => {
+  let server: MockPolishServer | null = null;
+
+  beforeEach(() => {
+    TEST_DIR = mkdtempSync(join(tmpdir(), "voicelayer-polish-qm-"));
+    TEST_SOCKET = testSocket("q.sock");
+    TEST_LOG = join(TEST_DIR, "polish.jsonl");
+  });
+
+  afterEach(async () => {
+    server?.stop();
+    server = null;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    if (TEST_SOCKET) rmSync(TEST_SOCKET, { force: true });
+    if (TEST_DIR) rmSync(TEST_DIR, { recursive: true, force: true });
+    TEST_DIR = "";
+    TEST_SOCKET = "";
+  });
+
+  const words = (text: string) =>
+    (text.toLowerCase().match(/[\p{L}\p{N}'’]+/gu) ?? []).sort();
+
+  async function polishWith(cleanedText: string, candidate: string) {
+    server?.stop();
+    server = createMockPolishServer(() => ({ text: candidate }));
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+      const events = errors.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.includes("polish_question_mark"));
+      return { result, events };
+    } finally {
+      errors.mockRestore();
+    }
+  }
+
+  const demotedOnce = ['[voicelayer] {"event":"polish_question_mark_demoted","count":1}'];
+
+  // [cleaned text with the recognizer's ".", polish candidate, delivered]. The
+  // same cleaned text without that statement evidence keeps the "?".
+  const statements: Array<[string, string, string]> = [
+    [
+      "i'm not sure which crate it is but anyway.",
+      "I'm not sure which crate it is, but anyway?",
+      "I'm not sure which crate it is, but anyway.",
+    ],
+    ["so i don't know what happened.", "So I don't know what happened?", "So I don't know what happened."],
+    [
+      "not sure where the config lives but yeah.",
+      "Not sure where the config lives, but yeah?",
+      "Not sure where the config lives, but yeah.",
+    ],
+    [
+      "we're not quite sure which branch has it.",
+      "We're not quite sure which branch has it?",
+      "We're not quite sure which branch has it.",
+    ],
+    [
+      "i have no idea who changed the setting.",
+      "I have no idea who changed the setting?",
+      "I have no idea who changed the setting.",
+    ],
+    ["i wonder if that works!", "I wonder if that works?", "I wonder if that works!"],
+    [
+      "i was wondering how the cache gets warmed but yeah.",
+      "I was wondering how the cache gets warmed, but yeah?",
+      "I was wondering how the cache gets warmed, but yeah.",
+    ],
+    ["i dunno if it shipped.", "I dunno if it shipped?", "I dunno if it shipped."],
+    ["tell me when it lands.", "Tell me when it lands?", "Tell me when it lands."],
+    ["okay let me know what you think.", "Okay, let me know what you think?", "Okay, let me know what you think."],
+    ["explain how the retry budget works.", "Explain how the retry budget works?", "Explain how the retry budget works."],
+    ["check whether the tests still pass.", "Check whether the tests still pass?", "Check whether the tests still pass."],
+    [
+      "actually show me how the parser handles dashes.",
+      "Actually, show me how the parser handles dashes?",
+      "Actually, show me how the parser handles dashes.",
+    ],
+    ["find out who owns the release.", "Find out who owns the release?", "Find out who owns the release."],
+    [
+      "we shipped the fix yesterday. do you want the notes. i'm not really sure which build it was but yeah.",
+      "We shipped the fix yesterday. Do you want the notes? I'm not really sure which build it was, but yeah?",
+      "We shipped the fix yesterday. Do you want the notes? I'm not really sure which build it was, but yeah.",
+    ],
+  ];
+  const noEvidence = ["", ","];
+
+  it.each(statements.map((row, index) => [...row, noEvidence[index % noEvidence.length]!] as const))(
+    "demotes a frame's ? on the recognizer's statement mark, keeps it without one: %s",
+    async (cleanedText, candidate, expected, unmarked) => {
+      const { result, events } = await polishWith(cleanedText, candidate);
+      expect(result).toMatchObject({ status: "applied", text: expected, polishedText: candidate });
+      expect(words(result.text)).toEqual(words(candidate));
+      expect(words(result.text)).toEqual(words(cleanedText));
+      expect(events).toEqual(demotedOnce);
+      const kept = await polishWith(cleanedText.replace(/[.!]$/u, unmarked), candidate);
+      expect(kept.result).toMatchObject({ status: "applied", text: candidate });
+      expect(kept.events).toEqual([]);
+    },
+  );
+
+  // [cleaned text, polish candidate]: every "?" here stays.
+  const questions: Array<[string, string]> = [
+    ["i don't know is it.", "I don't know is it?"],
+    ["i don't know do you.", "I don't know do you?"],
+    ["tell me did it land.", "Tell me did it land?"],
+    ["i am not sure is it merged.", "I am not sure is it merged?"],
+    ["i don't know should we wait.", "I don't know should we wait?"],
+    ["tell me will it ship.", "Tell me will it ship?"],
+    ["i wonder can you check the logs.", "I wonder can you check the logs?"],
+    // Noun-phrase subjects (Cursor pass on #919): real questions, after the frame or a comma.
+    ["tell me did the build finish.", "Tell me did the build finish?"],
+    ["i am not sure, did the build finish.", "I am not sure, did the build finish?"],
+    ["tell me did my patch land.", "Tell me did my patch land?"],
+    ["i do not know, will the release ship.", "I do not know, will the release ship?"],
+    ["i wonder, has the cache warmed.", "I wonder, has the cache warmed?"],
+    ["done and everything is merged.", "Done and everything is merged?"],
+    ["chrome translation.", "Chrome translation?"],
+    ["you already pushed the branch.", "You already pushed the branch?"],
+    ["i should merge it now.", "I should merge it now?"],
+    ["i'm not sure is it merged.", "I'm not sure, is it merged?"],
+    ["i don't know right.", "I don't know, right?"],
+    ["i don't know right.", "I don't know right?"],
+    ["i don't know no.", "I don't know, no?"],
+    ["i'm not sure which one it is?", "I'm not sure which one it is?"],
+    ["tell me did it land.", "Tell me, did it land?"],
+    ["let me know is that okay.", "Let me know — is that okay?"],
+    ["i wonder or should we wait.", "I wonder, or should we wait?"],
+    ["i can't tell where are we on the rollout.", "I can't tell where are we on the rollout?"],
+    ["i'm not sure about the flag you want it on.", "I'm not sure about the flag — you want it on?"],
+    ["did your build finish.", "Did your build finish?"],
+    ["what happened to the build.", "What happened to the build?"],
+    ["it works doesn't it.", "It works, doesn't it?"],
+    ["so is it ready.", "So, is it ready?"],
+    ["can you tell me what happened.", "Can you tell me what happened?"],
+    // Known-limit pins: any recognizer ? bypasses alignment for the whole take.
+    ['i\'m not sure "it works"?', 'I\'m not sure "it works"?'],
+    ["i'm not sure it works? uh.", "I'm not sure it works, uh?"],
+    ["i don't know where it went. i don't know where it went?", "I don't know where it went? I don't know where it went?"],
+    ["i'm not sure which build? it was.", "I'm not sure which build it was?"],
+  ];
+
+  // Every keep case carries a demotable control in the same text, so a guard
+  // that does nothing fails these tests as surely as a guard that demotes all.
+  const control = {
+    cleaned: "i'm not sure which crate it is but anyway.",
+    candidate: "I'm not sure which crate it is, but anyway?",
+    expected: "I'm not sure which crate it is, but anyway.",
+  };
+
+  it.each(questions)("keeps a ? the guard cannot prove was invented: %s", async (cleanedText, candidate) => {
+    const { result, events } = await polishWith(
+      `${cleanedText} ${control.cleaned}`,
+      `${candidate} ${control.candidate}`,
+    );
+    expect(result).toMatchObject({ status: "applied", text: `${candidate} ${cleanedText.includes("?") ? control.candidate : control.expected}` });
+    expect(words(result.text)).toEqual(words(`${cleanedText} ${control.cleaned}`));
+    expect(events).toEqual(cleanedText.includes("?") ? [] : demotedOnce);
+  });
+
+  it.each(["?", "？"])("keeps a recognizer %s when polish moves it", (mark) => {
+    const cleaned = `Did it land${mark} I'm not sure it worked.`;
+    const candidate = "Did it land. I'm not sure it worked?";
+    expect(guardPolishQuestionMarks(cleaned, candidate)).toEqual({ text: candidate, demoted: 0 });
+  });
+
+  it("does not retry HTTP polish after demoting its only edit", async () => {
+    const cleanedText = "I'm not sure which crate we carried to the storage room last week.";
+    const candidate = cleanedText.replace(/\.$/u, "?");
+    let requests = 0;
+    const http = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (request) => {
+        if (new URL(request.url).pathname === "/v1/models") return Response.json({ data: [] });
+        requests++;
+        return Response.json({ choices: [{ message: { content: candidate } }] });
+      },
+    });
+    try {
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${http.port}/v1/chat/completions`,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+      expect(requests).toBe(1);
+      expect(result).toMatchObject({ status: "applied", text: cleanedText, polishedText: candidate, changed: false, retried: false });
+    } finally {
+      http.stop(true);
+    }
+  });
+
+  it("keeps moved and added marks when the recognizer supplied a question mark", () => {
+    const cleaned = "Did it land? I'm not sure it worked.";
+    const candidate = "Did it land. I'm not sure it worked? Is it ready?";
+    expect(guardPolishQuestionMarks(cleaned, candidate)).toEqual({ text: candidate, demoted: 0 });
+  });
+
+  it("keeps a later added mark when an earlier question remains", () => {
+    const cleaned = "Did it land? I'm not sure it worked.";
+    const candidate = "Did it land? I'm not sure it worked?";
+    expect(guardPolishQuestionMarks(cleaned, candidate).text).toBe(candidate);
+  });
+
+  it.each([
+    ["I'm not sure which one it is.", "I'm not sure which one it is?", "I'm not sure which one it is."],
+    ["Is it ready.", "Is it ready?", "Is it ready?"],
+    ["אני לא בטוח שזה עובד.", "אני לא בטוח שזה עובד?", "אני לא בטוח שזה עובד?"],
+    ["האם זה עובד.", "האם זה עובד?", "האם זה עובד?"],
+  ])("preserves words and applies the conservative rule: %s", (cleaned, candidate, expected) => {
+    const result = guardPolishQuestionMarks(cleaned, candidate);
+    expect(result.text).toBe(expected);
+    expect(words(result.text)).toEqual(words(candidate));
+  });
+
+  it("keeps a recognizer ? that polish moved from an earlier sentence", async () => {
+    const cleanedText = `did it land? i'm not sure which build it was. ${control.cleaned}`;
+    const candidate = `Did it land. I'm not sure which build it was? ${control.candidate}`;
+    const { result, events } = await polishWith(cleanedText, candidate);
+    expect(result).toMatchObject({ status: "applied", text: candidate });
+    expect(events).toEqual([]);
+  });
+
+  it.each([
+    ['tell me what you think of "the plan"!', 'Tell me what you think of "the plan?"', 'Tell me what you think of "the plan!"'],
+    ['tell me what you think of "the plan"!', 'Tell me what you think of "the plan"?', 'Tell me what you think of "the plan"!'],
+  ])("reads the cleaned mark past a closer and writes it where polish put the ?: %s", async (cleanedText, candidate, expected) => {
+    const { result, events } = await polishWith(cleanedText, candidate);
+    expect(result).toMatchObject({ status: "applied", text: expected });
+    expect(events).toEqual(demotedOnce);
+  });
+
+  // Known limit, not a goal: wh-word + noun + inversion is still demoted.
+  it.each([
+    ["Let me know what time is it.", "Let me know what time is it?"],
+    ["I'm not sure which one is it.", "I'm not sure which one is it?"],
+  ])("known limit: wh-word plus noun plus inversion: %s", (cleaned, candidate) => {
+    expect(guardPolishQuestionMarks(cleaned, candidate)).toEqual({ text: cleaned, demoted: 1 });
+  });
+
+  // ?-free counterparts reach alignment rather than the whole-take bypass.
+  // The repeated sentence pins the duplicate-span rule: ambiguity keeps both marks.
+  it.each([
+    ['i\'m not sure "it works".', 'I\'m not sure "it works"?', 'I\'m not sure "it works".'],
+    ["i'm not sure it works. uh.", "I'm not sure it works, uh?", "I'm not sure it works, uh."],
+    ["i don't know where it went. i don't know where it went.", "I don't know where it went? I don't know where it went?", "I don't know where it went? I don't know where it went?"],
+    ["i'm not sure which build. it was.", "I'm not sure which build it was?", "I'm not sure which build it was."],
+    ["tell me which shelf you prefer but anyway.", "Tell me which shelf you prefer, but anyway?", "Tell me which shelf you prefer, but anyway."],
+  ])("aligns without a recognizer question mark: %s", (cleaned, candidate, expected) => {
+    const guarded = guardPolishQuestionMarks(cleaned, candidate);
+    expect(guarded).toEqual({ text: expected, demoted: expected === candidate ? 0 : 1 });
+    expect(words(guarded.text)).toEqual(words(candidate));
+  });
+
+  it("returns a polish that changed nothing byte-identical", async () => {
+    const cleanedText = "I'm not sure which crate it is, but anyway.";
+    const unchanged = await polishWith(cleanedText, cleanedText);
+    expect(unchanged.result).toMatchObject({ status: "applied", text: cleanedText, changed: false });
+    expect(unchanged.events).toEqual([]);
+    const repaired = await polishWith(control.cleaned, control.candidate);
+    expect(repaired.result.text).toBe(control.expected);
+  });
+
+  it("returns a polish whose question marks all stay byte-identical", async () => {
+    const cleanedText = "we shipped it do you want the notes it landed on main.";
+    const candidate = "We shipped it. Do you want the notes? It landed on main?";
+    const kept = await polishWith(cleanedText, candidate);
+    expect(kept.result.text).toBe(candidate);
+    expect(kept.events).toEqual([]);
+    const repaired = await polishWith(`${cleanedText} ${control.cleaned}`, `${candidate} ${control.candidate}`);
+    expect(repaired.result.text).toBe(`${candidate} ${control.expected}`);
+  });
+
+  it.each(["", "."])("does not guard a rejected candidate's projected punctuation: terminal %s", async (terminal) => {
+    const cleanedText =
+      `we merged the fix yesterday and the tests are green now i'm not sure which crate it is but anyway${terminal}`;
+    const candidate =
+      "We merged the patch yesterday, and the tests are green now. I'm not sure which crate it is, but anyway?";
+    // Projection never overwrites the recognizer's existing terminal period.
+    // A throwing spy makes this fail if the guard is called on rejection.
+    const guard = spyOn(questionMarkGuard, "guardPolishQuestionMarks").mockImplementation(() => {
+      throw new Error("rejected candidate reached the question-mark guard");
+    });
+    try {
+      const { result, events } = await polishWith(cleanedText, candidate);
+      expect(result.status).toBe("rejected");
+      expect(result.text.endsWith(`but anyway${terminal || "?"}`)).toBe(true);
+      expect(words(result.text)).toEqual(words(cleanedText));
+      expect(events).toEqual([]);
+      expect(guard).not.toHaveBeenCalled();
+    } finally {
+      guard.mockRestore();
+    }
+  });
+
+  it("delivers the accepted polish unchanged when the guard throws, logging no text", () => {
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const delivered = sttPolish.guardedPolishText(control.cleaned, control.candidate, () => {
+        throw new Error(control.candidate);
+      });
+      expect(delivered).toBe(control.candidate);
+      expect(errors.mock.calls.map((call) => String(call[0]))).toEqual([
+        '[voicelayer] {"event":"polish_question_mark_guard_error"}',
+      ]);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it("leaves a recognizer ? that polish turned into a full stop alone, and then demotes nothing", async () => {
+    // The dropped "?" may be the one polish wrote on the control sentence.
+    const candidate = `The build is green, right. ${control.candidate}`;
+    const { result, events } = await polishWith(`the build is green right? ${control.cleaned}`, candidate);
+    expect(result).toMatchObject({ status: "applied", text: candidate });
+    expect(events).toEqual([]);
+  });
+
+  // Shapes the validator rejects before the guard runs, checked on the guard itself.
+  it.each([
+    ["tell me when it lands —", "Tell me when it lands?", "Tell me when it lands?"],
+    ["tell me when it lands…", "Tell me when it lands?", "Tell me when it lands?"],
+    ["tell me when it lands...", "Tell me when it lands?", "Tell me when it lands?"],
+    ["tell me um when it lands, uh.", "Tell me when it lands?", "Tell me when it lands."],
+    ["i'm not sure. tell me when it lands.", "I'm not sure, tell me when it lands?", "I'm not sure, tell me when it lands."],
+  ])("guard: %s -> %s", (cleanedText, candidate, expected) => {
+    expect(guardPolishQuestionMarks(cleanedText, candidate)).toEqual({
+      text: expected,
+      demoted: expected === candidate ? 0 : 1,
+    });
   });
 });

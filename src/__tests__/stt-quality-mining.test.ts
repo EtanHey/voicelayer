@@ -464,9 +464,9 @@ describe("stt-quality-mining", () => {
         `${JSON.stringify({
           id: "latest",
           observed_text:
-            "or should I not change it, or just relay everything that we're about to do to code? VoiceLayer, or I'll just remember that we're doing something and I'll just still present what I have in the lecture.",
+            "The keeper sends this to code Codex, then closes the copper gate.",
           expected_text:
-            "or should I not change it, or just relay everything that we're about to do to VoiceLayer? or I'll just remember that we're doing something and I'll just still present what I have in the lecture?",
+            "The keeper sends this to Codex then closes the copper gate?",
         })}\n`,
       );
 

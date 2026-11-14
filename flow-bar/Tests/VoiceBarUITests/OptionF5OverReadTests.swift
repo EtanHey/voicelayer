@@ -1,8 +1,8 @@
 @testable import VoiceBarUI
 import XCTest
 
-/// Lane B P0, Etan 2026-11-08 4:40 pm (verbatim): "if its on empty, sure it can pause, if its on the same it should
-/// dedupe and tell the user, if its on separate text should be added to the narration queue". Model:
+/// Selection policy, 2026-11-08: empty toggles Pause; identical text reports duplication;
+/// different text joins the narration queue. Models:
 /// formal/playback-session OptF5Empty/OptF5Same/OptF5Other (NoSameQueued) and formal/speech-queue QueueAdmission
 /// (PlayingPolicy "hint"). The daemon side is src/__tests__/selection-admission.test.ts.
 @MainActor

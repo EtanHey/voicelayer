@@ -107,8 +107,7 @@ final class VoiceBarFooterPresentationTests: XCTestCase {
         )
     }
 
-    /// Etan, 2026-09-24: "i'd like it to say "agent speaking" for clarity". The Settings sidebar footer
-    /// and the menu-bar popover share this word; the notch stays textless.
+    /// Reported 2026-09-24: identify the speaking agent in the sidebar and popover; keep the notch textless.
     func testSpeakingStatusNamesTheAgent() {
         XCTAssertEqual(
             VoiceBarFooterPresentation
@@ -130,7 +129,7 @@ final class VoiceBarFooterPresentationTests: XCTestCase {
         XCTAssertEqual(notice(true), "Remote speech backend configured")
     }
 
-    /// S2 (Etan, 2026-11-02): "Transcribed on this Mac" is gone from every VoiceBar source file.
+    /// S2, 2026-11-02: omit the obsolete local-transcription footer from all sources.
     func testNoSourceSaysTranscribedOnThisMac() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

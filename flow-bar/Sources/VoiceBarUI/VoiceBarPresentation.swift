@@ -102,10 +102,8 @@ public struct VoiceBarTranscriptPreviewLayout: Equatable {
     public var isMultiline: Bool
 }
 
-/// X1-35 (Etan QA 2026-11-10: "reading playing and then reading pause should be the same thing with the pause button
-/// clicked ... maybe hiding while still speaking should be available as well ... that state should be finished or
-/// finished reading"). The read on screen, named the way Etan names it. Pause and Hide are independent axes
-/// (X1-34: "paused on its own should not hide the teleprompter, but just pause"); `finished` is an ended read.
+/// Reported 2026-11-10 (X1-35/X1-34): Pause and Hide control separate aspects of a read.
+/// Pausing keeps the teleprompter visible; hiding allows audio to continue. `finished` means the read ended.
 public enum VoiceBarReadingState: String, Equatable, CaseIterable {
     case playing = "reading-playing"
     case playingHidden = "reading-playing-hidden"
@@ -117,8 +115,8 @@ public enum VoiceBarReadingState: String, Equatable, CaseIterable {
     public var isHidden: Bool { self == .playingHidden || self == .pausedHidden }
 }
 
-/// X1-32 (Etan QA 2026-11-10: "that square should probably be X because I don't think the square does anything in that
-/// state"). The control at the end of the reading row: the red Stop square only while audio plays. Paused, nothing is
+/// Reported 2026-11-10 (X1-32): use Stop while playing and a dismiss control otherwise.
+/// Paused, nothing is
 /// playing to stop, so it is an X that ends the read and closes it (a user Stop retains no readback, so one click
 /// closes). An ended read's X dismisses the retained text.
 public struct VoiceBarReadingTerminalControl: Equatable {
@@ -464,7 +462,7 @@ public enum VoiceBarPresentation {
             showsProcessingSpinner: showsProcessingSpinner && speech == 0)
     }
 
-    /// X4 (Etan, PR #860: "too much space on the right"): the reading right wing matches the reading left wing, so the
+    /// X4 QA: equalize reading wings and centre the row within the visible right wing, so the
     /// wings are equal about the notch, and its row (time, meter, and Stop while collapsed) is centred in the wing's
     /// VISIBLE part: the glass hides the first `visibleCoreOcclusionInset` points on a hardware notch.
     public static func readingTrailingWingWidth(visibleCoreOcclusionInset: CGFloat) -> CGFloat {
@@ -491,7 +489,7 @@ public enum VoiceBarPresentation {
     /// Replay (when available) and the eye.
     public static func teleprompterLowerGroupCount(canReplay: Bool) -> Int { canReplay ? 2 : 1 }
 
-    /// X4 (Etan, PR #860: "stop / eye / replay not centred with the drag bar"): Replay, the eye and the terminal control
+    /// X4 QA: align Replay, eye, and terminal action on the drag-bar centre. The terminal action
     /// (Stop while reading, X on an ended readback) are ONE row centred on the body, which is where the drag bar is.
     /// The centre of control `index` (0 = leftmost) of `count`, from the body's centre.
     public static func teleprompterLowerControlOffset(index: Int, count: Int) -> CGFloat {
@@ -713,7 +711,7 @@ public enum VoiceBarPresentation {
         }
     }
 
-    /// X1-34 (Etan: "the eye stays there when it's actually paused hidden"): a hidden read, playing or paused, keeps
+    /// X1-34 design: retain Show teleprompter in the collapsed wing for any hidden read,
     /// Show teleprompter in the collapsed wing, over the meter's last slot.
     public static func showsWingTeleprompterReveal(reading: VoiceBarReadingState?,
                                                    bandState: VoiceBarNotchVisualState) -> Bool {

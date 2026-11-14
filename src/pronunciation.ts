@@ -6,7 +6,7 @@
  *
  * Categories:
  *   - tech: Framework/tool names (TypeScript → "Type Script")
- *   - hebrew: Hebrew names/words (Etan → "Eh tahn")
+ *   - hebrew: Hebrew names and words with engine-specific phonetic spellings
  *   - acronyms: Letter-by-letter (SQL → "S Q L", API → "A P I")
  *
  * Legacy YAML replacements are case-insensitive whole-word matches.

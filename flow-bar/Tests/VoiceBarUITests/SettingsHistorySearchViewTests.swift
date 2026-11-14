@@ -173,7 +173,7 @@ final class SettingsHistorySearchViewTests: XCTestCase {
                     createdAt: Self.date(hour: 10, minute: 15),
                     questionText: "Raise the silence timeout to five seconds?",
                     questionAudioPath: URL(fileURLWithPath: "/tmp/h1c-q/agent-audio.mp3"),
-                    responseTranscript: "Yes, but only when I'm mid-sentence.",
+                    responseTranscript: "Yes, once the painted lantern is ready.",
                     responseAudioPath: URL(fileURLWithPath: "/tmp/h1c-q/audio.wav")
                 ),
             ]),

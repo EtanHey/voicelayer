@@ -10,7 +10,7 @@ import XCTest
 final class NotchHistoryMorphTests: XCTestCase {
     // MARK: Morph B values
 
-    /// 2.4 Lane A (Etan: "one spring, no multi-stage"): open, close and the handle share one critically damped spring.
+    /// 2.4 design: opening, closing, and handle movement share one critically damped spring.
     func test0449ClosingFlightNeverMovesBackOrOvershootsAfterAReversal() {
         for speed in [-80.0, -8, 0, 8, 80] {
             let flight = NotchHistorySpringFlight(from: 0.8, to: 0, velocity: speed, start: 0,
@@ -450,7 +450,7 @@ final class NotchHistoryMorphTests: XCTestCase {
 
     func testAClippedRowShowsItsWholeTextInATooltipAndAShortOneShowsNone() {
         XCTAssertNil(NotchHistoryPresentation.clippedTextTooltip("Ship it."))
-        let long = "For History I want two lines per row and seven rows visible, and I want to pull it down to see more."
+        let long = "For Velfqora I want two velfrora per row and seven velfsora velftora, and I want to velaxora it velfuora to see more."
         XCTAssertEqual(NotchHistoryPresentation.clippedTextTooltip(long), long)
         XCTAssertEqual(NotchHistoryPresentation.clippedTextTooltip("Ship   it.\nNow", availableWidth: 10), "Ship it. Now")
         let huge = String(repeating: "word ", count: 400)
