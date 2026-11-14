@@ -1,6 +1,6 @@
 import Foundation
 
-/// A History search query (H1-c; Etan: "add search, separately for Recording and Ask").
+/// H1-c design: independent search queries for Dictations and Ask history.
 ///
 /// AIDEV-NOTE: The query is trimmed, and whitespace alone is not a search (the #148 lesson from the Dictionary
 /// search). Matching ignores case and diacritics, so "cafe" finds "Café"; Hebrew matches as typed.

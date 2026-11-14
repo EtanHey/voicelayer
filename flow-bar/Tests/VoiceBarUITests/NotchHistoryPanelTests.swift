@@ -4,8 +4,7 @@ import CoreGraphics
 @testable import VoiceBarUI
 import XCTest
 
-/// Etan's approved spec §4 + his words (findings.md:30): the History panel "should utilize the same type of
-/// popover as the teleprompter of the voice ask and voice speak just maybe be narrower and taller".
+/// Approved design §4: reuse the teleprompter shell for a taller, narrower History surface.
 /// So History is a notch visual state that drops the same shell the teleprompter uses, not an NSPopover.
 final class NotchHistoryPanelTests: XCTestCase {
     private func resolve(history: Bool, teleprompter: Bool = false, recording: Bool = false,

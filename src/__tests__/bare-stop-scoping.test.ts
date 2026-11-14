@@ -1,5 +1,5 @@
 // A stop without a take id is a speech/playback stop. It never ends a VoiceBar dictation take
-// (Etan, 2026-11-08: "Recording right after a recording breaks; it's consistent").
+// Reported 2026-11-08: consecutive recordings consistently failed.
 // Real socket handler and capture code; only the recorder child is the preload's silence stub.
 import { afterEach, expect, it, spyOn } from "bun:test";
 import { describeMicTouching as describe } from "./setup/live-host-guard";

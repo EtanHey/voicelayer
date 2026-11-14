@@ -190,7 +190,7 @@ test("G2g duplicate playing selection preserves VoiceBar wire contract", async (
   const second = selection("two", "same playing selection");
   fs.rmdirSync(path + ".lock");
   expect(await first).toMatchObject({ outcome: "accept" });
-  // Etan, 2026-11-08: a duplicate of the read being played is "Already reading this". VoiceState retires duplicate
+  // Etan's ruling, 2026-11-08: duplicate submissions produce a dedupe notice. Retire
   // submissions (and shows the note) for both "Already queued" and "Already reading this".
   expect(await second).toMatchObject({ outcome: "noop", reason: "Already reading this" });
 });

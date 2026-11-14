@@ -10,7 +10,7 @@ public struct TeleprompterAView: View {
     public var hasCompleteDisplay = false
     public var speechWords: SpeechWordTable?
     public var isPaused = false
-    /// T3 (Etan QA 2026-11-09): no "Reading" prose is drawn. A dictation pause keeps its words for VoiceOver only.
+    /// Reported 2026-11-09: omit visible reading-status prose; retain dictation-pause words for VoiceOver.
     public var footerState = TeleprompterA.footerState(isPaused: false, isPausedForDictation: false)
     public var visibleLines = 3
     public var columnWidth = TeleprompterA.columnWidth
@@ -315,8 +315,8 @@ struct TeleprompterScrollCatcher: NSViewRepresentable {
     }
 }
 
-/// T2 (Etan QA 2026-11-09: "The drag bar ... can go underneath the eye and the replay row"): Teleprompter A's
-/// height handle, its own leaf so the notch can place it under the eye row. Whole lines follow the pointer; it owns
+/// Reported 2026-11-09 (T2): place the independent height-handle leaf below the eye row.
+/// Whole lines follow the pointer; the handle owns
 /// the panel's pointer hold only between its own press and release (formal/teleprompter-a-handle).
 public struct TeleprompterAHeightHandle: View {
     public var visibleLines: Int

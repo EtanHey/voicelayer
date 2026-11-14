@@ -378,7 +378,7 @@ public extension STTVocabularyPreview {
     }
 }
 
-/// One Add/Edit sheet for a Dictionary term (Etan's 2.2.24 review #3: no inline box, no "+ misheard as…" row
+/// Reported 2.2.24 review: use one Add/Edit sheet per Dictionary term, without inline editing controls
 /// under every term). `original` is nil when adding.
 public struct DictionaryTermEdit: Equatable, Identifiable {
     public var original: STTDictionaryEntry?

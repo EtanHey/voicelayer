@@ -86,7 +86,7 @@ Handle(r) ==
          /\ d' = [d EXCEPT !.phase = IF r.same THEN "check" ELSE "batch", !.target = r.target]
          /\ UNCHANGED <<outcomes, receipts, closed, bad, queue, history, historyDelivered>>
     [] d.phase = "read" ->
-         /\ d' = [d EXCEPT !.phase = "check", !.fallback = ~(r.reading = "inserted" /\ r.same),
+         /\ d' = [d EXCEPT !.phase = IF (r.reading = "unknown" \/ ~r.same) /\ Mutation \notin {"ForeignRead", "DropUnknown"} THEN "read" ELSE "check", !.fallback = ~(r.reading = "inserted" /\ r.same),
               !.drop = (r.reading = "inserted" /\ (r.same \/ Mutation = "ForeignRead")) \/ Mutation = "DropUnknown",
               !.supplied = r.reading = "inserted" /\ r.same /\ r.landed /\ r.marker]
          /\ UNCHANGED <<outcomes, receipts, closed, bad, queue, history, historyDelivered>>
@@ -99,7 +99,7 @@ ActiveMain == /\ d.active /\ ~Blocked
   /\ UNCHANGED <<app, element, secure, recording, watchdog, quitting, draining, arrived>>
   /\ CASE d.phase = "finish" -> /\ Finish("posted") /\ UNCHANGED <<worker, reply>>
        [] d.phase # "finish" /\ d.time = Deadline /\ Mutation \notin {"NoDeadline", "LateMain"} ->
-           /\ IF Mutation = "LateAX" /\ worker.kind = "none" /\ reply.kind = "none"
+           /\ IF Mutation \in {"LateAX", "LateRead"} /\ (Mutation # "LateRead" \/ d.phase = "read") /\ worker.kind = "none" /\ reply.kind = "none"
                  THEN /\ Issue(d.phase) /\ UNCHANGED reply
                  ELSE /\ IF d.phase = "capture" \/ d.phase = "batch"
                                THEN Post(Empty, TRUE)

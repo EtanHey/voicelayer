@@ -34,7 +34,7 @@ Project(x) ==
                ELSE IF x.engaged \/ note \/ (x.mode = "idle" /\ ~x.collapsed) THEN "hoverLauncher" ELSE "idle"
       status == StatusVisible(x) /\ (StatusText(x) # "none")
                 /\ (Variant = "fixed" \/ HasStatusBand(x, baseShell) \/ baseShell = "compactStatus")
-      \* 2.3 N1 (Etan, QA round 1: "Typed" belongs in the right wing, not a lobe underneath): a one-line idle
+      \* Status acknowledgements use the transient status surface; history contains substantive responses.
       \* confirmation with no note beside it is the right wing's own label, in a compact (or collapsed) notch.
       \* Multi-line recovery copy, long copy and anything sharing the notch with a note or History stay the tab.
       wingConfirm == Variant = "fixed" /\ Fault # "confirmation-tab" /\ status /\ ~note

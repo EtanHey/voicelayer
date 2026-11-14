@@ -800,7 +800,7 @@ describe("SoundLayer MCP compatibility regression", () => {
     speakSpy.mockResolvedValue({
       displayText: "Paired question without markup",
       engine: "qwen3-tts",
-      voice: "etan-clone",
+      voice: "sample-clone",
       audioArtifact: { bytes: agentAudio, format: "mp3" },
     });
     waitForInputSpy.mockImplementation(
@@ -861,7 +861,7 @@ describe("SoundLayer MCP compatibility regression", () => {
       expect(metadata).toHaveProperty("transcription_status", "transcribed");
       expect(metadata).toHaveProperty("retention_policy", "indefinite");
       expect(metadata).toHaveProperty("agent_tts_engine", "qwen3-tts");
-      expect(metadata).toHaveProperty("agent_tts_voice", "etan-clone");
+      expect(metadata).toHaveProperty("agent_tts_voice", "sample-clone");
       expect(metadata).toHaveProperty("user_audio_sha256", createHash("sha256").update(userAudio).digest("hex"));
       expect(metadata).toHaveProperty("agent_audio_sha256", createHash("sha256").update(agentAudio).digest("hex"));
     } finally {

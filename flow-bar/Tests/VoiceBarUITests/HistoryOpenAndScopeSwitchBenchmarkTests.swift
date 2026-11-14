@@ -4,7 +4,7 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// Lane E (QA 2.2.25 C10/C15): "still some lag when I click Dictations… and Ask" and "clicking History… that was
+// QA regression: opening history and switching scope must remain responsive.
 /// long". Opt-in timing evidence on a synthetic archive with the real archive's SHAPE: a manifest of
 /// `day \t entry \t source \t transcriptChars \t durationMs \t hasTranscript \t hasAgentTranscript` rows (no text).
 /// Transcripts are synthetic filler of the recorded length.
@@ -168,7 +168,7 @@ final class HistoryOpenAndScopeSwitchBenchmarkTests: XCTestCase {
             after: clickedAt, expecting: .load("dictations"), probe: probe
         ))
 
-        // Away and back, warm (the "reopening History is slow even though I was just there" case). Returning to
+        // QA regression: scope changes must update the visible history without delay.
         // History reloads the shown scope, so a completed load is required.
         let general = try XCTUnwrap(SettingsTab.allCases.firstIndex(of: .general))
         table.selectRowIndexes([general], byExtendingSelection: false)

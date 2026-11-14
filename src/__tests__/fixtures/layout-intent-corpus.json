@@ -235,8 +235,8 @@
       "old": "Every day\nRepeat"
     },
     {
-      "input": "I need to call the bank new line buy groceries new line pick up the kids",
-      "old": "I need to call the bank\nBuy groceries\nPick up the kids"
+      "input": "the gardener needs lanterns new line paint baskets new line water the flowers",
+      "old": "The gardener needs lanterns\nPaint baskets\nWater the flowers"
     },
     {
       "input": "first point new line second point",

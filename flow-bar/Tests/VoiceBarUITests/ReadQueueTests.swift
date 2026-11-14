@@ -1,7 +1,7 @@
 @testable import VoiceBarUI
 import XCTest
 
-/// QUEUE1 (Etan, 2026-10-20): Option+F5 on a different selection queues it; the pill shows "+N" and Next.
+/// QUEUE1, 2026-10-20: a different Option+F5 selection queues it; show the count and Next.
 @MainActor
 final class ReadQueueTests: XCTestCase {
     private var commands: [[String: Any]] = []
@@ -266,7 +266,7 @@ final class ReadQueueTests: XCTestCase {
                     XCTAssertEqual(commands.last?["source"] as? String, "selection", label)
                     XCTAssertEqual(commands.last?["queue"] as? Bool == true, row.playing != 0 && !row.preempted, label)
                 }
-                // Etan, 2026-11-08: the read being played is "Already reading this"; a queued one "Already queued".
+                // Etan's ruling, 2026-11-08: distinguish the active read from a queued duplicate.
                 if row.decision == "hint" {
                     let reading = row.selected == row.playing && !row.suspended && !row.pending.contains(row.selected)
                     XCTAssertEqual(state.selectionFeedbackNote, reading ? VoiceState.alreadyReadingNote : "Already queued", label)
@@ -442,7 +442,7 @@ final class ReadQueueTests: XCTestCase {
         XCTAssertEqual(cmds, ["read_next"])
     }
 
-    // MARK: - R2 D2 (lead ruling a): F5 over a playing read keeps the queued reads for Next
+    // MARK: - R2 D2 (Etan's ruling a): F5 over a playing read keeps the queued reads for Next
 
     func testF5StopOverAPlayingReadKeepsTheQueueAndNextResumesItAfterTheCapture() throws {
         let (state, a) = readingA()
@@ -530,7 +530,7 @@ final class ReadQueueTests: XCTestCase {
         }
     }
 
-    // MARK: - QUEUE1b Q1B-SOL-1 (lead ruling): Hide ends the read chain on both sides
+    // MARK: - QUEUE1b Q1B-SOL-1 (Etan's ruling): Hide ends the read chain on both sides
 
     func testHideDuringCaptureRefusesAndKeepsTheRetainedQueue() throws {
         let (state, a) = readingA()
@@ -563,7 +563,7 @@ final class ReadQueueTests: XCTestCase {
         XCTAssertNil(VoiceBarPresentation.readQueueControl(for: state))
     }
 
-    // MARK: - QUEUE1c (lead ruling): an idle Cancel ends the waiting chain on both sides
+    // MARK: - QUEUE1c (Etan's ruling): an idle Cancel ends the waiting chain on both sides
 
     /// Sol's `testReviewIdleCancelMustNotOrphanWaitingReads`, adapted to the ruling: the idle Cancel
     /// (voicebar://cancel, socket-control) discards the waiting reads instead of orphaning them in the daemon.

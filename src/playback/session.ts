@@ -501,7 +501,7 @@ function clampWord(word: number, max: number): number {
 export const PAUSE_CLIENT_TOLERANCE_MS = 750;
 
 /**
- * Etan's "pause jumps back to 0:00" (QA 2026-11-08): the client's teleprompter clock was trusted
+ * Reported 2026-11-08: Pause rewound to a reset client clock. The teleprompter clock was trusted
  * as the pause position. VoiceBar's clock reads 0 while it thinks a read is preparing (between
  * chunks, right after a resume), and a chunk-local value minus the chunk start goes negative;
  * both rewound the read to the chunk's first word.

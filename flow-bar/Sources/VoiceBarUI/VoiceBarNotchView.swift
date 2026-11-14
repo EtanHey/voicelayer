@@ -309,7 +309,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     // (`open` keeps the launcher's wing rects, so the controls and their hit targets never move.)
 
     /// The History morph draws every change between History and the band a drawer opens over: the launcher, and
-    /// (0510 N7/R3) a recording or a compact status. X4 J3 (Etan, M4: "the drawer reopens then closes"): only the
+    /// (0510 N7/R3) a recording or compact status. X4 J3 reported a repeated drawer close on M4: only the
     /// launcher was listed, so over a recording the shell geometry sprang to the OPEN panel underneath the History
     /// morph; when the close finished and the morph went away, the plain shell drew that open panel again and sprang
     /// it shut, a second open and close. Snapping for every drawer band keeps the shell where the morph left it.
@@ -535,7 +535,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         _ content: some View,
         side: VoiceBarNotchSide
     ) -> some View {
-        // X4 J2 (Etan, M4: "the seconds and the waveform SHIFT sideways when I open or hold the notch"): a press, a
+        // X4 J2 reported wing content shifting on drawer interaction: a press, a
         // pull or an opening drawer mounts History, so the visual state becomes `.history` while the band above the
         // drawer is still the activity's (0510 R3). The wing keeps that band's content insets, so its row never
         // reflows: on the M4 the old `.history` insets moved the recording time and meter 4.5 pt toward the notch.

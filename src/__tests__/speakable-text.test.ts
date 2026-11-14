@@ -72,7 +72,7 @@ for (const engine of ["edge", "clone"] as const) {
     ['The token " [x] " stays.', 'The token " [x] " stays.', "The token open bracket x close bracket stays."],
     ["Use [x] to close", "Use [x] to close", "Use open bracket x close bracket to close"],
     ["Use [ ] inside a sentence", "Use [ ] inside a sentence", "Use an empty list inside a sentence"],
-    ['Etan said "[ ] x" here', 'Etan said "[ ] x" here', "Etan said an empty list x here"],
+    ['The gardener said "[ ] x" here', 'The gardener said "[ ] x" here', "The gardener said an empty list x here"],
     ["Before [ ] unchecked [x] checked [X] checked after", "Before [ ] unchecked [x] checked [X] checked after", "Before an empty list unchecked open bracket x close bracket checked open bracket X close bracket checked after"],
     ["Done [x]. Next", "Done [x]. Next", "Done open bracket x close bracket . Next"],
     ["Ready [X]!", "Ready [X]!", "Ready open bracket X close bracket !"],

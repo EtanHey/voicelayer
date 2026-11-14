@@ -445,12 +445,13 @@ describe("stt-polish", () => {
 
   it("floors every active on-mode non-applied fallback status", async () => {
     const cleanedText =
-      "so i was thinking about the whole voice layer pipeline and how the polish " +
-      "step is supposed to add punctuation but sometimes it just does not and then " +
-      "you end up with this giant wall of text that has no periods no commas nothing " +
-      "and it is really hard to read especially when the dictation is long like this " +
-      "one where i just keep talking and talking without ever stopping to breathe or " +
-      "add any kind of structure to what i am saying which is exactly the failure mode";
+      "the imaginary birch observatory tracks paper comets across a painted sky " +
+      "while a clockwork gardener sorts blue pebbles into wooden trays and then " +
+      "carries each tray through a corridor lined with tiny lanterns and maps " +
+      "the maps describe a distant island where brass turtles collect colored " +
+      "ribbons beside a silent fountain and stack them beneath a striped canopy " +
+      "every ribbon has a different pattern and every turtle follows the same " +
+      "winding path through the garden until the last lantern turns violet";
     server = createMockPolishServer(() => ({
       text: `Raw Whisper text: ${cleanedText}`,
     }));
@@ -507,7 +508,7 @@ describe("stt-polish", () => {
     }));
 
     const cleanedText =
-      "For fuck's sake. If BrainLayer hybrid is done, then it can just merge. Come on. I want to review the PR later. We need to make sure that they're all synced. BrainLayer will be responsive and usable?";
+      "For velaaora's velabora. If Velacora veladora is done, then it can just velaeora. Velafora on. I want to velagora the PR velahora. We need to make sure that they're all velaiora. Velacora will be velajora and velakora?";
     const result = await polishTranscriptionText({
       rawText: cleanedText,
       cleanedText,
@@ -626,11 +627,11 @@ describe("stt-polish", () => {
 
   it("rejects same-length long rewrites in on mode", async () => {
     server = createMockPolishServer(() => ({
-      text: "After merge, the app is faster, cleaner, safer, simpler, stable, ready, reviewed, documented, tested, and deployable without me reading the pull request again today safely.",
+      text: "After velaeora, the app is not velalora, velamora, velanora, velaoora, velapora, velaqora, velarora, velasora, velatora, and velauora velavora me velawora the velaxora velayora velazora velbaora velbbora.",
     }));
 
     const cleanedText =
-      "For fuck's sake. If BrainLayer hybrid is done, then it can just merge. Come on. I do not want to look at the PR. We need to make sure that they are all synced.";
+      "For velaaora's velabora. If Velacora veladora is done, then it can just velaeora. Velafora on. I do not want to velbcora at the PR. We need to make sure that they are all velaiora.";
     const result = await polishTranscriptionText({
       rawText: cleanedText,
       cleanedText,
@@ -819,8 +820,8 @@ describe("stt-polish", () => {
   });
 
   it("rejects a negation inversion even when the total negation count is unchanged", async () => {
-    const cleanedText = "I don't have a session ID before today.";
-    const polishedText = "I have no session ID before today.";
+    const cleanedText = "I don't have a lantern ID before sunrise.";
+    const polishedText = "I have no lantern ID before sunrise.";
     server = createMockPolishServer(() => ({ text: polishedText }));
 
     const result = await polishTranscriptionText({
@@ -843,8 +844,8 @@ describe("stt-polish", () => {
   });
 
   it("allows apostrophe-only negation spelling normalization", async () => {
-    const cleanedText = "I dont have a session ID before today.";
-    const polishedText = "I don't have a session ID before today.";
+    const cleanedText = "I dont have a veldbora ID before velbaora.";
+    const polishedText = "I don't have a veldbora ID before velbaora.";
     server = createMockPolishServer(() => ({ text: polishedText }));
 
     const result = await polishTranscriptionText({
@@ -1088,9 +1089,9 @@ describe("stt-polish", () => {
 
   it("rejects an arbitrary split-word join even alongside valid prose dash formatting", async () => {
     const cleanedText =
-      "As in if Astra is actually usable for that I think Astra should be it because it can also understand that we're working on d3 or d4 and what to leave for later and don't ask me questions yet wait until you get all the sub-agents back and then everything at once or atomically but don't put things where I won't see them once your sub-ag ents come back okay - Okay.";
+      "As in if Velbdora is actually velakora for that I think Velbdora should be it because it can also velbeora that we're velbfora on d3 or d4 and what to velbgora for velahora and don't ask me velbhora yet velbiora velbjora you get all the sub-velbkora velblora and then velbmora at velbnora or velboora but don't put velbpora where I won't see them velbnora your sub-ag velbqora velafora velblora okay - Okay.";
     const polishedText =
-      "As in if Astra is actually usable for that, I think Astra should be it because it can also understand that we're working on d3 or d4 and what to leave for later and don't ask me questions yet — wait until you get all the sub-agents back and then everything at once or atomically, but don't put things where I won't see them once your sub-agents come back. Okay — Okay.";
+      "As in if Velbdora is actually velakora for that, I think Velbdora should be it because it can also velbeora that we're velbfora on d3 or d4 and what to velbgora for velahora and don't ask me velbhora yet — velbiora velbjora you get all the sub-velbkora velblora and then velbmora at velbnora or velboora, but don't put velbpora where I won't see them velbnora your sub-velbkora velafora velblora. Okay — Okay.";
     server = createMockPolishServer(() => ({ text: polishedText }));
 
     const result = await polishTranscriptionText({
@@ -1174,9 +1175,9 @@ describe("stt-polish", () => {
       },
       {
         cleanedText:
-          "FYI, I was toggling it on and off, yeah, it wasn't flick ering, like, through all the states for no reason, it was me. Just wanted to make sure that you don't think that it's having a seizure, it's just how I was F5-ing on and off-ing.",
+          "FYI, I was velbrora it on and off, yeah, it velbsora't velbtora velbuora, like, velbvora all the velbwora for no velbxora, it was me. Just velbyora to make sure that you don't think that it's velbzora a velcaora, it's just how I was F5-ing on and off-ing.",
         polishedText:
-          "FYI, I was toggling it on and off, yeah, it wasn't flickering, like, through all the states for no reason, it was me. Just wanted to make sure that you don't think that it's having a seizure—it's just how I was F5-ing on and off.",
+          "FYI, I was velbrora it on and off, yeah, it velbsora't velcbora, like, velbvora all the velbwora for no velbxora, it was me. Just velbyora to make sure that you don't think that it's velbzora a velcaora—it's just how I was F5-ing on and off.",
       },
     ];
     const responses = cases.map(({ polishedText }) => polishedText);
@@ -1250,9 +1251,9 @@ describe("stt-polish", () => {
 
   it("rejects a candidate that splits an in-token hyphen", async () => {
     const cleanedText =
-      "Kind of yes. I want to make sure that our cc usage function, there's a cc-usage and just cc usage 1 word. 1 of them is our own function. 1 of them is someone else's function. I want to make sure both of them still read everything, so we need to somehow wire that upright. And I also want to understand how that all works. When I am speaking with you right now, the JSON-L watcher is supposed to watch every chunk that comes from you, basically every turn or every tool call, right? Or how does that work? Is it only when the session is dorm ant and then it goes over all the chunks? What happens when a conversation is compacted? Because I've been told lately that a compaction doesn't really delete everything before the compaction locally from the JSON-L, but it only creates a checkpoint where the compact happened, and then the summary is on top of it, and then the conversation kind of restarts, but everything before the checkpoint and compaction is still stored in the JSON-L. Can you send a brain worker or just a sub-agent to figure that out while we keep talking? Yes.";
+      "Velccora of yes. I want to make sure that our cc velcdora velceora, there's a cc-velcdora and just cc velcdora 1 velcfora. 1 of them is our own velceora. 1 of them is velcgora velchora's velceora. I want to make sure velciora of them still velcjora velbmora, so we need to velckora velclora that velcmora. And I also want to velbeora how that all velcnora. When I am velcoora with you right now, the Velcpora-L velcqora is velcrora to velcsora velctora velcuora that velcvora from you, velcwora velctora velcxora or velctora velcyora velczora, right? Or how does that veldaora? Is it only when the veldbora is veldcora ant and then it velddora over all the veldeora? What veldfora when a veldgora is veldhora? Because I've been veldiora veldjora that a veldkora veldlora't really veldmora velbmora before the veldkora veldnora from the Velcpora-L, but it only veldoora a veldpora where the veldqora veldrora, and then the veldsora is on top of it, and then the veldgora velccora of veldtora, but velbmora before the veldpora and veldkora is still velduora in the Velcpora-L. Can you veldvora a veldwora veldxora or just a sub-veldyora to veldzora that out veleaora we velebora velecora? Yes.";
     const polishedText =
-      "Kind of yes. I want to make sure that our cc usage function—there's a cc-usage and just cc usage, one word. One of them is our own function. One of them is someone else's function. I want to make sure both of them still read everything, so we need to somehow wire that upright. And I also want to understand how that all works. When I am speaking with you right now, the JSON-L watcher is supposed to watch every chunk that comes from you, basically every turn or every tool call, right? Or how does that work? Is it only when the session is dormant and then it goes over all the chunks? What happens when a conversation is compacted? Because I've been told lately that a compaction doesn't really delete everything before the compaction locally from the JSON- L, but it only creates a checkpoint where the compact happened, and then the summary is on top of it, and then the conversation kind of restarts, but everything before the checkpoint and compaction is still stored in the JSON-L. Can you send a brain worker or just a sub-agent to figure that out while we keep talking? Yes.";
+      "Velccora of yes. I want to make sure that our cc velcdora velceora—there's a cc-velcdora and just cc velcdora, one velcfora. One of them is our own velceora. One of them is velcgora velchora's velceora. I want to make sure velciora of them still velcjora velbmora, so we need to velckora velclora that velcmora. And I also want to velbeora how that all velcnora. When I am velcoora with you right now, the Velcpora-L velcqora is velcrora to velcsora velctora velcuora that velcvora from you, velcwora velctora velcxora or velctora velcyora velczora, right? Or how does that veldaora? Is it only when the veldbora is veledora and then it velddora over all the veldeora? What veldfora when a veldgora is veldhora? Because I've been veldiora veldjora that a veldkora veldlora't really veldmora velbmora before the veldkora veldnora from the Velcpora- L, but it only veldoora a veldpora where the veldqora veldrora, and then the veldsora is on top of it, and then the veldgora velccora of veldtora, but velbmora before the veldpora and veldkora is still velduora in the Velcpora-L. Can you veldvora a veldwora veldxora or just a sub-veldyora to veldzora that out veleaora we velebora velecora? Yes.";
     server = createMockPolishServer(() => ({ text: polishedText }));
 
     const result = await polishTranscriptionText({
@@ -1378,17 +1379,9 @@ describe("stt-polish", () => {
   });
 
   it("rejects article replacement even alongside punctuation and numeric rendering", async () => {
-    const polished =
-      "I don't see, oh okay, now I see: codex lead austerity — should that one " +
-      "be pushed to an ultra-ultra effort? Maybe also, I don't think you answered: " +
-      "do you need me to make you, or sorry, to make a codex effort ultra for you or not? " +
-      "Shit, look at this bs bs.";
+    const polished = "The imaginary orchard has one gate leading to an amber pavilion. Can the gardener bring a blue basket?";
     server = createMockPolishServer(() => ({ text: polished }));
-
-    const cleanedText =
-      "I don't see oh okay now I see codex lead austerity should that 1 be pushed " +
-      "to a ultra ultra effort maybe also I don't think you answered do you need me " +
-      "to make you or sorry to make a codex effort ultra for you or not shit look at this bs bs.";
+    const cleanedText = "the imaginary orchard has 1 gate leading to a amber pavilion can the gardener bring a blue basket";
     const result = await polishTranscriptionText({
       rawText: cleanedText,
       cleanedText,
@@ -1864,11 +1857,11 @@ describe("stt-polish", () => {
 
   it("rejects spoken-list restructuring that deletes framing and ordinal cues", async () => {
     server = createMockPolishServer(() => ({
-      text: "Okay:\n1. I want to do x, y, z.\n2. I want to do the other thing.\n3. I want to do this, that, and this.",
+      text: "Garden:\n1. Plant birch seeds.\n2. Water cedar pots.\n3. Label maple trays.",
     }));
 
     const cleanedText =
-      "Or if I say, okay, first of all, I want to do x, y, z, and then second of all, I want to do the other thing, and then third of all, I want to do this, that, and this.";
+      "For the imaginary garden, first of all, plant birch seeds, and then second of all, water cedar pots, and then third of all, label maple trays.";
     const result = await polishTranscriptionText({
       rawText: cleanedText,
       cleanedText,
@@ -1879,7 +1872,7 @@ describe("stt-polish", () => {
       },
     });
 
-    expectConservedRejection(result, cleanedText, "Okay:\n1. I want to do x, y, z.\n2. I want to do the other thing.\n3. I want to do this, that, and this.");
+    expectConservedRejection(result, cleanedText, "Garden:\n1. Plant birch seeds.\n2. Water cedar pots.\n3. Label maple trays.");
   });
 
   it("does not count deterministic upstream list markers as invented numbers", async () => {
@@ -2009,11 +2002,11 @@ describe("stt-polish", () => {
 
   it("allows punctuation repair when digit tokens are only written as equivalent number words", async () => {
     server = createMockPolishServer(() => ({
-      text: "So wait, what do you mean follow-up backlog? Why did you all not do it well? It seems like we've evaled this very good, and I'm now seeing the golemsClaude on your right. Three minor non-blocking gaps: failure recur, record path untested, cleanup skip is silent exit 0 with no Telegram warning, no boundary test for adjacency window edge. Well, I mean again, this should have been more compounding. I want this to be fucking hard, fucking rock solid. Can you get your own ID, your own Claude session ID, and send that to me?",
+      text: "The imaginary orchard has three silver gates. Three quiet gardeners walk beside the stream and gather fallen leaves. A clockwork owl counts the baskets. Can the lantern keeper open the north gate?",
     }));
 
     const cleanedText =
-      "So wait what do you mean follow up backlog why did you all not do it well it seems like we've evaled this very good and I'm now seeing the golemsClaude on your right 3 minor non-blocking gaps failure recur record path untested cleanup skip is silent exit 0 with no Telegram warning no boundary test for adjacency window edge well I mean again this should have been more compounding I want this to be fucking hard fucking rock solid can you get your own id your own Claude session id and send that to me";
+      "the imaginary orchard has 3 silver gates three quiet gardeners walk beside the stream and gather fallen leaves a clockwork owl counts the baskets can the lantern keeper open the north gate";
     const result = await polishTranscriptionText({
       rawText: cleanedText,
       cleanedText,
@@ -2025,7 +2018,7 @@ describe("stt-polish", () => {
     });
 
     expect(result).toMatchObject({
-      text: "So wait, what do you mean follow-up backlog? Why did you all not do it well? It seems like we've evaled this very good, and I'm now seeing the golemsClaude on your right. Three minor non-blocking gaps: failure recur, record path untested, cleanup skip is silent exit 0 with no Telegram warning, no boundary test for adjacency window edge. Well, I mean again, this should have been more compounding. I want this to be fucking hard, fucking rock solid. Can you get your own ID, your own Claude session ID, and send that to me?",
+      text: "The imaginary orchard has three silver gates. Three quiet gardeners walk beside the stream and gather fallen leaves. A clockwork owl counts the baskets. Can the lantern keeper open the north gate?",
       status: "applied",
       changed: true,
     });
@@ -2132,16 +2125,13 @@ describe("stt-polish", () => {
   it.each(["preserve conjunction", "delete conjunction"])("validates HTTP retry content independently of transport success (%s)", async (scenario) => {
     const preserveConjunction = scenario === "preserve conjunction";
     const cleanedText =
-      "please compare the settings on the first mac with the settings on this mac and make sure the permissions line up before you change anything i want the accessibility entries the microphone entries the automation entries and the full disk access entries checked carefully because the two machines should mostly match and the only real difference should be how the brain layer data is separated for that project also look for stale duplicates and tell me which entries are safe to remove after you verify the app versions";
+      "please compare the painted lanterns in the imaginary orchard with the lanterns beside the silver fountain and check the ribbons before the evening parade the gardeners need the blue baskets the cedar trays the paper maps and the brass bells arranged carefully because the two processions should mostly match and the only difference should be which clockwork turtle carries the violet banner also inspect the wooden arches and count the tiny flags before the moon rises over the garden wall and the last lantern turns violet";
     const polishedText =
-      "Please compare the settings on the first Mac with the settings on this Mac, and make sure the permissions line up before you change anything. I want the accessibility entries, the microphone entries, the automation entries, and the full disk access entries checked carefully, because the two machines should mostly match. And the only real difference should be how the BrainLayer data is separated for that project. Also, look for stale duplicates and tell me which entries are safe to remove after you verify the app versions.";
+      "Please compare the painted lanterns in the imaginary orchard with the lanterns beside the silver fountain, and check the ribbons before the evening parade. The gardeners need the blue baskets, the cedar trays, the paper maps, and the brass bells arranged carefully, because the two processions should mostly match. And the only difference should be which clockwork turtle carries the violet banner. Also, inspect the wooden arches and count the tiny flags before the moon rises over the garden wall and the last lantern turns violet.";
     const retryCandidate = preserveConjunction
       ? polishedText
       : polishedText.replace("mostly match. And the only", "mostly match. The only");
-    const responses = [
-      "Please compare the settings on the first Mac with the settings on this Mac. I want the accessibility entries, the microphone entries, and",
-      retryCandidate,
-    ];
+    const responses = ["Please compare the painted lanterns in the imaginary orchard.", retryCandidate];
     const requests: Record<string, unknown>[] = [];
     const server = Bun.serve({
       port: 0,
@@ -2427,12 +2417,13 @@ describe("stt-polish", () => {
 
   it("adds a terminal punctuation floor to a long single-narrative fallback", async () => {
     const cleanedText =
-      "so i was thinking about the whole voice layer pipeline and how the polish " +
-      "step is supposed to add punctuation but sometimes it just does not and then " +
-      "you end up with this giant wall of text that has no periods no commas nothing " +
-      "and it is really hard to read especially when the dictation is long like this " +
-      "one where i just keep talking and talking without ever stopping to breathe or " +
-      "add any kind of structure to what i am saying which is exactly the failure mode";
+      "the imaginary birch observatory tracks paper comets across a painted sky " +
+      "while a clockwork gardener sorts blue pebbles into wooden trays and then " +
+      "carries each tray through a corridor lined with tiny lanterns and maps " +
+      "the maps describe a distant island where brass turtles collect colored " +
+      "ribbons beside a silent fountain and stack them beneath a striped canopy " +
+      "every ribbon has a different pattern and every turtle follows the same " +
+      "winding path through the garden until the last lantern turns violet";
     const server = Bun.serve({
       port: 0,
       fetch: async () => {
@@ -2467,7 +2458,7 @@ describe("stt-polish", () => {
 
   it("does not fragment embedded question clauses when HTTP polish is unavailable", async () => {
     const cleanedText =
-      "can you tell me what you did and how you did it because i need to know now for the report tomorrow";
+      "can you veleeora me what you did and how you did it because i need to know now for the velefora velegora";
     const server = Bun.serve({
       port: 0,
       fetch: async () => {
@@ -3142,9 +3133,7 @@ describe("stt-polish", () => {
 });
 
 describe("stt-polish system prompt — false starts and retractions are KEPT", () => {
-  // Etan, 2026-09-06: "raw-ish, I guess. So my thinking process stays."
-  // AGENTS.md: "When I retract a word mid-sentence and say it again differently,
-  // hand over the full truth — retraction and all."
+  // Raw-accuracy policy: preserve false starts and retractions in full.
   const prompt = () => sttPolish.buildPolishSystemPrompt();
 
   it("states an explicit KEEP rule for false starts and self-corrections", () => {

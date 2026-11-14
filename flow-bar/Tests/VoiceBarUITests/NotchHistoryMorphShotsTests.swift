@@ -18,13 +18,13 @@ final class NotchHistoryMorphShotsTests: XCTestCase {
     }
 
     private static let rows = [
-        "And you know what, maybe the panel should open from wherever it is when I click again.",
+        "The garden panel opens beside the fountain whenever the gardener returns to inspect the lantern catalogue.",
         "A short synthetic row.",
-        "Come back to me with at least a part-way plan for the morph and the rows.",
-        "Well, the notch is incredibly fast. Or at least it feels fast when it springs.",
-        "I already tried giving this a look, but this is another good place to check the layout.",
+        "The lantern catalogue needs a partial plan for the baskets and the flower beds.",
+        "The garden fountain springs quickly whenever the wooden handle is released.",
+        "The imaginary gardener inspected every lantern beside the fountain before checking the garden layout.",
         "Another synthetic dictation that runs long enough to be cut off with an ellipsis at the end.",
-        "Let it know that it can take the time it needs.",
+        "The imaginary gardener can finish painting the lanterns before the spring fair.",
         "Nothing new yet.",
         "One, two, three, four.",
         "The copper lantern rests beside the quiet garden.",

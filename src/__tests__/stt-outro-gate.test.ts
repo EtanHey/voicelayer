@@ -194,14 +194,14 @@ describe("findOutroCandidates", () => {
 
   test("offers every 1-5 token tail the corpus actually produced", () => {
     const cases: Array<[string, string]> = [
-      ["...pause? And that's a little not so clear to me still. So.", "So."],
-      ["...give you the post from earlier: Okay.", "Okay."],
-      ["...thus making it much slower? Thank you.", "Thank you."],
-      ["...on a new read. You.", "You."],
-      ["Are we actually utilizing it? I.", "I."],
-      ["...where's that coming from, man? and.", "and."],
+      ["...lantern? And the orchard path is still not so clear to me. So.", "So."],
+      ["...hand you the ribbon from the fountain: Okay.", "Okay."],
+      ["...thus making the garden much quieter? Thank you.", "Thank you."],
+      ["...on a new lantern. You.", "You."],
+      ["Are we actually watering it? I.", "I."],
+      ["...where's that ribbon coming from, friend? and.", "and."],
       [
-        "...not really getting anything outside of LinkedIn, though. So, so, so, so, so.",
+        "...not really finding anything outside of the orchard, though. So, so, so, so, so.",
         "So, so, so, so, so.",
       ],
     ];
@@ -227,15 +227,15 @@ describe("findOutroCandidates", () => {
 
   test("offers specimen 5's English tail after a complete sentence", () => {
     const text =
-      "I mean, we'll have Astra—we shouldn't use it everywhere, just like we're not using Fable everywhere. Okay.";
+      "The garden has Astra lanterns—we should not hang them everywhere, just as the Fable baskets belong near the fountain. Okay.";
     expect(findTrailingOutroCandidate(text)?.phrase).toBe("Okay.");
   });
 
-  test("never offers a word Etan kept in the corpus", () => {
+  test("never offers a preserved synthetic closer", () => {
     const kept = [
-      // He said "Yeah." — the invented token in that row was "And...".
-      "...there were, like, 10 seats in all together. Yeah.",
-      // stt.test.ts requires this survive; "All right." is a thing he says.
+      // A spoken affirmative survives; a separate hallucinated token may be removed.
+      "...the garden had, roughly, 10 lanterns beside the fountain. Yeah.",
+      // Preserve the synthetic spoken agreement, matching the stt.test.ts contract.
       "Should we ship the plan now? All right.",
       "...we'll be done with run 8? Cool.",
       "...sometimes might happen. Here.",
@@ -390,7 +390,7 @@ describe("stripHallucinatedOutro — the audio decides", () => {
     const decision = stripHallucinatedOutro(text, quiet, {
       segments: [
         segment(" Ship the release today.", 0, 3.6),
-        // On the quiet second burst — he said it, softly.
+        // The synthetic closer has speech evidence at these segment coordinates.
         segment(" Thank you.", 3.8, 4.4),
       ],
     });
@@ -578,8 +578,8 @@ describe("stripHallucinatedOutro — the audio decides", () => {
   });
 
   test("picks the right one of two identical tails", () => {
-    // He said "Thank you." at 3.4 s; whisper then invented a second one in the
-    // silence. Only the invented one may go.
+    // Synthetic acoustic coverage: preserve speech-aligned text and reject unsupported trailing output.
+    // Synthetic acoustic coverage: preserve speech-aligned text and reject unsupported trailing output.
     const wav = makeWav(6, [{ startS: 0, endS: 3.4 }], 40);
     const decision = stripHallucinatedOutro(
       "Ship it. Thank you. Thank you.",
@@ -753,8 +753,8 @@ describe("stripHallucinatedOutro — the audio decides", () => {
 
   test("will not measure a closer against a span from a rewritten transcript", () => {
     // Head repair / echo trim dropped a leading hallucinated closer that the
-    // segments still describe. The remaining "Thank you." is the one he said
-    // (speech at 2.6–3.4 s). Word-count lookup into the original segments
+    // Synthetic acoustic coverage: preserve speech-aligned text and reject unsupported trailing output.
+    // Synthetic acoustic coverage: preserve speech-aligned text and reject unsupported trailing output.
     // would land on the LEADING silent copy and delete the spoken one.
     const wav = makeWav(6, [{ startS: 0.5, endS: 3.4 }], 40);
     const decision = stripHallucinatedOutro("Thank you.", wav, {
@@ -1019,9 +1019,9 @@ describe("stripHallucinatedOutro — specimen 2, the silent voice_ask", () => {
 });
 
 describe("stripHallucinatedOutro — specimen 3, the Hebrew tail", () => {
-  /** The transcript's real last sentence, verbatim from the archive. */
+  /** Invented Hebrew sentence; segment timing retains the measured archive geometry. */
   const HEBREW_LAST =
-    "ובזמן החופשי אני גם בונה מערכות בשילוב AI, כמו התחליף וויספר פלו שבניתי לעצמי.";
+    "ובזמן הפנוי הגנן גם צובע פנסים לגינה, מסדר סלים ליד המזרקה ומכין קטלוג פרחים ליריד האביב.";
 
   clipTest(CLIP_HEBREW_TAIL)(
     "drops the invented תודה. over the trailing silence",
@@ -1062,8 +1062,8 @@ describe("stripHallucinatedOutro — specimen 3, the Hebrew tail", () => {
 
 describe("stripHallucinatedOutro — specimen 4, Hebrew mid-utterance", () => {
   const BEFORE =
-    "לאט לאט תפסתי את הבקן גם, בעיקר בגלל שהבחור של הבקן שלנו עזב.";
-  const AFTER = "שם למדתי הרבה טכנולוגיות חדשות כמו סופה בייס.";
+    "הפנס הסגול עומד ליד השער והגנן מסדר פרחים לאורך השביל עד הערב";
+  const AFTER = "השומר פותח את הדלת ואז מחזיר את המפתח למגירה";
 
   clipTest(CLIP_HEBREW_MID)("drops תודה רבה. from the internal pause", () => {
     const wav = readWav(CLIP_HEBREW_MID);
@@ -1112,7 +1112,7 @@ describe("stripHallucinatedOutro — specimen 4, Hebrew mid-utterance", () => {
 
 describe("stripHallucinatedOutro — specimen 5, the Okay. tail", () => {
   const SPOKEN =
-    "I mean, we'll have Astra—we shouldn't use it everywhere, just like we're not using Fable everywhere.";
+    "The garden has Astra lanterns—we should not hang them everywhere, just as the Fable baskets belong near the fountain.";
 
   clipTest(CLIP_OKAY)("drops the invented Okay. despite a noisy floor", () => {
     const wav = readWav(CLIP_OKAY);
@@ -1167,7 +1167,7 @@ const CLIP_PAIR = join(
 );
 
 describe("stripHallucinatedOutro — specimen 6, one real closer and one invented", () => {
-  const SPOKEN = "I didn't give you the posts from earlier.";
+  const SPOKEN = "The copper lantern lights the quiet orchard path";
 
   clipTest(CLIP_PAIR)("cuts the invented tail and keeps the spoken one", () => {
     const wav = readWav(CLIP_PAIR);
@@ -1178,7 +1178,7 @@ describe("stripHallucinatedOutro — specimen 6, one real closer and one invente
     const decision = stripHallucinatedOutro(`${SPOKEN} Thank you. Okay.`, wav, {
       segments: [
         segment(` ${SPOKEN}`, 90.0, 104.9),
-        // On the clip's last real speech run — he said this.
+        // The synthetic closer has speech evidence at these segment coordinates.
         segment(" Thank you.", 104.92, 105.4),
         // Out in the 21.6 s of trailing silence — whisper invented this.
         segment(" Okay.", 110.0, 110.5),

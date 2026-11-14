@@ -3,9 +3,8 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// C6 lane L3, X1-32/33/34/35 (Etan QA 2026-11-10): pause and hide are independent. "Paused on its own should not hide
-/// the teleprompter, but just pause"; the eye stays while paused or playing; the paused square becomes an X; the states
-/// are reading playing / reading paused / paused hidden / finished.
+/// Revised 2026-11-10 (X1-32–35): Pause retains text; Hide is independent; a paused read uses X.
+/// Keep the eye available for hidden reads, whether playing or paused; distinguish ended reads.
 @MainActor
 final class ReadingStateL3Tests: XCTestCase {
     // MARK: - RED on candidate 5 (existing API, behavioural assertions)

@@ -1,13 +1,6 @@
 /**
- * Lane `cleanup-spoken-command-prose-guard` (issue #4).
- *
- * The PUNCTUATION_MAP regexes in src/rules-engine.ts used to fire
- * unconditionally, and about a third of them are ordinary English words.
- * Mid-prose they must never fire: "a new line on codex agents" became
- * "a. On codex agents" in production (polish-shadow line 7004, recording
- * 2026-09-05T11-46-00-495Z-81090f01). No cleanup rule may reduce the raw word
- * count on the prose path (AGENTS.md: "a fix that loses my words is worse than
- * the bug").
+ * Spoken-command prose guard: ambiguous command words must remain ordinary text in noun contexts.
+ * Reported 2026-09-05: unguarded symbol replacement removed real words.
  */
 import { describe, it, expect } from "bun:test";
 import { existsSync, readFileSync } from "fs";
@@ -21,9 +14,9 @@ const wordCount = (s: string): number =>
 describe("spoken-command prose guard", () => {
   it("keeps 'a new line' when it is prose, not a command (production specimen)", () => {
     const raw =
-      "there's still sometimes a new line on codex agents before the prompt is actually delivered";
+      "there is sometimes a new line on the garden map before the lantern route is printed";
     expect(applyRules(raw)).toBe(
-      "There's still sometimes a new line on codex agents before the prompt is actually delivered",
+      "There is sometimes a new line on the garden map before the lantern route is printed",
     );
   });
 
@@ -46,7 +39,7 @@ describe("spoken-command prose guard", () => {
 
   it("never reduces the word count of a prose utterance", () => {
     const prose = [
-      "there's still sometimes a new line on codex agents before the prompt is actually delivered",
+      "there is sometimes a new line on the garden map before the lantern route is printed",
       "I need some space to think about the dash and the hash in that branch",
       "the arrow function returns a percent of the total",
     ];
@@ -62,19 +55,16 @@ describe("spoken-command prose guard", () => {
     expect(applyRules("foo comma bar period")).toBe("Foo, bar.");
   });
 
-  // Etan's amendment (2026-09-06): "tab specifically is something I almost
-  // never if not never say as a command"; "There was a time where I said tab
-  // (the dom/ui element) and got a very long space, so I know some commands
-  // like tab do bleed." 41 corpus dictations contain the word; 33 shipped a
-  // literal tab character. The word is no longer a command at all.
+  // Decision 2026-09-06: tab is always a word, never a spoken command.
+  // Corpus review found 33 unwanted substitutions among 41 matching dictations.
   describe("'tab' is never a dictation command", () => {
     const specimens: string[] = [
-      // shadow 6183 (client name redacted for the public repo)
-      "Can you maybe send a codex worker to fill out the tab of skills that came up at the end of my application",
-      // shadow 6490, verbatim
-      "The tab is named run 9, but it's on a work tree of run 8 hotfix.",
-      // shadow 6697, verbatim
-      "we could have a tab of search across everything in a tab of people or something",
+      // Synthetic prose retaining the reported ambiguous command shape.
+      "Please open the tab of garden maps beside the painted lantern catalogue",
+      // Synthetic prose retaining the reported ambiguous command shape.
+      "The tab is named garden 9, but the paper map describes garden 8.",
+      // Synthetic prose retaining the reported ambiguous command shape.
+      "the imaginary catalogue could show a tab of lanterns beside a tab of baskets",
       // ordinary UI prose
       "open a new tab in helium",
       "the tab component",
@@ -89,8 +79,7 @@ describe("spoken-command prose guard", () => {
     }
   });
 
-  // Etan's amendment: "new line might be something I ask for or am talking
-  // about." The determiner/preposition context decides, both ways.
+  // Decision 2026-09-06: noun context distinguishes a layout mention from a command.
   describe("'new line' cuts both ways", () => {
     it("stays verbatim when it is the thing being talked about", () => {
       expect(applyRules("a new line on codex agents")).toBe(
@@ -107,8 +96,7 @@ describe("spoken-command prose guard", () => {
     });
   });
 
-  // Etan's amendment: "space" is the only command that DELETES a word, so it
-  // errs verbatim unless the utterance is already code-shaped.
+  // Decision 2026-09-06: preserve the space word unless code operands establish command intent.
   describe("'space' errs verbatim", () => {
     it("keeps the word in prose", () => {
       expect(applyRules("I need some space to think")).toBe(
@@ -129,7 +117,7 @@ describe("spoken-command prose guard", () => {
     // Macroscope on PR #17 (src/rules-engine.ts:355): applyPunctuation gated
     // the space command on `commandFired || isCodeShaped(text)`, so an ordinary
     // sentence that merely ended with a dictated "period" armed the one command
-    // that deletes a word. "I saw outer space period" shipped as "I saw outer."
+    // Reported in PR #17: the final noun was deleted from a sentence about the night sky.
     // The trigger is the shape of the utterance, never the fact that some other
     // command fired.
     it("is not armed by an unrelated command firing elsewhere", () => {
@@ -160,9 +148,7 @@ describe("spoken-command prose guard", () => {
     });
 
     it("keeps operands that are not single letters or camelCase verbatim", () => {
-      // Lowercase identifiers are indistinguishable from prose, and Etan's rule
-      // favours verbatim (AGENTS.md: a fix that loses my words is worse than
-      // the bug).
+      // Preserve ambiguous lowercase identifiers as ordinary prose.
       expect(applyRules("foo plus bar")).toBe("Foo plus bar");
       expect(applyRules("a big plus for the team")).toBe(
         "A big plus for the team",

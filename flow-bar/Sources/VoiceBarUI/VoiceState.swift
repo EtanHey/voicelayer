@@ -510,7 +510,7 @@ public final class VoiceState {
     @MainActor public var isQuitBusy: Bool {
         !([.idle, .disconnected, .error].contains(mode) && hotkeyPhase == .idle && pendingIntent == nil && !captureLive && !isRecordingHandoffPending &&
             !isHistoryRetranscriptionPending && !barInitiatedRecording && deferredRecordingTakeID == nil &&
-            !selectionCaptureInFlight && selectionSubmittedText == nil && readQueueCount == 0 &&
+            !listDeliveryActive() && !selectionCaptureInFlight && selectionSubmittedText == nil && readQueueCount == 0 &&
             readQueueCurrentRequestID == nil && speechPending["preview"] == nil && speechControls?.previewActive != true &&
             historyPlayback.playingURL == nil && !historyPlayback.isVoiceBusy)
     }
@@ -1339,6 +1339,10 @@ public final class VoiceState {
     /// pasteboard. Printable text only, line breaks as Shift+Return; see
     /// `SynthesizedTyping`. Returns false when nothing was posted (e.g.
     /// Accessibility not granted). See the AIDEV-NOTE at the paste call site.
+    public var listTypingHandler: ((String, pid_t, @escaping (ListDeliveryMachine.Outcome) -> Void) -> Void)?
+    public var listDeliveryActive: () -> Bool = { false }
+    public var drainListDelivery: (() -> Void)?
+    public var closeListDelivery: (() -> Void)?
     public var textTypingHandler: (_ text: String) -> Bool = { _ in false }
 
     /// Production installs a batch builder with a final PID check. Nil preserves the legacy
@@ -5402,6 +5406,35 @@ public final class VoiceState {
 
     /// Final-text arrival is the selection boundary. No activation/timer hop may
     /// choose a later cursor, and a possibly applied write is never retried.
+    /// List delivery captures/reads/checks on its worker before any legacy AX insertion path.
+    private func beginListDelivery(_ text: String, app: NSRunningApplication?, operationID: UUID?, declined: @escaping () -> Void) -> Bool {
+        guard let app, let listTypingHandler else { return false }
+        let bundle = app.bundleIdentifier ?? ""
+        guard TerminalPasteTargets.isTerminal(bundle) || Self.richHostTypingBundleIdentifiers.contains(bundle) || chromiumFamilyAppDetector(app) else { return false }
+        let deliveredText = TerminalPasteTargets.isTerminal(app.bundleIdentifier ?? "")
+            ? TerminalPasteTargets.typingText(text, bundleIdentifier: app.bundleIdentifier ?? "") : text
+        guard ListContinuationTyping.segments(for: deliveredText) != nil || listDeliveryActive() else { return false }
+        lastPasteTargetApp = app
+        let path = operationID.flatMap { ownedPasteOperations[$0]?.path }
+        let started = ProcessInfo.processInfo.systemUptime
+        listTypingHandler(deliveredText, app.processIdentifier) { [weak self] result in
+            guard let self else { return }
+            self.logDiagnostic("list_aware=completion", details: ["waited_ms": String(Int((ProcessInfo.processInfo.systemUptime - started) * 1000))])
+            switch result {
+            case .declined: declined()
+            case .posted:
+                self.finishPasteConfirmation(outcome: .typed, text: deliveredText, operationID: operationID, showsTerminalTranscript: TerminalPasteTargets.isTerminal(bundle))
+            case .refused:
+                self.finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
+            case let .partial(delivered, remaining):
+                self.finishPasteConfirmation(outcome: .unverified, text: text, operationID: operationID)
+                if let path { self.noteOwnedDelivery(path: path, text: text,
+                    note: "Partially typed: \(delivered.count) of \(delivered.count + remaining.count) characters; the same app, checked just before typing. Shift+F5 types the whole text again, including the part already typed.") }
+            }
+        }
+        return true
+    }
+
     private func pasteIntoReadyFocus(_ text: String, operationID: UUID?) {
         let app = frontmostAppProvider()
         let eligibility = focusedTargetEligibilityProvider()
@@ -5736,33 +5769,34 @@ public final class VoiceState {
                         "trailingNewlineStripped": boolString(isTerminalTarget && TerminalPasteTargets.strippingSingleTrailingNewline(text) != text),
                         "terminalNewlinesFolded": boolString(isTerminalTarget && deliveredText != TerminalPasteTargets.strippingSingleTrailingNewline(text)),
                     ])
+                    let deliverTyping = { [self] in
                     let typed: Bool
-                    if let ownedTarget, let ownedTextTypingHandler {
+                    if let ownedTarget, let ownedTextTypingHandler = self.ownedTextTypingHandler {
                         let matches = { [weak self] in self?.ownedTargetIsCurrent(ownedTarget) == true }
                         switch ownedTextTypingHandler(deliveredText, pasteTarget.processIdentifier, matches) {
                         case .posted: typed = true
                         case .failed: typed = false
                         case .focusChanged:
-                            finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID); return
+                            self.finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID); return
                         }
-                    } else if (plan == .autoPaste || allowAXInsertion), let guardedTextTypingHandler {
+                    } else if (plan == .autoPaste || allowAXInsertion), let guardedTextTypingHandler = self.guardedTextTypingHandler {
                         switch guardedTextTypingHandler(deliveredText, pasteTarget.processIdentifier) {
                         case .posted: typed = true
                         case .failed: typed = false
                         case .focusChanged:
-                            finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
+                            self.finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
                             return
                         }
                     } else {
-                        typed = textTypingHandler(deliveredText)
+                        typed = self.textTypingHandler(deliveredText)
                     }
-                    logDiagnostic("paste_typing_result", details: [
+                    self.logDiagnostic("paste_typing_result", details: [
                         "plan": String(describing: plan),
                         "targetApp": pasteTargetBundleID,
-                        "typed": boolString(typed),
+                        "typed": self.boolString(typed),
                         "textLength": String(deliveredText.count),
                     ])
-                    finishPasteConfirmation(
+                    self.finishPasteConfirmation(
                         outcome: Self.pasteOutcome(
                             pasted: typed,
                             plan: plan
@@ -5771,6 +5805,15 @@ public final class VoiceState {
                         operationID: operationID,
                         showsTerminalTranscript: isTerminalTarget
                     )
+                    }
+                    if !self.beginListDelivery(text, app: pasteTarget, operationID: operationID, declined: { [self] in
+                        guard !self.secureInputEnabledProvider(), self.frontmostAppProvider()?.processIdentifier == pasteTarget.processIdentifier,
+                              self.focusedTargetEligibilityProvider()?.isSecure != true,
+                              ownedTarget.map({ self.ownedTargetIsCurrent($0) }) != false else {
+                            self.finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID); return
+                        }
+                        deliverTyping()
+                    }) { deliverTyping() }
                 }
             }
             if ownedTarget == nil {
@@ -5985,7 +6028,7 @@ public final class VoiceState {
             if microphoneTakeID == nil {
                 let message: String = switch outcome {
                 case .insertedAtCursor, .pasted: text
-                case .typed: PasteDeliveryFeedback.typed
+                case .typed: showsTerminalTranscript ? text : PasteDeliveryFeedback.typed
                 case .notInserted: refusalNote
                 case .unverified: PasteRecoveryFeedback.unverified
                 case .partial: PasteRecoveryFeedback.partial

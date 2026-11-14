@@ -1,9 +1,8 @@
 @testable import VoiceBarUI
 import XCTest
 
-/// SETUI1 (Etan, 2026-10-19): "the recognizer now says accurate accurate on active effort and configured
-/// effort, which is stupid." A matching configured/active pair is one row; the pair shows only when the two
-/// differ or the model is not loaded.
+/// Reported 2026-10-19 (SETUI1): matching configured/active model facts were redundant.
+/// Show one matching row; show both when values differ or the model is unloaded.
 final class RecognizerDetailsDedupeTests: XCTestCase {
     func testMatchingConfiguredAndActiveCollapseToOneRowEach() {
         let rows = ModelsSettingsView.recognizerDetailRows(for: ModelsSettingsState(healthEvent: Self.health()))

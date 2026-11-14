@@ -268,7 +268,7 @@ const corpus: [string, string, boolean?][] = [
   ["review's typical Ask", "The build is green and every check passed. Should I merge PR 512 now?\n1. Merge now\n2. Wait for the proof", true],
   ["status with heading and list", "## Status\n\nThe build is green.\n\n- One\n- Two\n- Three\n- Four\n- Five\n\nNothing needed from you."],
   ["video 1", "Nothing needed from you.\n\n**Orchard route**\n\nAn orchard route follows three stops.\n\n1. Pick up the blue basket.\n2. Walk to the garden gate.\n3. Follow the path past the old apple tree to the low stone wall. Then cross the narrow wooden bridge over the stream and keep walking until you reach the orchard gate."],
-  ["video 2", "I spent today on:\n- **Archive backend:** saving every spoken reply so history survives a restart.\n- **Your Option+F5 formatting bug:** preserving list and paragraph structure in the read-along.\n- **The cutoff control in your screenshot:** choosing when to switch between short and long voices. That was separate work.\n\nNothing needed from you right now."],
+  ["synthetic garden", "The garden plan covers:\n- **Lantern catalogue:** painting every wooden lantern before the fair.\n- **The spring flower fair:** preserving garden paths and flower beds around the fountain.\n- **The basket collection:** choosing where to display the largest baskets. That was a separate exhibit.\n\nNo additional supplies are needed today."],
   ["plain short", "New long read."],
   ["plain long", Array.from({ length: 30 }, (_, i) => `Sentence ${i} has enough words to fill the next chunk.`).join(" ")],
   ["labels then long paragraph", "**Summary:** all green.\n\n" + Array.from({ length: 12 }, (_, i) => `Detail ${i} explains one more part of the change.`).join(" ")],

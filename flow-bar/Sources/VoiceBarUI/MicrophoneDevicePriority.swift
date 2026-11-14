@@ -86,7 +86,7 @@ public struct MicrophonePrioritySnapshot: Equatable {
         return visibleRows.compactMap(\.uid) + rows.filter(\.isVirtualOrAggregate).compactMap(\.uid)
     }
 
-    /// "Make default" (Etan's 2.2.24 review #5): the visible row at `index` goes to the top in one step, the
+    /// Reported 2.2.24 review: move the visible row at `index` to the top in one step; the
     /// other visible rows keep their order, and hidden devices are written after them. nil when the row is
     /// already first, out of range, or has no UID to persist.
     public func makingDefaultUIDs(at index: Int) -> [String]? {

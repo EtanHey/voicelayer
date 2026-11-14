@@ -3,7 +3,7 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// QA 2026-11-08 05:06 collision run, c07 X1 (Etan's R3): clicking the pill's Pause while "Reading · 1×" seeked back
+/// Reported 2026-11-08, QA 05:06 collision run: clicking Pause rewound playback
 /// (0:12 → 0:00, 0:16 → 0:05) instead of pausing. A click anywhere on the Pause control must only ever pause.
 @MainActor
 final class TeleprompterPauseNeverSeeksTests: XCTestCase {

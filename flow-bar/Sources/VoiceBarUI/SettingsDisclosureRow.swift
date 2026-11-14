@@ -8,7 +8,7 @@ import AppKit
 /// the rest of the row does nothing, and VoiceOver's AXPress reported success without
 /// expanding it (R4 UI pass finding 11). Keep the full-width content shape, and never make the
 /// row separately focusable: that is what left BrainBar's mouse-click focus ring behind.
-/// SETUI1 (Etan, 2026-10-19): "reuse that one" — never hand-roll another chevron row in Settings.
+/// Design decision 2026-10-19 (SETUI1): reuse this disclosure row throughout Settings.
 struct SettingsDisclosureRow<Content: View>: View {
     let title: String
     @Binding var isExpanded: Bool
