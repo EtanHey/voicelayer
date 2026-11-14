@@ -18,16 +18,20 @@ import Foundation
         }
     }
     public enum Outcome: Equatable {
-        case posted, refused
+        case posted, refused, declined
         case partial(delivered: String, remaining: String)
     }
     public struct Environment {
         public var worker: (Request, @escaping (Reply) -> Void) -> Void
         /// Pure, main-local guard. Must not perform Accessibility work.
         public var guardTarget: () -> Bool
+        public var started: () -> Void
+        public var diagnostic: (String) -> Void
         public var post: (String) -> GuardedTypingResult
         public init(worker: @escaping (Request, @escaping (Reply) -> Void) -> Void,
-                    guardTarget: @escaping () -> Bool, post: @escaping (String) -> GuardedTypingResult) {
+                    guardTarget: @escaping () -> Bool, post: @escaping (String) -> GuardedTypingResult,
+                    started: @escaping () -> Void = {}, diagnostic: @escaping (String) -> Void = { _ in }) {
+            self.started = started; self.diagnostic = diagnostic
             self.worker = worker; self.guardTarget = guardTarget; self.post = post
         }
     }
@@ -50,31 +54,37 @@ import Foundation
     private var drop = false
     private var fallback = false
     private var closed = false
+    private var draining = false
+    private var stableValue: String?
+    private let permitsNewDelivery: () -> Bool
     public var isActive: Bool { job != nil }
 
-    public init(now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+    public init(permitsNewDelivery: @escaping () -> Bool = { true }, now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
                 schedule: @escaping (TimeInterval, @escaping () -> Void) -> Void = { delay, action in
                     DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: action)
                 }) {
-        self.now = now; self.schedule = schedule
+        self.permitsNewDelivery = permitsNewDelivery; self.now = now; self.schedule = schedule
     }
     public func deliver(_ text: String, env: Environment, completion: @escaping (Outcome) -> Void) {
         let next = Job(text: text, env: env, completion: completion)
-        guard !closed else { completion(.refused); return }
+        guard !closed, !draining, permitsNewDelivery() else { completion(.refused); return }
         if job != nil {
             guard queue.count < 2 else { completion(.refused); return }
             queue.append(next)
         } else { start(next) }
     }
     private func start(_ next: Job) {
-        job = next; step = 0; drop = false; fallback = false; before = ""; typed = ""
+        next.env.started()
+        job = next; stableValue = nil; step = 0; drop = false; fallback = false; before = ""; typed = ""
         guard let plan = ListContinuationTyping.segments(for: next.text) else {
             segments = [ListContinuationSegment(text: next.text, leadingMarker: nil)]
             post(batch: true); return
         }
-        segments = plan; deadline = now() + 0.25; phase = .capture
+        segments = plan
+        let budget = min(0.25 + 0.15 * Double(plan.count - 1), 2.0)
+        deadline = now() + budget; phase = .capture
         let id = next.id
-        schedule(0.25) { [weak self] in
+        schedule(budget) { [weak self] in
             guard let self, self.job?.id == id else { return }
             self.expire()
         }
@@ -98,15 +108,27 @@ import Foundation
         }
         switch phase {
         case .capture:
-            guard reply.same, let value = reply.value else { post(batch: true); return }
+            job.env.diagnostic("list_aware=capture unreadable=\(!reply.same || reply.value == nil)")
+            guard reply.same, let value = reply.value else { finish(outcome: .declined); return }
             before = value; issue(.check)
         case .read:
             let reading = reply.same ? reply.value.map {
                 ListContinuationTyping.read(before: before, after: $0, typedLine: typed,
                                             nextMarker: segments[step].leadingMarker ?? "")
             } ?? .unknown : .unknown
+            job.env.diagnostic("list_aware=read verdict=\(reading)")
+            if reading == .unknown || (reading == .editorInsertedMarker && stableValue != reply.value) {
+                stableValue = reading == .editorInsertedMarker ? reply.value : nil
+                let id = job.id, currentStep = step
+                schedule(0.015) { [weak self] in
+                    guard let self, self.job?.id == id, self.step == currentStep, self.phase == .read else { return }
+                    self.issue(.read)
+                }
+                return
+            }
             drop = reading == .editorInsertedMarker
             fallback = reading != .editorInsertedMarker
+            if fallback { job.env.diagnostic("list_aware=fallback reason=plain_break") }
             if let value = reply.value, reply.same { before = value }
             issue(.check)
         case .check:
@@ -117,37 +139,45 @@ import Foundation
         }
     }
     private func expire() {
-        guard job != nil else { return }
-        // Only capture-unread may use the old batch. A silent re-check refuses/partials.
-        if phase == .capture { post(batch: true) } else { finish() }
+        guard let job else { return }
+        job.env.diagnostic("list_aware=expiry phase=\(phase)")
+        if phase == .capture { finish(outcome: .declined) } else { finish() }
     }
     private func post(batch: Bool) {
         guard let job else { return }
-        let end = batch || fallback || now() >= deadline ? segments.count : step + 1
+        let timestamp = now()
+        let end = batch || fallback || timestamp >= deadline ? segments.count : step + 1
         var text = segments[step..<end].map(\.text).joined()
-        if !batch, drop, now() < deadline, let marker = segments[step].leadingMarker {
+        if !batch, drop, timestamp < deadline, let marker = segments[step].leadingMarker {
             text.removeFirst(marker.count)
         }
         // The check consumption, final guard and post are one main-thread transition.
         guard job.env.guardTarget(), job.env.post(text) == .posted else { finish(); return }
-        typed = text; step = end; drop = false
+        typed = text; step = end; drop = false; stableValue = nil
         if step == segments.count { finish() } else { issue(.read) }
     }
-    private func finish() {
+    private func finish(outcome override: Outcome? = nil) {
         guard let current = job else { return }
         let delivered = segments.prefix(step).map(\.text).joined()
         let remaining = segments.dropFirst(step).map(\.text).joined()
-        let outcome: Outcome = step == segments.count ? .posted : step == 0 ? .refused
-            : .partial(delivered: delivered, remaining: remaining)
-        job = nil
+        let outcome: Outcome = override ?? (step == segments.count ? .posted : step == 0 ? .refused
+            : .partial(delivered: delivered, remaining: remaining))
+        let next = !closed && !draining && !queue.isEmpty ? queue.removeFirst() : nil
+        job = next // reserve the FIFO head before a reentrant completion
+        if let next { step = 0; segments = [ListContinuationSegment(text: next.text, leadingMarker: nil)] }
         current.completion(outcome)
-        if !closed, job == nil, !queue.isEmpty { start(queue.removeFirst()) }
+        if let next, job?.id == next.id { start(next) }
     }
     /// Quit/update drain close synchronously, without joining the AX worker.
     public func close() {
         closed = true
+        drain()
+    }
+    public func drain() {
+        draining = true
         let waiting = queue; queue.removeAll()
         finish()
         for item in waiting { item.completion(.refused) }
+        draining = false
     }
 }

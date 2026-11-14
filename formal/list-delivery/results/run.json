@@ -2,8 +2,8 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/list-delivery/ListDelivery.tla": "ab9c543cab29be0a129f3004ae99cc1d7212452689903fe809c9d9a15ce0ee2d",
-    "formal/list-delivery/checks.json": "ab20866c6049d2d28f684928ad6ad3c48b03fdc429c2698b2a160403e018daef",
+    "formal/list-delivery/ListDelivery.tla": "4705f326198473ae90ac370e9100bbef07ca5dbb43147344a1aa726c45267832",
+    "formal/list-delivery/checks.json": "cccabb28c3fe3b97b7277597c1586882e88a75535ce5bcaf9cd47328e0172e6b",
     "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
     "formal/list-delivery/LateAX.cfg": "1ebdd47e505518ed43cfaf7de75e63d3bb143f6f328a61ec1042eddefa485291",
@@ -25,6 +25,7 @@
     "formal/list-delivery/Queued.cfg": "3070e9b8732d2b1dadacfac717a3a1fa750c035bf0a96ba4493d0c1936389e16",
     "formal/list-delivery/BlockRecording.cfg": "f1ac5e3b136f3775f10657af6b8fb337da7b8e57446eecc50ebf40b366f6bf8a",
     "formal/list-delivery/DropSlow.cfg": "7e0a1c0ef8d26b8f0b997e6180f07786579d245678a6149e0b75e798baddc4f7",
+    "formal/list-delivery/LateRead.cfg": "d0710f187b21bea0f0894cc862757c666b4b10624adc761c3ebe0317fe130b72",
     "formal/list-delivery/ForeignRead.cfg": "2963594b937fe98f57a061094236df12ff0bacbf2c60980cf315c5edfa3ff346",
     "formal/list-delivery/Stale.cfg": "0749e10d67bbe5d8c25651e4e7e6c9547f617c3e34be4afe356e78118ac5f9f9",
     "formal/list-delivery/MainWait.cfg": "a547cd42f654a534a2329f552d0060f8148c5e7111e6c3232f277a439754d747",
@@ -36,7 +37,7 @@
     "formal/list-delivery/LegacyPartial.cfg": "3b5e5c564185bc45df1be665dc01f626f79e91b11782202ce43bc26c3fc2f6de",
     "formal/list-delivery/AgedCheck.cfg": "f72379708b9e5a60cdf6bc3b74a546d66158e32d78209f570dfc631e8f577456",
     "formal/list-delivery/check.sh": "4864496b21f4edb9293be442fae78c38c5dcf1b96f40bf538b5ac5ffd5b1b0fd",
-    "formal/list-delivery/README.md": "9ca2b857db717a7c6a14298eb32454c59c1f58067b09dd38e22cc9ba537ae4d3",
+    "formal/list-delivery/README.md": "4f24adf5c696eb478160e28ce8390bf03845faa3d2d2e59d2860436b944c570f",
     "formal/tlc_support.py": "8c5dad35602a3a631acc61b07ed2246eeb40ef2b3a6b3a9c72c5b207c95386ec",
     "formal/tlc.lock.json": "3e37914f1398c6073444c37c6c8df70eb3030c14d269e808791e1d1b25467d34",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
@@ -85,7 +86,8 @@
       "LateMain"
     ],
     "NoAXAfterExpiry": [
-      "LateAX"
+      "LateAX",
+      "LateRead"
     ]
   },
   "graphHashes": {},
@@ -135,8 +137,8 @@
       "kind": "invariant",
       "target": "SlowNeverLoses",
       "status": "EXPECTED_FAIL",
-      "generated": 483035,
-      "distinct": 56266
+      "generated": 809591,
+      "distinct": 84676
     },
     "DropUnknown": {
       "role": "mutant",
@@ -151,8 +153,8 @@
       "kind": "invariant",
       "target": "NoPostToChangedApp",
       "status": "EXPECTED_FAIL",
-      "generated": 300259,
-      "distinct": 33483
+      "generated": 545319,
+      "distinct": 59260
     },
     "FirstUnguarded": {
       "role": "mutant",
@@ -231,8 +233,8 @@
       "kind": "invariant",
       "target": "NoLostCharacter",
       "status": "EXPECTED_FAIL",
-      "generated": 251610,
-      "distinct": 28101
+      "generated": 249702,
+      "distinct": 27446
     },
     "Stale": {
       "role": "mutant",
@@ -255,16 +257,16 @@
       "kind": "pass",
       "target": null,
       "status": "PASS",
-      "generated": 1719249,
-      "distinct": 147264
+      "generated": 1480657,
+      "distinct": 126976
     },
     "FocusGeneration": {
       "role": "positive",
       "kind": "pass",
       "target": null,
       "status": "PASS",
-      "generated": 1155901,
-      "distinct": 99080
+      "generated": 991461,
+      "distinct": 85040
     },
     "Plain": {
       "role": "positive",
@@ -295,8 +297,8 @@
       "kind": "pass",
       "target": null,
       "status": "PASS",
-      "generated": 2264129,
-      "distinct": 196032
+      "generated": 1830785,
+      "distinct": 158528
     },
     "Serialized": {
       "role": "positive",
@@ -311,8 +313,8 @@
       "kind": "pass",
       "target": null,
       "status": "PASS",
-      "generated": 1719249,
-      "distinct": 147264
+      "generated": 1480657,
+      "distinct": 126976
     },
     "PartialUnsupported": {
       "role": "mutant",
@@ -321,6 +323,14 @@
       "status": "EXPECTED_FAIL",
       "generated": 33730,
       "distinct": 4977
+    },
+    "LateRead": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoAXAfterExpiry",
+      "status": "EXPECTED_FAIL",
+      "generated": 103980,
+      "distinct": 12560
     }
   }
 }
