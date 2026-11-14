@@ -4,12 +4,12 @@ import Observation
 
 // 2.4 Lane A: ONE notch surface. The notch owns every drawer that hangs from it (History and Settings) and
 // shows the recording wings and the teleprompter. Which drawer is open, and whether one may open at all, is
-// decided here and nowhere else. Etan, QA 0510 R3: "as long as there's no teleprompter of speech or asking,
-// settings and history should be pulled down", including while recording, transcribing and on Typed: a drawer
-// hangs under the recording wings and stays through the capture; only the teleprompter and a modal sheet close it. BarView, the dismissal monitors, the gear, the pull gesture and the app send
+// QA 0510 R3: History and Settings remain available during recording, transcription, and confirmation.
+// A teleprompter or modal sheet closes the drawer. The drawer retains the activity band during capture.
+// BarView, dismissal monitors, gear, pull gesture and app send
 // events; they never flip a flag of their own. Model: formal/notch-surface/NotchSurface.tla.
 
-/// History's two resting heights (Etan, 2.4: "collapsed 6, expanded 8, scrolls to 20").
+/// History rests at six collapsed rows or eight expanded rows (2.4 design).
 public enum NotchHistoryDetent: String, Equatable, Hashable, Sendable, CaseIterable {
     case collapsed
     case expanded

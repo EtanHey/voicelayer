@@ -1,7 +1,7 @@
 import CoreGraphics
 
-/// Lane H (Etan, QA of candidate 6: "still can't do side to side in the history"): which History category is shown
-/// and how far a sideways gesture has carried the lists. Pure state, so the gesture rules are unit-tested.
+/// Candidate-6 QA: track the selected History category and horizontal gesture displacement.
+/// Pure state allows the gesture rules to be unit-tested.
 ///
 /// A gesture picks its axis once, from its first few points: sideways only when it is clearly more horizontal than
 /// vertical. A vertical gesture stays the list's own scroll for its whole length and never switches category.

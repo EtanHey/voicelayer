@@ -23,8 +23,8 @@ public enum Theme {
     /// Pressed, but the recorder has not delivered a frame yet. Reuses the
     /// vetted idle gray so the waveform never shows red before capture exists.
     public static let captureBootingColor = idleColor
-    /// c9-P (Etan, 2026-11-12: the red meter "would just become the rippling one when it's transcribing", and make it
-    /// "more prominent or more obvious"): the transcribing ripple's blue. The processing hue (`speakingColor`, 211°)
+    /// Reported 2026-11-12 (c9-P): make the processing ripple visibly distinct and sufficiently contrasted.
+    /// Its blue uses the processing hue (`speakingColor`, 211°),
     /// lifted to 206° / HSL lightness 0.82 so it holds ≥ 3:1 on the M4's grey glass, measured at (106, 115, 125)
     /// in recording 13.30.27 (`speakingColor` reads 1.4:1 there). TranscribingRippleTests pins the figure.
     public static let processingRippleColor = Color(hex: 0xA3D7FF)

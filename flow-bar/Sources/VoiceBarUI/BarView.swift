@@ -880,9 +880,8 @@ public struct BarView: View {
             }
     }
 
-    /// The open drawer's body follows a vertical drag too (2.4, Etan: "drag UP closes it, mirroring drag-down to
-    /// open"; dragging further down opens Settings). It is a simultaneous gesture, so rows and buttons keep their
-    /// clicks; a row's click right after a drag is ignored (`drawerBodyDragJustHappened`).
+    /// Drawer-body drags close upward or open Settings downward (2.4 design).
+    /// Rows retain simultaneous clicks; suppress the click immediately after a drag.
     private var drawerBodyDragGesture: some Gesture {
         DragGesture(minimumDistance: NotchHistoryMorph.dragSlop, coordinateSpace: .named(Self.notchCanvasSpace))
             .onChanged { value in
@@ -1124,8 +1123,7 @@ public struct BarView: View {
         }
         let wasBare = historyPressIsBare
         historyPressIsBare = false
-        // C7-W (Etan, QA 2026-11-11: fast clicks on the notch "not even getting it"): a click or a short dab on the
-        // recording wing, off Stop, Mute and Cancel, toggles the drawer like the launcher's History button.
+        // Reported 2026-11-11 (C7-W): brief wing clicks must toggle the drawer, excluding action controls.
         let isWingClick = historyPressIsWingClick && !cancelled && historyPressTravel <= NotchHistoryMorph.wingClickTravel
         historyPressIsWingClick = false
         let opensSettings = isSettingsPullArmed && !cancelled
@@ -1432,10 +1430,8 @@ public struct BarView: View {
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
-    /// T1/T6 (Etan QA 2026-11-09: "the backwards and forwards button need to go next to the pause button. There's
-    /// also a ton of space next to it ... They can be disabled or enabled depending on if there is something queued or
-    /// not" and "the 1× can probably just go to the top next to the play pause backwards and forwards"). From the
-    /// outer edge: speed, Back, Pause/Play, Forward. Back and Forward walk the CURRENT queue only and are disabled
+    /// Reported 2026-11-09 (T1/T6): group speed and queue navigation beside Pause.
+    /// Outer-edge order: speed, Back, Pause/Play, Forward. Navigation uses only the current queue
     /// when nothing waits in that direction. One control slot each from the core, so the hit rects match; the speed
     /// chip is the outermost, wider control (`VoiceBarPresentation.readingSpeedChipWidth`).
     private func readingTransportControls(_ pause: VoiceBarPlaybackPauseControl) -> some View {
@@ -1537,8 +1533,7 @@ public struct BarView: View {
 
     /// QA 0449: the time/meter group is centred in equal wings, with a clear gap and no blank outer region.
     /// Capture-open still owns the timer; the capturing microphone remains its tooltip and VoiceOver value.
-    /// c9-P (Etan, 2026-11-12: "the red waveform would just become the rippling one when it's transcribing"): while
-    /// transcribing the time leaves (no words added), the meter ripples in the processing blue in the same frame.
+    /// Reported 2026-11-12 (c9-P): replace the recording timer with a blue processing ripple in place.
     private var recordingMeterRow: some View {
         let isRecording = notchPresentation.bandState == .recording
         let isPaused = isRecording && state.isRecordingPaused
@@ -1633,9 +1628,7 @@ public struct BarView: View {
         }
     }
 
-    /// T5/T7 (Etan QA 2026-11-09: "the waveform is blue but is consistent with the same waveform and time stuff that
-    /// we have when recording" and "maybe just the red stop button goes to the bottom"): reading aloud lays the right
-    /// wing out like recording, time then level meter (blue: the playback level). With the teleprompter open, the red
+    /// Reported 2026-11-09 (T5/T7): reading uses a blue time-and-meter row matching recording. With the teleprompter open, the red
     /// Stop sits in its eye row. Collapsed (paused or hidden) there is no eye row, so Stop follows the meter; a hidden
     /// but playing read puts Show teleprompter over the meter's last slot, one pitch inside Stop.
     /// X4 (Etan, PR #860): the row is centred in the visible wing, with no blank outer region.
@@ -1965,10 +1958,8 @@ public struct BarView: View {
     /// U5: live reading uses Teleprompter A; an idle-retained readback keeps its scrolling view.
     private var showsTeleprompterA: Bool { state.mode == .speaking && !state.isTeleprompterReadback }
 
-    /// T4/T7 (Etan QA 2026-11-09: "they're not in one flex box together centered" and "maybe just the red stop button
-    /// goes to the bottom"). X4 (Etan, PR #860: "stop / eye / replay not centred with the drag bar"): Replay, the eye
-    /// and the terminal control (the live red Stop while reading, X on an ended readback) are one row centred in the
-    /// body, on the drag bar's centre.
+    /// Reported 2026-11-09 (T4/T7), refined by X4: centre Replay, eye, and terminal action on the drag bar.
+    /// The terminal action is Stop during playback and X for ended readback.
     private var notchTeleprompterControls: some View {
         HStack(spacing: VoiceBarPresentation.teleprompterLowerControlSpacing) {
             if state.canReplay {
@@ -2243,9 +2234,8 @@ public struct BarView: View {
         }
     }
 
-    /// 0510 N9 (Etan, R4: the mic control "should take you to the right settings page in the notch app", the same
-    /// every time): wherever it shows, it opens Settings › General at Microphone priority in the notch, and
-    /// closes it again from there. Without a Settings drawer (2.3 hosts) it keeps opening the microphone list.
+    /// QA 0510 N9: consistently toggle the notch Settings microphone-priority destination.
+    /// Older hosts without that drawer continue to open the microphone list.
     private var microphonePickerButton: some View {
         notchButton(
             icon: "chevron.down",

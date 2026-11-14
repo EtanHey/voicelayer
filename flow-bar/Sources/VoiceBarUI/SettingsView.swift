@@ -552,7 +552,7 @@ public struct SettingsView: View {
     private let latestHistoryAnchorID = "settings-history-latest-anchor"
     private let latestAskHistoryAnchorID = "settings-ask-history-latest-anchor"
     private static let historyPageSize = SettingsHistoryArchive.defaultPageSize
-    /// 2.4 (Etan, QA 0510 R2/N1: "settings should be in the notch app, not open the extra settings window"). Non-nil
+    /// QA 0510 R2/N1: embed the Settings pane in the notch. A non-nil value
     /// renders only this tab's own pane, without the window's sidebar and title, for the notch Settings drawer. The
     /// window keeps nil. History is not embedded: the drawer reuses the notch's own History rows for that tab.
     private var notchEmbeddedTab: SettingsTab?
@@ -606,7 +606,7 @@ public struct SettingsView: View {
     @State private var historySearch = ""
     @State private var askHistorySearch = ""
     @State private var includedTermsExpanded = false
-    /// Etan (M27): "a collapsible Personal section". Expanded by default.
+    /// M27 design: personal entries form an expandable section, initially open.
     @State private var yourTermsExpanded = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// UI pass #18: after Add/Edit the saved term is scrolled to, selected and flashed.
@@ -979,7 +979,7 @@ public struct SettingsView: View {
     private func notchPane(_ tab: SettingsTab) -> some View {
         notchPaneContent(tab)
             .scrollContentBackground(.hidden)
-            // Etan (QA 2026-11-11): "the gutters on the sides are still huge". A grouped Form insets its cards 20 pt
+            // Reported 2026-11-11: nested margins made drawer gutters excessive. A grouped Form insets cards 20 pt
             // inside the drawer's own 8 pt, and `contentMargins` does not move them (measured on macOS 26.5). The
             // drawer widens a Form pane by that inset, so its cards line up with the tab bar's edges (lane S
             // DESIGN.md §1), and moves the overlay scroller back inside the visible pane.
@@ -1379,7 +1379,7 @@ public struct SettingsView: View {
         }
     }
 
-    /// Etan (QA 2026-11-11, shot 3: "still very jumbled"): the gestures were a bare "Gestures" line inside Advanced,
+    /// Reported 2026-11-11: gesture rows were hard to scan inside Advanced, with
     /// labels left and grey descriptions right-aligned and wrapping under them, with Read Clipboard alone below.
     /// They are now their own section of ordinary rows: the key as the title, what it does as the description, and
     /// Read Clipboard as a row whose button sits in the trailing column.
@@ -1481,7 +1481,7 @@ public struct SettingsView: View {
     private func microphonePriorityRow(_ row: MicrophonePriorityRow, at index: Int, visibleCount: Int) -> some View {
         let isUsed = SettingsMicrophoneRowPresentation.isUsedForDictation(row, snapshot: microphoneSnapshot)
         let isHovered = hoveredMicrophoneIndex == index || settingsHoverPreview.microphoneRow == index
-        // Etan (QA 2026-11-11, shots 1-2): status and the "Used for dictation" pill share the second line, and Make
+        // Reported 2026-11-11: status and dictation-use indicator share the second line; Make
         // default is the row's only trailing control. Nothing appears under the row and hovering moves nothing.
         let content = SettingsRow(title: row.label, description: SettingsMicrophoneRowPresentation.status(row),
                                   badge: isUsed ? SettingsMicrophoneRowPresentation.usedBadge : nil,
@@ -2250,8 +2250,7 @@ public struct SettingsView: View {
     // Recording's existing behavior and prevents tall Ask cards from scrolling through it.
     /// A pinned day header is opaque so rows scroll under it. `coversAbove` extends that cover over the list's own
     /// top padding while pinned, and must never exceed the stack spacing above the header: past it, an unpinned
-    /// header paints over the bottom of the previous day's last row (V27, Etan: "only the last in the list in a
-    /// given date… right before the title of the next date"). The Ask list spaces its sections 18 pt apart; the
+    /// header paints over the previous day's final row (V27 QA). The Ask list spaces sections 18 pt apart; the
     /// Dictations list spaces rows 2 pt apart and keeps its top inset outside the scroll view instead.
     private func historyDayHeader(_ title: String, coversAbove: CGFloat = 18) -> some View {
         Text(title)
@@ -2577,7 +2576,7 @@ public struct SettingsView: View {
                         Text("Used on every dictation").font(.subheadline).foregroundStyle(SettingsPanePalette.helper)
                     }
                 }
-                // Lane S PR 3 (Etan's video, 299.8 s "this is still ugly"): search and Add term share one toolbar row.
+                // Reported 2026-11-11, video 299.8 s: search and Add term share one toolbar row.
                 HStack(alignment: .center, spacing: 8) {
                     searchRow
                     Button {

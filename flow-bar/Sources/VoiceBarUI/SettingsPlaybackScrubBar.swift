@@ -163,8 +163,8 @@ struct SettingsPlaybackScrubBar: View {
         SettingsAudioPlaybackPosition.clockLabel(duration > 0 ? max(duration, 1) : 0)
     }
 
-    /// The only growing affordance (Etan, NOTCH2: "Solid bar + 'so far'", and no ellipsis): "so far" next to
-    /// the total while synthesis is still adding audio. The track is the normal solid bar either way.
+    /// NOTCH2 design: append a short growth indicator beside the total during synthesis.
+    /// The track remains solid, without a dotted tail or ellipsis.
     static let growingNote = "so far"
 
     private func durationText(_ duration: TimeInterval) -> Text {

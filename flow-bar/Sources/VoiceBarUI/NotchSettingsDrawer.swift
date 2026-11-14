@@ -4,9 +4,8 @@ import SwiftUI
 /// it; a BarView without one keeps the 2.3 behaviour (the gear opens the Settings window).
 public struct NotchSettingsDrawerContext {
     public var updates: NotchUpdateController?
-    /// The Settings window's own pane for a tab (`SettingsView.notchDrawerPane`), built from the same stores, so
-    /// the drawer edits the real settings (Etan, QA 0510 R2: "we literally already have notch history, this is so
-    /// easy to re-use"). The request carries a spot to scroll to (the microphone priority list, 0510 N9).
+    /// Reuse each Settings tab pane and its stores in the drawer (QA 0510 R2).
+    /// The request may also identify a scroll destination, such as microphone priority (N9).
     public var pane: (SettingsTab, SettingsTabRequest?) -> AnyView
 
     public init(
@@ -303,8 +302,8 @@ extension SettingsTab {
     }
 }
 
-/// Cancels a grouped Form's 20 pt side inset inside the drawer (lane S, Etan QA 2026-11-11 "the gutters on the sides
-/// are still huge"). The Form is laid out 20 pt wider on each side than the pane, so its cards land on the pane's
+/// Reported 2026-11-11: grouped Form margins compound the drawer inset.
+/// Lay out the Form 20 pt wider on each side so cards meet the pane edges; the
 /// edges; the drawer clips the pane, so the overlay scroller, which would sit in the clipped strip, is inset back to
 /// just inside the visible edge.
 struct NotchGroupedFormGutter: ViewModifier {

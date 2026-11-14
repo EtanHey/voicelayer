@@ -62,8 +62,8 @@ enum SettingsHistoryLayout {
     }
 }
 
-/// QA-06 (Etan, 2026-11-02: "the state is not kept between just traveling within the app"): what the
-/// Dictations list keeps while Settings is open. SettingsView owns it, so it outlives the History tab;
+/// Reported 2026-11-02 (QA-06): retain Dictations selection and expansion state across tab changes.
+/// SettingsView owns this state for the lifetime of the window;
 /// leaving History and coming back restores the same row and keeps its Recording details open or
 /// closed. Scroll positions live in SettingsHistoryScrollMemory, independent of the selection. Only a fresh Settings window starts again from the newest row.
 struct SettingsHistoryRecordingMemory: Equatable {

@@ -179,8 +179,8 @@ public struct ModelsSettingsView: View {
         let value: String
     }
 
-    /// SETUI1 (Etan, 2026-10-19): "accurate accurate … We don't need this repetitiveness." A loaded model whose
-    /// active fact matches its configured one is one row; the pair shows only when they differ or it is not loaded.
+    /// Reported 2026-10-19 (SETUI1): merge matching configured and active model facts into one row.
+    /// Keep both rows when the facts differ or the model is not loaded.
     static func recognizerDetailRows(for state: ModelsSettingsState) -> [RecognizerDetailRow] {
         func rows(_ noun: String, configured: String?, active: String?) -> [RecognizerDetailRow] {
             if state.residency == .loaded, let configured, configured == active {

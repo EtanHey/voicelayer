@@ -16,8 +16,8 @@
     "formal/history-pull/MutantWholeRow.cfg": "6544ab0197d83ed41e5656ed651b684a93e1ab7a365c01e437301f1ceb7d351f",
     "formal/history-pull/MutantNoCancel.cfg": "357b152262aea12ebf2f57e912ae60887da0f0b557985172a8ef0d77b50e4314",
     "formal/history-pull/Fixed.cfg": "c6b2a0faf9545471c78f1e04cc2c7a9c126dc3397b13927903a16c43cce8b7e7",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "f549f6c96d60d0c52c73acc08739dd6d8bbb169a502f99aacf53e589e42ac4a8",
-    "flow-bar/Sources/VoiceBarUI/NotchHistoryMorph.swift": "00bae1beeb17d1463558dc01f42c96f8befad040fb1bdbffeedcb6c0af2ffc67",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "551fffe23e20d89dab372861f2f4ebd480fdaa3d4c725d0ef0344c1388e430e0",
+    "flow-bar/Sources/VoiceBarUI/NotchHistoryMorph.swift": "e34cee7518e8be2caf5e53540776cd9edc9728c456feb900695e2917a811836d",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {

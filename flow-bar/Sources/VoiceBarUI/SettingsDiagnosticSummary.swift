@@ -18,7 +18,7 @@ enum SettingsCopyPayload {
 }
 
 /// Shared with the Speech lane: copying never runs a command or changes a setting.
-/// QA-20 (Etan, 2026-11-02: "We don't need a copy word. The copy icon is very known"): icon only;
+/// Reported 2026-11-02 (QA-20): use an icon-only copy control;
 /// the tooltip and VoiceOver say what is copied.
 @MainActor
 struct SettingsCopyButton: View {
