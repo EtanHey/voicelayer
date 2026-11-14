@@ -1,0 +1,13 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "LaunchingNeverDrawsSwift",
+  "status": "EXPECTED_FAIL",
+  "generated": 7,
+  "distinct": 5,
+  "trace": [
+    "/\\ runeChild = \"none\"\n/\\ runeCrashSeen = FALSE\n/\\ mode = \"unset\"\n/\\ pref = \"rune\"\n/\\ app = \"down\"\n/\\ launchMode = \"unset\"\n/\\ swiftUI = \"none\"",
+    "/\\ runeChild = \"none\"\n/\\ runeCrashSeen = FALSE\n/\\ mode = \"rune\"\n/\\ pref = \"rune\"\n/\\ app = \"launching\"\n/\\ launchMode = \"rune\"\n/\\ swiftUI = \"none\"",
+    "/\\ runeChild = \"none\"\n/\\ runeCrashSeen = FALSE\n/\\ mode = \"rune\"\n/\\ pref = \"rune\"\n/\\ app = \"launching\"\n/\\ launchMode = \"rune\"\n/\\ swiftUI = \"live\""
+  ]
+}
