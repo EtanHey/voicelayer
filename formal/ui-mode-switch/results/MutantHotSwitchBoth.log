@@ -1,0 +1,16 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NeverBoth",
+  "status": "EXPECTED_FAIL",
+  "generated": 80,
+  "distinct": 39,
+  "trace": [
+    "/\\ runeChild = \"none\"\n/\\ runeCrashSeen = FALSE\n/\\ mode = \"unset\"\n/\\ pref = \"swift\"\n/\\ app = \"down\"\n/\\ launchMode = \"unset\"\n/\\ swiftUI = \"none\"",
+    "/\\ runeChild = \"none\"\n/\\ runeCrashSeen = FALSE\n/\\ mode = \"swift\"\n/\\ pref = \"swift\"\n/\\ app = \"launching\"\n/\\ launchMode = \"swift\"\n/\\ swiftUI = \"none\"",
+    "/\\ runeChild = \"none\"\n/\\ runeCrashSeen = FALSE\n/\\ mode = \"swift\"\n/\\ pref = \"swift\"\n/\\ app = \"launching\"\n/\\ launchMode = \"swift\"\n/\\ swiftUI = \"live\"",
+    "/\\ runeChild = \"none\"\n/\\ runeCrashSeen = FALSE\n/\\ mode = \"swift\"\n/\\ pref = \"swift\"\n/\\ app = \"running\"\n/\\ launchMode = \"swift\"\n/\\ swiftUI = \"live\"",
+    "/\\ runeChild = \"none\"\n/\\ runeCrashSeen = FALSE\n/\\ mode = \"rune\"\n/\\ pref = \"rune\"\n/\\ app = \"running\"\n/\\ launchMode = \"swift\"\n/\\ swiftUI = \"live\"",
+    "/\\ runeChild = \"starting\"\n/\\ runeCrashSeen = FALSE\n/\\ mode = \"rune\"\n/\\ pref = \"rune\"\n/\\ app = \"running\"\n/\\ launchMode = \"swift\"\n/\\ swiftUI = \"live\""
+  ]
+}

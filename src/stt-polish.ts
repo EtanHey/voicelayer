@@ -1,3 +1,4 @@
+import { getSTTDictionaryCommands } from "./stt-cleanup";
 import { requireIsolatedOverride } from "./test-isolation";
 import { randomUUID } from "crypto";
 import { processingEnv } from "./processing-settings";
@@ -1377,6 +1378,25 @@ function isAllowedSpokenListRewrite(
   return normalizedSimilarity(cleanedText, candidate) >= SPOKEN_LIST_SIMILARITY_FLOOR;
 }
 
+/** This rule only preserves existing standalone commands; additions are other guards' business. */
+export function standaloneDictionaryCommandsPreserved(
+  cleanedText: string, candidate: string, commands: ReadonlySet<string>,
+): "ok" | "lost standalone dictionary command" {
+  const counts = (text: string) => {
+    const result = new Map<string, number>();
+    for (const match of text.matchAll(/(?:^|\s)(\/[A-Za-z0-9][A-Za-z0-9-]*)(?=[\s.,;:!?]|$)/gu)) {
+      if (commands.has(match[1])) result.set(match[1], (result.get(match[1]) ?? 0) + 1);
+    }
+    return result;
+  };
+  const before = counts(cleanedText);
+  const after = counts(candidate);
+  for (const [command, count] of before) {
+    if ((after.get(command) ?? 0) < count) return "lost standalone dictionary command";
+  }
+  return "ok";
+}
+
 function validatePolishCandidate(
   cleanedText: string,
   polishedText: string,
@@ -1403,6 +1423,8 @@ function validatePolishCandidate(
     !allowedSelfCorrectionRewrite &&
     !allowedSpokenListRewrite;
   if (!candidate) return "empty polish response";
+  const commandRule = standaloneDictionaryCommandsPreserved(cleanedText, candidate, getSTTDictionaryCommands(env));
+  if (commandRule !== "ok") return commandRule;
   if (/Raw Whisper text:|VoiceLayer cleaned text to fix:/i.test(candidate)) {
     return "polish response echoed the prompt";
   }

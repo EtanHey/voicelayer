@@ -7,6 +7,12 @@ import ts from "typescript";
 // Exact lines AND occurrence budgets: adding a home path even in an allowed
 // file needs review. These exceptions are fixtures, isolation or path contracts.
 const ALLOWED: Record<string, Array<[string, number]>> = {
+  // Path-grammar fixtures: a bare "~/" token exercises the tilde-path join in
+  // normalizePathTokens; no real home directory, file or corpus is read.
+  "src/__tests__/stt-dictionary-commands.test.ts": [
+    ['it.each(["src / quill / index", "~/ foo / quill"])("keeps real path %s", (input) => {', 1],
+    ['" /quill / Index", " /other -B", " / x", " -x", "~/", "/", "-",', 1],
+  ],
   // Containment assertion only: this child receives a synthetic HOME before it
   // starts, and validates every resolved path before its sandbox writes.
   "src/__tests__/test-isolation-cwd.test.ts": [

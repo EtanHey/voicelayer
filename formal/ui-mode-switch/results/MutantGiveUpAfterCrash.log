@@ -1,0 +1,16 @@
+{
+  "role": "mutant",
+  "kind": "temporal",
+  "target": "CrashRestarts",
+  "status": "EXPECTED_FAIL",
+  "generated": 92,
+  "distinct": 34,
+  "trace": [
+    "/\\ runeChild = \"none\"\n/\\ runeCrashSeen = FALSE\n/\\ mode = \"unset\"\n/\\ pref = \"rune\"\n/\\ app = \"down\"\n/\\ launchMode = \"unset\"\n/\\ swiftUI = \"none\"",
+    "/\\ runeChild = \"none\"\n/\\ runeCrashSeen = FALSE\n/\\ mode = \"rune\"\n/\\ pref = \"rune\"\n/\\ app = \"launching\"\n/\\ launchMode = \"rune\"\n/\\ swiftUI = \"none\"",
+    "/\\ runeChild = \"starting\"\n/\\ runeCrashSeen = FALSE\n/\\ mode = \"rune\"\n/\\ pref = \"rune\"\n/\\ app = \"launching\"\n/\\ launchMode = \"rune\"\n/\\ swiftUI = \"none\"",
+    "/\\ runeChild = \"crashed\"\n/\\ runeCrashSeen = TRUE\n/\\ mode = \"rune\"\n/\\ pref = \"rune\"\n/\\ app = \"launching\"\n/\\ launchMode = \"rune\"\n/\\ swiftUI = \"none\"",
+    "/\\ runeChild = \"crashed\"\n/\\ runeCrashSeen = TRUE\n/\\ mode = \"rune\"\n/\\ pref = \"swift\"\n/\\ app = \"launching\"\n/\\ launchMode = \"rune\"\n/\\ swiftUI = \"none\"",
+    "/\\ runeChild = \"crashed\"\n/\\ runeCrashSeen = TRUE\n/\\ mode = \"rune\"\n/\\ pref = \"rune\"\n/\\ app = \"launching\"\n/\\ launchMode = \"rune\"\n/\\ swiftUI = \"none\"\n\nBack to state 5: <ChangePreference line 59, col 5 to line 61, col 71 of module UIModeSwitch>"
+  ]
+}

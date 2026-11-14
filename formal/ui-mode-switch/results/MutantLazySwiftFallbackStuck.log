@@ -1,0 +1,15 @@
+{
+  "role": "mutant",
+  "kind": "temporal",
+  "target": "CrashRecovers",
+  "status": "EXPECTED_FAIL",
+  "generated": 92,
+  "distinct": 34,
+  "trace": [
+    "/\\ runeChild = \"none\"\n/\\ runeCrashSeen = FALSE\n/\\ mode = \"unset\"\n/\\ pref = \"rune\"\n/\\ app = \"down\"\n/\\ launchMode = \"unset\"\n/\\ swiftUI = \"none\"",
+    "/\\ runeChild = \"none\"\n/\\ runeCrashSeen = FALSE\n/\\ mode = \"rune\"\n/\\ pref = \"rune\"\n/\\ app = \"launching\"\n/\\ launchMode = \"rune\"\n/\\ swiftUI = \"none\"",
+    "/\\ runeChild = \"starting\"\n/\\ runeCrashSeen = FALSE\n/\\ mode = \"rune\"\n/\\ pref = \"rune\"\n/\\ app = \"launching\"\n/\\ launchMode = \"rune\"\n/\\ swiftUI = \"none\"",
+    "/\\ runeChild = \"crashed\"\n/\\ runeCrashSeen = TRUE\n/\\ mode = \"rune\"\n/\\ pref = \"rune\"\n/\\ app = \"launching\"\n/\\ launchMode = \"rune\"\n/\\ swiftUI = \"live\"",
+    "Finished checking temporal properties in 00s at 2026-11-14 00:25:07"
+  ]
+}

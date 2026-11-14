@@ -665,7 +665,8 @@ export function cleanupTranscriptionText(
       ...Object.fromEntries((snapshot?.entries ?? []).filter((entry) => entry.cleanup_spelling).map((entry) => [entry.canonical, entry.cleanup_spelling!])),
     }),
   );
-  const pathNormalized = normalizePathTokens(normalized);
+  const commands = new Set(Object.values(aliases).filter((value) => /^\/[A-Za-z0-9][A-Za-z0-9-]*$/.test(value)));
+  const pathNormalized = normalizePathTokens(normalized, commands);
   const sentenceCased = normalizeSentenceStarts(pathNormalized);
   // Must run LAST: after the canonical-term pass folds "voice layer Codex"
   // into the camelCase agent token, and after auto-cap/sentence-start so the
@@ -715,17 +716,52 @@ function normalizeConversationalOne(text: string): string {
     .replace(/\b(other)\s+1\b/giu, "$1 one");
 }
 
-export function normalizePathTokens(text: string): string {
+export function getSTTDictionaryCommands(env: STTCleanupEnv = process.env): ReadonlySet<string> {
+  return new Set(Object.values(buildRuntimeAliases(env, loadVocabularySnapshot(env)))
+    .filter((value) => /^\/[A-Za-z0-9][A-Za-z0-9-]*$/.test(value)));
+}
+
+// Sticky scanning consumes each command once per join, without suffix slicing.
+function joinPathSeparators(text: string, commands: ReadonlySet<string>): string {
+  const command = /\/[A-Za-z0-9][A-Za-z0-9-]*/uy;
+  const isCommand = (index: number): boolean => {
+    if (!commands.size || (index > 0 && !/\s/u.test(text[index - 1]))) return false;
+    command.lastIndex = index;
+    const match = command.exec(text);
+    return !!match && commands.has(match[0]) &&
+      (command.lastIndex === text.length || /[\s.,;:!?]/u.test(text[command.lastIndex]));
+  };
+  text = text.replace(/\s*\/\s*/gu, (match, offset: number) =>
+    isCommand(offset + match.indexOf("/")) ? match : "/");
+  text = text.replace(/\s*-\s*/gu, (match, offset: number) => {
+    // A hyphen may own the whitespace before the next slash in this same join.
+    const trailing = match.match(/\s+$/u)?.[0] ?? "";
+    return "-" + (trailing && isCommand(offset + match.length) ? trailing : "");
+  });
+  // A retained command boundary becomes a path join if a later separator
+  // has joined onto the command itself.
+  const boundaries = [...text.matchAll(/\s+(\/[A-Za-z0-9][A-Za-z0-9-]*)/gu)];
+  const joins = new Set<number>();
+  // Work backwards so a chain ending in a path joins all its segments. Match
+  // the whole token: backtracking at a hyphen would split a valid command.
+  for (let i = boundaries.length - 1; i >= 0; i--) {
+    const boundary = boundaries[i];
+    const end = boundary.index + boundary[0].length;
+    if (text[end] === "/" || (!commands.has(boundary[1]) && boundary[1].includes("-")) ||
+        (boundaries[i + 1]?.index === end && joins.has(end))) joins.add(boundary.index);
+  }
+  return text.replace(/\s+(\/[A-Za-z0-9][A-Za-z0-9-]*)/gu, (match, _token: string, offset: number) =>
+    joins.has(offset) ? match.trimStart() : match);
+}
+
+export function normalizePathTokens(text: string, commands: ReadonlySet<string> = new Set()): string {
   let result = text.replace(
     /\b(in|at|under|inside)\s+-\s*,\s+is it\s+(?=~\s*\/)/giu,
     (_match, preposition: string) => `${preposition} `,
   );
 
   result = result.replace(/~\s*\/[^,;!?]*/gu, (match) =>
-    match
-      .replace(/\s*\/\s*/g, "/")
-      .replace(/\s*-\s*/g, "-")
-      .toLowerCase(),
+    joinPathSeparators(match, commands).toLowerCase(),
   );
 
   result = replacePathTokenSpans(result, (match) => {
@@ -733,10 +769,31 @@ export function normalizePathTokens(text: string): string {
       if (/^[A-Za-z]+\s+\/\s*[A-Za-z0-9-]+$/u.test(match.trim())) {
         return match;
       }
-      return match
-        .replace(/\s*\/\s*/g, "/")
-        .replace(/\s*-\s*/g, "-")
-        .toLowerCase();
+      const joined = joinPathSeparators(match, commands);
+      const parts: string[] = [];
+      let cursor = 0;
+      let originalCursor = 0;
+      // Only path portions are case-normalized around kept command boundaries.
+      // Keep each command and its preceding whitespace exactly as joined above.
+      const boundaries = /\s+\/([A-Za-z0-9][A-Za-z0-9-]*)(?=[\s.,;:!?]|$)/gu;
+      // Joining only deletes whitespace. Map retained characters back to the
+      // original span once, so vanished command boundaries cannot shift slices.
+      const toOriginal = new Int32Array(joined.length + 1);
+      for (let j = 0, i = 0; j <= joined.length; j++, i++) {
+        while (i < match.length && j < joined.length && joined[j] !== match[i]) i++;
+        toOriginal[j] = j === joined.length ? match.length : i;
+      }
+      for (const boundary of joined.matchAll(boundaries)) {
+        if (!commands.has(`/${boundary[1]}`)) continue;
+        const before = joined.slice(cursor, boundary.index);
+        parts.push(before.includes("/") ? before.toLowerCase() : match.slice(originalCursor, toOriginal[boundary.index]), boundary[0]);
+        cursor = boundary.index + boundary[0].length;
+        originalCursor = toOriginal[cursor];
+      }
+      if (cursor === 0) return joined.toLowerCase();
+      const tail = joined.slice(cursor);
+      parts.push(tail.includes("/") ? tail.toLowerCase() : match.slice(originalCursor));
+      return parts.join("");
   });
 
   return result;

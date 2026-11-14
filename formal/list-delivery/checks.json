@@ -1,0 +1,170 @@
+{
+  "module": "ListDelivery",
+  "sources": [
+    "formal/list-delivery/check.sh",
+    "formal/list-delivery/README.md",
+    "formal/tlc_support.py",
+    "formal/tlc.lock.json"
+  ],
+  "checks": {
+    "AgedCheck": {
+      "role": "mutant",
+      "target": "NoSegmentWithoutFreshCheck",
+      "kind": "invariant"
+    },
+    "BatchUnguarded": {
+      "role": "mutant",
+      "target": "NoPostToChangedApp",
+      "kind": "invariant"
+    },
+    "BlockRecording": {
+      "role": "mutant",
+      "target": "RecordingNeverBlocked",
+      "kind": "invariant"
+    },
+    "CheckAwaitPost": {
+      "role": "mutant",
+      "target": "NoPostToChangedApp",
+      "kind": "invariant"
+    },
+    "DrainWorker": {
+      "role": "mutant",
+      "target": "DrainBounded",
+      "kind": "invariant"
+    },
+    "DropSlow": {
+      "role": "mutant",
+      "target": "SlowNeverLoses",
+      "kind": "invariant"
+    },
+    "DropUnknown": {
+      "role": "mutant",
+      "target": "NoLostCharacter",
+      "kind": "invariant"
+    },
+    "FallbackUnguarded": {
+      "role": "mutant",
+      "target": "NoPostToChangedApp",
+      "kind": "invariant"
+    },
+    "FirstUnguarded": {
+      "role": "mutant",
+      "target": "NoPostToChangedApp",
+      "kind": "invariant"
+    },
+    "ForeignRead": {
+      "role": "mutant",
+      "target": "NoLostCharacter",
+      "kind": "invariant"
+    },
+    "LateAX": {
+      "role": "mutant",
+      "target": "NoAXAfterExpiry",
+      "kind": "invariant"
+    },
+    "LateMain": {
+      "role": "mutant",
+      "target": "DeadlineBound",
+      "kind": "invariant"
+    },
+    "MainWait": {
+      "role": "mutant",
+      "target": "MainNeverWaits",
+      "kind": "invariant"
+    },
+    "NoDeadline": {
+      "role": "mutant",
+      "target": "BoundedDelivery",
+      "kind": "temporal"
+    },
+    "NoQuitReceipt": {
+      "role": "mutant",
+      "target": "ExactlyOneOutcome",
+      "kind": "invariant"
+    },
+    "PartialPosted": {
+      "role": "mutant",
+      "target": "ExactlyOneOutcome",
+      "kind": "invariant"
+    },
+    "PlainList": {
+      "role": "mutant",
+      "target": "PlainTextUntouched",
+      "kind": "invariant"
+    },
+    "PreBreak": {
+      "role": "mutant",
+      "target": "NoLostCharacter",
+      "kind": "invariant"
+    },
+    "Stale": {
+      "role": "mutant",
+      "target": "NoSegmentWithoutFreshCheck",
+      "kind": "invariant"
+    },
+    "TwoReceipts": {
+      "role": "mutant",
+      "target": "ExactlyOneOutcome",
+      "kind": "invariant"
+    },
+    "Async": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "FocusGeneration": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Plain": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Queued": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Silent": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "ThreeSegments": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "Serialized": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "LegacyPartial": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "PartialUnsupported": {
+      "role": "mutant",
+      "target": "ExactlyOneOutcome",
+      "kind": "invariant"
+    }
+  },
+  "acceptance": [
+    "NoPostToChangedApp",
+    "NoSegmentWithoutFreshCheck",
+    "MainNeverWaits",
+    "BoundedDelivery",
+    "NoLostCharacter",
+    "SlowNeverLoses",
+    "PlainTextUntouched",
+    "ExactlyOneOutcome",
+    "RecordingNeverBlocked",
+    "DrainBounded",
+    "DeadlineBound",
+    "NoAXAfterExpiry"
+  ]
+}

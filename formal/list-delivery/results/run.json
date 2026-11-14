@@ -1,0 +1,326 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/list-delivery/ListDelivery.tla": "ab9c543cab29be0a129f3004ae99cc1d7212452689903fe809c9d9a15ce0ee2d",
+    "formal/list-delivery/checks.json": "ab20866c6049d2d28f684928ad6ad3c48b03fdc429c2698b2a160403e018daef",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
+    "formal/list-delivery/LateAX.cfg": "1ebdd47e505518ed43cfaf7de75e63d3bb143f6f328a61ec1042eddefa485291",
+    "formal/list-delivery/Silent.cfg": "f3f3e959640f427173516eea695279665e8e9b97e21f7d51b97f962663ea4ca3",
+    "formal/list-delivery/FocusGeneration.cfg": "08d9ebc4fe41de41c1f12b7aaf8133714e356960d6246bb3bf265bac67f81604",
+    "formal/list-delivery/Serialized.cfg": "b3985c42de8e3dd14c6c41f5f9b762bdad711fb4d8e82c7f96e104bb9fe11926",
+    "formal/list-delivery/FallbackUnguarded.cfg": "4e122afe2a492b164584e425ecb51629d9f85f63817f05a13b927feb6f551ecd",
+    "formal/list-delivery/PlainList.cfg": "a4d1c2bfe39e44a365251554dbcd9b3c4cf1110572e5690f15f87819bd2e7c03",
+    "formal/list-delivery/LateMain.cfg": "a8f1f8ba1321c4bedafb744a131674bbf5a04031b4f4c767e2696338f53105b0",
+    "formal/list-delivery/NoQuitReceipt.cfg": "58ff86692d316f1998db0964064ee5ba5dfcf45c5e77d82e2dfcdc0d1a7ef52b",
+    "formal/list-delivery/BatchUnguarded.cfg": "82a25c2893eb42809ec562c3c77f14e6f97523e319d0c5c7906303df2a9da93c",
+    "formal/list-delivery/FirstUnguarded.cfg": "c9ca38e835e6a820b8ca37883e91d9fd71009d10caf18060a88791dd6922c901",
+    "formal/list-delivery/Async.cfg": "2e83ce1b7bdb15856670f03d05ddacc9c2493b321d4db62e30a25a29ecc4b3a2",
+    "formal/list-delivery/TwoReceipts.cfg": "8b5014e2d2caf8a636375e121b729fa8512e790de5a01855976ac550baf9f539",
+    "formal/list-delivery/CheckAwaitPost.cfg": "baed19f89892e099582d45d497ad1c18f7ee10780ca0670d6a5e9885903113a4",
+    "formal/list-delivery/PreBreak.cfg": "49a78ed5c5759f4b338cc1ca34dec2688226836fea892a2b30ad814c3d4c7544",
+    "formal/list-delivery/Plain.cfg": "8c13815c609a972dd28aec9a580c7c7566ce5e6c65d3da2ace9a23191bbd39ad",
+    "formal/list-delivery/NoDeadline.cfg": "9b845c617889e3ecb408678b1e6729c4f55420f58cd637ebf7d16549da872763",
+    "formal/list-delivery/Queued.cfg": "3070e9b8732d2b1dadacfac717a3a1fa750c035bf0a96ba4493d0c1936389e16",
+    "formal/list-delivery/BlockRecording.cfg": "f1ac5e3b136f3775f10657af6b8fb337da7b8e57446eecc50ebf40b366f6bf8a",
+    "formal/list-delivery/DropSlow.cfg": "7e0a1c0ef8d26b8f0b997e6180f07786579d245678a6149e0b75e798baddc4f7",
+    "formal/list-delivery/ForeignRead.cfg": "2963594b937fe98f57a061094236df12ff0bacbf2c60980cf315c5edfa3ff346",
+    "formal/list-delivery/Stale.cfg": "0749e10d67bbe5d8c25651e4e7e6c9547f617c3e34be4afe356e78118ac5f9f9",
+    "formal/list-delivery/MainWait.cfg": "a547cd42f654a534a2329f552d0060f8148c5e7111e6c3232f277a439754d747",
+    "formal/list-delivery/PartialUnsupported.cfg": "66953b494b95edb7004cca0d80fa4b4c746f0e303df45da973310bdf6acb1c06",
+    "formal/list-delivery/DrainWorker.cfg": "6687bc666fdb2d168dae34da1b0e8e946e264de1e38cfe462f11e5697a5f63db",
+    "formal/list-delivery/ThreeSegments.cfg": "78e1601a881f57138c717553059b3cfaa1f91d637b8af171d6470ff5e04da7b7",
+    "formal/list-delivery/DropUnknown.cfg": "6da7a8a2221904f0fae240de7d28a70252acd111d84a5b0b6259947eaaf2acb0",
+    "formal/list-delivery/PartialPosted.cfg": "5e98845117fb0be8b31de62c6401aa4dd7f2355b58b5d2bd048f6322fc995b42",
+    "formal/list-delivery/LegacyPartial.cfg": "3b5e5c564185bc45df1be665dc01f626f79e91b11782202ce43bc26c3fc2f6de",
+    "formal/list-delivery/AgedCheck.cfg": "f72379708b9e5a60cdf6bc3b74a546d66158e32d78209f570dfc631e8f577456",
+    "formal/list-delivery/check.sh": "4864496b21f4edb9293be442fae78c38c5dcf1b96f40bf538b5ac5ffd5b1b0fd",
+    "formal/list-delivery/README.md": "9ca2b857db717a7c6a14298eb32454c59c1f58067b09dd38e22cc9ba537ae4d3",
+    "formal/tlc_support.py": "8c5dad35602a3a631acc61b07ed2246eeb40ef2b3a6b3a9c72c5b207c95386ec",
+    "formal/tlc.lock.json": "3e37914f1398c6073444c37c6c8df70eb3030c14d269e808791e1d1b25467d34",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
+  },
+  "mutants": {
+    "NoPostToChangedApp": [
+      "BatchUnguarded",
+      "CheckAwaitPost",
+      "FallbackUnguarded",
+      "FirstUnguarded"
+    ],
+    "NoSegmentWithoutFreshCheck": [
+      "AgedCheck",
+      "Stale"
+    ],
+    "MainNeverWaits": [
+      "MainWait"
+    ],
+    "BoundedDelivery": [
+      "NoDeadline"
+    ],
+    "NoLostCharacter": [
+      "DropUnknown",
+      "ForeignRead",
+      "PreBreak"
+    ],
+    "SlowNeverLoses": [
+      "DropSlow"
+    ],
+    "PlainTextUntouched": [
+      "PlainList"
+    ],
+    "ExactlyOneOutcome": [
+      "NoQuitReceipt",
+      "PartialPosted",
+      "TwoReceipts",
+      "PartialUnsupported"
+    ],
+    "RecordingNeverBlocked": [
+      "BlockRecording"
+    ],
+    "DrainBounded": [
+      "DrainWorker"
+    ],
+    "DeadlineBound": [
+      "LateMain"
+    ],
+    "NoAXAfterExpiry": [
+      "LateAX"
+    ]
+  },
+  "graphHashes": {},
+  "checks": {
+    "AgedCheck": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoSegmentWithoutFreshCheck",
+      "status": "EXPECTED_FAIL",
+      "generated": 33792,
+      "distinct": 5001
+    },
+    "BatchUnguarded": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoPostToChangedApp",
+      "status": "EXPECTED_FAIL",
+      "generated": 2344,
+      "distinct": 528
+    },
+    "BlockRecording": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "RecordingNeverBlocked",
+      "status": "EXPECTED_FAIL",
+      "generated": 2,
+      "distinct": 2
+    },
+    "CheckAwaitPost": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoPostToChangedApp",
+      "status": "EXPECTED_FAIL",
+      "generated": 31852,
+      "distinct": 4573
+    },
+    "DrainWorker": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "DrainBounded",
+      "status": "EXPECTED_FAIL",
+      "generated": 35,
+      "distinct": 26
+    },
+    "DropSlow": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "SlowNeverLoses",
+      "status": "EXPECTED_FAIL",
+      "generated": 483035,
+      "distinct": 56266
+    },
+    "DropUnknown": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoLostCharacter",
+      "status": "EXPECTED_FAIL",
+      "generated": 248159,
+      "distinct": 27121
+    },
+    "FallbackUnguarded": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoPostToChangedApp",
+      "status": "EXPECTED_FAIL",
+      "generated": 300259,
+      "distinct": 33483
+    },
+    "FirstUnguarded": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoPostToChangedApp",
+      "status": "EXPECTED_FAIL",
+      "generated": 19926,
+      "distinct": 3111
+    },
+    "ForeignRead": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoLostCharacter",
+      "status": "EXPECTED_FAIL",
+      "generated": 445962,
+      "distinct": 53620
+    },
+    "LateAX": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoAXAfterExpiry",
+      "status": "EXPECTED_FAIL",
+      "generated": 927,
+      "distinct": 225
+    },
+    "LateMain": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "DeadlineBound",
+      "status": "EXPECTED_FAIL",
+      "generated": 19276,
+      "distinct": 2998
+    },
+    "MainWait": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "MainNeverWaits",
+      "status": "EXPECTED_FAIL",
+      "generated": 2,
+      "distinct": 2
+    },
+    "NoDeadline": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "BoundedDelivery",
+      "status": "EXPECTED_FAIL",
+      "generated": 6433,
+      "distinct": 576
+    },
+    "NoQuitReceipt": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ExactlyOneOutcome",
+      "status": "EXPECTED_FAIL",
+      "generated": 15,
+      "distinct": 11
+    },
+    "PartialPosted": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ExactlyOneOutcome",
+      "status": "EXPECTED_FAIL",
+      "generated": 33730,
+      "distinct": 4977
+    },
+    "PlainList": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "PlainTextUntouched",
+      "status": "EXPECTED_FAIL",
+      "generated": 16,
+      "distinct": 15
+    },
+    "PreBreak": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoLostCharacter",
+      "status": "EXPECTED_FAIL",
+      "generated": 251610,
+      "distinct": 28101
+    },
+    "Stale": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoSegmentWithoutFreshCheck",
+      "status": "EXPECTED_FAIL",
+      "generated": 6540,
+      "distinct": 1216
+    },
+    "TwoReceipts": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ExactlyOneOutcome",
+      "status": "EXPECTED_FAIL",
+      "generated": 15,
+      "distinct": 11
+    },
+    "Async": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 1719249,
+      "distinct": 147264
+    },
+    "FocusGeneration": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 1155901,
+      "distinct": 99080
+    },
+    "Plain": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 9785,
+      "distinct": 896
+    },
+    "Queued": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 335825,
+      "distinct": 29824
+    },
+    "Silent": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 9905,
+      "distinct": 896
+    },
+    "ThreeSegments": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 2264129,
+      "distinct": 196032
+    },
+    "Serialized": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 1190513,
+      "distinct": 102784
+    },
+    "LegacyPartial": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 1719249,
+      "distinct": 147264
+    },
+    "PartialUnsupported": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "ExactlyOneOutcome",
+      "status": "EXPECTED_FAIL",
+      "generated": 33730,
+      "distinct": 4977
+    }
+  }
+}
