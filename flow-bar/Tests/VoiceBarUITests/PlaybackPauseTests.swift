@@ -304,8 +304,8 @@ final class PlaybackPauseTests: XCTestCase {
         XCTAssertEqual(state.playbackAudioLevel(), 0)
     }
 
-    /// X1-34 (Etan QA 2026-11-10, reversing P16's collapse): "paused on its own should not hide the teleprompter, but
-    /// just pause". Hide is the eye's job, paused or playing.
+    /// X1-34 (reported 2026-11-10, reversing P16's collapse): pause must keep the teleprompter visible.
+    /// Hide is the eye's job, paused or playing.
     func testPauseKeepsTheTeleprompterAndHideCollapsesIt() {
         let (state, _) = speakingState()
         XCTAssertEqual(presentation(for: state).visualState, .teleprompter)
@@ -591,7 +591,7 @@ final class PlaybackPauseTests: XCTestCase {
 
     // MARK: - Geometry
 
-    /// Etan, 2026-10-20: "centered like the idle hover state has the microphone". The pause slot is the
+    /// Reported 2026-10-20: align the pause control with the idle microphone. The pause slot is the
     /// mic's slot: same lane width, same insets, same distance from the core, in every speaking layout.
     func testPauseGlyphSlotMatchesTheIdleHoverMicrophone() {
         let (state, _) = speakingState()

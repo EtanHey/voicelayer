@@ -90,7 +90,7 @@ extension VoiceBarFlowTests {
         step(name, body)
     }
 
-    // Etan's 2.2.61 notch ledger N2: "no text band while transcribing; spinner+blue are enough — N2 wins".
+    // Notch ledger N2, shipped in 2.2.61: transcribing uses the spinner and blue state without a text band.
     // Shipped by 9df63566. The refusal stays in state; recording/F5-preview still render their full notes.
     func verifyTranscribingN2(in bar: XCUIElement, snapshot: [String: Any], refusalActive: Bool) throws -> XCUIElement {
         let spinner = bar.descendants(matching: .other).matching(NSPredicate(format: "label == %@", "Transcribing")).firstMatch

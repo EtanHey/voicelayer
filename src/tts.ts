@@ -291,7 +291,7 @@ let ttsCounter = 0;
  * an audibility change only; nothing about what is verified changes.
  */
 /**
- * T9 (Etan QA 2026-11-09: "It also sounds kind of hollow or weird when it speaks fast or slow"). afplay's -r/-q 1 is
+ * T9 (reported 2026-11-09: speech sounded hollow at changed playback speeds). afplay's -r/-q 1 is
  * Apple's spectral time-pitch, whose phasiness is what sounds hollow on speech. A scaled speed on the resident stack
  * plays through SoX's WSOLA `tempo -s` (speech, pitch-preserving, streamed, so there is no pre-render delay).
  *
@@ -2862,8 +2862,8 @@ function onScreenText(): string | undefined {
 }
 
 /**
- * T1 (Etan QA 2026-11-09: "it goes back in history to things I haven't heard yet ... and not just things that were
- * in the current queue"). Back walks the CURRENT queue only: the narrations whose player started in this queue run,
+ * T1 (reported 2026-11-09: Back visited unheard history outside the active queue).
+ * Back walks the CURRENT queue only: the narrations whose player started in this queue run,
  * as OCCURRENCES in the order they were heard (Codex round 1: A, B, A, C goes back from C to the second A). An
  * occurrence is keyed by its playback session (a short narration's job, or a long read's id), so a read's chunk,
  * resume, seek and return-from-hold edges are one occurrence while a repeat of the same text is another. Each keeps

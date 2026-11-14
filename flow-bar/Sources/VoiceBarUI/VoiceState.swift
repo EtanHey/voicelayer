@@ -2738,7 +2738,7 @@ public final class VoiceState {
         notifyPanelLayoutChangedIfNeeded(before != teleprompterFittedLines)
     }
 
-    /// Lane B (Etan "less empty space"): the rows the shell needs: the handle's choice, but never more than the read
+    /// Lane B: fit the shell to the rows used by the read and the handle's choice; a one-line read uses one row.
     /// uses (a one-line read is a one-line box). The shell (Lane A) sizes the drawer from this.
     public var teleprompterFittedLines: Int {
         teleprompterTextLineCount.map { TeleprompterA.fittedLines(preferred: teleprompterVisibleLines, textLines: $0) }
@@ -2896,7 +2896,7 @@ public final class VoiceState {
             command["cmd"] = "resume"
         } else {
             command["cmd"] = "pause"
-            // Lane B (Etan, QA 2026-11-08 "pause jumps back to 0:00"): the clock reads 0 while a read prepares
+            // Reported 2026-11-08: pausing could reset the clock. It reads 0 while a read prepares
             // (between chunks, right after a resume). Only a live clock is sent; otherwise the daemon pauses at its
             // own player position.
             if sendsElapsed, sendsLivePlaybackClock { command["playback_elapsed_ms"] = playbackElapsedMilliseconds() }
@@ -5735,16 +5735,15 @@ public final class VoiceState {
                     //   3. #69 (v2.2.18): clipboard + Cmd+V, leave the transcript on the
                     //      pasteboard. Removed the race by making it permanent: every Cmd+V
                     //      after a dictation pasted the transcript, not what he copied.
-                    //      Etan, 2026-09-13: "the transcription is my paste instead of only
-                    //      Shift+F5 being paste of last transcript and Command+V being kept
-                    //      for only actual clipboard use."
+                    //      Reported 2026-09-13: ordinary paste used the transcript; only Shift+F5
+                    //      should paste the last transcript, leaving Cmd+V for clipboard contents.
                     //   4. v2.2.19: typed, wrapped in ESC[200~ … ESC[201~. A typed key event
                     //      cannot carry an ESC into cmux: under the kitty keyboard protocol
                     //      Claude Code and Codex turn on, Ghostty types the KEY in place of
                     //      any text holding a control character, and the key was keycode 0,
                     //      `a`. Every dictation arrived as "a…a" and lost the words in its
-                    //      first and last event. Etan, 2026-09-13: "keeps doing 'a' at the
-                    //      begining and 'a' at the end, or 'aa' for short ones."
+                    //      first and last event. Reported 2026-09-13: boundary key events
+                    //      inserted letter keys instead of transcript text.
                     //
                     // Each earlier fix recorded only the side it fixed. His spec, not
                     // negotiable: Shift+F5 pastes the last transcript; Cmd+V is his clipboard

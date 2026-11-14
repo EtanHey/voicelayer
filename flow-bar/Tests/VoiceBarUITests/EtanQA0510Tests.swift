@@ -12,7 +12,7 @@ final class EtanQA0510Tests: XCTestCase {
         let options = XCTExpectedFailure.Options()
         options.isStrict = true
         options.issueMatcher = { $0.type == .assertionFailure && $0.compactDescription.contains("[" + row + "]") }
-        XCTExpectFailure("[" + row + "] Etan 2026-11-09", options: options, failingBlock: body)
+        XCTExpectFailure("[" + row + "] QA 2026-11-09", options: options, failingBlock: body)
     }
 
     /// AX hit-testing is not visibility: use the actual painted copy, with an OCR positive control. The panes are the

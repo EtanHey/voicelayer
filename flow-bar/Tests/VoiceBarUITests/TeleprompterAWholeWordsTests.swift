@@ -101,10 +101,10 @@ final class TeleprompterAWholeWordsTests: XCTestCase {
             XCTAssertGreaterThan(TeleprompterAModel.width(family, heading: false), 404)
             try assertWholeWordsWithinTheColumn("Ask \(family) Codex.", columns: [150, 160, 404], expectedWords: 3)
             try assertWholeWordsWithinTheColumn(
-                "See https://github.com/EtanHey/voicelayer/blob/main/flow-bar/Sources/VoiceBarUI/TeleprompterAView.swift for Codex.",
+                "See /srv/example/projects/sample-voice-app/flow-bar/Sources/VoiceBarUI/TeleprompterAView.swift for Codex.",
                 columns: [150, 160, 404])
             try assertWholeWordsWithinTheColumn(
-                "Open /Users/happycampr/.t3/worktrees/voicelayer/flow-bar/Sources/VoiceBarUI/BarView.swift with Codex.",
+                "Open /srv/example/.t3/worktrees/sample-voice-app/flow-bar/Sources/VoiceBarUI/BarView.swift with Codex.",
                 columns: [150, 160, 404])
         }
     }
