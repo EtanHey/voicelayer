@@ -93,7 +93,7 @@ public struct VoiceBarNotchGeometry: Equatable, Sendable {
     /// lower surface, so no body is drawn and the core still sits after the leading wing). A body that grows out
     /// of it (the note band, the teleprompter) then starts as wide as the top row instead of the core: from zero
     /// extents the early frames centred the core under a narrower body, so the wider wing overhung the shell's
-    /// frame and was cut flat (the "other side" cut Etan saw).
+    /// frame and was cut flat (reported wing clipping).
     public var bodyFlushWithWings: VoiceBarNotchGeometry {
         guard lowerSurfaceHeight == 0 else { return self }
         return VoiceBarNotchGeometry(
@@ -165,7 +165,7 @@ public struct VoiceBarNotchMaterialContract: Equatable {
         visibleCoreOcclusionInset: CGFloat = 0
     ) -> VoiceBarNotchWingContentLayout {
         // P16: every leading wing, the teleprompter's pause/play included, uses the idle-hover mic's lane
-        // (Etan: "centered like the idle hover state has the microphone").
+        // (P16 design: share the idle microphone alignment).
         // 2.3 U2 (3-wings mock): the right wing is a fixed 73.5 pt in every state, so its content sits centred
         // between the shared fixed-wing insets instead of the old waveform lane (24 pt from the core). That room
         // is what fits the reading time beside Stop without widening the wing.
@@ -531,7 +531,7 @@ public enum VoiceBarNotchContract {
     /// both software seams inward to meet the physical housing.
     public static let hardwareHorizontalCalibrationInset: CGFloat = 8.5
     public static let compactCoreContentInset: CGFloat = 13.5
-    /// 2.4 Lane A (Etan: "keep ≥ 8 pt of padding to the physical notch"): the least distance wing content may have
+    /// 2.4 design: wing content must stay at least 8 pt from the physical camera housing,
     /// from the physical camera housing. The calibrated core edge IS the housing edge (#359, operator and phone
     /// verified: AppKit's auxiliary gap includes a clear shoulder, which `hardwareHorizontalCalibrationInset` removes),
     /// so every core-side inset is measured from it and must be at least this. NotchRealGeometryTests checks it.
@@ -603,11 +603,11 @@ public enum VoiceBarNotchContract {
     public static let transientNoteCanvasReserve: CGFloat =
         2 * VoiceBarNotchFeedback.maximumTextHeight + 16 + 34 + 10 + transientNoteClearance
     public static let transientNoteHorizontalInset: CGFloat = 16
-    /// Spec §4 / Etan: the History panel is the teleprompter's shell, "narrower and taller" (the teleprompter
+    /// Spec §4: History uses the teleprompter shell with reduced width and increased height (teleprompter
     /// body is 465 × 196 pt). 2.3 lane U4 (approved mock 5-history): 420 pt wide, seven 46 pt two-line rows.
     public static let historyBodyWidth: CGFloat = NotchHistoryMorph.bodyWidth
     public static let historyLowerSurfaceHeight: CGFloat = NotchHistoryMorph.lowerSurfaceHeight
-    /// 2.4 Lane A (the 2.4 list: "widening the teleprompter"; Etan: "less empty space in the teleprompter"): the
+    /// 2.4 design: widen the teleprompter and reduce unused internal space. The
     /// body reaches 180 pt past each side of the core (545 pt at a 185 pt core, was 465), so a read wraps onto fewer
     /// lines. Lane B's text column follows the body's width.
     public static let teleprompterBodyExtent: CGFloat = 180
@@ -757,8 +757,8 @@ public enum VoiceBarNotchContract {
         )
     }
 
-    /// N1 (Etan, 2026-11-02): "No full-width wing slab under the notch for ANY state. A note stays compact,
-    /// tucked under the notch." A note hangs from the hardware notch as a tab no wider than the notch (or this
+    /// Reported 2026-11-02 (N1): keep notes inside a compact tab below the hardware notch.
+    /// That tab is no wider than the notch (or this
     /// minimum on a narrow virtual notch); it never spans the wings and never steps out past one.
     public static let noteMinimumWidth: CGFloat = coreWidth
 

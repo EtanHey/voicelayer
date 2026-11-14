@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// 2.3 lane U4 (approved mock 5-history): the History panel that grows out of the notch. Rows are two lines, six
-/// visible collapsed and eight expanded, up to 20 scrolling inside (Etan, 2026-11-08, superseding 11-03's "7
-/// visible"): the dictation on the first line, when and how long on the second. Tight insets, no footer prose, a thin scroll indicator only while scrolling, and a row highlight
+/// visible collapsed and eight expanded, up to 20 scrolling inside (design revision 2026-11-08).
+/// Dictation occupies the first line; time and duration occupy the second. Tight insets, no footer prose, a thin scroll indicator only while scrolling, and a row highlight
 /// that follows the pointer on the same frame from ONE container hover tracker (no per-row `.onHover`).
 /// Hovering a row shows Copy / Paste / Transcribe again on its right. It draws on the notch's own contrast
 /// palette and adds no material of its own.

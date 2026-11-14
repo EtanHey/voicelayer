@@ -2,8 +2,8 @@ import Foundation
 
 /// One in-memory index of the recordings archive for History's two scopes (Dictations and Ask).
 ///
-/// AIDEV-NOTE: Etan (2.2.24 review): switching Recording↔Ask is slow, and reopening History is slow "even
-/// though I was just there". `SettingsHistoryArchive.loadPage` re-walks the day directories and re-decodes every
+/// Reported in the 2.2.24 review: switching scopes and reopening History both repeat expensive work.
+/// `SettingsHistoryArchive.loadPage` re-walks directories and re-decodes every
 /// entry up to the limit on every call. This actor walks the tree once, decodes each entry at most once per
 /// scope, and serves later pages from memory. It stays exact:
 /// - the walk order and skip rules mirror `SettingsArchiveScanner.scan`, and a page is assembled by the SAME

@@ -1,8 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Lane H (rows N19, N20; Etan, QA of candidate 6: "history here should have had like ask and a speech history as
-/// well", "still can't do side to side"). The notch History as three categories: Dictations, Ask, Speech. A compact
+/// Candidate-6 QA (N19/N20): provide Dictations, Ask, and Speech history with horizontal category navigation.
 /// selector sits on top of the list, and a two-finger swipe or a sideways drag slides the lists with the finger.
 ///
 /// - Motion: the lists and the selector's thumb follow the finger 1:1, then settle on the drawer's own strong
