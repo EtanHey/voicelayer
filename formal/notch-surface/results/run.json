@@ -2,7 +2,7 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/notch-surface/NotchSurface.tla": "3fe486175db400bf6754f69252f5c05ab0aa5edf9f1a2d2933060d83528cc104",
+    "formal/notch-surface/NotchSurface.tla": "2ce197202455c030906606ac45c4f0f657007e8e2abdc801c04b99337edfdcb0",
     "formal/notch-surface/checks.json": "375ada09347838ee795809aaac4fa1c9d343cde1925a04c8bcb10441fbb4bd2c",
     "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",

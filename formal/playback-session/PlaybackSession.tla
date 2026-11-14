@@ -16,7 +16,7 @@
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS
-  JumpBack,          \* pause stores a reset client clock (word 0): Etan's "pause jumps back"
+  JumpBack,          \* Reported pause rewind: client clock resets to word zero
   SkipReap,          \* audio starts before the previous player exited: two voices at once
   StrandOnFail,      \* an ask ends without restoring the read it parked: read lost after an ask
   ParkResumeAtZero,  \* an ask over a read still preparing its resume parks it at word 0 (second ask bug)
@@ -410,7 +410,7 @@ ParkedEventuallyReleased == \A r \in Reads : [](st[r] = "parked" => <>(st[r] # "
 \* "Overlap": exactly one session owns the screen.
 OneLiveSession == Cardinality({r \in Reads : st[r] \in Live}) <= 1
 
-\* Etan: "if its on the same it should dedupe": the text being read (playing or paused) is never queued behind
+\* Etan's ruling: dedupe the active read, whether playing or paused; never queue it behind
 \* itself; the queue never holds a read that is on screen.
 NoSameQueued == \A r \in optq : st[r] \notin Live
 

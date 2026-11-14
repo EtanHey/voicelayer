@@ -2,7 +2,7 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/history-pull/HistoryPull.tla": "64f05f75f9101392c8fd1efc273d2be4d8c83fe91bd51ad1adf81cc57d90a9d6",
+    "formal/history-pull/HistoryPull.tla": "e7505d42ae1573db7deaea42bee15e6fe64414b83aa3f7c1665a0095b35f555f",
     "formal/history-pull/checks.json": "811f6e66e4e311d83f0c96ee4c4d383fe79424e7fda8d0f486c1fccc5b312fbe",
     "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
