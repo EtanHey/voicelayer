@@ -5,15 +5,9 @@
  * (`src/stt-punctuation.ts`) read whisper segments, the Silero pause map and a
  * few clause heuristics from here. Nothing in this module rewrites text.
  *
- * AIDEV-NOTE: alignment does NOT use whisper's per-word timestamps. Measured on
- * recording `2026-09-06T12-56-44-855Z-28f3916c`, whisper claims "for some
- * reason just killed" spans 5.41-7.65 s while raw RMS energy over that window
- * is -60..-66 dB — silent. Whisper interpolates words across silence, and
- * `-dtw large.v3.turbo` changes nothing. Whisper's SEGMENT ends, by contrast,
- * land within ~0.15 s of the real pauses (30.02 vs 30.11, 35.54 vs 35.68,
- * 39.54 vs 39.68). So we trust segment ends and the Silero pause map, and place
- * words inside a segment by splitting them across that segment's speech runs in
- * proportion to run duration.
+ * Measured 2026-09-06: word timestamps spanned a 5.41–7.65 s silent region at -60..-66 dB.
+ * Segment ends instead matched pauses within approximately 0.15 s. Use segment ends and
+ * Silero speech runs; distribute words proportionally within those runs rather than trusting word timestamps.
  */
 
 import type { PauseSpan } from "./stt-pause-map";
@@ -49,13 +43,8 @@ export const WORD_ALIGNMENT_TOLERANCE = 1;
  * Openers that attach BACKWARDS — they finish the clause before them instead of
  * starting a new one. This is the discriminator Rule B turns on.
  *
- * Etan, 2026-09-06 17:32, choosing Rule B over the literal rule: "B, its more
- * about subject/sentence building, this isnt inventing anything." A mark with no
- * pause under it is fine as long as what follows really does start a new
- * subject; it is wrong only when the next words carry on the same clause. In the
- * gold he said "...of the next couple of words i guess" — "I guess" is a tag on
- * that clause, not a new sentence, so the period before it goes. Two words later
- * "It might have been..." IS a new subject, so that period stays.
+ * Decision 2026-09-06: judge unpaused marks by clause structure. A continuation tag
+ * belongs to the preceding clause; a genuine new subject may retain its sentence boundary.
  */
 const CONTINUATION_OPENER_PHRASES = [
   "i guess",

@@ -5,8 +5,8 @@ import { endsWithAbbreviation } from "./stt-transcript-alignment";
  * a completed sentence, preferably where the subject changes — instead of only
  * where a long pause happens to sit under a full stop.
  *
- * Etan, 2026-10-19: "it's not about real pauses, it's about coherent sentence
- * ending or coherent subject changing". So this stage reads only the text: no
+ * Decision 2026-10-19: group completed sentences and subject changes, rather than relying on acoustic pauses.
+ * This stage reads only text: no
  * segments, no Silero, works on every backend and on the chunked path.
  *
  * AIDEV-NOTE: the ONLY edit is replacing the horizontal whitespace after an

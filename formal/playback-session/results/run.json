@@ -26,7 +26,7 @@
     "formal/playback-session/OldReplayShownMutant.cfg": "b494b390cd434b5f6a9d37d452232470d55f37b194c6f8a91a4333fd11e72eb6",
     "formal/playback-session/SecondAskMutant.cfg": "6b8de4ed42ed17842ffe827feca177a79c48c95bcc8c68b6974a278c53a9b147",
     "formal/playback-session/Fixed.cfg": "5ee7e3a9f9039f8a25019fa17b39923273d3916f9b6a04a333fdbf43efc5caaa",
-    "src/playback/session.ts": "84ddaf10eec452305703fc2b9f425aaf3bd253a15590471fa35447720226022c",
+    "src/playback/session.ts": "e32428e4744410576ee10e788c5ee8ca827f5973bd3e287574a1ca7bce58b35b",
     "src/playback/ledger.ts": "d57b969ab6147f269362dae68faad29ff7675338003366e6b473c57a6e3ea166",
     "src/__tests__/playback-session.test.ts": "37911a0c7f01cbc95f178bbb8339ac9a34183d67eb9fc30f6b0c94fab128a0a0",
     "src/tts.ts": "d955005599c2a2e4cf565ce4c6ee4365d1d2ee80c42b3645de1840ddd9825e2e",
@@ -201,8 +201,8 @@
       "kind": "temporal",
       "target": "ParkedEventuallyReleased",
       "status": "EXPECTED_FAIL",
-      "generated": 136990,
-      "distinct": 46513
+      "generated": 136677,
+      "distinct": 46381
     },
     "AskCancelsReadMutant": {
       "role": "mutant",

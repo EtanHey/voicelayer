@@ -4,8 +4,8 @@ import { measureTakeStage } from "./take-stage-timings";
  *
  * Whisper welds a short farewell into a recording wherever the audio goes
  * quiet — `Thank you.`, `Okay.`, `You.`, `and.`, `So, so, so, so, so.`,
- * `תודה.`, `תודה רבה.` It is the single largest source of Etan's #1 complaint
- * ("words get added that I never said"): 15 of the 17 word-added edits in the
+ * `תודה.`, `תודה רבה.` Corpus review 2026-09-06 found invented tail tokens in
+ * 15 of the 17 word-addition corrections, and
  * 2026-09-06 correction corpus are 1-5 invented tokens welded to the tail, and
  * two `voice_ask` clips from the same afternoon show the same phrase appearing
  * in Hebrew and at an INTERNAL pause, between two real sentences.
@@ -35,8 +35,8 @@ import { measureTakeStage } from "./take-stage-timings";
  * and they are what separates the two cases.
  *
  * AIDEV-NOTE: this is NOT the duplication fix and NOT the retraction rule.
- * Etan ratified "raw accurate" — a retraction stays, a cut-off word keeps its
- * ellipsis. Nothing here may start trimming for tidiness.
+ * Raw-accuracy policy: retain retractions and mark incomplete words with an ellipsis.
+ * Never trim the transcript for tidiness.
  */
 
 import { parseWavAudioInfo, WAVE_FORMAT_PCM } from "./stt-pause-map";
@@ -124,14 +124,9 @@ const SILENCE_MARGIN_SECONDS = 0.15;
  *
  * Wider, because the corpus says a trailing closer and an internal one are not
  * equally suspect. At the tail, invention is the norm: 15 of 17 word-added rows
- * and all four RED specimens. Internally it is the opposite — every internal
- * `Thank you.` the corpus flags (`…a28eab5f`, `…bc42f7f7`, `…ba12d56e`) is one
- * Etan KEPT, thanking an agent mid-dictation. `…bc42f7f7` is the pair in one
- * row: he kept the internal `Thank you.` and deleted the trailing `Okay.`
- *
- * Condition (b) is what actually saves those three — he said them, so there is
- * speech under them — but when the prior says "probably real", the timestamp
- * jitter allowance should be the generous one.
+ * The corpus retained all three flagged internal closers; one row retained the internal
+ * closer while removing the tail. Acoustic speech evidence protects these words.
+ * Given that internal closers are commonly genuine, allow generous timestamp jitter.
  */
 const INTERNAL_SILENCE_MARGIN_SECONDS = 0.3;
 
@@ -146,9 +141,7 @@ const MAX_REMOVALS = 4;
  * normalized sentence, never on a substring — "thank you for the review" is not
  * here, and a sentence merely *containing* one of these is never a candidate.
  *
- * Hebrew is in the same set on Etan's ruling (brief ADDENDUM, 2026-09-06
- * 18:35): `2026-09-06T15-16-33-682Z-ff770b47` ends `תודה.` he never said, and
- * `2026-09-06T15-20-11-471Z-a6aa28aa` carries `תודה רבה.` at an internal pause.
+ * Decision 2026-09-06: apply the same acoustic test to Hebrew closers at tails and internal pauses.
  */
 /** Exact captions observed on non-speech; sources: docs/stt-cjk-hallucinations.md. */
 export const CJK_HALLUCINATION_PHRASES = [
@@ -194,12 +187,9 @@ const KNOWN_OUTRO_PHRASES = new Set([
  * the corpus (`So.`, `Okay.`, `You.`, `I.`, `and.`) or the brief; the Hebrew
  * entries from the brief's ADDENDUM.
  *
- * AIDEV-NOTE: `right` / `all right` are deliberately absent. "All right." is a
- * thing Etan actually says to close a thought — `stt.test.ts` has a case that
- * requires it survive — and the law is that a doubtful word stays. `כן` ("yes")
- * IS in the set on the brief's instruction, and it is the riskiest entry here:
- * it is a perfectly ordinary standalone reply. It is only ever safe because
- * conditions (b) and (c) are acoustic — if he said it, there is energy under it.
+ * Ordinary closing affirmations remain protected by regression tests; uncertain speech stays.
+ * Hebrew affirmations are especially risky because they are valid standalone replies.
+ * Only the acoustic speech and clearance conditions can authorize their removal.
  */
 const OUTRO_SINGLE_TOKENS = new Set([
   "okay",
@@ -362,10 +352,8 @@ function isKnownOutroKey(key: string): boolean {
 /**
  * Split a transcript into sentences, keeping each one's offsets.
  *
- * An ellipsis (`…`, or a run of two or more dots) closes a sentence — that is
- * Etan's ratified cut-off fragment, "fu…", and it stays exactly where it is —
- * but a sentence that ENDS in one can never be a candidate. So a fragment
- * bounds its neighbours without ever being deletable itself.
+ * An ellipsis closes a sentence while preserving the incomplete word at its original location.
+ * A sentence ending in that mark cannot be removed, but still bounds its neighbours.
  */
 export function splitSentences(text: string): SentenceSpan[] {
   const spans: SentenceSpan[] = [];
@@ -807,8 +795,8 @@ export function findCandidateSpan(
  * AIDEV-NOTE: there was an "echo guard" here that kept a candidate whenever the
  * speech next to it already ended with the same phrase. It was removed, and it
  * should not come back: that condition describes the COMMON hallucination —
- * Etan says "Thank you.", whisper writes it once on the speech and a second
- * time over the silence after it — so the guard blocked exactly the removals
+ * A spoken closer can be repeated by the recognizer over the following silence.
+ * That makes textual repetition alone insufficient to protect a silent candidate;
  * this gate exists for. Conditions (b) and (c) are strictly stronger anyway:
  * they prove no word is inside the span and that the silence extends clear of
  * it on both sides. If the phrase's own audio is silence, it was not spoken,
