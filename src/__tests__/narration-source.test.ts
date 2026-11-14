@@ -128,7 +128,7 @@ describe("bounded utterances with pauses (voice_ask narration)", () => {
     expect(plan.map(u => u.text).join(" ")).toBe("one two three four five six seven eight nine ten eleven twelve thirteen really fast");
     expect(plan.length).toBe(2);
     expect(plan[0].pauseAfterMs).toBe(0);
-    // Etan's "fast -- really fast": the pause lands on the dash, never inside "really fast".
+    // A repeated speed modifier keeps its pause at the dash, outside the following phrase.
     const dash = planUtterances("we measured it and it was fast -- really fast and then it stopped completely right there");
     const before = dash.findIndex(u => u.text.endsWith("--"));
     expect(before).toBeGreaterThanOrEqual(0);

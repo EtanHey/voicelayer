@@ -754,15 +754,15 @@ describe("STT backends", () => {
         transcribeViaServer: async () => {
           calls++;
           return calls === 1
-            ? "use the collab file smart with monitors, because I don't want to leave anything for Anthropic, I mean I don't"
-            : "I don't want to leave anything for Anthropic, I don't want to leave anything for Anthropic";
+            ? "arrange the brass lanterns carefully beside the arch, because the silver turtles need every basket for the parade, well the turtles"
+            : "the silver turtles need every basket for the parade, the silver turtles need every basket for the parade";
         },
       });
 
       const result = await backend.transcribe(wavPath);
 
       expect(result.text).toBe(
-        "use the collab file smart with monitors, because I don't want to leave anything for Anthropic, I mean I don't",
+        "arrange the brass lanterns carefully beside the arch, because the silver turtles need every basket for the parade, well the turtles",
       );
       expect(result.backend).toBe("whisper-server");
     });
@@ -825,14 +825,14 @@ describe("STT backends", () => {
         transcribeViaServer: async () => {
           calls++;
           return calls === 1
-            ? ", the cmux thing is another skill"
-            : "I mean, the cmux thing is another skill";
+            ? ", the brass lantern is another ornament"
+            : "Well now, the brass lantern is another ornament";
         },
       });
 
       const result = await backend.transcribe(wavPath);
 
-      expect(result.text).toBe("I mean, the cmux thing is another skill");
+      expect(result.text).toBe("Well now, the brass lantern is another ornament");
       expect(result.backend).toBe("whisper-server+head");
     });
 
@@ -846,7 +846,7 @@ describe("STT backends", () => {
         transcribeViaServer: async () => {
           calls++;
           return calls === 1
-            ? ", the cmux thing is another skill"
+            ? ", the brass lantern is another ornament"
             : "unrelated retry hallucination";
         },
         fallbackBackend: {
@@ -862,7 +862,7 @@ describe("STT backends", () => {
 
       const result = await backend.transcribe(wavPath);
 
-      expect(result.text).toBe(", the cmux thing is another skill");
+      expect(result.text).toBe(", the brass lantern is another ornament");
       expect(result.backend).toBe("whisper-server");
     });
 
@@ -873,12 +873,12 @@ describe("STT backends", () => {
       const backend = new WhisperServerBackend({
         isServerAvailable: () => true,
         transcribeViaServer: async () =>
-          ", it's still a little ambiguous, but it is much",
+          ", the painted pavilion is rather unusual, but it is much",
         fallbackBackend: {
           name: "whisper-cpp",
           isAvailable: async () => true,
           transcribe: async () => ({
-            text: "I mean, it's still a little ambiguous, but it is much",
+            text: "Well now, the painted pavilion is rather unusual, but it is much",
             backend: "whisper-cpp",
             durationMs: 1,
           }),
@@ -888,7 +888,7 @@ describe("STT backends", () => {
       const result = await backend.transcribe(wavPath);
 
       expect(result.text).toBe(
-        "I mean, it's still a little ambiguous, but it is much",
+        "Well now, the painted pavilion is rather unusual, but it is much",
       );
       expect(result.backend).toBe("whisper-server+head-cli");
     });
@@ -922,12 +922,12 @@ describe("STT backends", () => {
         transcribeViaServer: async (_wavData, options) => {
           calls++;
           if (calls === 1) {
-            return "Are these two separate or parallel tracks or are they sequenced? I'm confused about those tracks. Tracks.";
+            return "Are these two garden paths separate or parallel or are they connected? The gardener is puzzled about those paths. Paths.";
           }
           if (options?.prompt) {
-            return "I like that Comfy UI feeds both tracks.";
+            return "The brass arch connects both paths.";
           }
-          return "or are they like sequenced? I'm confused about those tracks. I like that Comfy UI feeds both tracks.";
+          return "or are they connected? The gardener is puzzled about those paths. The brass arch connects both paths.";
         },
       });
 
@@ -936,7 +936,7 @@ describe("STT backends", () => {
       expect(calls).toBe(3);
       // Etan's ruling B (2026-10-19): tail verify is log-only, so the full-decode text stands.
       expect(result.text).toBe(
-        "Are these two separate or parallel tracks or are they sequenced? I'm confused about those tracks. Tracks.",
+        "Are these two garden paths separate or parallel or are they connected? The gardener is puzzled about those paths. Paths.",
       );
       expect(result.backend).toBe("whisper-server");
     });
@@ -951,8 +951,8 @@ describe("STT backends", () => {
         transcribeViaServer: async () => {
           calls++;
           return calls === 1
-            ? "I'm confused about those tracks. Tracks."
-            : "I'm confused about those tracks. I like that Comfy UI feeds both tracks.";
+            ? "The gardener is puzzled about those paths. Paths."
+            : "The gardener is puzzled about those paths. The brass arch connects both paths.";
         },
       });
 
@@ -960,7 +960,7 @@ describe("STT backends", () => {
 
       expect(calls).toBe(2);
       // Etan's ruling B (2026-10-19): tail verify is log-only, so the full-decode text stands.
-      expect(result.text).toBe("I'm confused about those tracks. Tracks.");
+      expect(result.text).toBe("The gardener is puzzled about those paths. Paths.");
       expect(result.backend).toBe("whisper-server");
     });
 
@@ -1132,7 +1132,7 @@ describe("STT backends", () => {
       const wavPath =
         testTmp("voicelayer-whisper-server-multi-adjacent-tail-echo-test.wav");
       await Bun.write(wavPath, makePcm16Wav(71));
-      const repeated = "I don't want to leave anything for Anthropic";
+      const repeated = "the silver turtles need every basket for the parade";
       const backend = new WhisperServerBackend({
         isServerAvailable: () => true,
         transcribeViaServer: async (_wavData, options) =>
@@ -1199,18 +1199,18 @@ describe("STT backends", () => {
         isServerAvailable: () => true,
         transcribeViaServer: async () => {
           calls++;
-          if (calls === 1) return ", what? Slide six. I don't think she said";
-          if (calls === 2) return "she said anything was too long";
-          if (calls === 3) return "too long and we should fix the handoff";
-          if (calls === 4) return "the handoff before sending it";
-          return "uh what slide six i don't think she said";
+          if (calls === 1) return ", what? Lantern six. The gardener thinks the owl stayed";
+          if (calls === 2) return "owl stayed beside the fountain";
+          if (calls === 3) return "the fountain and the brass gate should remain open";
+          if (calls === 4) return "remain open before the parade";
+          return "uh what lantern six the gardener thinks the owl stayed";
         },
       });
 
       const result = await backend.transcribe(wavPath);
 
       expect(result.text).toBe(
-        "uh what? Slide six. I don't think she said anything was too long and we should fix the handoff before sending it",
+        "uh what? Lantern six. The gardener thinks the owl stayed beside the fountain and the brass gate should remain open before the parade",
       );
       expect(result.backend).toBe("whisper-server+chunks+head");
     });
@@ -2728,11 +2728,11 @@ describe("STT backends", () => {
       // "and I mean … and I mean" on golden clip B.
       expect(
         mergeChunkTranscripts(
-          ["I need to click and I mean", "ChatGPT Codex Connector, maybe we can remove it"],
+          ["The gardener needs a basket and well", "the violet paper lantern, perhaps the turtle can carry it"],
           ["anchor", "silence"],
         ),
       ).toBe(
-        "I need to click and I mean ChatGPT Codex Connector, maybe we can remove it",
+        "The gardener needs a basket and well the violet paper lantern, perhaps the turtle can carry it",
       );
     });
 
@@ -2870,11 +2870,11 @@ describe("STT backends", () => {
     it("deduplicates tail verification overlap after a short filler prefix", () => {
       expect(
         mergeChunkTranscripts([
-          "I wonder if it should also test different type of agents. Or like with the routing agents, agents routing skill,?",
-          "Yeah, I wonder if it should also test different type of agents. Or like with the routing agents, agents routing skill, you know?",
+          "The gardener wonders whether the owl should inspect different kinds of lanterns. Or perhaps with the garden maps, paper garden maps,?",
+          "Yeah, The gardener wonders whether the owl should inspect different kinds of lanterns. Or perhaps with the garden maps, paper garden maps, you know?",
         ]),
       ).toBe(
-        "I wonder if it should also test different type of agents. Or like with the routing agents, agents routing skill, you know?",
+        "The gardener wonders whether the owl should inspect different kinds of lanterns. Or perhaps with the garden maps, paper garden maps, you know?",
       );
     });
 

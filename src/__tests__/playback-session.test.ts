@@ -23,7 +23,7 @@ function healthy(engine: PlaybackSessionEngine) {
   expect(engine.violations()).toEqual([]);
 }
 
-describe("ResumeExact: Etan's 'pause sometimes jumps back'", () => {
+describe("ResumeExact: reported pause rewind", () => {
   it("resume lands on the paused word, and a second pause after it on the word heard then", () => {
     const engine = new PlaybackSessionEngine();
     playing(engine, "r1");

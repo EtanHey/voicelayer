@@ -1,29 +1,15 @@
 /**
- * Lane A3 — whisper comma-wraps spoken commands.
- *
- * Whisper punctuates each spoken command as its own comma-delimited token:
- * "update colon Q3 roadmap update new line hey Sarah comma new paragraph"
- * comes back as "update, colon, Q3, roadmap, update, new line, hey, Sarah,
- * comma, new paragraph.". Those commas are whisper's, not Etan's. On main the
- * attach-left cleanup in applyPunctuation then collapsed ", : ," to ",:," and
- * ate every "\n" that "new line" produced, so the whole layout of a dictated
- * email vanished.
- *
- * Live specimen: Etan's v2.2.12 acceptance dictation, shadow row created_at
- * 2026-09-06T14:42:25Z in ~/.voicelayer/eval/polish-shadow.jsonl.
- *
- * The same words WITHOUT whisper's commas already cleaned correctly on main,
- * which is what pins the blame on the comma handling rather than on the
- * ALWAYS/AMBIGUOUS policy from #17/#20 — that policy must survive intact.
+ * Regression shape reported 2026-09-06: recognizer delimiters around spoken commands
+ * must not swallow layout breaks or genuine spoken punctuation. Fixtures below are invented.
  */
 import { describe, it, expect } from "bun:test";
 import { applyRules } from "../rules-engine";
 
-// Etan's v2.2.12 acceptance dictation, raw whisper output.
+// Invented email-shaped commands with recognizer comma wrapping.
 const SPECIMEN =
-  "Subject line, colon, Q3, roadmap, update, new line, hey, Sarah, comma, " +
-  "new paragraph. Here are my three main priorities for next week. Colon, " +
-  "new line, bullet point, finalize the deck.";
+  "Subject line, colon, Q7, garden, update, new line, hey, Quill, comma, " +
+  "new paragraph. Here are the three lantern colours for next week. Colon, " +
+  "new line, bullet point, paint the arch.";
 
 const tokenize = (s: string): string[] =>
   s.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}'’]*/gu) ?? [];
@@ -39,9 +25,9 @@ describe("comma-wrapped spoken commands", () => {
     });
 
     it("keeps the paragraph break that 'new paragraph' asked for", () => {
-      // Raw: "hey, Sarah, comma, new paragraph." — the dictated "comma" is the
+      // Raw: "hey, Quill, comma, new paragraph." — the dictated "comma" is the
       // one comma that survives; the break follows it.
-      expect(cleaned).toMatch(/Sarah,\s*\n\n/);
+      expect(cleaned).toMatch(/Quill,\s*\n\n/);
     });
 
     it("never emits the ',:,' cluster", () => {
@@ -50,7 +36,7 @@ describe("comma-wrapped spoken commands", () => {
     });
 
     it("turns the spoken colons into real colons", () => {
-      expect(cleaned).toMatch(/Subject line:\s*Q3/);
+      expect(cleaned).toMatch(/Subject line:\s*Q7/);
       // Whisper ended the sentence before the second spoken colon; the period
       // is whisper's, the colon is Etan's.
       expect(cleaned).toMatch(/week:/);
@@ -76,7 +62,7 @@ describe("comma-wrapped spoken commands", () => {
 
   describe("a command whisper isolated between its own commas", () => {
     it("substitutes the colon and drops both of whisper's commas", () => {
-      expect(applyRules("update, colon, Q3")).toBe("Update: Q3");
+      expect(applyRules("update, colon, Q7")).toBe("Update: Q7");
     });
 
     it("substitutes the newline when whisper ended the sentence first", () => {
@@ -87,8 +73,8 @@ describe("comma-wrapped spoken commands", () => {
     });
 
     it("keeps exactly one comma when the speaker actually said 'comma'", () => {
-      expect(applyRules("hey Sarah, comma, here are the notes")).toBe(
-        "Hey Sarah, here are the notes",
+      expect(applyRules("hey Quill, comma, here are the notes")).toBe(
+        "Hey Quill, here are the notes",
       );
     });
 
@@ -97,9 +83,7 @@ describe("comma-wrapped spoken commands", () => {
     });
   });
 
-  // Lead's addition — Etan's 2026-09-06T14:56:58.449Z row. Three commands in a
-  // row, each isolated by whisper's own commas. Main dropped all three and
-  // shipped one flat line; every one of them has to land.
+  // Regression shape, 2026-09-06: retain all three consecutive layout commands.
   describe("a run of consecutive commands", () => {
     const RUN_SPECIMEN =
       "Here are a few things, new line, new line, new paragraph, " +
@@ -110,8 +94,7 @@ describe("comma-wrapped spoken commands", () => {
       const cleaned = applyRules(RUN_SPECIMEN);
       // "new line" + "new line" + "new paragraph" = 4 newlines, in that order.
       expect(cleaned.match(/\n/g) ?? []).toHaveLength(4);
-      // Lead's ruling: whisper's comma before a newline command is dropped —
-      // Etan said "things new line", not "things comma new line".
+      // Discard inserted delimiters before spoken layout commands.
       expect(cleaned).toMatch(
         /^Here are a few things\s*\n\s*\n\s*\n\s*\n\s*First of all I went there/,
       );
@@ -127,10 +110,7 @@ describe("comma-wrapped spoken commands", () => {
     });
   });
 
-  // Lead's ruling (2026-09-06), verbatim: "DROP the comma whisper inserted
-  // immediately before a newline/paragraph command — Etan said 'update new
-  // line', not 'update comma new line'; a comma survives only when he actually
-  // dictated 'comma' (its own command token)."
+  // Decision 2026-09-06: remove inserted commas near layout commands while retaining spoken comma commands.
   describe("whisper's comma before a newline command", () => {
     it("is dropped when whisper supplied both delimiters", () => {
       expect(applyRules("update, new line, hey")).toBe("Update\nHey");
@@ -141,8 +121,8 @@ describe("comma-wrapped spoken commands", () => {
       expect(applyRules("Here are a few things, new line first of all")).toBe(
         "Here are a few things\nFirst of all",
       );
-      expect(applyRules("hey Sarah, new line and then next")).toBe(
-        "Hey Sarah\nAnd then next",
+      expect(applyRules("hey Quill, new line and then next")).toBe(
+        "Hey Quill\nAnd then next",
       );
       expect(
         applyRules("update, new paragraph here are my priorities"),
@@ -152,11 +132,11 @@ describe("comma-wrapped spoken commands", () => {
     it("survives when Etan actually dictated the word 'comma'", () => {
       // The comma command is still the WORD "comma" when the drop pass runs,
       // so it cannot be matched — this is why that pass runs before the unwrap.
-      expect(applyRules("hey, Sarah, comma, new paragraph. Here are")).toBe(
-        "Hey, Sarah,\n\nHere are",
+      expect(applyRules("hey, Quill, comma, new paragraph. Here are")).toBe(
+        "Hey, Quill,\n\nHere are",
       );
-      expect(applyRules("hey Sarah, comma, new line and then")).toBe(
-        "Hey Sarah,\nAnd then",
+      expect(applyRules("hey Quill, comma, new line and then")).toBe(
+        "Hey Quill,\nAnd then",
       );
     });
 
@@ -235,7 +215,7 @@ describe("comma-wrapped spoken commands", () => {
 
     it("still fires for a command Etan actually dictated", () => {
       expect(applyRules("foo comma bar period")).toBe("Foo, bar.");
-      expect(applyRules("update, colon, Q3")).toBe("Update: Q3");
+      expect(applyRules("update, colon, Q7")).toBe("Update: Q7");
     });
   });
 
@@ -260,8 +240,8 @@ describe("comma-wrapped spoken commands", () => {
 
     it("still lets a DICTATED break swallow the delimiter", () => {
       // The other side of the same rule — this is the lane's whole point.
-      expect(applyRules("hey, Sarah, comma, new paragraph. Here are")).toBe(
-        "Hey, Sarah,\n\nHere are",
+      expect(applyRules("hey, Quill, comma, new paragraph. Here are")).toBe(
+        "Hey, Quill,\n\nHere are",
       );
     });
 
@@ -280,7 +260,7 @@ describe("comma-wrapped spoken commands", () => {
     });
 
     // Macroscope round 3. A WORD LOSS, and a direct violation of the lead's
-    // ruling: a comma survives wherever Etan actually said "comma".
+    // Etan's ruling: preserve an explicitly dictated comma command.
     it("preserves the dictated break before a spoken comma or period without capitalizing after the comma", () => {
       expect(applyRules("foo new line comma bar")).toBe("Foo\n, bar");
       expect(applyRules("foo new line period bar")).toBe("Foo\n. Bar");
@@ -308,9 +288,9 @@ describe("comma-wrapped spoken commands", () => {
   // delimiters are not operands, so they never unwrap.
   describe("'plus' and 'minus' still need operand evidence", () => {
     it("keeps the sentence-opening connective verbatim", () => {
-      // shadow row, verbatim opening
+      // Synthetic connective fixture with the reported sentence-opening shape.
       const raw =
-        "the same quality as what Google gives us in Flex. Plus, I don't know if we can match it";
+        "the same brightness as the painted lanterns beside the fountain. Plus, the gardener doubts the owl can match it";
       const cleaned = applyRules(raw);
       expect(cleaned.toLowerCase()).toContain("plus");
       expect(cleaned).not.toContain("+");
