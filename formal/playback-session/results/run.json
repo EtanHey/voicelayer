@@ -28,7 +28,7 @@
     "formal/playback-session/Fixed.cfg": "5ee7e3a9f9039f8a25019fa17b39923273d3916f9b6a04a333fdbf43efc5caaa",
     "src/playback/session.ts": "e32428e4744410576ee10e788c5ee8ca827f5973bd3e287574a1ca7bce58b35b",
     "src/playback/ledger.ts": "d57b969ab6147f269362dae68faad29ff7675338003366e6b473c57a6e3ea166",
-    "src/__tests__/playback-session.test.ts": "37911a0c7f01cbc95f178bbb8339ac9a34183d67eb9fc30f6b0c94fab128a0a0",
+    "src/__tests__/playback-session.test.ts": "90041ca61405d17cd7a406371e4b9f3c51c771e0e710791d51702a54af40da22",
     "src/tts.ts": "d955005599c2a2e4cf565ce4c6ee4365d1d2ee80c42b3645de1840ddd9825e2e",
     "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "58f90e0459215e2a128ff849611a20795c5b34c172ffa850f50d1ba6bc72736c",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
@@ -201,8 +201,8 @@
       "kind": "temporal",
       "target": "ParkedEventuallyReleased",
       "status": "EXPECTED_FAIL",
-      "generated": 136677,
-      "distinct": 46381
+      "generated": 132654,
+      "distinct": 45206
     },
     "AskCancelsReadMutant": {
       "role": "mutant",

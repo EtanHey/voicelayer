@@ -1,5 +1,5 @@
 /**
- * T9 (Etan QA 2026-11-09, "hollow or weird when it speaks fast or slow"; Codex round 1, finding 2): the resident
+ * Reported 2026-11-09 (T9): rate changes sounded hollow. Codex round 1 checks the resident
  * player's scaled speed is SoX's WSOLA `tempo -s <rate> 20 5 8` (see buildPlaybackArgv). File-to-file only: SoX
  * renders into the isolated test directory, so no audio device is opened. Skips loudly when SoX is not installed.
  */

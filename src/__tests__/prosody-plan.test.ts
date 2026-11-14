@@ -315,12 +315,12 @@ describe("evidence passages (GEMINI-1 §4–5)", () => {
       PAUSE.number, PAUSE.shortItem, PAUSE.number, PAUSE.shortItem, PAUSE.longNumber, 0]);
   });
   it("video 2: colon lead-in and bold bullet labels", () => {
-    const raw = "I spent today on:\n- **Archive backend:** saving every spoken reply.\n- **Your Option+F5 formatting bug:** preserving list structure.";
+    const raw = "The garden plan covers:\n- **Lantern catalogue:** painting every wooden lantern.\n- **The spring flower fair:** preserving garden paths.";
     const plan = speakPlan(raw);
     expectSound(plan, projectSpeakableText(raw, [], "edge").speechText);
-    expect(plan.segments[0]).toMatchObject({ text: "I spent today on:", pauseMs: PAUSE.listIntro });
-    expect(plan.segments[1]).toMatchObject({ kind: "label", emphasis: true, pauseMs: PAUSE.label, text: "Archive backend." });
-    // "Archive backend: saving every spoken reply." is six words: a long item.
+    expect(plan.segments[0]).toMatchObject({ text: "The garden plan covers:", pauseMs: PAUSE.listIntro });
+    expect(plan.segments[1]).toMatchObject({ kind: "label", emphasis: true, pauseMs: PAUSE.label, text: "Lantern catalogue." });
+    // The first labelled item has six words and requires a long-item pause.
     expect(plan.segments[2]).toMatchObject({ kind: "item", pauseMs: PAUSE.longItem });
     expect(plan.segments[3]).toMatchObject({ kind: "label", emphasis: true, pauseMs: PAUSE.label });
   });

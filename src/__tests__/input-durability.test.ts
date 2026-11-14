@@ -415,7 +415,7 @@ describe("input recording durability", () => {
     }, SUBPROCESS_TEST_TIMEOUT_MS);
   }
 
-  // Recording pause (Etan 2026-11-08): read aloud mid-dictation without it being captured, then continue the
+  // Synthetic durability regression: the fixture retains every captured segment.
   // same take. Fixture recorder only; frames are pushed by hand so each lands before or after a socket command.
   const pauseCommand = async (paused: boolean, extra: Record<string, unknown> = {}) => {
     const { handleSocketCommand } = await import("../socket-handlers");
@@ -3155,7 +3155,7 @@ describe("input recording durability", () => {
             "capture running", 10_000);
           if (reported) await reportViaSocket(liveCaptureId(), 10);
           expect(await raceStillRecording(pending, 300)).toBe("still recording");
-          // Etan keeps talking on B.
+          // Synthetic durability regression: the fixture retains every captured segment.
           for (const chunk of liveChunks(20)) recorder.push(chunk);
           await stopPushToEndOnceCaptured(60 * VAD_CHUNK_BYTES);
           expect(await pending).toBe("Retained transcript.");
@@ -4050,7 +4050,7 @@ describe("input recording durability", () => {
         agentAudioFormat: "mp3",
         agentTranscript: "Production-path question",
         agentTtsEngine: "f5-tts-mlx",
-        agentTtsVoice: "etan-f5",
+        agentTtsVoice: "sample-f5",
         createdAt: new Date("2026-07-16T20:30:00.000Z"),
       },
       onPhaseChange: () => {
@@ -4086,7 +4086,7 @@ describe("input recording durability", () => {
       retention_policy: "indefinite",
       transcription_status: "transcribed",
       agent_tts_engine: "f5-tts-mlx",
-      agent_tts_voice: "etan-f5",
+      agent_tts_voice: "sample-f5",
     });
     expect(
       broadcasts.some(
@@ -4200,7 +4200,7 @@ describe("input recording durability", () => {
         agentAudioFormat: "mp3",
         agentTranscript: "Archive the failure case",
         agentTtsEngine: "f5-tts-mlx",
-        agentTtsVoice: "etan-f5",
+        agentTtsVoice: "sample-f5",
         createdAt: new Date("2026-07-18T11:04:10.000Z"),
       },
       signal: controller.signal,
@@ -4276,7 +4276,7 @@ describe("input recording durability", () => {
           agentAudioFormat: "mp3",
           agentTranscript: "Keep the capture if the callback fails",
           agentTtsEngine: "f5-tts-mlx",
-          agentTtsVoice: "etan-f5",
+          agentTtsVoice: "sample-f5",
           createdAt: new Date("2026-07-18T11:05:10.000Z"),
         },
         onCaptureEnd: () => {
