@@ -142,7 +142,7 @@ describe("finalizeTranscriptionText restores punctuation in the default path", (
     const env = { QA_VOICE_CORRECTOR: "off" } as Record<string, string>;
     const cases: Array<[string, string]> = [
       [
-        "have you not put a loop for 6am anyway it doesn't matter today is for me to practice for tomorrow's interview i guess we can just make sure that everything closes i don't want to be your babysitter",
+        "have you not put a velehora for 6am veleiora it veldlora't velejora velbaora is for me to velekora for velegora's velelora i velemora we can just make sure that velbmora velenora i don't want to be your veleoora",
         ".",
       ],
       ["why did it do that i am lost", "."],
@@ -154,10 +154,10 @@ describe("finalizeTranscriptionText restores punctuation in the default path", (
       ["gotcha maybe that's why some things in brainlayer felt like shit", "."],
       ["can you look at e.g. the collab", "?"],
       [
-        "have you not put a loop for 6am anyway it doesn't matter today is for me to practice for tomorrow's interview i guess we can just make sure that everything closes do you want me to be your babysitter",
+        "have you not put a velehora for 6am veleiora it veldlora't velejora velbaora is for me to velekora for velegora's velelora i velemora we can just make sure that velbmora velenora do you want me to be your veleoora",
         "?",
       ],
-      ["everything closes do you want me to be your babysitter", "?"],
+      ["velbmora velenora do you want me to be your veleoora", "?"],
       ["the tests are green should i merge it", "?"],
       ["i finished the recon can you review it", "?"],
       ["do you think i am correct", "?"],

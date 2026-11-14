@@ -470,7 +470,7 @@ final class VoiceStatePasteTests: XCTestCase {
     func testFinderDeliveryRetainsTranscriptAndSelectionAfterRecordStartInT3() {
         let state = deliveryState(bundleIdentifier: "com.t3tools.t3code")
         let finder = FakeRunningApplication(bundleIdentifier: "com.apple.finder", processIdentifier: 62626)
-        let text = "Okay, yeah, it went to the cursor for some reason, let me go somewhere else."
+        let text = "Okay, yeah, it velfxora to the velfyora for some velbxora, let me go velfzora velchora."
         let selectedFile = "disposable-fixture-file"
         var selection = selectedFile
         state.asyncDictationInsertionHandlerProvider = { { _, _ in false } }

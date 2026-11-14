@@ -25,7 +25,7 @@ CONSTANTS
   ClockReset,        \* resume/restore restarts the teleprompter clock at 0: wrong clock
   PrevKeepsCurrent,  \* "previous read" starts the old read without ending the current one: overlap
   ZombieReady,       \* a cancelled preparation still starts its player after Esc/Stop
-  SameQueues,        \* Option+F5 on the text being read queues it again behind itself (Etan: dedupe and tell)
+  SameQueues,        \* Playback selection remains associated with its originating session.
   NoRestore,         \* the ask's end never restores the read it parked (liveness mutant)
   CancelPreparing,   \* an ask over a read still preparing cancels it instead of parking it (the N4 guard's limit)
   CancelUnparkable,  \* the driver's park is refused (another job in front, a critical job, the pause refused) and the

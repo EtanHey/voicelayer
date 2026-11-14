@@ -194,14 +194,14 @@ describe("findOutroCandidates", () => {
 
   test("offers every 1-5 token tail the corpus actually produced", () => {
     const cases: Array<[string, string]> = [
-      ["...pause? And that's a little not so clear to me still. So.", "So."],
-      ["...give you the post from earlier: Okay.", "Okay."],
-      ["...thus making it much slower? Thank you.", "Thank you."],
-      ["...on a new read. You.", "You."],
-      ["Are we actually utilizing it? I.", "I."],
-      ["...where's that coming from, man? and.", "and."],
+      ["...lantern? And the orchard path is still not so clear to me. So.", "So."],
+      ["...hand you the ribbon from the fountain: Okay.", "Okay."],
+      ["...thus making the garden much quieter? Thank you.", "Thank you."],
+      ["...on a new lantern. You.", "You."],
+      ["Are we actually watering it? I.", "I."],
+      ["...where's that ribbon coming from, friend? and.", "and."],
       [
-        "...not really getting anything outside of LinkedIn, though. So, so, so, so, so.",
+        "...not really finding anything outside of the orchard, though. So, so, so, so, so.",
         "So, so, so, so, so.",
       ],
     ];
@@ -1062,8 +1062,8 @@ describe("stripHallucinatedOutro — specimen 3, the Hebrew tail", () => {
 
 describe("stripHallucinatedOutro — specimen 4, Hebrew mid-utterance", () => {
   const BEFORE =
-    "לאט לאט תפסתי את הבקן גם, בעיקר בגלל שהבחור של הבקן שלנו עזב.";
-  const AFTER = "שם למדתי הרבה טכנולוגיות חדשות כמו סופה בייס.";
+    "הפנס הסגול עומד ליד השער והגנן מסדר פרחים לאורך השביל עד הערב";
+  const AFTER = "השומר פותח את הדלת ואז מחזיר את המפתח למגירה";
 
   clipTest(CLIP_HEBREW_MID)("drops תודה רבה. from the internal pause", () => {
     const wav = readWav(CLIP_HEBREW_MID);
@@ -1167,7 +1167,7 @@ const CLIP_PAIR = join(
 );
 
 describe("stripHallucinatedOutro — specimen 6, one real closer and one invented", () => {
-  const SPOKEN = "I didn't give you the posts from earlier.";
+  const SPOKEN = "The copper lantern lights the quiet orchard path";
 
   clipTest(CLIP_PAIR)("cuts the invented tail and keeps the spoken one", () => {
     const wav = readWav(CLIP_PAIR);

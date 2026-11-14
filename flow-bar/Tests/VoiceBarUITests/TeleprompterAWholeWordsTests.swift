@@ -84,10 +84,10 @@ final class TeleprompterAWholeWordsTests: XCTestCase {
 
     func testEveryWordRendersWholeWhenItEndsALine() throws {
         try withAccessibility {
-            // 160 pt puts "Codex." at the end of a line that fits (the QA shape); the others are the widths where base
+            // 160 pt puts "Codex." at the end of a line that fits (the QA shape; invented text with the same wrap at every column); the others are the widths where base
             // truncated a line-ending word, plus the live column.
             try assertWholeWordsWithinTheColumn(
-                "l asked Codex to review it, then Claude Code and Codex again. Did codex agree with Codex? Ask Codex.",
+                "Pia brought the green mirror to the window, and then the heavy crate. Does this reach Codex? Ask Codex.",
                 columns: [150, 152, 160, 172, 404], expectedWords: 19)
         }
     }
