@@ -16,7 +16,7 @@ is. Order-of-events risks modelled here:
   (`@GestureState` reset → `endHistoryPull(cancelled: true)`).
 - **Extend handle (V6).** A handle press inside the slop is a click and changes nothing; a
   released (or cancelled) handle springs to the nearer of two detents, collapsed 6 rows or
-  expanded 8 (Etan, 2026-11-08: one pull goes 6 → 8, "it only adds one more row"), never resting
+  expanded 8 (reported 2026-11-08: one pull must reach the expanded detent), never resting
   anywhere else (`NoStrandedRows`); at rest the hit region holds exactly the rows drawn (`HitMatchesRows`),
   because the settled rows reach the presentation model on release. The band pull and the handle
   never own the pointer at once.

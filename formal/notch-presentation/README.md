@@ -127,7 +127,7 @@ Lane A's changes on top of Lane G's round-2 model (union, nothing dropped):
 
 ## 2.3 N6: one-line confirmations in the right wing
 
-Etan, QA round 1 (S1-F4, S2-F2): "Typed" belongs in the right wing, not a lobe under the notch. Lane A had
+Status acknowledgements use the transient status surface; history contains substantive responses.
 moved every idle confirmation into the tab, which was vetoable and is now vetoed for one-line copy.
 `N6ConfirmationInWing` (Fixed): a one-line idle confirmation alone in a compact or collapsed notch is the right
 wing's label, with no band and a wing within the 132 pt bound. Multi-line recovery copy, long copy and a

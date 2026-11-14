@@ -21,7 +21,7 @@ the read left the speaker); `pausedAt` is what the engine stored; a resume must 
 
 | Invariant | Bug it prevents | Mutant config(s) |
 | --- | --- | --- |
-| ResumeExact | Etan: "pause sometimes jumps back" (QA 2026-11-08: the pause button rewound to 0:00) | JumpBackMutant, SecondAskMutant |
+| ResumeExact | Reported 2026-11-08: pausing rewound playback to the beginning | JumpBackMutant, SecondAskMutant |
 | OneAudible | two voices at once: a read or the ask prompt starting over a player still exiting | OverlapMutant |
 | AskParksOne | "a second voice_ask over a paused read didn't resume": a read left parked after an ask | StrandMutant |
 | MicExclusive | the mic records our own audio: prompt still exiting, or a read resumed before the recorder exited (capture-end r2) | EarlyMicMutant, RecorderWaitMutant |
