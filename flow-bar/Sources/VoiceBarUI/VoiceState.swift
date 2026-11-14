@@ -1339,6 +1339,9 @@ public final class VoiceState {
     /// pasteboard. Printable text only, line breaks as Shift+Return; see
     /// `SynthesizedTyping`. Returns false when nothing was posted (e.g.
     /// Accessibility not granted). See the AIDEV-NOTE at the paste call site.
+    public var listTypingHandler: ((String, pid_t, @escaping (ListDeliveryMachine.Outcome) -> Void) -> Void)?
+    public var listDeliveryActive: () -> Bool = { false }
+    public var closeListDelivery: (() -> Void)?
     public var textTypingHandler: (_ text: String) -> Bool = { _ in false }
 
     /// Production installs a batch builder with a final PID check. Nil preserves the legacy
@@ -5402,7 +5405,31 @@ public final class VoiceState {
 
     /// Final-text arrival is the selection boundary. No activation/timer hop may
     /// choose a later cursor, and a possibly applied write is never retried.
+    /// List delivery captures/reads/checks on its worker before any legacy AX insertion path.
+    private func beginListDelivery(_ text: String, app: NSRunningApplication?, operationID: UUID?) -> Bool {
+        guard let app, let listTypingHandler else { return false }
+        let deliveredText = TerminalPasteTargets.isTerminal(app.bundleIdentifier ?? "")
+            ? TerminalPasteTargets.typingText(text, bundleIdentifier: app.bundleIdentifier ?? "") : text
+        guard ListContinuationTyping.segments(for: deliveredText) != nil || listDeliveryActive() else { return false }
+        lastPasteTargetApp = app
+        listTypingHandler(deliveredText, app.processIdentifier) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .posted:
+                self.finishPasteConfirmation(outcome: .typed, text: text, operationID: operationID)
+            case .refused:
+                self.finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
+            case let .partial(delivered, remaining):
+                self.finishPasteConfirmation(outcome: .unverified, text: text, operationID: operationID)
+                self.noteOwnedDelivery(path: nil, text: text,
+                    note: "Partially typed: \(delivered.count) of \(delivered.count + remaining.count) characters; the same app, checked just before typing. Shift+F5 retries the whole text.")
+            }
+        }
+        return true
+    }
+
     private func pasteIntoReadyFocus(_ text: String, operationID: UUID?) {
+        if beginListDelivery(text, app: frontmostAppProvider(), operationID: operationID) { return }
         let app = frontmostAppProvider()
         let eligibility = focusedTargetEligibilityProvider()
         guard !secureInputEnabledProvider(), eligibility?.isSecure != true else {
@@ -5438,6 +5465,7 @@ public final class VoiceState {
         operationID: UUID? = nil,
         ownedTarget: ReadyPasteTarget? = nil
     ) {
+        if beginListDelivery(text, app: targetApp, operationID: operationID) { return }
         let recordStartTargetApp = ownedTarget.map { $0.app } ?? (plan == .autoPaste ? targetApp : frontmostAppOnRecordStart)
         let insertionHandler = ownedTarget.map { $0.insertion } ?? (plan == .autoPaste ? recordStartInsertionHandler : nil)
         let legacyReadyInsertion = plan == .autoPaste && ownedTarget == nil

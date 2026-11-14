@@ -855,6 +855,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "com.voicelayer.voicebar")
                     .filter { !$0.isTerminated }.map(\.processIdentifier) == [ProcessInfo.processInfo.processIdentifier],
                                                 gate: .shared)
+            if reply != nil { voiceState.closeListDelivery?() }
             if reply != nil, request["action"] as? String == "quit" {
                 // Commit before returning ACK; later ingress cannot rescind an acknowledged quit.
                 terminationPolicy.authorize(.controlledUpdate)
@@ -1045,6 +1046,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     private func performTerminationCleanup() {
+        voiceState.closeListDelivery?()
         responsivenessWatchdog.stop()
         errorLogRotator.stop()
         stopPermissionHealth()
@@ -1605,6 +1607,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         voiceState.simulatedPasteHandler = {
             Self.simulatePaste()
         }
+        let listMachine = MainActor.assumeIsolated { ListDeliveryMachine() }
+        voiceState.listDeliveryActive = { MainActor.assumeIsolated { listMachine.isActive } }
+        voiceState.closeListDelivery = { MainActor.assumeIsolated { listMachine.close() } }
+        let activationEpoch = ListDeliveryActivationEpoch()
+        voiceState.listTypingHandler = { text, pid, completion in
+            let capturedEpoch = activationEpoch.value
+            let worker = ListDeliveryAXWorker(pid: pid)
+            MainActor.assumeIsolated { listMachine.deliver(text, env: .init(
+                worker: { request, reply in worker.request(request, completion: reply) },
+                guardTarget: { activationEpoch.value == capturedEpoch && !IsSecureEventInputEnabled()
+                    && NSWorkspace.shared.frontmostApplication?.processIdentifier == pid },
+                post: { Self.typeTextGuarded($0, expectedPID: pid) }
+            ), completion: completion) }
+        }
         voiceState.textTypingHandler = { text in
             Self.typeText(text)
         }
@@ -1718,7 +1734,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 SynthesizedKeyEvents.events(for: SynthesizedTyping.keystrokes(for: text), source: source)
             },
             frontmostPID: { NSWorkspace.shared.frontmostApplication?.processIdentifier },
-            matchesCapturedTarget: matchesCapturedTarget,
+            matchesCapturedTarget: { !IsSecureEventInputEnabled() && matchesCapturedTarget() },
             postEvent: { event in
                 if postToTarget { event.postToPid(expectedPID) }
                 else { event.post(tap: .cghidEventTap) }
