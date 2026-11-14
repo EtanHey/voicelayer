@@ -389,6 +389,9 @@ fn menu<S: HistoryHost>(s: &History, k: &Kit, overlays: &mut Vec<El>) -> El {
 pub trait HistoryHost: 'static {
     fn history_ref(&self) -> &History;
     fn history_mut(&mut self) -> &mut History;
+    fn history_select(&mut self, category: usize) {
+        self.history_mut().select(category);
+    }
     fn hosted() -> bool {
         false
     }
@@ -523,21 +526,18 @@ pub fn embedded_page<S: HistoryHost>(s: &History, category: usize, cx: &mut Cx<S
             SegmentedControl::new(&["Dictations", "Ask", "Speech"], Some(category))
                 .label("History category")
                 .width(if S::hosted() { Some(260.0) } else { None })
-                .on_pick(|host: &mut S, i, _| {
-                    let s = host.history_mut();
-                    s.select(i)
-                })
+                .on_pick(|host: &mut S, i, _| host.history_select(i))
                 .build(&k)
                 .key("selector")
                 .on_key(|host: &mut S, e, _| {
-                    let s = host.history_mut();
+                    let category = host.history_ref().category;
                     match e.key {
                         Key::Left => {
-                            s.select(s.category.saturating_sub(1));
+                            host.history_select(category.saturating_sub(1));
                             true
                         }
                         Key::Right => {
-                            s.select(s.category + 1);
+                            host.history_select(category + 1);
                             true
                         }
                         _ => false,

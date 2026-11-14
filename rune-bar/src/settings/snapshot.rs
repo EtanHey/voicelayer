@@ -97,7 +97,14 @@ fn json(path: &Path) -> serde_json::Value {
 }
 pub fn read(home: &Path, env: &BTreeMap<String, String>) -> SettingsSnapshot {
     let state = home.join(".local/state/voicelayer");
-    let p = json(&state.join("processing-settings.json"));
+    let processing_path = state.join("processing-settings.json");
+    let p = if std::fs::symlink_metadata(&processing_path)
+        .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+    {
+        serde_json::json!({})
+    } else {
+        json(&processing_path)
+    };
     let w = json(&state.join("whisper-performance.json"));
     let mut s = SettingsSnapshot::default();
     for (i, (key, var)) in [
@@ -108,15 +115,23 @@ pub fn read(home: &Path, env: &BTreeMap<String, String>) -> SettingsSnapshot {
     .iter()
     .enumerate()
     {
-        s.processing[i] = if i == 0 {
-            s.polish = match p[key].as_str() {
-                Some("off") => Some(Polish::Off),
-                Some("on") => Some(Polish::On),
-                _ => None,
+        s.processing[i] = if !p.is_object() {
+            None
+        } else if i == 0 {
+            s.polish = match p.get(*key) {
+                None => Some(Polish::On),
+                Some(raw) => match raw.as_str() {
+                    Some("off") => Some(Polish::Off),
+                    Some("on") => Some(Polish::On),
+                    _ => None,
+                },
             };
             s.polish.map(|p| p == Polish::On)
         } else {
-            p[key].as_bool()
+            match p.get(*key) {
+                None => Some(i == 1),
+                Some(raw) => raw.as_bool(),
+            }
         };
         if let Some(v) = env.get(*var) {
             s.processing_locks[i] = Some((*var).into());
@@ -137,13 +152,19 @@ pub fn read(home: &Path, env: &BTreeMap<String, String>) -> SettingsSnapshot {
         }
     }
     let effort_var = "QA_VOICE_WHISPER_PERFORMANCE_EFFORT";
-    let valid = |v: &&str| ["fast", "balanced", "accurate"].contains(v);
-    let override_effort = env.get(effort_var).map(|v| v.trim()).filter(valid);
-    s.effort_lock = override_effort.map(|_| effort_var.into());
+    let valid = |v: &String| ["fast", "balanced", "accurate"].contains(&v.as_str());
+    let override_effort = env
+        .get(effort_var)
+        .map(|v| v.trim().to_lowercase())
+        .filter(valid);
+    s.effort_lock = override_effort.as_ref().map(|_| effort_var.into());
     s.configured_effort = Some(
         override_effort
-            .or(w["effort"].as_str().filter(valid))
-            .unwrap_or("accurate")
+            .or(w["effort"]
+                .as_str()
+                .map(|v| v.trim().to_lowercase())
+                .filter(valid))
+            .unwrap_or_else(|| "accurate".into())
             .into(),
     );
     let voices = home.join(".voicelayer/voices");

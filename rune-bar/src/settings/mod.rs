@@ -26,6 +26,7 @@ pub struct Settings {
     pub width: f32,
     pub state_path: Option<PathBuf>,
     pub slide: f32,
+    offset: rune::Live<[f32; 2]>,
     pub axis: i8,
     pub settling: bool,
     pub drag_origin: usize,
@@ -62,6 +63,11 @@ impl HistoryHost for Settings {
     fn history_drag(&mut self, d: &mut Drag, tx: &mut rune::Tx) {
         pager(self, d, tx)
     }
+    fn history_select(&mut self, category: usize) {
+        self.select_tab(4);
+        self.history.select(category);
+        self.offset.snap([-(self.page() as f32) * self.width, 0.0]);
+    }
     fn hosted() -> bool {
         true
     }
@@ -89,6 +95,7 @@ impl Settings {
             width: 720.0,
             state_path: path,
             slide: 0.0,
+            offset: rune::Live::new([0.0, 0.0]),
             axis: 0,
             settling: false,
             drag_origin: 0,
@@ -123,18 +130,23 @@ impl Settings {
             self.history.select(p - 4);
         }
         self.open = None;
+        if self.axis != 1 {
+            self.offset.snap([-(self.page() as f32) * self.width, 0.0]);
+        }
     }
     pub fn select_tab(&mut self, tab: usize) {
         self.settling = false;
         self.tab = tab.min(4);
         self.open = None;
         self.slide = 0.0;
+        self.offset.snap([-(self.page() as f32) * self.width, 0.0]);
     }
 }
 fn pager(s: &mut Settings, d: &mut Drag, tx: &mut rune::Tx) {
     match d.phase {
         Phase::Down => {
             s.axis = 0;
+            s.settling = false;
             s.drag_origin = s.page();
         }
         Phase::Move => {
@@ -157,6 +169,7 @@ fn pager(s: &mut Settings, d: &mut Drag, tx: &mut rune::Tx) {
                         }
                     }
                 };
+                s.offset.snap([-(s.page() as f32) * s.width + s.slide, 0.0]);
             }
         }
         Phase::Up => {
@@ -168,6 +181,14 @@ fn pager(s: &mut Settings, d: &mut Drag, tx: &mut rune::Tx) {
             }
             if d.cancelled() {
                 s.select_page(s.drag_origin);
+            }
+            // Live bindings own their spring independently of a coalesced instant Move.
+            // An unrendered final snap is superseded: release starts where the body was drawn.
+            let rest = [-(s.page() as f32) * s.width, 0.0];
+            if s.reduce_motion {
+                s.offset.snap(rest);
+            } else {
+                s.offset.set(rest);
             }
             s.slide = 0.0;
             s.settling = true;
@@ -253,6 +274,8 @@ fn lock(var: &Option<String>, dark: bool) -> El {
     } else {
         el()
     }
+    .w(14.0)
+    .h(14.0)
 }
 fn choice(
     s: &Settings,
@@ -265,7 +288,9 @@ fn choice(
     let a = id.to_owned();
     let b = a.clone();
     let c = a.clone();
+    let locked = s.snapshot.speech_locks[usize::from(id.starts_with("Long")) * 2].is_some();
     let field = Select::new(id, options)
+        .disabled(locked)
         .appearance(SelectAppearance::Field)
         .label(id)
         .current(current)
@@ -296,7 +321,9 @@ fn choice(
         .fill(k.c.bg_base)
         .border(1.0, k.c.border_base)
         .radius(6.0);
-    row().key(c).child(field)
+    row()
+        .key(c)
+        .child(field.opacity(if locked { 0.5 } else { 1.0 }))
 }
 pub const GROUP_GAP: f32 = 24.0;
 // Groups stay together; additional drawer height remains below the form.
@@ -396,7 +423,13 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
                         controls = controls.child(
                             Button::new("Make default")
                                 .on_press(move |s: &mut Settings| {
-                                    if let Some(from) = s.snapshot.default_microphone.clone() {
+                                    if let Some(from) = s
+                                        .snapshot
+                                        .microphones
+                                        .as_ref()
+                                        .and_then(|m| m.first())
+                                        .cloned()
+                                    {
                                         s.change("microphone-default", &from, &to);
                                     }
                                 })
@@ -436,9 +469,7 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
                     .center_y()
                     .gap(8.0)
                     .child(value(v.recognizer.as_deref(), dark))
-                    .child(if v.resident.is_none() {
-                        el()
-                    } else {
+                    .children(v.resident.map(|_| {
                         button(
                             if v.resident == Some(true) {
                                 "Unload"
@@ -448,7 +479,7 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
                             "recognizer-toggle".into(),
                             k,
                         )
-                    }),
+                    })),
                 dark,
             ));
             if v.resident.is_none() {
@@ -504,13 +535,17 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
             .enumerate()
             {
                 let key = key.to_string();
-                let mut controls = row().center_y().gap(8.0);
+                let mut controls = row()
+                    .center_y()
+                    .gap(8.0)
+                    .child(lock(&v.processing_locks[i], dark));
                 if let Some(enabled) = v.processing[i] {
                     if i == 0 && v.polish == Some(Polish::Shadow) {
                         controls = controls.child(tag("Shadow", dark));
                     } else {
                         controls = controls.child(
                             Switch::new(enabled)
+                                .disabled(v.processing_locks[i].is_some())
                                 .label(*label)
                                 .hide_label()
                                 .on_toggle(move |s: &mut Settings| {
@@ -526,7 +561,6 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
                                 .key(format!("toggle-{i}")),
                         );
                     }
-                    controls = controls.child(lock(&v.processing_locks[i], dark));
                 } else {
                     controls = controls.child(value(None, dark));
                 }
@@ -573,13 +607,23 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
                     if let Ok(n) = raw.trim_end_matches('%').parse::<i32>() {
                         for (name, delta) in [("−", -step), ("+", step)] {
                             if delta > 0 {
-                                rate = rate.child(value(Some(raw), dark));
+                                rate = rate.child(
+                                    text(raw)
+                                        .font(rune::tok::type_::BODY.features("'tnum' 1"))
+                                        .color(rune::tok::theme(dark).text)
+                                        .w(44.0)
+                                        .align(rune::Align::Center),
+                                );
                             }
                             let operation = format!("set-{label}-rate");
                             let from = raw.to_string();
                             rate = rate.child(
                                 Button::new(name)
-                                    .disabled(n + delta < min || n + delta > max)
+                                    .disabled(
+                                        v.speech_locks[i * 2 + 1].is_some()
+                                            || n + delta < min
+                                            || n + delta > max,
+                                    )
                                     .on_press(move |s: &mut Settings| {
                                         if s.snapshot.speech_locks[i * 2 + 1].is_none() {
                                             s.change(
@@ -637,6 +681,7 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
                 .fill(k.c.bg_base)
                 .border(1.0, k.c.border_base)
                 .radius(6.0)
+                .opacity(if v.threshold_lock.is_some() { 0.5 } else { 1.0 })
                 .key("threshold")
                 .child(
                     rune::text_input(
@@ -647,6 +692,7 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
                         },
                     )
                     .color(rune::tok::theme(dark).text)
+                    .disabled(v.threshold_lock.is_some())
                     .single_line()
                     .on_edit(|s: &mut Settings| &mut s.threshold)
                     .label("Long text from")
@@ -666,6 +712,7 @@ fn panel(s: &Settings, tab: usize, dark: bool, k: &Kit, overlays: &mut Vec<El>) 
                     threshold = threshold
                         .child(
                             Button::new("Apply")
+                                .disabled(v.threshold_lock.is_some())
                                 .on_press(|s: &mut Settings| {
                                     if s.snapshot.threshold_lock.is_none() {
                                         if let (Some(from), Ok(to)) =
@@ -785,7 +832,7 @@ pub fn view(s: &Settings, cx: &mut Cx<Settings>) -> El {
     for page in 0usize..7 {
         body = body.child(
             if page == s.page()
-                || (s.axis == 1 && page == s.drag_origin)
+                || ((s.axis == 1 || s.settling) && page == s.drag_origin)
                 || (s.slide.abs() > 0.01 && page.abs_diff(s.page()) <= 1)
             {
                 page_body(page).key(format!("page-{page}"))
@@ -794,10 +841,11 @@ pub fn view(s: &Settings, cx: &mut Cx<Settings>) -> El {
             },
         );
     }
-    let body = body.offset(
-        -(s.page() as f32) * s.width + if reduce { 0.0 } else { s.slide },
-        0.0,
-    );
+    let body = if reduce {
+        body.offset(-(s.page() as f32) * s.width, 0.0)
+    } else {
+        body.live_offset(s.offset.smooth(rune::tok::motion::REFLOW))
+    };
     col()
         .key("settings")
         .w_full()
@@ -841,11 +889,7 @@ pub fn view(s: &Settings, cx: &mut Cx<Settings>) -> El {
                 .min_h(0.0)
                 .clip_rounded(0.0)
                 .on_drag(pager)
-                .child(if s.axis == 1 || !s.settling {
-                    body.offset_motion(rune::Anim::INSTANT)
-                } else {
-                    body.token_motion(rune::tok::motion::REFLOW)
-                }),
+                .child(body),
         )
         .child(
             row()

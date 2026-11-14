@@ -63,6 +63,7 @@ fn initial() -> Settings {
         for lock in &mut s.snapshot.processing_locks {
             *lock = Some("QA_FIXTURE_LOCK".into());
         }
+        s.snapshot.threshold_lock = Some("QA_FIXTURE_LOCK".into());
         for lock in &mut s.snapshot.speech_locks {
             *lock = Some("QA_FIXTURE_LOCK".into());
         }
