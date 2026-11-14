@@ -3308,6 +3308,12 @@ describe("stt-polish terminal question marks", () => {
     ["i don't know should we wait.", "I don't know should we wait?"],
     ["tell me will it ship.", "Tell me will it ship?"],
     ["i wonder can you check the logs.", "I wonder can you check the logs?"],
+    // Noun-phrase subjects (Cursor pass on #919): real questions, after the frame or a comma.
+    ["tell me did the build finish.", "Tell me did the build finish?"],
+    ["i am not sure, did the build finish.", "I am not sure, did the build finish?"],
+    ["tell me did my patch land.", "Tell me did my patch land?"],
+    ["i do not know, will the release ship.", "I do not know, will the release ship?"],
+    ["i wonder, has the cache warmed.", "I wonder, has the cache warmed?"],
     ["done and everything is merged.", "Done and everything is merged?"],
     ["chrome translation.", "Chrome translation?"],
     ["you already pushed the branch.", "You already pushed the branch?"],

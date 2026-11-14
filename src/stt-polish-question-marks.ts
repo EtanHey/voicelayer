@@ -1,4 +1,4 @@
-import { isInterrogative, QUESTION_AUX_OPENERS, QUESTION_SUBJECTS } from "./stt-interrogative";
+import { hasDirectQuestionOpener, isInterrogative, QUESTION_AUX_OPENERS, QUESTION_SUBJECTS } from "./stt-interrogative";
 import { endsWithAbbreviation } from "./stt-transcript-alignment";
 
 /**
@@ -137,7 +137,12 @@ function withoutLeadIns(clause: string): string {
 /** A later clause that asks directly: "is it merged", "you think so". */
 function asksDirectly(clause: string): boolean {
   const rest = withoutLeadIns(clause);
-  return isInterrogative(rest) || SECOND_PERSON.has(words(rest)[0] ?? "");
+  return isInterrogative(rest) || SECOND_PERSON.has(words(rest)[0] ?? "") || opensAuxQuestion(words(rest));
+}
+
+/** An auxiliary plus a pronoun or noun-phrase subject: "did it land", "did the build finish". */
+function opensAuxQuestion(clauseWords: string[]): boolean {
+  return QUESTION_AUX_OPENERS.has(clauseWords[0] ?? "") && hasDirectQuestionOpener(clauseWords.join(" "));
 }
 
 /** A question word in direct-question order ("… what do you mean"), not "which one it is". */
@@ -154,8 +159,10 @@ export function onlyContainsQuestion(sentence: string): boolean {
   const sentenceWords = words(withoutLeadIns(sentence));
   const frame = sentenceWords.slice(0, FRAME_WINDOW).join(" ").match(FRAME);
   if (!frame) return false;
-  const [opener, subject] = sentenceWords.slice(frame[0].trim().split(" ").length);
+  const afterFrame = sentenceWords.slice(frame[0].trim().split(" ").length);
+  const [opener, subject] = afterFrame;
   if (QUESTION_AUX_OPENERS.has(opener ?? "") && QUESTION_SUBJECTS.has(subject ?? "")) return false;
+  if (opensAuxQuestion(afterFrame)) return false;
   if (hasInvertedWhQuestion(sentenceWords)) return false;
   if (TAGS.has(sentenceWords.at(-1)!)) return false;
   const later = sentence.split(CLAUSE_SPLIT).slice(1).filter((clause) => words(clause).length > 0);
