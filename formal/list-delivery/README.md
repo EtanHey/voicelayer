@@ -214,7 +214,7 @@ marker only for inserted AND same. Every other readback (including plain, unknow
 | check/aged reply | consume without post, issue new check before expiry | completion timestamp vs monotonic now (100 ms) |
 | post/failed | no events built or trust gone; refused before any text, partial after prefix | GuardedTypingResult.failed through completion and History |
 | arrive/active | enqueue original text in FIFO, do not start second delivery | ListDeliveryMachine queue (capacity >= 2) |
-| quit/drain with queue | refuse each queued id, original retained, one receipt each | synchronous finalization; active finish phase reports posted |
+| quit/drain with queue | refuse each queued id, original retained, one receipt each | synchronous finalization; the active delivery reports posted only if it is in its finish phase (every segment already posted); with only a prefix posted it reports partial (or unverified to a daemon without the capability); with nothing posted, refused |
 | next delivery/hung old worker | new captured app; serial slot still occupied, capture may time out to old batch | serial AX queue is shared; old result id discarded |
 
 Worker replies normalize unused fields (target only for capture, marker/landed
@@ -251,7 +251,7 @@ transport still require the mechanism PR's supported-pair tests.
 
 Additional exact oracles: DeadlineBound checks late <= 2 and posts <= Segments;
 NoAXAfterExpiry checks a sticky flag recording any AX issue at expiry. Their mutants are LateMain
-(consume repeated old callbacks beyond expiry) and LateAX (issue instead of taking the deadline route). Additional mutants: BatchUnguarded removes only the app guard for
+(main keeps taking ordinary steps after expiry, consuming replies or issuing new checks; its recorded counterexample reaches late = 3 by issuing after expiry) and LateAX (issue instead of taking the deadline route). Additional mutants: BatchUnguarded removes only the app guard for
 batch; ForeignRead removes only the same-element requirement for marker drop;
 AgedCheck removes only the age requirement. FirstUnguarded applies only to the
 first segmented post, FallbackUnguarded only to segmented fallback; both retain
