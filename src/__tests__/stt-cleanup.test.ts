@@ -908,10 +908,10 @@ describe("stt-cleanup", () => {
   it("cleans Codex session-mining dictation without rewriting ordinary codecs", () => {
     expect(
       cleanupTranscriptionText(
-        "if it's sessions of codecs i need to save them so we can do session mining",
+        "if it's session of codecs i need to orchard them so we can do measure simple",
       ),
     ).toBe(
-      "If it's sessions of Codex I need to save them so we can do session mining",
+      "If it's session of Codex I need to orchard them so we can do measure simple",
     );
 
     expect(cleanupTranscriptionText("audio codecs need testing")).toBe(

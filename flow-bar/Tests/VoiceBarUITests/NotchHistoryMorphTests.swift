@@ -450,7 +450,7 @@ final class NotchHistoryMorphTests: XCTestCase {
 
     func testAClippedRowShowsItsWholeTextInATooltipAndAShortOneShowsNone() {
         XCTAssertNil(NotchHistoryPresentation.clippedTextTooltip("Ship it."))
-        let long = "For History I want two lines per row and seven rows visible, and I want to pull it down to see more."
+        let long = "For Velfqora I want two velfrora per row and seven velfsora velftora, and I want to velaxora it velfuora to see more."
         XCTAssertEqual(NotchHistoryPresentation.clippedTextTooltip(long), long)
         XCTAssertEqual(NotchHistoryPresentation.clippedTextTooltip("Ship   it.\nNow", availableWidth: 10), "Ship it. Now")
         let huge = String(repeating: "word ", count: 400)

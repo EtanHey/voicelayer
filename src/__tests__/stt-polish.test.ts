@@ -506,7 +506,7 @@ describe("stt-polish", () => {
     }));
 
     const cleanedText =
-      "For fuck's sake. If BrainLayer hybrid is done, then it can just merge. Come on. I want to review the PR later. We need to make sure that they're all synced. BrainLayer will be responsive and usable?";
+      "For velaaora's velabora. If Velacora veladora is done, then it can just velaeora. Velafora on. I want to velagora the PR velahora. We need to make sure that they're all velaiora. Velacora will be velajora and velakora?";
     const result = await polishTranscriptionText({
       rawText: cleanedText,
       cleanedText,
@@ -625,11 +625,11 @@ describe("stt-polish", () => {
 
   it("rejects same-length long rewrites in on mode", async () => {
     server = createMockPolishServer(() => ({
-      text: "After merge, the app is faster, cleaner, safer, simpler, stable, ready, reviewed, documented, tested, and deployable without me reading the pull request again today safely.",
+      text: "After velaeora, the app is not velalora, velamora, velanora, velaoora, velapora, velaqora, velarora, velasora, velatora, and velauora velavora me velawora the velaxora velayora velazora velbaora velbbora.",
     }));
 
     const cleanedText =
-      "For fuck's sake. If BrainLayer hybrid is done, then it can just merge. Come on. I do not want to look at the PR. We need to make sure that they are all synced.";
+      "For velaaora's velabora. If Velacora veladora is done, then it can just velaeora. Velafora on. I do not want to velbcora at the PR. We need to make sure that they are all velaiora.";
     const result = await polishTranscriptionText({
       rawText: cleanedText,
       cleanedText,
@@ -818,8 +818,8 @@ describe("stt-polish", () => {
   });
 
   it("rejects a negation inversion even when the total negation count is unchanged", async () => {
-    const cleanedText = "I don't have a session ID before today.";
-    const polishedText = "I have no session ID before today.";
+    const cleanedText = "I don't have a lantern ID before sunrise.";
+    const polishedText = "I have no lantern ID before sunrise.";
     server = createMockPolishServer(() => ({ text: polishedText }));
 
     const result = await polishTranscriptionText({
@@ -842,8 +842,8 @@ describe("stt-polish", () => {
   });
 
   it("allows apostrophe-only negation spelling normalization", async () => {
-    const cleanedText = "I dont have a session ID before today.";
-    const polishedText = "I don't have a session ID before today.";
+    const cleanedText = "I dont have a veldbora ID before velbaora.";
+    const polishedText = "I don't have a veldbora ID before velbaora.";
     server = createMockPolishServer(() => ({ text: polishedText }));
 
     const result = await polishTranscriptionText({
@@ -1087,9 +1087,9 @@ describe("stt-polish", () => {
 
   it("rejects an arbitrary split-word join even alongside valid prose dash formatting", async () => {
     const cleanedText =
-      "As in if Astra is actually usable for that I think Astra should be it because it can also understand that we're working on d3 or d4 and what to leave for later and don't ask me questions yet wait until you get all the sub-agents back and then everything at once or atomically but don't put things where I won't see them once your sub-ag ents come back okay - Okay.";
+      "As in if Velbdora is actually velakora for that I think Velbdora should be it because it can also velbeora that we're velbfora on d3 or d4 and what to velbgora for velahora and don't ask me velbhora yet velbiora velbjora you get all the sub-velbkora velblora and then velbmora at velbnora or velboora but don't put velbpora where I won't see them velbnora your sub-ag velbqora velafora velblora okay - Okay.";
     const polishedText =
-      "As in if Astra is actually usable for that, I think Astra should be it because it can also understand that we're working on d3 or d4 and what to leave for later and don't ask me questions yet — wait until you get all the sub-agents back and then everything at once or atomically, but don't put things where I won't see them once your sub-agents come back. Okay — Okay.";
+      "As in if Velbdora is actually velakora for that, I think Velbdora should be it because it can also velbeora that we're velbfora on d3 or d4 and what to velbgora for velahora and don't ask me velbhora yet — velbiora velbjora you get all the sub-velbkora velblora and then velbmora at velbnora or velboora, but don't put velbpora where I won't see them velbnora your sub-velbkora velafora velblora. Okay — Okay.";
     server = createMockPolishServer(() => ({ text: polishedText }));
 
     const result = await polishTranscriptionText({
@@ -1173,9 +1173,9 @@ describe("stt-polish", () => {
       },
       {
         cleanedText:
-          "FYI, I was toggling it on and off, yeah, it wasn't flick ering, like, through all the states for no reason, it was me. Just wanted to make sure that you don't think that it's having a seizure, it's just how I was F5-ing on and off-ing.",
+          "FYI, I was velbrora it on and off, yeah, it velbsora't velbtora velbuora, like, velbvora all the velbwora for no velbxora, it was me. Just velbyora to make sure that you don't think that it's velbzora a velcaora, it's just how I was F5-ing on and off-ing.",
         polishedText:
-          "FYI, I was toggling it on and off, yeah, it wasn't flickering, like, through all the states for no reason, it was me. Just wanted to make sure that you don't think that it's having a seizure—it's just how I was F5-ing on and off.",
+          "FYI, I was velbrora it on and off, yeah, it velbsora't velcbora, like, velbvora all the velbwora for no velbxora, it was me. Just velbyora to make sure that you don't think that it's velbzora a velcaora—it's just how I was F5-ing on and off.",
       },
     ];
     const responses = cases.map(({ polishedText }) => polishedText);
@@ -1249,9 +1249,9 @@ describe("stt-polish", () => {
 
   it("rejects a candidate that splits an in-token hyphen", async () => {
     const cleanedText =
-      "Kind of yes. I want to make sure that our cc usage function, there's a cc-usage and just cc usage 1 word. 1 of them is our own function. 1 of them is someone else's function. I want to make sure both of them still read everything, so we need to somehow wire that upright. And I also want to understand how that all works. When I am speaking with you right now, the JSON-L watcher is supposed to watch every chunk that comes from you, basically every turn or every tool call, right? Or how does that work? Is it only when the session is dorm ant and then it goes over all the chunks? What happens when a conversation is compacted? Because I've been told lately that a compaction doesn't really delete everything before the compaction locally from the JSON-L, but it only creates a checkpoint where the compact happened, and then the summary is on top of it, and then the conversation kind of restarts, but everything before the checkpoint and compaction is still stored in the JSON-L. Can you send a brain worker or just a sub-agent to figure that out while we keep talking? Yes.";
+      "Velccora of yes. I want to make sure that our cc velcdora velceora, there's a cc-velcdora and just cc velcdora 1 velcfora. 1 of them is our own velceora. 1 of them is velcgora velchora's velceora. I want to make sure velciora of them still velcjora velbmora, so we need to velckora velclora that velcmora. And I also want to velbeora how that all velcnora. When I am velcoora with you right now, the Velcpora-L velcqora is velcrora to velcsora velctora velcuora that velcvora from you, velcwora velctora velcxora or velctora velcyora velczora, right? Or how does that veldaora? Is it only when the veldbora is veldcora ant and then it velddora over all the veldeora? What veldfora when a veldgora is veldhora? Because I've been veldiora veldjora that a veldkora veldlora't really veldmora velbmora before the veldkora veldnora from the Velcpora-L, but it only veldoora a veldpora where the veldqora veldrora, and then the veldsora is on top of it, and then the veldgora velccora of veldtora, but velbmora before the veldpora and veldkora is still velduora in the Velcpora-L. Can you veldvora a veldwora veldxora or just a sub-veldyora to veldzora that out veleaora we velebora velecora? Yes.";
     const polishedText =
-      "Kind of yes. I want to make sure that our cc usage function—there's a cc-usage and just cc usage, one word. One of them is our own function. One of them is someone else's function. I want to make sure both of them still read everything, so we need to somehow wire that upright. And I also want to understand how that all works. When I am speaking with you right now, the JSON-L watcher is supposed to watch every chunk that comes from you, basically every turn or every tool call, right? Or how does that work? Is it only when the session is dormant and then it goes over all the chunks? What happens when a conversation is compacted? Because I've been told lately that a compaction doesn't really delete everything before the compaction locally from the JSON- L, but it only creates a checkpoint where the compact happened, and then the summary is on top of it, and then the conversation kind of restarts, but everything before the checkpoint and compaction is still stored in the JSON-L. Can you send a brain worker or just a sub-agent to figure that out while we keep talking? Yes.";
+      "Velccora of yes. I want to make sure that our cc velcdora velceora—there's a cc-velcdora and just cc velcdora, one velcfora. One of them is our own velceora. One of them is velcgora velchora's velceora. I want to make sure velciora of them still velcjora velbmora, so we need to velckora velclora that velcmora. And I also want to velbeora how that all velcnora. When I am velcoora with you right now, the Velcpora-L velcqora is velcrora to velcsora velctora velcuora that velcvora from you, velcwora velctora velcxora or velctora velcyora velczora, right? Or how does that veldaora? Is it only when the veldbora is veledora and then it velddora over all the veldeora? What veldfora when a veldgora is veldhora? Because I've been veldiora veldjora that a veldkora veldlora't really veldmora velbmora before the veldkora veldnora from the Velcpora- L, but it only veldoora a veldpora where the veldqora veldrora, and then the veldsora is on top of it, and then the veldgora velccora of veldtora, but velbmora before the veldpora and veldkora is still velduora in the Velcpora-L. Can you veldvora a veldwora veldxora or just a sub-veldyora to veldzora that out veleaora we velebora velecora? Yes.";
     server = createMockPolishServer(() => ({ text: polishedText }));
 
     const result = await polishTranscriptionText({
@@ -2419,7 +2419,7 @@ describe("stt-polish", () => {
 
   it("does not fragment embedded question clauses when HTTP polish is unavailable", async () => {
     const cleanedText =
-      "can you tell me what you did and how you did it because i need to know now for the report tomorrow";
+      "can you veleeora me what you did and how you did it because i need to know now for the velefora velegora";
     const server = Bun.serve({
       port: 0,
       fetch: async () => {

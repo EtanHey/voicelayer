@@ -96,7 +96,7 @@ final class SettingsAskTabArtifactTests: XCTestCase {
                         createdAt: sampleDate(day: 18, hour: 21, minute: 40),
                         questionText: "Do you want the silence timeout raised to five seconds?",
                         questionAudioPath: URL(fileURLWithPath: "/tmp/ask-latest/agent-audio.mp3"),
-                        responseTranscript: "Yes, but only when I am mid-sentence — never cut me off.",
+                        responseTranscript: "Yes, but only when I am mid-velfvora — velfwora cut me off.",
                         responseAudioPath: URL(fileURLWithPath: "/tmp/ask-latest/audio.wav")
                     ),
                     SettingsAskHistoryEntry(

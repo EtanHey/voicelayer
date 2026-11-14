@@ -438,9 +438,9 @@ test_developer_id_signature_guard_rejects_apple_development() {
 if [[ "$*" == *"--verify"* ]]; then
     exit 0
 elif [[ "$*" == *"-d -r-"* ]]; then
-    printf 'designated => identifier "com.voicelayer.voicebar" and anchor apple generic and certificate leaf[subject.OU] = "DXHB5E7P2D" and certificate leaf[subject.CN] = "Apple Development: Etan Heyman (DXHB5E7P2D)"\n' >&2
+    printf 'designated => identifier "com.voicelayer.voicebar" and anchor apple generic and certificate leaf[subject.OU] = "DXHB5E7P2D" and certificate leaf[subject.CN] = "Apple Development: Synthetic Signer (DXHB5E7P2D)"\n' >&2
 elif [[ "$*" == *"-dvvv"* || "$*" == *"-dv"* ]]; then
-    printf 'Authority=Apple Development: Etan Heyman (DXHB5E7P2D)\nTeamIdentifier=DXHB5E7P2D\n' >&2
+    printf 'Authority=Apple Development: Synthetic Signer (DXHB5E7P2D)\nTeamIdentifier=DXHB5E7P2D\n' >&2
 else
     exit 2
 fi
@@ -468,9 +468,9 @@ test_developer_id_signature_guard_allows_apple_development_with_dangerous_overri
 if [[ "$*" == *"--verify"* ]]; then
     exit 0
 elif [[ "$*" == *"-d -r-"* ]]; then
-    printf 'designated => identifier "com.voicelayer.voicebar" and anchor apple generic and certificate leaf[subject.OU] = "DXHB5E7P2D" and certificate leaf[subject.CN] = "Apple Development: Etan Heyman (DXHB5E7P2D)"\n' >&2
+    printf 'designated => identifier "com.voicelayer.voicebar" and anchor apple generic and certificate leaf[subject.OU] = "DXHB5E7P2D" and certificate leaf[subject.CN] = "Apple Development: Synthetic Signer (DXHB5E7P2D)"\n' >&2
 elif [[ "$*" == *"-dvvv"* || "$*" == *"-dv"* ]]; then
-    printf 'Authority=Apple Development: Etan Heyman (DXHB5E7P2D)\nTeamIdentifier=DXHB5E7P2D\n' >&2
+    printf 'Authority=Apple Development: Synthetic Signer (DXHB5E7P2D)\nTeamIdentifier=DXHB5E7P2D\n' >&2
 else
     exit 2
 fi
@@ -491,6 +491,7 @@ SH
 }
 
 test_developer_id_signature_guard_accepts_developer_id() {
+    local SIGN_IDENTITY="Developer ID Application: Synthetic Signer (PPN23G925Y)"
     APP_DIR="/tmp/VoiceBar-Test.app"
     local bin_dir
     bin_dir="$(mktemp -d)"
@@ -499,9 +500,9 @@ test_developer_id_signature_guard_accepts_developer_id() {
 if [[ "$*" == *"--verify"* ]]; then
     exit 0
 elif [[ "$*" == *"-d -r-"* ]]; then
-    printf 'designated => identifier "com.voicelayer.voicebar" and anchor apple generic and certificate leaf[subject.OU] = "PPN23G925Y" and certificate leaf[subject.CN] = "Developer ID Application: Etan Heyman (PPN23G925Y)"\n' >&2
+    printf 'designated => identifier "com.voicelayer.voicebar" and anchor apple generic and certificate leaf[subject.OU] = "PPN23G925Y" and certificate leaf[subject.CN] = "Developer ID Application: Synthetic Signer (PPN23G925Y)"\n' >&2
 elif [[ "$*" == *"-dvvv"* || "$*" == *"-dv"* ]]; then
-    printf 'Authority=Developer ID Application: Etan Heyman (PPN23G925Y)\nAuthority=Developer ID Certification Authority\nAuthority=Apple Root CA\nTeamIdentifier=PPN23G925Y\n' >&2
+    printf 'Authority=Developer ID Application: Synthetic Signer (PPN23G925Y)\nAuthority=Developer ID Certification Authority\nAuthority=Apple Root CA\nTeamIdentifier=PPN23G925Y\n' >&2
 else
     exit 2
 fi
@@ -520,6 +521,7 @@ SH
 }
 
 test_developer_id_signature_guard_rejects_partial_chain() {
+    local SIGN_IDENTITY="Developer ID Application: Synthetic Signer (PPN23G925Y)"
     APP_DIR="/tmp/VoiceBar-Test.app"
     local bin_dir
     bin_dir="$(mktemp -d)"
@@ -528,9 +530,9 @@ test_developer_id_signature_guard_rejects_partial_chain() {
 if [[ "$*" == *"--verify"* ]]; then
     exit 0
 elif [[ "$*" == *"-d -r-"* ]]; then
-    printf 'designated => identifier "com.voicelayer.voicebar" and anchor apple generic and certificate leaf[subject.OU] = "PPN23G925Y" and certificate leaf[subject.CN] = "Developer ID Application: Etan Heyman (PPN23G925Y)"\n' >&2
+    printf 'designated => identifier "com.voicelayer.voicebar" and anchor apple generic and certificate leaf[subject.OU] = "PPN23G925Y" and certificate leaf[subject.CN] = "Developer ID Application: Synthetic Signer (PPN23G925Y)"\n' >&2
 elif [[ "$*" == *"-dvvv"* || "$*" == *"-dv"* ]]; then
-    printf 'Authority=Developer ID Application: Etan Heyman (PPN23G925Y)\nTeamIdentifier=PPN23G925Y\n' >&2
+    printf 'Authority=Developer ID Application: Synthetic Signer (PPN23G925Y)\nTeamIdentifier=PPN23G925Y\n' >&2
 else
     exit 2
 fi
@@ -553,7 +555,7 @@ test_resident_app_install_rejects_apple_development_without_dangerous_override()
     local old_sign_identity="$SIGN_IDENTITY"
     local old_required_prefix="$VOICEBAR_REQUIRED_SIGNING_PREFIX"
     local old_required_team="$VOICEBAR_REQUIRED_TEAM_ID"
-    SIGN_IDENTITY="Apple Development: Etan Heyman (DXHB5E7P2D)"
+    SIGN_IDENTITY="Apple Development: Synthetic Signer (DXHB5E7P2D)"
     VOICEBAR_REQUIRED_SIGNING_PREFIX="Apple Development"
     VOICEBAR_REQUIRED_TEAM_ID="DXHB5E7P2D"
     unset VOICEBAR_ALLOW_DANGEROUS_DEV_RESIDENT_INSTALL || true
@@ -562,7 +564,7 @@ test_resident_app_install_rejects_apple_development_without_dangerous_override()
     bin_dir="$(mktemp -d)"
     cat > "$bin_dir/security" <<'SH'
 #!/usr/bin/env bash
-printf '  1) ABCDEF "Apple Development: Etan Heyman (DXHB5E7P2D)"\n'
+printf '  1) ABCDEF "Apple Development: Synthetic Signer (DXHB5E7P2D)"\n'
 SH
     chmod 755 "$bin_dir/security"
 
@@ -589,7 +591,7 @@ test_resident_app_install_allows_apple_development_with_dangerous_override() {
     local old_sign_identity="$SIGN_IDENTITY"
     local old_required_prefix="$VOICEBAR_REQUIRED_SIGNING_PREFIX"
     local old_required_team="$VOICEBAR_REQUIRED_TEAM_ID"
-    SIGN_IDENTITY="Apple Development: Etan Heyman (DXHB5E7P2D)"
+    SIGN_IDENTITY="Apple Development: Synthetic Signer (DXHB5E7P2D)"
     VOICEBAR_REQUIRED_SIGNING_PREFIX="Developer ID Application"
     VOICEBAR_REQUIRED_TEAM_ID="PPN23G925Y"
     # shellcheck disable=SC2034 # Used by sourced build-app helper.
@@ -599,7 +601,7 @@ test_resident_app_install_allows_apple_development_with_dangerous_override() {
     bin_dir="$(mktemp -d)"
     cat > "$bin_dir/security" <<'SH'
 #!/usr/bin/env bash
-printf '  1) ABCDEF "Apple Development: Etan Heyman (DXHB5E7P2D)"\n'
+printf '  1) ABCDEF "Apple Development: Synthetic Signer (DXHB5E7P2D)"\n'
 SH
     chmod 755 "$bin_dir/security"
 

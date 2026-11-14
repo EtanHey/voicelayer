@@ -2,7 +2,7 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/playback-session/PlaybackSession.tla": "750639225a4213e7ea775f71e4c0c6a8c21148bc8ed75466d0ef04870f9e8046",
+    "formal/playback-session/PlaybackSession.tla": "3a093de1c92fd1a35d754824bd7310876d9f379a2a8871a57be4210d5666ef3f",
     "formal/playback-session/checks.json": "c7c8e6478b93b728c49094a1e0f3db97dd1e8d1ed382b67bcf8ed5b68e33c9cd",
     "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
@@ -201,8 +201,8 @@
       "kind": "temporal",
       "target": "ParkedEventuallyReleased",
       "status": "EXPECTED_FAIL",
-      "generated": 134131,
-      "distinct": 45665
+      "generated": 139830,
+      "distinct": 47470
     },
     "AskCancelsReadMutant": {
       "role": "mutant",

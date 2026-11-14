@@ -973,8 +973,8 @@ describe("STT backends", () => {
         transcribeViaServer: async () => {
           calls++;
           return calls === 1
-            ? "can you just do this and then tell me when you have the next goal for the next brain layer codex do you"
-            : "and then tell me when you have the next goal for the next brain layer codex do you have the next goal for the next brain layer codex";
+            ? "can you just do this and then veleeora me when you have the velexora veleyora for the velexora veldwora velezora velfaora do you"
+            : "and then veleeora me when you have the velexora veleyora for the velexora veldwora velezora velfaora do you have the velexora veleyora for the velexora veldwora velezora velfaora";
         },
       });
 
@@ -983,7 +983,7 @@ describe("STT backends", () => {
       expect(calls).toBe(2);
       // Etan's ruling B (2026-10-19): tail verify is log-only, so the full-decode text stands.
       expect(result.text).toBe(
-        "can you just do this and then tell me when you have the next goal for the next brain layer codex do you",
+        "can you just do this and then veleeora me when you have the velexora veleyora for the velexora veldwora velezora velfaora do you",
       );
       expect(result.backend).toBe("whisper-server");
     });
@@ -2214,7 +2214,7 @@ describe("STT backends", () => {
           if (calls === 3) return "middle plan";
           if (calls === 4) return "plan look at ponytail skill";
           if (calls === 5)
-            return "so I am going to put it in the middle of the ponytail";
+            return "so I am velfbora to put it in the velfcora of the velfdora";
           return "thank you";
         },
       });
@@ -2223,7 +2223,7 @@ describe("STT backends", () => {
 
       expect(calls).toBe(6);
       expect(result.text).toBe(
-        "intro setup middle plan look at ponytail skill so I am going to put it in the middle of the ponytail",
+        "intro setup middle plan look at ponytail skill so I am velfbora to put it in the velfcora of the velfdora",
       );
       expect(result.backend).toBe("whisper-server+chunks");
     });
@@ -2639,11 +2639,11 @@ describe("STT backends", () => {
 
       it("keeps a re-said sentence after a garbled overlap (review #139 P2)", () => {
         const merged = mergeChunkTranscripts([
-          "we talked about the release plan and then I said we need to fix the notch gear",
-          "we need to fits the not gear. Okay so again, we need to fix the notch gear before the release",
+          "we talked about the orchard plan and then I said we need to fix the orchard wheel",
+          "we need to fits the orchard wheel. Okay so again, we need to fix the orchard wheel before the release",
         ]);
         expect(merged).toContain("Okay so again,");
-        expect(merged.split("fix the notch gear").length - 1).toBe(2);
+        expect(merged.split("fix the orchard wheel").length - 1).toBe(2);
       });
 
       it("keeps both attempts of a retraction restarted at the seam (review #139 P3)", () => {
