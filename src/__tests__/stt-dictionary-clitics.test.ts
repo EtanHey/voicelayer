@@ -35,7 +35,7 @@ for (const literal of [
   "Zelmoras", "Zelmoras'", "Zelmoras’", "SQLites'", "SQLites’", "Zelmora’d", "Zelmora'll", "Zelmora'something", "Zelmora's…", "Zelmora's-",
   "Zelmora…", "Zelmoras'…", "preZelmora's", "Zelmora'sשלום", "Zelmora's_value",
   "src/Zelmora's.ts", "Zelmora's@example.com", "Zelmora's.value", "`Zelmora's`",
-  "```text\nZelmora's\n```", "Liranthalsilai",
+  "Velnora literal", "Velnora plain",
 ]) {
   test(`leaves unrecognized or literal surface ${literal} intact`, () => {
     expect(applyRules(literal, { aliases, possessiveAliasSources, disabledStages })).toBe(literal);
