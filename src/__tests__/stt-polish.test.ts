@@ -1272,6 +1272,43 @@ describe("stt-polish", () => {
     expect(result.error).toContain("removed code punctuation");
   });
 
+  // T8A: invented commands, count preservation only; no spaced-slash allowance.
+  const dictionaryCommands = new Set(["/quill", "/zephyr-sweep", "/other"]);
+  for (const [name, cleaned, candidate, expected] of [
+    ["glued before", "Run /quill now.", "Run/quill now.", "lost standalone dictionary command"],
+    ["joined commands", "Run /quill /zephyr-sweep.", "Run /quill/zephyr-sweep.", "lost standalone dictionary command"],
+    ["lost repeated occurrence", "Run /quill then /quill.", "Run /quill then/quill.", "lost standalone dictionary command"],
+    ["kept standalone", "Run /quill now.", "Run  /quill now.", "ok"],
+    ["unrelated added command", "Run /quill now.", "Run /quill /other now.", "ok"],
+    ["path occurrence", "See src/quill/index then /quill.", "See src/quill then /quill.", "ok"],
+  ] as const) {
+    it(`standalone command rule: ${name}`, () => {
+      expect(sttPolish.standaloneDictionaryCommandsPreserved(cleaned, candidate, dictionaryCommands)).toBe(expected);
+    });
+  }
+  for (const [name, candidate, status] of [
+    ["glued", "Run/quill now.", "rejected"],
+    ["standalone", "Run /quill now!", "applied"],
+    // A wrapped command cannot execute where it is typed; rejection delivers
+    // the cleaned text, preserving the command the speaker actually said.
+    ["backtick-wrapped", "Run `/quill` now.", "rejected"],
+  ] as const) {
+    it(`delivers the correct text for a ${name} dictionary command`, async () => {
+      const vocabularyPath = join(TEST_DIR, "commands.json");
+      await Bun.write(vocabularyPath, JSON.stringify({ entries: [{ canonical: "/quill", variants: [] }] }));
+      server = createMockPolishServer(() => ({ text: candidate }));
+      const cleanedText = "Run /quill now.";
+      const result = await polishTranscriptionText({ rawText: cleanedText, cleanedText, env: {
+        QA_VOICE_STT_POLISH: "on", QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG, QA_VOICE_STT_VOCABULARY_PATH: vocabularyPath,
+        QA_VOICE_STT_COMMANDS_DIR: "",
+      } });
+      expect(result.status).toBe(status);
+      expect(result.text).toBe(status === "rejected" ? cleanedText : candidate);
+      if (status === "rejected") expect(result.error).toContain("lost standalone dictionary command");
+    });
+  }
+
   it("allows slash command spacing cleanup when the slash is preserved", async () => {
     server = createMockPolishServer(() => ({
       text: "Also, do /whats-new and output that as your summary.",
