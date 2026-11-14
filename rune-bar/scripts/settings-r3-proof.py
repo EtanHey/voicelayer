@@ -19,12 +19,6 @@ def run(args,tab=0,height=640,theme='dark',variant=None):
  p=subprocess.run([str(BIN),'--size',f'720x{height}','--theme',theme,*map(str,args)],env=env,capture_output=True,text=True)
  with (OUT/'render-r3.log').open('a') as f:f.write(p.stderr+p.stdout)
  if p.returncode:raise RuntimeError(p.stderr)
-def flat(v):
- if isinstance(v,dict):
-  if 'rect' in v and 'key' in v:yield v
-  for x in v.values():yield from flat(x)
- elif isinstance(v,list):
-  for x in v:yield from flat(x)
 if not os.environ.get('SETTINGS_MEASURE_ONLY'):
  for theme in ['dark','light']:
   for h in [640,900]:
@@ -33,7 +27,7 @@ if not os.environ.get('SETTINGS_MEASURE_ONLY'):
    for variant,tab,name in [('BROKEN',0,'broken'),('LOCKED',1,'locked'),('UNKNOWN',1,'unknown'),('LOCKED',3,'locked-speech')]:
     run(['--snap',PIC/f'settings-{name}-{h}-{theme}.png','--at','1'],tab,h,theme,variant)
  print('36 fixture pictures rendered',flush=True)
- 
+
  flick=[]
  for j in range(3):
   t=j*.48+.05;flick.append({'t':t,'type':'drag','key':'pager','dx':-160,'dy':0,'dur':.16})
