@@ -75,9 +75,10 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(seconds))
     }
 
-    private func send(_ type: NSEvent.EventType, at point: NSPoint, to panel: NSWindow, clickCount: Int = 1) throws {
+    private func send(_ type: NSEvent.EventType, at point: NSPoint, to panel: NSWindow,
+                      clickCount: Int = 1, timestamp: TimeInterval? = nil) throws {
         panel.sendEvent(try XCTUnwrap(NSEvent.mouseEvent(
-            with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            with: type, location: point, modifierFlags: [], timestamp: timestamp ?? ProcessInfo.processInfo.systemUptime,
             windowNumber: panel.windowNumber, context: nil, eventNumber: 1, clickCount: clickCount,
             pressure: type == .leftMouseUp ? 0 : 1
         )))
@@ -514,11 +515,14 @@ extension NotchSurfaceHostedFlowTests {
                 XCTAssertTrue(NotchHistoryPull.accepts(y: canvasY), "the fixture must start inside the pull band")
                 let end = NSPoint(x: start.x, y: start.y - distance)
                 let journalStart = h.surface.journal.count
-                try send(.leftMouseDown, at: start, to: h.panel)
-                drain(distance == 220 ? 0.3 : 0.01)
+                // Gesture speed comes from event timestamps, independent of runner scheduling and rendering.
+                let t0 = ProcessInfo.processInfo.systemUptime
+                let duration = distance == 220 ? 0.3 : 0.01
+                try send(.leftMouseDown, at: start, to: h.panel, timestamp: t0)
+                drain(duration)
                 // Only one changed sample: no later event can repair a lost initial velocity.
-                try send(.leftMouseDragged, at: end, to: h.panel)
-                try send(.leftMouseUp, at: end, to: h.panel)
+                try send(.leftMouseDragged, at: end, to: h.panel, timestamp: t0 + duration)
+                try send(.leftMouseUp, at: end, to: h.panel, timestamp: t0 + duration)
                 drain(0.1)
                 XCTAssertEqual(h.surface.drawer, .history(.collapsed), "start \(fromTop), travel \(distance)")
                 XCTAssertEqual(h.surface.journal.dropFirst(journalStart).filter {

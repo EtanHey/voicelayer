@@ -828,7 +828,8 @@ public struct BarView: View {
             .onChanged { value in
                 guard !isDismissedDrawerGesture else { return }
                 let openHeight = notchPresentationOpenHistoryHeight
-                let time = NotchHistoryClock.now()
+                // Use input-sample time, not handler latency, when measuring pointer velocity.
+                let time = value.time.timeIntervalSinceReferenceDate
                 if isDrawerBodyDragActive { return }
                 if case .idle = historyPull.phase, case .idle = historyRowsPull.phase {
                     historyPressIsBare = abs(value.startLocation.x - historyPanelCentreX) <= notchPresentation.geometry.coreWidth / 2
@@ -873,7 +874,7 @@ public struct BarView: View {
                 if travel > NotchHistoryMorph.dragSlop { historyPressIsBare = false }
                 if historyRowsPull.phase == .idle, value.translation != historyPressLastTranslation,
                    canPullDrawer || isSettingsDrawerOpen {
-                    followHistoryPull(y: value.location.y, time: NotchHistoryClock.now(),
+                    followHistoryPull(y: value.location.y, time: value.time.timeIntervalSinceReferenceDate,
                                       openHeight: notchPresentationOpenHistoryHeight)
                 }
                 endHistoryPull(cancelled: false)
@@ -886,7 +887,8 @@ public struct BarView: View {
         DragGesture(minimumDistance: NotchHistoryMorph.dragSlop, coordinateSpace: .named(Self.notchCanvasSpace))
             .onChanged { value in
                 guard !isDismissedDrawerGesture else { return }
-                let time = NotchHistoryClock.now()
+                // Use input-sample time, not handler latency, when measuring pointer velocity.
+                let time = value.time.timeIntervalSinceReferenceDate
                 if !isDrawerBodyDragActive {
                     // Lane H: a sideways drag is History's category swipe, never a drawer pull.
                     guard abs(value.translation.width) <= abs(value.translation.height) * NotchHistoryCategoryPager.horizontalBias
