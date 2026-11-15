@@ -2,6 +2,8 @@
 | --- | --- |
 | AskKeepsRead | CancelPreparingMutant, AskCancelsReadMutant |
 | AskParksOne | StrandMutant |
+| DictationEventuallyAdmitted | AskReservationRetainedMutant |
+| DictationOwnsQuietVoice | AskDictationEarlyMutant |
 | EndedReplayNotShownRunning | OldReplayShownMutant |
 | MicExclusive | EarlyMicMutant, RecorderWaitMutant |
 | NoSameQueued | SameQueuesMutant |

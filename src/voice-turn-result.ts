@@ -6,6 +6,7 @@ export type VoiceAskTimeoutStage = "playback-wait" | "prompt" | "capture-start" 
 type Recovery = NonNullable<NonNullable<Parameters<typeof formatAsk>[1]>["recovery"]>;
 type PromptPlayback = PlaybackOutcomeEvent | undefined;
 export type VoiceAskTurnOutcome =
+  | { kind: "dictation-started"; archiveId: string | null }
   | { kind: "away" }
   | { kind: "answered"; transcript: string; archiveId: string | null; promptPlayback: PromptPlayback }
   | { kind: "no-answer"; timeoutSeconds: number; recovery: Recovery; promptPlayback: PromptPlayback }
@@ -35,6 +36,8 @@ export function formatVoiceAskTurnResult(outcome: VoiceAskTurnOutcome): McpTextR
     ...(isError && { isError }),
   });
   switch (outcome.kind) {
+    case "dictation-started":
+      return textResult(`the user started a dictation; ask cancelled (ask/archive id: ${outcome.archiveId ?? "unavailable"}). You can ask again.`);
     case "answered":
       return textResult(formatAsk(outcome.transcript, {
         ...(outcome.archiveId ? { archiveId: outcome.archiveId } : {}),

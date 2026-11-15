@@ -1,5 +1,6 @@
+import { interruptAskPromptForDictation } from "./ask-prompt-interruption";
 import { writeCaptureStop, captureLifecycle } from "./capture-lifecycle";
-import { runBarCaptureWithPausedRead, bufferOpeningCaptureControl, hasScopedCapture, scopedCaptureTakeID } from "./f5-capture";
+import { runBarCaptureWithPausedRead, afterAskPromptExit, bufferOpeningCaptureControl, hasScopedCapture, scopedCaptureTakeID } from "./f5-capture";
 import { runHistoryTranscription, canStartBarCapture, cancelRecordingJob,
   acknowledgeDictationDelivery, recordingJobsSnapshot, markBarCaptureDraining, isBarCaptureDraining } from "./recording-jobs";
 import { downloadRecognizer, cancelRecognizerDownload } from "./recognizer-download";
@@ -525,6 +526,12 @@ function handleSocketCommandAdmitted(
       return buildAck(command, "accept");
     }
     case "record": {
+      const promptExit = command.take_id !== undefined ? interruptAskPromptForDictation() : undefined;
+      if (promptExit) {
+        const takeID = command.take_id!;
+        return afterAskPromptExit(takeID, promptExit,
+          () => handleSocketCommandAdmitted({ ...command, take_id: takeID }, onSpeak), command.take_id !== undefined);
+      }
       if (recordingState === "recording") {
         if (isBarCaptureDraining()) return buildAck(command, "reject", "Previous recording is finishing. Try record again when ready.");
         return buildAck(command, "noop", "already recording");

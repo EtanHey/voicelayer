@@ -6,7 +6,13 @@
     "src/playback/ledger.ts",
     "src/__tests__/playback-session.test.ts",
     "src/tts.ts",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift"
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift",
+    "src/ask-prompt-interruption.ts",
+    "src/handlers.ts",
+    "src/f5-capture.ts",
+    "src/socket-handlers.ts",
+    "src/__tests__/pause-ask.test.ts",
+    "flow-bar/Tests/VoiceBarUITests/VoiceStateRecoveryTests.swift"
   ],
   "checks": {
     "Fixed": {
@@ -108,6 +114,21 @@
       "role": "mutant",
       "target": "EndedReplayNotShownRunning",
       "kind": "invariant"
+    },
+    "AskDictationFixed": {
+      "role": "positive",
+      "target": null,
+      "kind": "pass"
+    },
+    "AskReservationRetainedMutant": {
+      "role": "mutant",
+      "target": "DictationEventuallyAdmitted",
+      "kind": "temporal"
+    },
+    "AskDictationEarlyMutant": {
+      "role": "mutant",
+      "target": "DictationOwnsQuietVoice",
+      "kind": "invariant"
     }
   },
   "acceptance": [
@@ -124,6 +145,8 @@
     "QueueSurvivesAsk",
     "SuccessorWaitsForRelease",
     "RestoreReceiptApplied",
-    "EndedReplayNotShownRunning"
+    "EndedReplayNotShownRunning",
+    "DictationOwnsQuietVoice",
+    "DictationEventuallyAdmitted"
   ]
 }
