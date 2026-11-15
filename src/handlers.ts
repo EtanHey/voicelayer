@@ -762,6 +762,8 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
   const outerTimeoutMs =
     (timeoutSeconds + VOICE_ASK_CAPTURE_TIMEOUT_ALLOWANCE_SECONDS) * 1000;
   const inputAbortController = new AbortController();
+  // F5 alone cancels prompt synthesis; timeout/disconnect retain their bounded teardown contract.
+  const dictationPromptAbortController = new AbortController();
   let captureAdmission: CaptureAdmission | undefined;
   let dictationInterrupted = false;
   let unregisterPrompt: (() => void) | undefined;
@@ -914,6 +916,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     // F5 may end this prompt, but never an Ask whose microphone has been admitted.
     unregisterPrompt = registerAskPrompt(() => {
       dictationInterrupted = true;
+      dictationPromptAbortController.abort(new Error("Ask yielded to dictation"));
       inputAbortController.abort(new Error("Ask yielded to dictation"));
       for (const handle of promptPlayers) cancelPlayback({ id: handle.id });
     }, operationLifecycle?.released ?? flowReleased.promise);
@@ -932,7 +935,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         voice: voiceName,
         captureAudioArtifact: true,
         textOnlyOnSynthesisFailure: inputAbortController.signal,
-        signal: inputAbortController.signal,
+        signal: dictationPromptAbortController.signal,
         onPlaybackQueued: handle => {
           promptPlayers.push(handle);
           if (inputAbortController.signal.aborted || !captureAdmission!.admit(handle, onPromptParkedChange)) {
