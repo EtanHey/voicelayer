@@ -199,8 +199,8 @@ async function shortTail(mode = "speech", duration = 28.5013125, lastEnd = 27.2)
       if (calls++ === 0) return native;
       const clipBytes = readFileSync(clip), clipFrames = (clipBytes.length - 44) / 2;
       const candidate = mode === "empty" ? "" : mode === "legacy" ? "final thought. Go." : mode === "punctuation" ? "final thought, recovered tail" : "final thought. recovered tail";
-      const clipStart = Math.max(0, lastEnd - 1.26);
-      const recoveredStart = mode === "outside" ? .7 : (mode === "legacy" ? 24 : lastEnd + .35) - clipStart;
+      const clipStart = Math.floor(Math.max(0, lastEnd - 1.26) * 16000) / 16000;
+      const recoveredStart = mode === "outside" ? .7 : (mode === "early40" ? lastEnd - .04 : mode === "early80" ? lastEnd - .08 : mode === "legacy" ? 24 : lastEnd + .35) - clipStart;
       const raw_token_times = [
         { text: candidate.slice(0, candidate.indexOf(" ", 6)), start: .16, end: .6 },
         { text: candidate.slice(candidate.indexOf(" ", 6)), start: recoveredStart, end: recoveredStart + .25 },
@@ -268,4 +268,10 @@ test("short-tail probe never admits internal-gap repair on a five-second take", 
   expect(r.probes).toBe(1); expect(r.calls).toBe(1);
   expect(r.result.text).toBe(r.native.text);
   expect(r.logs).not.toContain("uncovered-internal");
+});
+
+test.each(["early40", "early80"])("R2 tail accepts one-frame boundary shift: %s", async mode => {
+  const r = await shortTail(mode);
+  expect(r.calls).toBe(2);
+  expect(r.result.text).toBe(r.native.text + " recovered tail");
 });

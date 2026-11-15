@@ -230,16 +230,32 @@ test.each(["bad-timing", "out-of-range", "invalid-tokens"] as const)("%s retains
   expect(r.logs.some(l => l.includes('"event":"parakeet_coverage_unavailable"'))).toBe(true);
 });
 
-test.each(["missing", "unaligned", "early", "late", "straddling", "subword", "valid"])("insertion timing: %s", mode => {
+test.each(["missing", "unaligned", "early", "late", "straddling", "subword", "late-frame", "valid"])("insertion timing: %s", mode => {
   const candidate: ParakeetResponse = { text: "final thought recovered tail", complete: true, input_frames: 80000,
     covered_frames: 80000, sample_rate: 16000, last_token_end_s: 5, inference_s: 0, language: null,
     raw_token_times: [{ text: "final thought", start: 0, end: 1 }, { text: " recovered tail", start: 2.3, end: 2.7 }] };
   if (mode === "missing") delete candidate.raw_token_times;
   if (mode === "unaligned") candidate.raw_token_times = [{ text: "wrong text", start: 2.3, end: 2.7 }];
   if (mode === "early") candidate.raw_token_times![1]!.start = 1.7;
-  if (mode === "late") candidate.raw_token_times![1]!.end = 3.3;
+  if (mode === "late") candidate.raw_token_times![1]!.end = 3.4;
+  if (mode === "late-frame") candidate.raw_token_times![1]!.end = 3.3;
   if (mode === "straddling") candidate.raw_token_times![1]!.start = 1.9;
   if (mode === "subword") candidate.raw_token_times = [{ text: "final thought re", start: 0, end: 1 }, { text: "covered tail", start: 2.3, end: 2.7 }];
   const plan = { gap: { start: 12.25, end: 13 }, start: 10, end: 15, offset: 14, left: ["final", "thought"], right: [] };
-  expect(qualifyTimedSpanRepair(candidate, plan, 1, .25).accepted).toBe(mode === "valid");
+  expect(qualifyTimedSpanRepair(candidate, plan, 1, .25).accepted).toBe(mode === "valid" || mode === "late-frame");
+});
+
+test.each([.04, .08])("R2 internal right edge accepts %fs frame-grid overlap", overlap => {
+  const candidate: ParakeetResponse = { text: "before this recovered clause after this", complete: true,
+    input_frames: 80000, covered_frames: 80000, sample_rate: 16000, last_token_end_s: 4,
+    inference_s: 0, language: null, raw_token_times: [
+      { text: "before this", start: 0, end: 1 },
+      { text: " recovered clause", start: 2.1, end: 3 + overlap },
+      { text: " after this", start: 3.1, end: 4 },
+    ] };
+  const plan = { gap: { start: 12.25, end: 12.75 }, start: 10, end: 15, offset: 11,
+    left: ["before", "this"], right: ["after", "this"] };
+  const result = qualifyTimedSpanRepair(candidate, plan, 1, .25);
+  expect(result.accepted).toBe(true);
+  if (result.accepted) expect(result.insertion).toBe("recovered clause");
 });

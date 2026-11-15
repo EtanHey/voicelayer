@@ -82,6 +82,10 @@ export function qualifySpanRepair(candidate: string, plan: SpanRepair, speechSec
   return { accepted: true, insertion, from: ws[leftEnd - 1]!.end, to: plan.right.length ? ws[rightStart]!.start : candidate.length };
 }
 
+// Parakeet TDT encoder timestamps advance in 80ms frames. Cropping shifts
+// that grid relative to the native take; allow one frame at either word edge.
+const PARAKEET_ENCODER_FRAME_S = 0.08;
+
 /** Fail closed on untimed/misaligned crop words. Times are relative to the crop,
  * while the uncovered span is relative to the full take. Never trim native text
  * or salvage only some candidate words when an insertion crosses its evidence. */
@@ -101,7 +105,8 @@ export function qualifyTimedSpanRepair(candidate: ParakeetResponse, plan: SpanRe
   const inserted = words(candidate.text).filter(w => w.start >= qualified.from && w.end <= qualified.to);
   // spanWav floors the crop's start to a sample boundary.
   const origin = Math.floor(plan.start * 16000) / 16000;
-  const lower = plan.gap.start - margin, upper = plan.gap.end + margin;
+  const lower = plan.gap.start - margin - PARAKEET_ENCODER_FRAME_S;
+  const upper = plan.gap.end + margin + PARAKEET_ENCODER_FRAME_S;
   for (const word of inserted) {
     const tokens = timed.filter(t => t.to > word.start && t.from < word.end);
     if (!tokens.length || tokens.some(t => t.start + origin < lower || t.end + origin > upper))
