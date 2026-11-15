@@ -15,8 +15,8 @@
     "formal/f5-gesture-preview/StaleShowMutant.cfg": "b87699b9abeb202829948576a8af5064b7e6917b871656638d458dba3b1c4e3e",
     "flow-bar/Sources/VoiceBar/HotkeyManager.swift": "31a294ee0c5d3a2bf234f0ff0a5934dcd4ca7e42d9390412bb78a5bb1621ce5a",
     "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "9e4bfc30e64627da8a74e43caf59c4620b54efb6074faa1a07b2b2b10c4a4ab5",
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "6a0ccf561e39b29b91f08c026f9f66086e33a8eba20ed23cc0be6450e3031140",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "551fffe23e20d89dab372861f2f4ebd480fdaa3d4c725d0ef0344c1388e430e0",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "0621dd4b44ced50adea2bcf4bf7812cdf67883573d4b656b61303bd7648efdca",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "42f2d446a1b520d3c3969f442ea39b5246d2299ddd2adf1b0648f92360cc288f",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {

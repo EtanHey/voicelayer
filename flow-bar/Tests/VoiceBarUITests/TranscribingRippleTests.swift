@@ -50,6 +50,67 @@ final class TranscribingRippleTests: XCTestCase {
         let model: VoiceBarNotchPresentationModel
     }
 
+    func testNotchRegressionSpinnerKeepsTheTwoPointThreeCoreDistance() throws {
+        let mounted = try mount()
+        defer { unmount(mounted) }
+        startRecording(mounted)
+        send(mounted, ["type": "state", "state": "transcribing"])
+        advance(mounted, by: 1)
+        let spinner = try frame("Transcribing", in: mounted.host)
+        let presentation = mounted.model.presentation
+        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation).canvasGeometry
+        // BarView includesPanelOutsets adds 12 pt at the left of the fixed morph canvas.
+        let coreLeft = 12 + canvas.coreOriginX
+        let gap = coreLeft - spinner.midX
+        let historical = try historicalSpinnerCoreDistance()
+        print("NOTCH_REG spinner center distance to core: current=\(gap), v2.3=\(historical), coreLeft=\(coreLeft)")
+        try regressionShot(mounted, "transcribing")
+        XCTAssertEqual(historical, 36.5, accuracy: 0.5, "measured historical single-spinner placement")
+        XCTAssertEqual(gap, historical, accuracy: 0.5, "match 2.3 spinner position; extra width belongs outside it")
+        let microphone = try frame("Choose microphone", in: mounted.host)
+        XCTAssertEqual(spinner.midX - microphone.midX - 20, 6, accuracy: 0.5,
+                       "the approved outer microphone keeps recording's 20 pt slots and 6 pt gap")
+        XCTAssertEqual(presentation.geometry.leadingWingWidth, 102, accuracy: 0.001)
+        XCTAssertEqual(presentation.geometry.topWidth, 389, accuracy: 0.001, "keep the recording-to-transcribing shell width")
+    }
+
+    /// Placement-only reconstruction of v2.3.0 BarView's transcribing branch: one 20 pt spinner,
+    /// centred by VoiceBarNotchWingSlot in its fixed 73.5 pt wing. The compact slot's 14/13.5 insets
+    /// and centring are unchanged from that tag. This does not claim to run the historical binary.
+    private func historicalSpinnerCoreDistance() throws -> CGFloat {
+        let view = ProcessingSpinner(color: Theme.processingRippleColor)
+            .frame(width: 20, height: 20)
+            .accessibilityElement()
+            .accessibilityLabel("Transcribing")
+            .modifier(VoiceBarNotchWingSlot(slot: VoiceBarNotchContract.material.wingContentLayout(
+                for: .leading, state: .compactStatus)))
+            .frame(width: 73.5, height: 32)
+            .environment(\.visualRenderTime, 101.5)
+        let host = NSHostingView(rootView: view)
+        host.frame = CGRect(x: 0, y: 0, width: 73.5, height: 32)
+        let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        VLOrderCompositorTestWindow(window)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        settle(host)
+        let spinner = try frame("Transcribing", in: host)
+        if let path = ProcessInfo.processInfo.environment["NOTCH_REG_SHOTS"] {
+            let directory = URL(fileURLWithPath: path, isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try XCTUnwrap(try bitmap(host).representation(using: .png, properties: [:]))
+                .write(to: directory.appendingPathComponent("v2.3-spinner-placement.png"))
+        }
+        return host.bounds.maxX - spinner.midX
+    }
+
+    private func regressionShot(_ mounted: Mounted, _ name: String) throws {
+        guard let path = ProcessInfo.processInfo.environment["NOTCH_REG_SHOTS"] else { return }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try shot(mounted, name, into: directory)
+    }
+
     // MARK: - The meter becomes the ripple in place
 
     /// The right wing keeps the recording meter's slot: same frame, same seven bar columns; the bars turn the

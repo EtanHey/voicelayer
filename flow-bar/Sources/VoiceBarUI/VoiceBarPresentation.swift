@@ -551,6 +551,20 @@ public enum VoiceBarPresentation {
     /// c9-P: both transcribing wings, at least the plain recording band's (Stop · ✕ on the left, time and meter on
     /// the right). A wider recording band (an earlier take's spinner) is held by the presentation model through the
     /// hand-over (`holdsRecordingWings`, round 2 F1); the meter row is pinned to the outer edge as while recording.
+    /// v2.3.0 centred one spinner in the fixed control wing. Keep that core distance inside the wider band.
+    public static var transcribingSpinnerCoreInset: CGFloat {
+        let material = VoiceBarNotchContract.material
+        return VoiceBarNotchContract.compactCoreContentInset +
+            (VoiceBarNotchContract.fixedWingWidth - material.compactContentInset -
+             VoiceBarNotchContract.compactCoreContentInset - material.compactControlSize) / 2
+    }
+
+    /// The microphone sits one recording-control pitch outside the spinner; its hit region follows its slot.
+    public static var transcribingMicrophoneCoreInset: CGFloat {
+        transcribingSpinnerCoreInset + VoiceBarNotchContract.material.compactControlSize +
+            VoiceBarNotchContract.material.compactControlSpacing
+    }
+
     public static func transcribingWingWidth(visibleCoreOcclusionInset: CGFloat) -> CGFloat {
         recordingWingWidth(showsThirdControl: false, showsEarlierTakeProcessing: false,
                            visibleCoreOcclusionInset: visibleCoreOcclusionInset)
