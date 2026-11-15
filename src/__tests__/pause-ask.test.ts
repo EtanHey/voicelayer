@@ -1,3 +1,4 @@
+import { narrationSource } from "../narration/source";
 import { finishSyntheticCapture } from "./setup/recording-jobs-fixture";
 import { hasScopedCapture } from "../f5-capture";
 import { afterEach, beforeEach, expect, it, jest, setSystemTime, spyOn } from "bun:test";
@@ -16,6 +17,7 @@ import { TEST_TMP, testSocket } from "./setup/test-tmp";
 import { deferredFixture as deferred, fixtureBarrier, fixtureCheckpoint as flush } from "./long-read-fixture-barriers";
 
 const question = "First question?";
+const realSpeak = tts.speak;
 
 type Player = { exit: ReturnType<typeof deferred<number>>; signals: string[] };
 let players: ReturnType<typeof fixtureBarrier<Player>>;
@@ -455,4 +457,84 @@ it("F5 during Ask listening retains the existing busy refusal and does not cance
       .toMatchObject({ outcome: "reject", reason: "busy" });
   } finally { answer.resolve("retained answer"); }
   expect((await pending)?.content[0].text).toContain("retained answer");
+});
+
+
+it("F5 aborts only Ask synthesis and admits dictation before the 2 second record-ack deadline", async () => {
+  const entered = deferred<AbortSignal>();
+  const synthesis = deferred<null>();
+  const otherSynthesis = deferred<null>();
+  const otherEntered = deferred<AbortSignal>();
+  let releasedSynthesis = false;
+  spies.push(spyOn(narrationSource(), "synthesize").mockImplementation(request => {
+    expect(request.signal).toBeDefined();
+    const other = request.text === "Unrelated narration";
+    (other ? otherEntered : entered).resolve(request.signal!);
+    return new Promise((resolve, reject) => {
+      request.signal!.addEventListener("abort", () => reject(request.signal!.reason), { once: true });
+      void (other ? otherSynthesis : synthesis).promise.then(resolve, reject);
+    });
+  }));
+  spyOn(tts, "speak").mockImplementation((text, options) => realSpeak(text, { ...options, voice: "en-US-AriaNeural" }));
+  capture.mockImplementation(async () => {
+    expect(tts.isCaptureAdmissionReserved()).toBe(false);
+    expect(hasActiveVoiceOperation()).toBe(false);
+    return finishSyntheticCapture(async () => "every dictated word");
+  });
+  pending = handleVoiceAsk({ message: question, timeout_seconds: 5 });
+  const promptSignal = await entered.promise;
+  const other = realSpeak("Unrelated narration", { voice: "en-US-AriaNeural" }).catch(error => error);
+  const otherSignal = await otherEntered.promise;
+  let ack: unknown;
+  const record = Promise.resolve(handleSocketCommand({ cmd: "record", id: "synthesis-f5", take_id: "synthesis-take" }))
+    .then(value => { ack = value; return value; });
+  try {
+    await flush();
+    jest.advanceTimersByTime(1999);
+    await flush();
+    expect(releasedSynthesis).toBe(false);
+    expect(ack).toMatchObject({ command: "record", outcome: "accept" });
+    expect(promptSignal.aborted).toBe(true);
+    expect(otherSignal.aborted).toBe(false);
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(players.values).toHaveLength(0);
+    const result = await pending;
+    expect(result?.isError).not.toBe(true);
+    expect(result?.content[0].text).toContain("the user started a dictation; ask cancelled");
+  } finally {
+    releasedSynthesis = true;
+    synthesis.resolve(null);
+    otherSynthesis.resolve(null);
+    await other;
+    await record;
+    await pending;
+    await flush();
+  }
+});
+
+
+for (const refusal of ["mic-disabled", "foreign-booking"] as const) it(`F5 ${refusal} does not cancel the Ask prompt`, async () => {
+  const { player } = await startAsk();
+  const check = refusal === "mic-disabled"
+    ? spyOn(input, "micAllowed").mockReturnValue(false)
+    : spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: false,
+        owner: { sessionId: "other-session", pid: 9999, startedAt: "2026-01-01T00:00:00Z" } });
+  let ack: unknown;
+  const record = Promise.resolve(handleSocketCommand({ cmd: "record", id: refusal, take_id: `${refusal}-take` }))
+    .then(value => { ack = value; return value; });
+  try {
+    await flush();
+    expect(ack).toMatchObject({ outcome: "reject", reason: refusal === "mic-disabled" ? "mic disabled" : "busy" });
+    expect(player.signals).toEqual([]);
+    expect(tts.isCaptureAdmissionReserved()).toBe(true);
+    expect(hasActiveVoiceOperation()).toBe(true);
+    expect(capture).not.toHaveBeenCalled();
+  } finally {
+    check.mockRestore();
+    player.exit.resolve(0);
+    await pending;
+    await record;
+    await flush();
+  }
+  expect((await pending)?.content[0].text).toContain("fixture answer");
 });

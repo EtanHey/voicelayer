@@ -32,13 +32,13 @@
     "src/playback/session.ts": "e32428e4744410576ee10e788c5ee8ca827f5973bd3e287574a1ca7bce58b35b",
     "src/playback/ledger.ts": "d57b969ab6147f269362dae68faad29ff7675338003366e6b473c57a6e3ea166",
     "src/__tests__/playback-session.test.ts": "90041ca61405d17cd7a406371e4b9f3c51c771e0e710791d51702a54af40da22",
-    "src/tts.ts": "c81c90c38dbf92021a80488d339a64baf65fbae58aa2cb3469a4aec823e4a468",
+    "src/tts.ts": "f8ac1761b37277e7b471ecdad5528768eebf97cba9fb9381e49d4203fa1927e4",
     "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "9e4bfc30e64627da8a74e43caf59c4620b54efb6074faa1a07b2b2b10c4a4ab5",
-    "src/ask-prompt-interruption.ts": "333fb67d2b7a79eef3bc286a944a96e5bcf4897a06562aa6d069041e74756bcd",
-    "src/handlers.ts": "396a3fce867ee89b7780d83c322dd94e0e5d61df8083ff5fd699d44a6307da67",
+    "src/ask-prompt-interruption.ts": "84542c3a9b95a051c882dcaab77f55a1e80d4e01485be9a7e3de984a0392979f",
+    "src/handlers.ts": "9c0dcd7736012a060db295948e5ee2f21f0f1ead69ac767dd827b942e3008e55",
     "src/f5-capture.ts": "3f445b9fd24ea92d9eb176c39f06f3bfd9a37eeca9ab537326aaa5540ded8740",
-    "src/socket-handlers.ts": "06523101b8a571437880ae93e7eb3030766422eb2c1863934c6ea00b289723af",
-    "src/__tests__/pause-ask.test.ts": "c554070a0202714bc376a7b02c059085032d9f723785720bab024126fea1e9ac",
+    "src/socket-handlers.ts": "ae4d17c53965cbee48bd629de4a79e1a286d9e7fd105682dacdde3268d1bf890",
+    "src/__tests__/pause-ask.test.ts": "8fcf51e46a585922f62e0f2da32ab5ad9045a4e56d09d480a40bba78c47cd81d",
     "flow-bar/Tests/VoiceBarUITests/VoiceStateRecoveryTests.swift": "799f66b92a08d5c9e318169720f640171c590406599c17786b8e8cd52465801e",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
@@ -216,8 +216,8 @@
       "kind": "temporal",
       "target": "ParkedEventuallyReleased",
       "status": "EXPECTED_FAIL",
-      "generated": 138384,
-      "distinct": 47000
+      "generated": 128996,
+      "distinct": 44043
     },
     "AskCancelsReadMutant": {
       "role": "mutant",

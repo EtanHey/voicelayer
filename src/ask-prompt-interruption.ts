@@ -11,3 +11,6 @@ export function interruptAskPromptForDictation(): Promise<void> | undefined {
   owner.cancel();
   return owner.released;
 }
+
+/** Read-only preflight: refusal must not consume the Ask. */
+export function hasInterruptibleAskPrompt(): boolean { return prompt !== undefined; }

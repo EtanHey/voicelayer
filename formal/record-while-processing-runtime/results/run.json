@@ -25,7 +25,7 @@
     "formal/record-while-processing-runtime/Fixed.cfg": "100335967423506e9e265e1629777937f1770e14f25c8ebc84f389baa37de3c1",
     "src/recording-jobs.ts": "b93de1bd6033ad59ec273c768a47317538b5f50dc482d088303422d40c134b6a",
     "src/recording-take-queue.ts": "781306092e4ed6b22eedff048023059867f26682b98ad0bd470f11484621bb7b",
-    "src/socket-handlers.ts": "06523101b8a571437880ae93e7eb3030766422eb2c1863934c6ea00b289723af",
+    "src/socket-handlers.ts": "ae4d17c53965cbee48bd629de4a79e1a286d9e7fd105682dacdde3268d1bf890",
     "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "9e4bfc30e64627da8a74e43caf59c4620b54efb6074faa1a07b2b2b10c4a4ab5",
     "flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift": "40894bfe33de588427cd42f5a0417804079ff139489a29fd377c4ba904ba27fc",
     "flow-bar/Sources/VoiceBar/SynthesizedKeyEvents.swift": "b580e09f10dcad78e683b2e76a8d01c4309256a1222ee235eab4cc3431a2a368",
@@ -116,8 +116,8 @@
       "kind": "temporal",
       "target": "NoStaleGuard",
       "status": "EXPECTED_FAIL",
-      "generated": 166991,
-      "distinct": 56543
+      "generated": 173522,
+      "distinct": 58222
     },
     "RetargetMutant": {
       "role": "mutant",
@@ -156,16 +156,16 @@
       "kind": "temporal",
       "target": "DeliveryAckBound",
       "status": "EXPECTED_FAIL",
-      "generated": 104141,
-      "distinct": 37634
+      "generated": 105922,
+      "distinct": 38172
     },
     "StallMutant": {
       "role": "mutant",
       "kind": "temporal",
       "target": "ProcessingSettles",
       "status": "EXPECTED_FAIL",
-      "generated": 80539,
-      "distinct": 26942
+      "generated": 103720,
+      "distinct": 31756
     },
     "FailedMicMutant": {
       "role": "mutant",
@@ -212,8 +212,8 @@
       "kind": "temporal",
       "target": "QueuedCaptureStarts",
       "status": "EXPECTED_FAIL",
-      "generated": 73000,
-      "distinct": 27833
+      "generated": 112249,
+      "distinct": 39528
     }
   }
 }

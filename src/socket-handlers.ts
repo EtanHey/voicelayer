@@ -1,4 +1,4 @@
-import { interruptAskPromptForDictation } from "./ask-prompt-interruption";
+import { hasInterruptibleAskPrompt, interruptAskPromptForDictation } from "./ask-prompt-interruption";
 import { writeCaptureStop, captureLifecycle } from "./capture-lifecycle";
 import { runBarCaptureWithPausedRead, afterAskPromptExit, bufferOpeningCaptureControl, hasScopedCapture, scopedCaptureTakeID } from "./f5-capture";
 import { runHistoryTranscription, canStartBarCapture, cancelRecordingJob,
@@ -526,6 +526,18 @@ function handleSocketCommandAdmitted(
       return buildAck(command, "accept");
     }
     case "record": {
+      // These synchronous refusals do not depend on releasing the Ask's reservation.
+      // Leave its question intact when F5 cannot use the microphone at all.
+      if (command.take_id !== undefined && hasInterruptibleAskPrompt()) {
+        if (!micAllowed()) {
+          broadcast({ type: "error", message: "Mic is disabled", recoverable: false });
+          return buildAck(command, "reject", "mic disabled");
+        }
+        const booking = isVoiceBooked();
+        if (booking.booked && !booking.ownedByUs) {
+          return buildAck(command, "reject", "busy");
+        }
+      }
       const promptExit = command.take_id !== undefined ? interruptAskPromptForDictation() : undefined;
       if (promptExit) {
         const takeID = command.take_id!;
