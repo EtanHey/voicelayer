@@ -371,8 +371,8 @@ extension NotchSurfaceHostedFlowTests {
         }
     }
 
-    /// 0510 N9 (R4): the microphone control is in the same core-side slot in every allowed state that has a left
-    /// wing to spare (launcher, transcribing, Typed), and it opens Settings › General at the microphone in the notch.
+    /// 0510 N9 (R4): the microphone opens Settings › General in each allowed state. While transcribing it sits
+    /// one pitch outside the decorative spinner; launcher and Typed keep the usual core-side slot.
     func testN9TheMicrophoneControlOpensTheNotchMicrophoneSettingEverywhere() throws {
         for activity in [Activity.launcher, .transcribing, .typed] {
             let harness = makeHarness()
@@ -380,11 +380,26 @@ extension NotchSurfaceHostedFlowTests {
             XCTAssertEqual(harness.model.presentation.geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth,
                            "[N9] \(activity): the same two-slot left wing")
             let current = layout(harness.model)
+            // VoiceBarApp.notchInteractionConfiguration is in the executable target, which this UI test target
+            // does not import. Mirror its transcribing-only inset using the same presentation constant.
+            let configuration = activity == .transcribing
+                ? VoiceBarNotchInteractionConfiguration(
+                    leadingControlCount: 1, leadingCoreInset: VoiceBarPresentation.transcribingMicrophoneCoreInset)
+                : VoiceBarNotchInteractionConfiguration(leadingControlCount: 1)
             let chevron = VoiceBarNotchHitRegion(
                 geometry: current.presentation.geometry,
-                configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 1)
+                configuration: configuration
             ).rects[0].offsetBy(dx: current.visibleContentRect.minX, dy: current.visibleContentRect.minY)
-            try click(center(chevron), in: harness.panel)
+            let clickPoint = center(chevron)
+            if activity == .transcribing {
+                let spinnerRect = VoiceBarNotchHitRegion(
+                    geometry: current.presentation.geometry,
+                    configuration: VoiceBarNotchInteractionConfiguration(
+                        leadingControlCount: 1, leadingCoreInset: VoiceBarPresentation.transcribingSpinnerCoreInset)
+                ).rects[0].offsetBy(dx: current.visibleContentRect.minX, dy: current.visibleContentRect.minY)
+                XCTAssertFalse(spinnerRect.contains(clickPoint), "[N9] click the microphone, outside the decorative spinner")
+            }
+            try click(clickPoint, in: harness.panel)
             wait { harness.surface.drawer != nil }
             XCTAssertEqual(harness.surface.drawer, .settings(.general), "[N9] \(activity): the chevron opens General")
             wait { harness.paneRequests.all.last??.focus != nil }
