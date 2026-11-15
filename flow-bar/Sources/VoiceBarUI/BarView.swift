@@ -828,7 +828,8 @@ public struct BarView: View {
             .onChanged { value in
                 guard !isDismissedDrawerGesture else { return }
                 let openHeight = notchPresentationOpenHistoryHeight
-                let time = NotchHistoryClock.now()
+                // Use input-sample time, not handler latency, when measuring pointer velocity.
+                let time = value.time.timeIntervalSinceReferenceDate
                 if isDrawerBodyDragActive { return }
                 if case .idle = historyPull.phase, case .idle = historyRowsPull.phase {
                     historyPressIsBare = abs(value.startLocation.x - historyPanelCentreX) <= notchPresentation.geometry.coreWidth / 2
@@ -842,7 +843,7 @@ public struct BarView: View {
                         historyPull.press(y: value.startLocation.y, progress: historyProgress, time: time)
                     } else if isHistoryPresented, NotchHistoryPull.acceptsHandle(
                         point: value.startLocation, centreX: historyPanelCentreX,
-                        panelHeight: openHeight, progress: historyFrozenProgress ?? renderedHistoryProgress(at: time)
+                        panelHeight: openHeight, progress: historyFrozenProgress ?? renderedHistoryProgress(at: NotchHistoryClock.now())
                     ) {
                         drawerPullDismissalGeneration = surface.dismissalGeneration
                         historyRowsPull.press(y: value.startLocation.y, progress: historyRowsExtent, time: time)
@@ -873,7 +874,7 @@ public struct BarView: View {
                 if travel > NotchHistoryMorph.dragSlop { historyPressIsBare = false }
                 if historyRowsPull.phase == .idle, value.translation != historyPressLastTranslation,
                    canPullDrawer || isSettingsDrawerOpen {
-                    followHistoryPull(y: value.location.y, time: NotchHistoryClock.now(),
+                    followHistoryPull(y: value.location.y, time: value.time.timeIntervalSinceReferenceDate,
                                       openHeight: notchPresentationOpenHistoryHeight)
                 }
                 endHistoryPull(cancelled: false)
@@ -886,7 +887,8 @@ public struct BarView: View {
         DragGesture(minimumDistance: NotchHistoryMorph.dragSlop, coordinateSpace: .named(Self.notchCanvasSpace))
             .onChanged { value in
                 guard !isDismissedDrawerGesture else { return }
-                let time = NotchHistoryClock.now()
+                // Use input-sample time, not handler latency, when measuring pointer velocity.
+                let time = value.time.timeIntervalSinceReferenceDate
                 if !isDrawerBodyDragActive {
                     // Lane H: a sideways drag is History's category swipe, never a drawer pull.
                     guard abs(value.translation.width) <= abs(value.translation.height) * NotchHistoryCategoryPager.horizontalBias
@@ -925,7 +927,8 @@ public struct BarView: View {
         guard admitsCurrentDrawerGesture() else { return }
         guard let progress = historyPull.move(
             y: y, time: time, range: openHeight - VoiceBarNotchContract.topHeight,
-            seed: renderedHistoryProgress(at: time)
+            // The handoff starts from what is drawn now; event time is only for the pointer's velocity.
+            seed: renderedHistoryProgress(at: NotchHistoryClock.now())
         ) else { return }
         let armed = settingsDrawer != nil && !isSettingsDrawerOpen
             && historyPull.rawProgress >= NotchHistoryMorph.settingsPullThreshold
@@ -1366,12 +1369,14 @@ public struct BarView: View {
             if notchPresentation.bandState == .compactStatus, state.mode == .transcribing {
                 // 2.3 U2: the spinner sits where Stop was, in a control slot so it lines up with it. It is not a
                 // control, so it registers no tooltip (R0856-09: tooltips sit on controls); VoiceOver reads it.
-                // 0510 N9: the microphone control keeps its core-side slot, as on the launcher.
+                // Keep the spinner at its historical core distance, with the microphone one control pitch outside.
                 HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
-                    transcriptionSpinner
                     microphonePickerButton
+                    transcriptionSpinner
                 }
-                // c9-P: the wing keeps the recording band's width; the pair stays on its core-anchored hit slots.
+                .padding(.trailing, VoiceBarPresentation.transcribingSpinnerCoreInset
+                    - VoiceBarNotchContract.compactCoreContentInset)
+                // c9-P: keep the full recording wing; spare width stays beyond the microphone on the outer side.
                 .frame(maxWidth: .infinity, alignment: .trailing)
             } else if let playbackPauseControl {
                 readingTransportControls(playbackPauseControl)

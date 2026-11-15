@@ -411,6 +411,9 @@ public struct NotchHistoryPull: Equatable {
                 phase = .dragging(startY: anchor, startProgress: seed)
                 seedOffset = seed - band(seed)
                 guard excess > 0 else {
+                    // The no-jump handoff absorbs displacement, not the pointer's release speed.
+                    let dt = max(0.001, time - lastTime)
+                    velocity = 0.7 * Double(travel / max(1, range)) / dt + 0.3 * velocity
                     lastY = y
                     lastTime = time
                     rawProgress = seed

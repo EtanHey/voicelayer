@@ -44,7 +44,7 @@
     "src/update-gate-installer-participant.ts": "daad633ba3a8d0c5b3fbcc9749f1f1bac8caeb44e7b19a449d19793a0aaf22c8",
     "src/update-gate.ts": "942e63224305214373116d2e1b3f4929713f870bb38b186e75196372ecd59954",
     "src/update-gate-installer.ts": "1626adaff2724a667ff77752ec89ecc8a9c58ede9f4fee589c539d04e7fb547c",
-    "src/mcp-server-daemon.ts": "43c8d2e125af6cd476663b77dc70839f405530f4b7409fc1b4cb57f4f07c2937",
+    "src/mcp-server-daemon.ts": "96f2389b0aa6e7406e6d9e8f281a51cac4d1b70935baf9192499d96ac54c0a99",
     "flow-bar/Sources/VoiceBar/VoiceBarDaemonController.swift": "dc4d888ca56de9b6c34f846154ba8fc7dc221280c51cea54f2c9cafb01f809bb",
     "scripts/lib/voicebar-launchagent.sh": "c22a3721759080a4ecf88788907751bd27131f5feb9b2ebdc01e10e736b99de2",
     "scripts/start-voicebar.sh": "269d6aa117abe3ec3e738db1e0401c2e839a65f66ba46de6f758a67157a72f24",
@@ -53,7 +53,7 @@
     "src/cli/voicelayer.sh": "7d01d8562ebe628071a293147e0be9815a334b6f323913de82586890b0b91b03",
     "flow-bar/build-app.sh": "c6e9bc6a7f0d656d7db57df92605fc16a450d1aa51e176517e69eb70efe07f21",
     "scripts/lib/qa-candidate-lifecycle.py": "2e4c8a850094e6fa397c13e42f5dff09a4646627b1d7481fe21cc862008d41eb",
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "6a0ccf561e39b29b91f08c026f9f66086e33a8eba20ed23cc0be6450e3031140",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "0621dd4b44ced50adea2bcf4bf7812cdf67883573d4b656b61303bd7648efdca",
     "src/update-gate-owner.ts": "94a6efef3240dc751a8600e15630127fcbd67009cca314ca65eb8d60f29ee8ea",
     "flow-bar/Sources/VoiceBarUI/NativeUpdateGate.swift": "4a65b08844c2664fcae549ca641c03ec8e1efdb85c3fc06b595dd8e4ba5ced52",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"

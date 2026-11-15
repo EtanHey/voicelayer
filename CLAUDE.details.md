@@ -1,7 +1,7 @@
 # VoiceLayer Details
 
 ## Architecture
-- MCP server exposes `voice_speak` (non-blocking TTS) and `voice_ask` (blocking record + transcribe).
+- MCP server exposes `voice_speak` (non-blocking TTS), `voice_ask` (blocking record + transcribe), and `voice_ask_results` (read-only retained answers).
 - TTS routing: Qwen3-TTS daemon (cloned voices) -> edge-tts (preset) -> text-only fallback.
 - Voice Bar is a persistent server on `/tmp/voicelayer.sock` (POSIX sockets + GCD). MCP servers connect as clients.
 - Socket protocol uses NDJSON events: state, speech, transcription, error; commands: stop, replay, toggle.
@@ -129,5 +129,6 @@ Recordings backup: `bash scripts/backup-recordings-icloud.sh [--dry-run]` copies
 - Optional: demucs, pyannote.audio
 
 ## Naming
-- Primary tools: `voice_speak`, `voice_ask`
+- Primary tools: `voice_speak`, `voice_ask`, `voice_ask_results`
+- `voice_ask_results({archive_id?, limit?})`: read retained Ask answers (default 5, max 20), including raw answer and answered/away/needs-retranscribe status; no speech, capture or retranscription. `voice_ask` logs its archive ID when retained, before transcription. Retained-result text includes the ID; no ID exists before allocation.
 - Env vars use a mixed contract: `VOICELAYER_*` is canonical where implemented (currently aggressive-filler control and socket overrides), with legacy `QA_VOICE_*` aliases retained; settings not yet migrated still use `QA_VOICE_*`.

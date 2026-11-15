@@ -75,9 +75,10 @@ final class NotchSurfaceHostedFlowTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(seconds))
     }
 
-    private func send(_ type: NSEvent.EventType, at point: NSPoint, to panel: NSWindow, clickCount: Int = 1) throws {
+    private func send(_ type: NSEvent.EventType, at point: NSPoint, to panel: NSWindow,
+                      clickCount: Int = 1, timestamp: TimeInterval? = nil) throws {
         panel.sendEvent(try XCTUnwrap(NSEvent.mouseEvent(
-            with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            with: type, location: point, modifierFlags: [], timestamp: timestamp ?? ProcessInfo.processInfo.systemUptime,
             windowNumber: panel.windowNumber, context: nil, eventNumber: 1, clickCount: clickCount,
             pressure: type == .leftMouseUp ? 0 : 1
         )))
@@ -371,8 +372,8 @@ extension NotchSurfaceHostedFlowTests {
         }
     }
 
-    /// 0510 N9 (R4): the microphone control is in the same core-side slot in every allowed state that has a left
-    /// wing to spare (launcher, transcribing, Typed), and it opens Settings › General at the microphone in the notch.
+    /// 0510 N9 (R4): the microphone opens Settings › General in each allowed state. While transcribing it sits
+    /// one pitch outside the decorative spinner; launcher and Typed keep the usual core-side slot.
     func testN9TheMicrophoneControlOpensTheNotchMicrophoneSettingEverywhere() throws {
         for activity in [Activity.launcher, .transcribing, .typed] {
             let harness = makeHarness()
@@ -380,11 +381,26 @@ extension NotchSurfaceHostedFlowTests {
             XCTAssertEqual(harness.model.presentation.geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth,
                            "[N9] \(activity): the same two-slot left wing")
             let current = layout(harness.model)
+            // VoiceBarApp.notchInteractionConfiguration is in the executable target, which this UI test target
+            // does not import. Mirror its transcribing-only inset using the same presentation constant.
+            let configuration = activity == .transcribing
+                ? VoiceBarNotchInteractionConfiguration(
+                    leadingControlCount: 1, leadingCoreInset: VoiceBarPresentation.transcribingMicrophoneCoreInset)
+                : VoiceBarNotchInteractionConfiguration(leadingControlCount: 1)
             let chevron = VoiceBarNotchHitRegion(
                 geometry: current.presentation.geometry,
-                configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 1)
+                configuration: configuration
             ).rects[0].offsetBy(dx: current.visibleContentRect.minX, dy: current.visibleContentRect.minY)
-            try click(center(chevron), in: harness.panel)
+            let clickPoint = center(chevron)
+            if activity == .transcribing {
+                let spinnerRect = VoiceBarNotchHitRegion(
+                    geometry: current.presentation.geometry,
+                    configuration: VoiceBarNotchInteractionConfiguration(
+                        leadingControlCount: 1, leadingCoreInset: VoiceBarPresentation.transcribingSpinnerCoreInset)
+                ).rects[0].offsetBy(dx: current.visibleContentRect.minX, dy: current.visibleContentRect.minY)
+                XCTAssertFalse(spinnerRect.contains(clickPoint), "[N9] click the microphone, outside the decorative spinner")
+            }
+            try click(clickPoint, in: harness.panel)
             wait { harness.surface.drawer != nil }
             XCTAssertEqual(harness.surface.drawer, .settings(.general), "[N9] \(activity): the chevron opens General")
             wait { harness.paneRequests.all.last??.focus != nil }
@@ -452,6 +468,88 @@ extension NotchSurfaceHostedFlowTests {
             XCTAssertEqual(harness.surface.drawer, .history(.collapsed), "[C7-W] a \(travel) pt dab opens History")
             harness.panel.orderOut(nil)
         }
+    }
+
+    /// VB-009: real BarView events, with exactly one surface action per press/release.
+    func testVB009FortyMillisecondClickMatchesSlowClick() throws {
+        for duration in [0.04, 0.3] {
+            for recording in [false, true] {
+                let h = makeHarness()
+                if recording { enter(.recording, h) }
+                let start = recording ? wingPoint(h) : notchPoint(h, fromTop: 16)
+                let journalStart = h.surface.journal.count
+                try send(.leftMouseDown, at: start, to: h.panel)
+                drain(duration)
+                try send(.leftMouseUp, at: start, to: h.panel)
+                drain(0.1)
+                if recording {
+                    XCTAssertEqual(h.surface.drawer, .history(.collapsed))
+                    XCTAssertEqual(h.surface.journal.dropFirst(journalStart).filter {
+                        if case .openHistory = $0.event { return true }; return false
+                    }.count, 1)
+                    XCTAssertEqual(h.menuRequests.count, 0)
+                } else {
+                    XCTAssertEqual(h.menuRequests.count, 1)
+                    XCTAssertNil(h.surface.drawer)
+                }
+                resize(h)
+                try terminalShot("vb009-click-\(duration)-recording-\(recording)", h)
+            }
+        }
+    }
+
+    func testVB009BareShortFlickAndBandEdgePullMatchSlowOpen() throws {
+        for fromTop: CGFloat in [16, VoiceBarNotchContract.topHeight - 1] {
+            for distance: CGFloat in [6, 8, 10, 220] {
+                let h = makeHarness()
+                // The layout has a bottom shadow, no top shadow. The legacy notchPoint helper
+                // subtracts that 17 pt from the top too, putting a nominal y=31 at y=48.
+                let current = layout(h.model)
+                let geometry = current.presentation.geometry
+                let start = NSPoint(
+                    x: current.visibleContentRect.minX + geometry.coreOriginX + geometry.coreWidth / 2,
+                    y: current.visibleContentRect.maxY - fromTop
+                )
+                let canvasY = current.panelSize.height - start.y
+                XCTAssertEqual(canvasY, fromTop, accuracy: 0.001, "press the actual band edge")
+                XCTAssertTrue(NotchHistoryPull.accepts(y: canvasY), "the fixture must start inside the pull band")
+                let end = NSPoint(x: start.x, y: start.y - distance)
+                let journalStart = h.surface.journal.count
+                // Gesture speed comes from event timestamps, independent of runner scheduling and rendering.
+                let t0 = ProcessInfo.processInfo.systemUptime
+                let duration = distance == 220 ? 0.3 : 0.01
+                try send(.leftMouseDown, at: start, to: h.panel, timestamp: t0)
+                // Deliberately delay handling beyond a short flick's velocity threshold. Event timestamps still
+                // describe a 10 ms flick, so handler-clock product code must fail even on a fast test host.
+                drain(0.2)
+                // Only one changed sample: no later event can repair a lost initial velocity.
+                try send(.leftMouseDragged, at: end, to: h.panel, timestamp: t0 + duration)
+                try send(.leftMouseUp, at: end, to: h.panel, timestamp: t0 + duration)
+                drain(0.1)
+                XCTAssertEqual(h.surface.drawer, .history(.collapsed), "start \(fromTop), travel \(distance)")
+                XCTAssertEqual(h.surface.journal.dropFirst(journalStart).filter {
+                    if case .openHistory = $0.event { return true }; return false
+                }.count, 1, "exactly one open")
+                XCTAssertEqual(h.menuRequests.count, 0, "a pull must not become a menu click")
+                resize(h)
+                try terminalShot("vb009-pull-y\(fromTop)-d\(distance)", h)
+            }
+        }
+    }
+
+    func testVB009ClickImmediatelyAfterHoverInOpensMenuOnce() throws {
+        let h = makeHarness()
+        h.state.isHovering = false
+        h.model.setHovered(false)
+        drain(0.3)
+        h.state.isHovering = true
+        h.model.setHovered(true)
+        resize(h)
+        try click(notchPoint(h, fromTop: 16), in: h.panel)
+        drain(0.1)
+        XCTAssertEqual(h.menuRequests.count, 1)
+        XCTAssertNil(h.surface.drawer)
+        try terminalShot("vb009-immediate-hover", h)
     }
 
     private func recordingHarness(_ mode: String, drawerOpen: Bool = false) -> Harness {

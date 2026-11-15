@@ -19,7 +19,7 @@ import {
 } from "./mcp-notifications";
 
 /** Known tool names from the server dispatch tables. */
-const KNOWN_TOOLS = new Set(["voice_speak", "voice_ask"]);
+const KNOWN_TOOLS = new Set(["voice_speak", "voice_ask", "voice_ask_results"]);
 
 /** Tool execution context — injected by caller to decouple from actual handlers. */
 export interface ToolExecutor {

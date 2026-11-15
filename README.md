@@ -5,7 +5,7 @@
 [![npm](https://img.shields.io/npm/v/voicelayer-mcp.svg)](https://www.npmjs.com/package/voicelayer-mcp)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue.svg)](https://modelcontextprotocol.io)
-[![Tools](https://img.shields.io/badge/MCP%20tools-2-38BDF8.svg)](#the-two-tools)
+[![Tools](https://img.shields.io/badge/MCP%20tools-3-38BDF8.svg)](#the-three-tools)
 
 **Voice I/O for AI coding assistants.** Press F5, speak to Claude Code, get on-device
 transcription in under 1.5 seconds. Your AI speaks back. Works with any MCP client.
@@ -114,15 +114,16 @@ On macOS, grant your terminal microphone access (System Settings → Privacy →
 Updates, kill-switches, and cross-machine setup:
 **[docs/install-and-update.md](docs/install-and-update.md)**.
 
-## The two tools
+## The three tools
 
 | Tool | Behavior | Blocking |
 |------|----------|:--------:|
 | **`voice_speak`** | TTS with auto-mode (announce/brief/consult/think), replay, toggle | No |
 | **`voice_ask`** | Speak a question, record the mic, transcribe the answer | Yes |
+| **`voice_ask_results`** | Read retained Ask answers, newest or by archive ID; no microphone or speech | No |
 
-Both ship full MCP [ToolAnnotations](https://spec.modelcontextprotocol.io/specification/2025-03-26/server/tools/#annotations).
-Neither is destructive; both set `openWorldHint: false`.
+All three ship full MCP [ToolAnnotations](https://spec.modelcontextprotocol.io/specification/2025-03-26/server/tools/#annotations).
+None is destructive; all set `openWorldHint: false`.
 
 Daemon speech profiles, env overrides, and socket controls: [docs/tts-settings.md](docs/tts-settings.md).
 

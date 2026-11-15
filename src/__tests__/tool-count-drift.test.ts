@@ -99,7 +99,7 @@ export async function assertToolCountTruth(root: string): Promise<void> {
     root === repositoryRoot
   ) {
     const badge = claims.find(
-      (claim) => claim.path === "README.md" && claim.text.includes("tools-2"),
+      (claim) => claim.path === "README.md" && /tools-\d+/.test(claim.text),
     );
     if (badge) badge.count += 1;
   }
@@ -140,8 +140,8 @@ describe("tool-count drift guard", () => {
       await Bun.write(
         `${fixture}/src/mcp-server.ts`,
         (await Bun.file(`${fixture}/src/mcp-server.ts`).text()).replace(
-          "2 tools:",
-          "two tools:",
+          "3 tools:",
+          "three tools:",
         ),
       );
       await expect(assertToolCountTruth(fixture)).rejects.toThrow(
@@ -153,8 +153,8 @@ describe("tool-count drift guard", () => {
         await Bun.file("src/mcp-server.ts").text(),
       );
       const mutated = (await Bun.file(`${fixture}/README.md`).text()).replace(
-        "MCP%20tools-2",
         "MCP%20tools-3",
+        "MCP%20tools-4",
       );
       await Bun.write(`${fixture}/README.md`, mutated);
       await expect(assertToolCountTruth(fixture)).rejects.toThrow(

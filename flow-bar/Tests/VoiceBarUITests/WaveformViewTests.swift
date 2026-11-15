@@ -427,8 +427,9 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertFalse(source.contains("centerOutHistory"))
     }
 
-    /// c9-P (Etan, 2026-11-12): the spinner stays left; on the right the recording meter row stays and ripples (the
-    /// same row as recording, outside the band switch so it keeps its identity), and History + Settings leave it.
+    /// c9-P: in the left wing the spinner stays nearest the notch, with the microphone on its outer side.
+    /// On the right the recording meter row stays and ripples (the same row as recording, outside the band switch
+    /// so it keeps its identity), and History + Settings leave it.
     func testTranscribingShowsTheSpinnerLeftAndTheRecordingMeterRippleRight() throws {
         let source = try barViewSource()
         let leading = try XCTUnwrap(source.components(separatedBy: "private var notchLeadingContent").dropFirst().first)
@@ -447,7 +448,7 @@ final class WaveformViewTests: XCTestCase {
             .components(separatedBy: "} else if")[0]
         let spinner = try XCTUnwrap(transcribingBranch.range(of: "transcriptionSpinner")).lowerBound
         let chevron = try XCTUnwrap(transcribingBranch.range(of: "microphonePickerButton")).lowerBound
-        XCTAssertLessThan(spinner, chevron, "the spinner sits left of the 0510 N9 microphone control")
+        XCTAssertLessThan(chevron, spinner, "lead ruling 2026-11-15: the microphone sits on the outer side of the spinner, the spinner nearest the notch")
         XCTAssertTrue(leadingCompactStatusBranch.contains("ProcessingSpinner(color: Theme.processingRippleColor(for: notchAppearance))"))
         XCTAssertFalse(leadingCompactStatusBranch.contains("statusLabel"))
         XCTAssertFalse(leadingCompactStatusBranch.contains("WaveformView("))

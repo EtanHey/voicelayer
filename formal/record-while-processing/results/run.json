@@ -68,7 +68,7 @@
     "src/socket-handlers.ts": "ba966df991db38969594868381323d6b383c8eeabac71c5d9bf11130d39885fe",
     "src/recording-state.ts": "db2b9617e38ed6da0fea264ead439f3a4ba88619252b84ac76bbb420274b90da",
     "src/session-booking.ts": "8354241ad3c54e1b2333630c095178e2da77dce049e8ca3a44ae55c5653b5b62",
-    "src/mcp-server-daemon.ts": "43c8d2e125af6cd476663b77dc70839f405530f4b7409fc1b4cb57f4f07c2937",
+    "src/mcp-server-daemon.ts": "96f2389b0aa6e7406e6d9e8f281a51cac4d1b70935baf9192499d96ac54c0a99",
     "src/recording-jobs.ts": "b93de1bd6033ad59ec273c768a47317538b5f50dc482d088303422d40c134b6a",
     "src/recording-take-queue.ts": "781306092e4ed6b22eedff048023059867f26682b98ad0bd470f11484621bb7b",
     "flow-bar/Sources/VoiceBar/SynthesizedKeyEvents.swift": "b580e09f10dcad78e683b2e76a8d01c4309256a1222ee235eab4cc3431a2a368",
@@ -451,24 +451,24 @@
       "kind": "temporal",
       "target": "ProcessingSettles",
       "status": "EXPECTED_FAIL",
-      "generated": 236670,
-      "distinct": 10520
+      "generated": 231439,
+      "distinct": 10385
     },
     "MutNoOverlapProgress": {
       "role": "mutant",
       "kind": "temporal",
       "target": "OverlapPastes",
       "status": "EXPECTED_FAIL",
-      "generated": 197742,
-      "distinct": 9729
+      "generated": 197202,
+      "distinct": 9724
     },
     "MutNoIdle": {
       "role": "mutant",
       "kind": "temporal",
       "target": "EventuallyIdle",
       "status": "EXPECTED_FAIL",
-      "generated": 305777,
-      "distinct": 13469
+      "generated": 304087,
+      "distinct": 13437
     },
     "MutHeldDecode": {
       "role": "mutant",
@@ -491,16 +491,16 @@
       "kind": "temporal",
       "target": "OverlapPastes",
       "status": "EXPECTED_FAIL",
-      "generated": 223072,
-      "distinct": 10277
+      "generated": 225499,
+      "distinct": 10402
     },
     "MutNoDecodeFairness": {
       "role": "mutant",
       "kind": "temporal",
       "target": "EventuallyIdle",
       "status": "EXPECTED_FAIL",
-      "generated": 300156,
-      "distinct": 13307
+      "generated": 296701,
+      "distinct": 13243
     },
     "MutSpeechNoRenew": {
       "role": "mutant",
@@ -563,8 +563,8 @@
       "kind": "temporal",
       "target": "NoStaleGuard",
       "status": "EXPECTED_FAIL",
-      "generated": 245847,
-      "distinct": 10767
+      "generated": 246015,
+      "distinct": 10772
     },
     "ConcurrentGlobalCancel": {
       "role": "mutant",

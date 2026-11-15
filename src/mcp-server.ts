@@ -25,6 +25,7 @@ import { PACKAGE_VERSION } from "./version";
 import {
   handleVoiceSpeak,
   handleVoiceAsk,
+  handleVoiceAskResults,
 } from "./handlers";
 import { createVoiceToolContext } from "./mcp-notifications";
 
@@ -39,7 +40,8 @@ const server = new Server(
   {
     capabilities: { tools: {}, logging: {} },
     instructions:
-      "Voice I/O layer for Claude Code. 2 tools:\n" +
+      "Voice I/O layer for Claude Code. 3 tools:\n" +
+      "- voice_ask_results: read retained Ask answers, newest or by archive_id; never opens the microphone.\n" +
       "- voice_speak(message): TTS. mode is auto-detected (announce=short update, brief=long explanation, consult=checkpoint question, think=silent log). Override with mode param.\n" +
       `- voice_ask(message): BLOCKING. Waits for any playing voice_speak audio to finish, then speaks question, records mic, returns transcription. Session booking prevents mic conflicts. Stop: touch ${STOP_FILE} OR 2.5s silence (thoughtful default).\n` +
       "  Captured audio is always kept. If a result includes an archive path, use VoiceBar History → Re-transcribe and do not ask the user to repeat.\n" +
@@ -75,6 +77,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     switch (name) {
       case "voice_speak":
         return await handleVoiceSpeak(args, context);
+      case "voice_ask_results":
+        return await handleVoiceAskResults(args);
       case "voice_ask":
         return await handleVoiceAsk(args, context);
       default:
