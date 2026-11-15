@@ -6,7 +6,7 @@ import type { ParakeetResponse } from "../parakeet-server";
 import type { ParakeetFallbackAttempt } from "../parakeet-attempts";
 import { fallbackReasonFromBackend } from "../recording-provenance";
 import { finalizeTranscriptionResultForSurface } from "../input";
-import { qualifySpanRepair, spanWav } from "../parakeet-span-repair";
+import { qualifySpanRepair, qualifyTimedSpanRepair, planSpanRepairs, spanWav } from "../parakeet-span-repair";
 import { testTmp } from "./setup/test-tmp";
 
 function fixture() {
@@ -63,7 +63,12 @@ async function repair(candidate: string, mode: "speech" | "silence" | "untimed" 
       const clip = readFileSync(path); clips.push(clip);
       if (mode === "error") throw new Error("Parakeet repair failed");
       const frames = clip.readUInt32LE(40) / 2;
-      return { text: mode === "multi" && clips.length === 1 ? "words survive recovered clause another boundary" : candidate,
+      const text = mode === "multi" && clips.length === 1 ? "words survive recovered clause another boundary" : candidate;
+      const gaps = mode === "tail" ? [{ start: 115.75, end: 127.258 }] :
+        [{ start: 39.75, end: 40.75 }, ...(mode === "multi" ? [{ start: 112.75, end: 113.75 }] : [])];
+      const plan = planSpanRepairs(f.native, gaps, 240)[clips.length - 1]!;
+      const timing = plan.gap.start - plan.start;
+      return { text, raw_token_times: [{ text, start: timing, end: timing + .2 }],
         complete: true, input_frames: frames, covered_frames: frames, sample_rate: 16000,
         last_token_end_s: frames / 16000, inference_s: 0, language: null };
     }, speechProbe: async () => f.speech,
@@ -223,4 +228,18 @@ test.each(["bad-timing", "out-of-range", "invalid-tokens"] as const)("%s retains
   const r = await repair("must never replace native", mode);
   expect(r.result.text).toBe(r.native.text); expect(r.whisperCalls).toBe(0); expect(r.parakeetCalls).toBe(1);
   expect(r.logs.some(l => l.includes('"event":"parakeet_coverage_unavailable"'))).toBe(true);
+});
+
+test.each(["missing", "unaligned", "early", "late", "straddling", "subword", "valid"])("insertion timing: %s", mode => {
+  const candidate: ParakeetResponse = { text: "final thought recovered tail", complete: true, input_frames: 80000,
+    covered_frames: 80000, sample_rate: 16000, last_token_end_s: 5, inference_s: 0, language: null,
+    raw_token_times: [{ text: "final thought", start: 0, end: 1 }, { text: " recovered tail", start: 2.3, end: 2.7 }] };
+  if (mode === "missing") delete candidate.raw_token_times;
+  if (mode === "unaligned") candidate.raw_token_times = [{ text: "wrong text", start: 2.3, end: 2.7 }];
+  if (mode === "early") candidate.raw_token_times![1]!.start = 1.7;
+  if (mode === "late") candidate.raw_token_times![1]!.end = 3.3;
+  if (mode === "straddling") candidate.raw_token_times![1]!.start = 1.9;
+  if (mode === "subword") candidate.raw_token_times = [{ text: "final thought re", start: 0, end: 1 }, { text: "covered tail", start: 2.3, end: 2.7 }];
+  const plan = { gap: { start: 12.25, end: 13 }, start: 10, end: 15, offset: 14, left: ["final", "thought"], right: [] };
+  expect(qualifyTimedSpanRepair(candidate, plan, 1, .25).accepted).toBe(mode === "valid");
 });

@@ -176,7 +176,7 @@ async function shortTail(mode = "speech", duration = 28.5013125, lastEnd = 27.2)
   bytes.fill(1, 44); // Nonzero synthetic PCM, never used as speech evidence.
   writeFileSync(path, bytes);
   const tokens = [
-    { text: "Keep every fu… no repeated repeated word", start: 0, end: lastEnd - 1.2 },
+    { text: "Keep every fu… no repeated repeated word", start: 0, end: mode === "internal" ? 1 : lastEnd - 1.2 },
     { text: " final", start: lastEnd - 1.1, end: lastEnd - .72 },
     { text: " thought", start: lastEnd - .7, end: lastEnd - .4 },
     { text: ".", start: lastEnd - .3, end: lastEnd },
@@ -186,6 +186,8 @@ async function shortTail(mode = "speech", duration = 28.5013125, lastEnd = 27.2)
     sample_rate: 16000, last_token_end_s: lastEnd, inference_s: 0, language: null, raw_token_times: tokens };
   const probabilities = Array.from({ length: Math.ceil(frames / 512) }, (_, i) => {
     const start = i * .032, end = (i + 1) * .032;
+    if (mode === "internal") return start >= 1.28 && end <= 1.92 ? .99 : .01;
+    if (mode === "legacy") return start >= 24 && end <= 24.352 ? .99 : .01;
     const speechEnd = mode === "brief" ? lastEnd + .7 : lastEnd + .928;
     return start >= lastEnd + .288 && end <= speechEnd ? (mode === "noise" ? .29 : .99) : .01;
   });
@@ -196,7 +198,14 @@ async function shortTail(mode = "speech", duration = 28.5013125, lastEnd = 27.2)
     const backend = new ParakeetBackend({ transcribe: async clip => {
       if (calls++ === 0) return native;
       const clipBytes = readFileSync(clip), clipFrames = (clipBytes.length - 44) / 2;
-      return { ...native, raw_token_times: undefined, text: mode === "empty" ? "" : "final thought. recovered tail",
+      const candidate = mode === "empty" ? "" : mode === "legacy" ? "final thought. Go." : mode === "punctuation" ? "final thought, recovered tail" : "final thought. recovered tail";
+      const clipStart = Math.max(0, lastEnd - 1.26);
+      const recoveredStart = mode === "outside" ? .7 : (mode === "legacy" ? 24 : lastEnd + .35) - clipStart;
+      const raw_token_times = [
+        { text: candidate.slice(0, candidate.indexOf(" ", 6)), start: .16, end: .6 },
+        { text: candidate.slice(candidate.indexOf(" ", 6)), start: recoveredStart, end: recoveredStart + .25 },
+      ];
+      return { ...native, raw_token_times, text: candidate,
         input_frames: clipFrames, covered_frames: clipFrames, last_token_end_s: clipFrames / 16000 };
     }, speechProbe: async snapshot => {
       probes++;
@@ -236,4 +245,27 @@ describe("short uncovered final speech", () => {
     expect(r.retained.some(a => a.repair?.accepted === false && a.repairParakeet?.text === "")).toBe(true);
     expect(r.logs).toContain('"accepted":false');
   });
+});
+
+describe("short-tail review R1", () => {
+  test("legacy 0.352s word four seconds after last token is still recovered", async () => {
+    const r = await shortTail("legacy", 28.5, 20);
+    expect(r.calls).toBe(2); expect(r.result.text).toBe(r.native.text + " Go.");
+  });
+  test("crop words timed before the uncovered span cannot be inserted", async () => {
+    const r = await shortTail("outside");
+    expect(r.calls).toBe(2); expect(r.result.text).toBe(r.native.text);
+    expect(r.logs).toContain("insertion-outside-uncovered-span");
+  });
+  test("different candidate punctuation cannot produce period comma", async () => {
+    const r = await shortTail("punctuation");
+    expect(r.result.text).toBe(r.native.text + " recovered tail");
+  });
+});
+
+test("short-tail probe never admits internal-gap repair on a five-second take", async () => {
+  const r = await shortTail("internal", 5, 3.6);
+  expect(r.probes).toBe(1); expect(r.calls).toBe(1);
+  expect(r.result.text).toBe(r.native.text);
+  expect(r.logs).not.toContain("uncovered-internal");
 });

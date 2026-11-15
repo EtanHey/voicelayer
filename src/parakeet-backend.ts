@@ -5,7 +5,7 @@ import { requestedLanguageCode } from "./language-config";
 import { retainParakeetFallback, type ParakeetFallbackAttempt } from "./parakeet-attempts";
 import { mkdirSync, writeFileSync, unlinkSync, openSync, closeSync } from "fs";
 import { dirname, join } from "path";
-import { fallbackOutputRisk, planSpanRepairs, qualifySpanRepair, spanWav, type SpeechGap } from "./parakeet-span-repair";
+import { fallbackOutputRisk, planSpanRepairs, qualifyTimedSpanRepair, spanWav, type SpeechGap } from "./parakeet-span-repair";
 import { createHash, randomUUID } from "crypto";
 import { getStateDir } from "./paths";
 import { noteRecognizerEngine, noteRecognizerEffective } from "./recognizer-state";
@@ -326,7 +326,7 @@ export class ParakeetBackend implements STTBackend {
         return { text: result.text, backend: this.name + "+coverage-unavailable", durationMs: Date.now() - started,
           outcome: "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN", fallbackEvidencePath, languageWarning, languageEvidence };
       }
-      const gaps = internalTokenGaps(result, duration);
+      const gaps = duration >= 8 ? internalTokenGaps(result, duration) : [];
       if ((!reason || (accountingGap && reason === "invalid-timing")) && (accountingGap || (duration >= 8 && gaps.length > 0) ||
           (result.last_token_end_s !== null && duration - result.last_token_end_s >
             INTERNAL_SPEECH_MIN_S + 2 * INTERNAL_TOKEN_MARGIN_S))) {
@@ -338,11 +338,14 @@ export class ParakeetBackend implements STTBackend {
           : "[voicelayer] Parakeet speech evidence unavailable or invalid; keeping Parakeet text (no energy fallback)");
         const probabilities = sileroProbabilities(speechEvidence, info, inputSha256);
         // Reuse the internal-gap rule: >=0.5s consecutive positive complete
-        // windows after the token margin. A distant isolated breath is not enough.
+        // windows after the token margin. Retain the legacy rule as well so short
+        // words after a long pause are never excluded by the new run minimum.
         const tailSpeech = probabilities && result.last_token_end_s !== null &&
           uncoveredInternalSpeech([{ start: result.last_token_end_s + INTERNAL_TOKEN_MARGIN_S,
             end: duration }], probabilities, info).length > 0;
-        reason = parakeetOutputRisk(result, info, !!tailSpeech, accountingGap);
+        const legacyTail = duration >= 8 && result.last_token_end_s !== null && lastSpeechSeconds !== undefined &&
+          lastSpeechSeconds - result.last_token_end_s > Math.max(3, Math.min(8, duration * 0.05));
+        reason = parakeetOutputRisk(result, info, !!tailSpeech || legacyTail, accountingGap);
         if (accountingGap) {
           uncoveredSpans = [{ start: result.covered_frames / info.sampleRate, end: duration }];
           if (!probabilities) return fallback("accounting-gap-unverified", result);
@@ -410,15 +413,15 @@ export class ParakeetBackend implements STTBackend {
                 if (probabilities[i]! >= PARAKEET_EMPTY_SPEECH_THRESHOLD)
                   speechSeconds += Math.max(0, Math.min(plan.end, (i + 1) * windowSeconds) - Math.max(plan.start, i * windowSeconds));
               }
-              const qualified = qualifySpanRepair(repairParakeet.text, plan, speechSeconds);
+              const qualified = qualifyTimedSpanRepair(repairParakeet, plan, speechSeconds, INTERNAL_TOKEN_MARGIN_S);
               accepted = qualified.accepted;
               if (qualified.accepted && qualified.insertion) {
                 let insertion = qualified.insertion;
                 // A tail anchor excludes punctuation from its lexical match.
                 // Do not append its existing terminator twice; native bytes stay intact.
                 const terminator = result.text.match(/[,.;:!?…)}\]]+$/u)?.[0];
-                if (!plan.right.length && terminator && insertion.startsWith(terminator))
-                  insertion = insertion.slice(terminator.length).trimStart();
+                if (!plan.right.length && terminator)
+                  insertion = insertion.replace(/^[,.;:!?…)}\]]+\s*/u, "");
                 if (insertion) text = text.slice(0, plan.offset) + (/^[,.;:!?…)}\]]/u.test(insertion) ? "" : " ") + insertion + text.slice(plan.offset);
               } else if (!qualified.accepted) rejection = qualified.reason;
             } catch (error) { rejection = error instanceof Error ? error.name : "unknown"; }
