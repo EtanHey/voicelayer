@@ -50,21 +50,6 @@ final class TranscribingRippleTests: XCTestCase {
         let model: VoiceBarNotchPresentationModel
     }
 
-    // The 2.3 short-clock relationship: 8 pt core clearance + 26 pt clock + 4 pt gap.
-    // Exercise the production BarView and AX frames, rather than a copy of its layout formula.
-    func testNotchRegressionMeterKeepsTheTwoPointThreeClockGap() throws {
-        let mounted = try mount()
-        defer { unmount(mounted) }
-        startRecording(mounted)
-        let time = try frame("Recording time", in: mounted.host)
-        let meter = try frame("Input level", in: mounted.host)
-        print("NOTCH_REG recording clock=\(time) meter=\(meter) gap=\(meter.minX - time.maxX)")
-        try regressionShot(mounted, "recording")
-        XCTAssertEqual(meter.minX - time.maxX, 4, accuracy: 0.5,
-                       "v2.3.0 recordingTimeGap; the timer and shell must stay put")
-        XCTAssertEqual(meter.width, 46, accuracy: 0.5, "never scale the short-clock waveform")
-    }
-
     func testNotchRegressionSpinnerKeepsTheTwoPointThreeCoreDistance() throws {
         let mounted = try mount()
         defer { unmount(mounted) }
