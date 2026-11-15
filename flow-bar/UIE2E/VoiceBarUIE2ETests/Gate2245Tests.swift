@@ -157,8 +157,8 @@ extension VoiceBarFlowTests {
                         "Current teleprompter text missing: " + text)
                 }
                 if name == "busy" {
-                    // Etan's 2.2.61 notch ledger N2: "no text band while transcribing; spinner+blue are enough — N2
-                    // wins", shipped by 9df63566. The refusal is the empty command list and the selection:busy receipt.
+                    // Notch ledger N2, shipped in 2.2.61 by 9df63566: transcribing uses no text band.
+                    // The refusal is the empty command list and the selection:busy receipt.
                     XCTAssertEqual((receipt["state"] as? [String: Any])?["mode"] as? String, "transcribing")
                     let pill = app.dialogs["VoiceBar GATE2245 Product Pill"]
                     let spinner = pill.descendants(matching: .other)
@@ -329,7 +329,7 @@ extension VoiceBarFlowTests {
                 attachJSON("GATE2245-SELECTION-" + name, receipt)
             }
         }
-        // Etan's 2.2.61 notch ledger N2: "no text band while transcribing; spinner+blue are enough — N2 wins".
+        // Notch ledger N2, shipped in 2.2.61: transcribing uses the spinner and blue state without a text band.
         // Shipped by 9df63566. Busy-while-transcribing shows the spinner only; the refusal is still recorded.
         // Busy while recording or during F5 preview keeps its full note (Focused338GalleryTests asserts those).
         step("SEL1 busy-transcribing refusal: N2 spinner, no note, refusal recorded") {

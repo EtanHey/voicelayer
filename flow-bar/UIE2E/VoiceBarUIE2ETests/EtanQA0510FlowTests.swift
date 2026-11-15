@@ -14,14 +14,14 @@ extension VoiceBarFlowTests {
         }
     }
     func qa0510Expected(_ row: UIE2EKnownIssue, _ body: () throws -> Void) {
-        step(row.rawValue + " Etan QA 0510", expected: row,
+        step(row.rawValue + " QA 0510", expected: row,
              surface: "e2e24:" + row.rawValue, surfaces: ["e2e24:" + row.rawValue], body)
     }
     /// A fixed N row: a plain step (the product fix landed; its Swift proofs are in EtanQA0510Tests and
     /// NotchSurfaceHostedFlowTests). A failure here is a failure, not an expected one; the e2e24 case loop records
     /// the row's surface as verified when it passes.
     func qa0510Verified(_ row: String, _ body: () throws -> Void) {
-        step(row + " Etan QA 0510", body)
+        step(row + " QA 0510", body)
     }
     /// Pulls down from the bare notch (the core above the pill's centre) by `distance`, as a user grabs it.
     func qa0510PullFromNotch(_ distance: CGFloat) throws {
@@ -32,7 +32,7 @@ extension VoiceBarFlowTests {
     var qa0510Grip: XCUIElement { qa0510Pill.descendants(matching: .any)["notch-drawer-grip"] }
     /// A fixed row: a plain step on its exact e2e24 surface, never an expected failure.
     func qa0510Fixed(_ row: String, _ body: () throws -> Void) {
-        step(row + " Etan QA 0510", surface: "e2e24:" + row, surfaces: ["e2e24:" + row], body)
+        step(row + " QA 0510", surface: "e2e24:" + row, surfaces: ["e2e24:" + row], body)
     }
     func qa0510Speaking() throws {
         try e2e24Fixture("speaking", owner: "lane-B")

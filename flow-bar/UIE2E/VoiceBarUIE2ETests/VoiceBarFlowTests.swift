@@ -1121,7 +1121,7 @@ extension VoiceBarFlowTests {
         click(historyControl("Open stored audio in Finder"))
         receipt("history-finder")
         assertHistoryCopy("Copy recording details", contains: "Model: QA recognizer\nEffort: accurate")
-        // Etan, 2026-11-05: "can't close" the open Recording details. A visible close button, and Esc.
+        // Reported 2026-11-05: Recording details could not be dismissed. Provide a close button and Esc.
         let closeDetails = app.buttons["Close recording details"]
         if !closeDetails.exists { click(app.buttons["Recording details"], "open Recording details") }
         step("assert open Recording details show a close button") { XCTAssertTrue(closeDetails.waitForExistence(timeout: 3)) }
