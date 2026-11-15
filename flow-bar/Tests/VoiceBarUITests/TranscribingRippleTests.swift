@@ -66,11 +66,10 @@ final class TranscribingRippleTests: XCTestCase {
         print("NOTCH_REG spinner center distance to core: current=\(gap), v2.3=\(historical), coreLeft=\(coreLeft)")
         try regressionShot(mounted, "transcribing")
         // Independently hosted views can round opposite ways by half a pixel on different display scales.
-        // Allow one device pixel for their placement comparison, retaining the half-point Retina tolerance.
+        // Only their comparison needs one device pixel; keep the historical reconstruction pin at half a point.
         let pixel = 1 / (mounted.host.window?.backingScaleFactor ?? 2)
-        let placementAccuracy = max(0.5, pixel) + 0.001
-        XCTAssertEqual(historical, 36.5, accuracy: placementAccuracy, "measured historical single-spinner placement")
-        XCTAssertEqual(gap, historical, accuracy: placementAccuracy, "match 2.3 spinner position; extra width belongs outside it")
+        XCTAssertEqual(historical, 36.5, accuracy: 0.5, "measured historical single-spinner placement")
+        XCTAssertEqual(gap, historical, accuracy: pixel + 0.01, "match 2.3 spinner position; extra width belongs outside it")
         let microphone = try frame("Choose microphone", in: mounted.host)
         XCTAssertEqual(spinner.midX - microphone.midX - 20, 6, accuracy: 0.5,
                        "the approved outer microphone keeps recording's 20 pt slots and 6 pt gap")

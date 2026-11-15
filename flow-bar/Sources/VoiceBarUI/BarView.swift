@@ -843,7 +843,7 @@ public struct BarView: View {
                         historyPull.press(y: value.startLocation.y, progress: historyProgress, time: time)
                     } else if isHistoryPresented, NotchHistoryPull.acceptsHandle(
                         point: value.startLocation, centreX: historyPanelCentreX,
-                        panelHeight: openHeight, progress: historyFrozenProgress ?? renderedHistoryProgress(at: time)
+                        panelHeight: openHeight, progress: historyFrozenProgress ?? renderedHistoryProgress(at: NotchHistoryClock.now())
                     ) {
                         drawerPullDismissalGeneration = surface.dismissalGeneration
                         historyRowsPull.press(y: value.startLocation.y, progress: historyRowsExtent, time: time)
@@ -927,7 +927,8 @@ public struct BarView: View {
         guard admitsCurrentDrawerGesture() else { return }
         guard let progress = historyPull.move(
             y: y, time: time, range: openHeight - VoiceBarNotchContract.topHeight,
-            seed: renderedHistoryProgress(at: time)
+            // The handoff starts from what is drawn now; event time is only for the pointer's velocity.
+            seed: renderedHistoryProgress(at: NotchHistoryClock.now())
         ) else { return }
         let armed = settingsDrawer != nil && !isSettingsDrawerOpen
             && historyPull.rawProgress >= NotchHistoryMorph.settingsPullThreshold

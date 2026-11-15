@@ -519,7 +519,9 @@ extension NotchSurfaceHostedFlowTests {
                 let t0 = ProcessInfo.processInfo.systemUptime
                 let duration = distance == 220 ? 0.3 : 0.01
                 try send(.leftMouseDown, at: start, to: h.panel, timestamp: t0)
-                drain(duration)
+                // Deliberately delay handling beyond a short flick's velocity threshold. Event timestamps still
+                // describe a 10 ms flick, so handler-clock product code must fail even on a fast test host.
+                drain(0.2)
                 // Only one changed sample: no later event can repair a lost initial velocity.
                 try send(.leftMouseDragged, at: end, to: h.panel, timestamp: t0 + duration)
                 try send(.leftMouseUp, at: end, to: h.panel, timestamp: t0 + duration)
