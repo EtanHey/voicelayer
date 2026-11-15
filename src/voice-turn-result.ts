@@ -27,6 +27,7 @@ export type VoiceAskTurnOutcome =
 export type McpTextResult = {
   content: { type: "text"; text: string }[];
   isError?: boolean;
+  structuredContent?: { archive_id: string | null };
 };
 
 export function formatVoiceAskTurnResult(outcome: VoiceAskTurnOutcome): McpTextResult {

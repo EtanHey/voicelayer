@@ -1,3 +1,5 @@
+export { handleVoiceAskResults } from "./ask-results";
+import { atomicWriteFile } from "./recordings-archive-fs";
 import { claimVoiceCall, recordNoAnswer, STILL_AWAY, userVoicePresent } from "./voice-away-policy";
 import { voiceAskNoAnswerSeconds } from "./voice-ask-no-answer";
 import { formatVoiceAskTurnResult, type VoiceAskTurnOutcome, type VoiceAskTimeoutStage, type McpTextResult } from "./voice-turn-result";
@@ -416,8 +418,23 @@ async function handleVoiceSpeakAdmitted(
 }
 
 export async function handleVoiceAsk(...args: Parameters<typeof handleVoiceAskAdmitted>): Promise<McpResult> {
-  try { return await withFreshAsyncVoiceAdmission(() => handleVoiceAskAdmitted(...args), { maxWaitMs: 20, kind: "capture" }); }
-  catch (error) { if (error instanceof VoiceAdmissionCancelledError) return textResult(error.message); if (error instanceof UpdateBusyError) return textResult(error.message, true); throw error; }
+  const [input, context] = args;
+  let archiveId: string | null = null;
+  if (input && typeof input === "object" && "retranscribe_archive_id" in input &&
+      typeof input.retranscribe_archive_id === "string" &&
+      /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[a-f0-9]{8}$/.test(input.retranscribe_archive_id)) archiveId = input.retranscribe_archive_id;
+  const receiptContext: VoiceToolContext = { ...context, emit(event) {
+    if (event.kind === "voice_ask_archive") archiveId = event.archiveId;
+    context?.emit(event);
+  } };
+  let result: McpResult;
+  try { result = await withFreshAsyncVoiceAdmission(() => handleVoiceAskAdmitted(input, receiptContext), { maxWaitMs: 20, kind: "capture" }); }
+  catch (error) {
+    if (error instanceof VoiceAdmissionCancelledError) result = textResult(error.message);
+    else if (error instanceof UpdateBusyError) result = textResult(error.message, true);
+    else result = textResult("voice_ask failed; use voice_ask_results to recover retained answers.", true);
+  }
+  return { ...result, structuredContent: { archive_id: archiveId } };
 }
 async function handleVoiceAskAdmitted(
   args: unknown,
@@ -1007,6 +1024,8 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         } : {}),
         onArchiveCreated: (archivePath) => {
           captureArchivePath = archivePath;
+          console.error(`[voicelayer] voice_ask archive_id=${basename(archivePath)}`);
+          context?.emit({ kind: "voice_ask_archive", archiveId: basename(archivePath) });
         },
         onCaptureEnd: (transcribedDurationMs) => {
           ledgerCaptureEnd("answer");
@@ -1032,6 +1051,10 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     );
 
     if (response === null) {
+      if ((noAnswer || noSpeech) && !unclassifiedAnswer && captureArchivePath) {
+        try { atomicWriteFile(join(captureArchivePath, "ask-result.json"), JSON.stringify({ status: "away" })); }
+        catch { console.error("[voicelayer] Ask away receipt could not be saved"); }
+      }
       const recovery = recoveryOptions();
       const promptPlayback = speech.playbackOutcome;
       if (unclassifiedAnswer && recovery) return { kind: "retained", recovery: { ...recovery,

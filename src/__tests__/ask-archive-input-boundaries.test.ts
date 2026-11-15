@@ -81,7 +81,7 @@ describe(`Ask raw archive admission: ${caller} (isolated preload; synthetic spee
     it(`refuses raw cap+1 before allocation or voice work; trimmed=${message.trim().length}`, async () => {
       const result = await ask({ message });
       if (caller === "typed") expect(admitted).toEqual({ kind: "refused", reason: "raw-input-limit", result });
-      expect(result).toEqual({ content: [{ type: "text", text: "voice_ask refused: raw input exceeds archive admission limit" }], isError: true });
+      expect(result).toEqual({ content: [{ type: "text", text: "voice_ask refused: raw input exceeds archive admission limit" }], isError: true, ...(caller === "legacy" ? { structuredContent: { archive_id: null } } : {}) });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("raw input exceeds archive admission limit");
       expect(creator).not.toHaveBeenCalled();

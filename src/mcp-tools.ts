@@ -103,6 +103,15 @@ export function getToolDefinitions() {
     },
 
     {
+      name: "voice_ask_results",
+      description: "Read retained Ask answers after an interrupted voice_ask: newest first (default 5, max 20), or one archive_id. Returns id, asked_at, question_preview (80 characters), raw answer and status answered/away/needs-retranscribe. Never speaks, records, opens the microphone or retranscribes. For explicit retranscription use voice_ask with retranscribe_archive_id.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: { type: "object" as const, properties: {
+        archive_id: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z-[a-f0-9]{8}$", description: "Exact retained Ask archive ID." },
+        limit: { type: "integer", minimum: 1, maximum: 20, default: 5 },
+      }, additionalProperties: false },
+    },
+    {
       name: "voice_ask",
       description:
         "Ask ONE short question aloud (≤600 chars — longer is refused).\n" +
@@ -128,7 +137,7 @@ export function getToolDefinitions() {
         "Recover it with Re-transcribe in VoiceBar History; do not ask the user to repeat.\n" +
         "Optional archive retranscription is explicit only and never automatic: call voice_ask with only retranscribe_archive_id from the preceding successful Ask. " +
         "It binds to that exact receipt, sends the complete retained response audio to STT, does not speak and does not open the microphone, and returns the result only to this caller.\n" +
-        "Returns: transcribed text on success, recoverable archive details when captured audio needs retranscription, " +
+        "An archive ID notification is emitted as soon as the captured take is retained, before transcription completes. Every result includes structuredContent.archive_id (null before allocation). Recover interrupted answers with voice_ask_results. Returns: transcribed text on success, recoverable archive details when captured audio needs retranscription, " +
         "error if busy, if the prompt or the recorder never finished so the microphone never opened, or if the capture pipeline is stuck with zero recoverable audio.\n" +
         "Prerequisites: sox (recording), whisper.cpp or Wispr Flow (STT), python3 + edge-tts (TTS).",
       annotations: {

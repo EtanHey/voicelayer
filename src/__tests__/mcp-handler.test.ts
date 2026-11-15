@@ -159,7 +159,7 @@ describe("mcp-handler", () => {
       const toolNames = response.result.tools.map(
         (t: { name: string }) => t.name,
       );
-      expect(toolNames).toEqual(["voice_speak", "voice_ask"]);
+      expect(toolNames).toEqual(["voice_speak", "voice_ask_results", "voice_ask"]);
     });
 
     it("advertises the preserved voice override on voice_ask", async () => {
