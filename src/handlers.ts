@@ -1,3 +1,5 @@
+export { handleVoiceAskResults } from "./ask-results";
+import { atomicWriteFile } from "./recordings-archive-fs";
 import { claimVoiceCall, recordNoAnswer, STILL_AWAY, userVoicePresent } from "./voice-away-policy";
 import { voiceAskNoAnswerSeconds } from "./voice-ask-no-answer";
 import { formatVoiceAskTurnResult, type VoiceAskTurnOutcome, type VoiceAskTimeoutStage, type McpTextResult } from "./voice-turn-result";
@@ -1007,6 +1009,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         } : {}),
         onArchiveCreated: (archivePath) => {
           captureArchivePath = archivePath;
+          console.error(`[voicelayer] voice_ask archive_id=${basename(archivePath)}`);
         },
         onCaptureEnd: (transcribedDurationMs) => {
           ledgerCaptureEnd("answer");
@@ -1032,13 +1035,17 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     );
 
     if (response === null) {
+      if ((noAnswer || noSpeech) && !unclassifiedAnswer && captureArchivePath) {
+        try { atomicWriteFile(join(captureArchivePath, "ask-result.json"), JSON.stringify({ status: "away" })); }
+        catch { console.error("[voicelayer] Ask away receipt could not be saved"); }
+      }
       const recovery = recoveryOptions();
       const promptPlayback = speech.playbackOutcome;
       if (unclassifiedAnswer && recovery) return { kind: "retained", recovery: { ...recovery,
         reason: "Speech could not be ruled out: VAD classification stalled. The complete recording was kept." }, promptPlayback };
       if (noAnswer && recovery) return recordNoAnswer(context)
         ? { kind: "no-answer", timeoutSeconds, recovery, promptPlayback }
-        : { kind: "away" };
+        : { kind: "away", archiveId: recovery.archiveId };
       if (noSpeech) return { kind: "no-speech", recovery: recovery ?? null, promptPlayback };
       if (recovery) return { kind: "retained", recovery, promptPlayback };
       return { kind: "no-input", timeoutSeconds, pushToEnd, promptPlayback };

@@ -20,7 +20,7 @@ for (const [raw, expected] of [[undefined, 120], ["", 120], ["garbage", 120], ["
   });
 }
 test("D5 both tool descriptions limit agents to ONE follow-up, then away", () => {
-  for (const tool of getToolDefinitions()) {
+  for (const tool of getToolDefinitions().filter(tool => !tool.annotations.readOnlyHint)) {
     expect(tool.description).toContain("ONE follow-up voice_speak or voice_ask");
     expect(tool.description).toContain("then continue as if the user is away");
     expect(tool.description).toContain("do not keep asking");

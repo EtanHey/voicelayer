@@ -220,7 +220,7 @@ describe("speak CLI review regressions", () => {
       await until(() => speaking); expect(ended).toBe(false);
       await requestSpeech({ cmd: "stop", scope: "speech" }, { socketPath, token: "token" }); await waiting;
       expect(ended).toBe(true);
-      expect((await rpc(socketPath, "tools/list")).result.tools.map((tool: any) => tool.name)).toEqual(["voice_speak", "voice_ask"]);
+      expect((await rpc(socketPath, "tools/list")).result.tools.map((tool: any) => tool.name)).toEqual(["voice_speak", "voice_ask_results", "voice_ask"]);
     } finally { daemon.stop(); }
   }, SUBPROCESS_TEST_TIMEOUT_MS);
   for (const host of ["native", "linux"]) for (const signal of ["SIGINT", "SIGTERM"] as const) for (const phase of ["synth", "player"]) test(`${signal} reaps foreground fallback during ${phase} (${host})`, async () => {

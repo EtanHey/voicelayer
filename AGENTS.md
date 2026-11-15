@@ -85,6 +85,7 @@ That lifecycle is not solid yet, and it has broken F5 and left two VoiceLayers r
 |------|------|-------|
 | `voice_speak` | Async | Returns immediately, audio plays in background |
 | `voice_ask` | Blocking | Waits for speak to finish, records mic, returns transcription |
+| `voice_ask_results` | Read-only | Retained Ask answers, newest (default 5, max 20) or by `archive_id`; never records or retranscribes |
 
 ## Test & Build
 
