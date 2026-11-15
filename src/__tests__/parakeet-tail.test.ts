@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { createHash } from "crypto";
 import { join } from "path";
@@ -164,5 +164,76 @@ describe("Lane K: Silero tail evidence and timestamped CLI fallback", () => {
     const result = await failureRouter(cli.backend, async p => evidence(p, true)).transcribe(path);
     expect(result.text).toBe(""); expect(result.outcome).toBe("ACOUSTIC_GATE_EMPTY");
     expect(result.attemptEvidence?.gateRemoval?.gate).toBe("closing-caption");
+  });
+});
+
+// Sanitized incident geometry; injected model replies exercise the real router,
+// evidence validation, crop planning, qualification and insertion code.
+async function shortTail(mode = "speech", duration = 28.5013125, lastEnd = 27.2) {
+  const frames = Math.round(duration * 16000), bytes = Buffer.alloc(44 + frames * 2);
+  const header = wav().subarray(0, 44); header.copy(bytes);
+  bytes.writeUInt32LE(bytes.length - 8, 4); bytes.writeUInt32LE(frames * 2, 40);
+  bytes.fill(1, 44); // Nonzero synthetic PCM, never used as speech evidence.
+  writeFileSync(path, bytes);
+  const tokens = [
+    { text: "Keep every fu… no repeated repeated word", start: 0, end: lastEnd - 1.2 },
+    { text: " final", start: lastEnd - 1.1, end: lastEnd - .72 },
+    { text: " thought", start: lastEnd - .7, end: lastEnd - .4 },
+    { text: ".", start: lastEnd - .3, end: lastEnd },
+  ];
+  const text = tokens.map(t => t.text).join("");
+  const native = { text, complete: true, input_frames: frames, covered_frames: frames,
+    sample_rate: 16000, last_token_end_s: lastEnd, inference_s: 0, language: null, raw_token_times: tokens };
+  const probabilities = Array.from({ length: Math.ceil(frames / 512) }, (_, i) => {
+    const start = i * .032, end = (i + 1) * .032;
+    const speechEnd = mode === "brief" ? lastEnd + .7 : lastEnd + .928;
+    return start >= lastEnd + .288 && end <= speechEnd ? (mode === "noise" ? .29 : .99) : .01;
+  });
+  let calls = 0, probes = 0, whisper = 0;
+  const retained: import("../parakeet-attempts").ParakeetFallbackAttempt[] = [];
+  const logs = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const backend = new ParakeetBackend({ transcribe: async clip => {
+      if (calls++ === 0) return native;
+      const clipBytes = readFileSync(clip), clipFrames = (clipBytes.length - 44) / 2;
+      return { ...native, raw_token_times: undefined, text: mode === "empty" ? "" : "final thought. recovered tail",
+        input_frames: clipFrames, covered_frames: clipFrames, last_token_end_s: clipFrames / 16000 };
+    }, speechProbe: async snapshot => {
+      probes++;
+      return { status: "COMPLETE", threshold: .3, frames, analyzedFrames: mode === "partial" ? 512 : frames,
+        inputSha256: mode === "wrong-hash" ? "wrong" : createHash("sha256").update(readFileSync(snapshot)).digest("hex"), probabilities };
+    }, env: () => ({ QA_VOICE_WHISPER_LANG: "en" }), retainFallback: a => { retained.push(a); return "short-tail-receipt"; },
+      fallbackBackend: { name: "forbidden-whisper", isAvailable: async () => true, transcribe: async () => { whisper++; throw new Error("must not run"); } },
+    });
+    const result = await backend.transcribe(path);
+    return { result, native, calls, probes, whisper, retained, logs: logs.mock.calls.flat().join(" ") };
+  } finally { logs.mockRestore(); }
+}
+
+describe("short uncovered final speech", () => {
+  test("28.5s take ending at 27.2s requests a repair and appends without losing native characters", async () => {
+    const r = await shortTail();
+    expect(r.probes).toBe(1); expect(r.calls).toBe(2); expect(r.whisper).toBe(0);
+    expect(r.result.text).toBe(r.native.text + " recovered tail");
+    expect(r.result.backend).toContain("uncovered-tail+span-repair");
+    expect(r.logs).toContain('"event":"parakeet_coverage_retry"');
+  });
+  test.each(["noise", "brief", "partial", "wrong-hash"])("%s does not authorize a tail repair", async mode => {
+    const r = await shortTail(mode);
+    expect(r.probes).toBe(1); expect(r.calls).toBe(1); expect(r.whisper).toBe(0);
+    expect(r.result.text).toBe(r.native.text);
+    expect(r.logs).not.toContain('"event":"parakeet_coverage_retry"');
+  });
+  test("five-second take also recovers final speech", async () => {
+    const r = await shortTail("speech", 5, 3.7);
+    expect(r.calls).toBe(2); expect(r.result.text).toBe(r.native.text + " recovered tail");
+  });
+  test("empty Parakeet crop keeps all native text and records rejection without Whisper", async () => {
+    const r = await shortTail("empty");
+    expect(r.calls).toBe(2); expect(r.whisper).toBe(0);
+    expect(r.result.text).toBe(r.native.text);
+    expect(r.result.backend).toContain("uncovered-tail+kept-native");
+    expect(r.retained.some(a => a.repair?.accepted === false && a.repairParakeet?.text === "")).toBe(true);
+    expect(r.logs).toContain('"accepted":false');
   });
 });

@@ -77,7 +77,7 @@ export function parakeetWavInfo(bytes: Uint8Array): WavInfo {
   return { frames: dataBytes / 2, sampleRate, lastActiveSeconds: last, allZero, dataOffset };
 }
 
-export function parakeetOutputRisk(result: ParakeetResponse, info: WavInfo, lastSpeechSeconds?: number, probeAccountingGap = false): string | null {
+export function parakeetOutputRisk(result: ParakeetResponse, info: WavInfo, uncoveredTail = false, probeAccountingGap = false): string | null {
   if (!result || typeof result.text !== "string") return "invalid-response";
   const evidence = result.attemptEvidence;
   if (evidence?.status && !["RETURNED", "EMPTY_RESPONSE"].includes(evidence.status)) return "provider-" + evidence.status.toLowerCase();
@@ -93,7 +93,8 @@ export function parakeetOutputRisk(result: ParakeetResponse, info: WavInfo, last
   const times = result.raw_token_times === undefined ? undefined : tokenTimeSchema.safeParse(result.raw_token_times);
   if ((times && (!times.success || times.data.some(t => t.end > duration))) || evidence?.timesValid === false || (result.last_token_end_s !== null &&
       (typeof result.last_token_end_s !== "number" || !Number.isFinite(result.last_token_end_s) || result.last_token_end_s < 0 || result.last_token_end_s > duration))) return "invalid-timing";
-  if (duration >= 8 && result.last_token_end_s !== null && lastSpeechSeconds !== undefined && lastSpeechSeconds - result.last_token_end_s > Math.max(3, Math.min(8, duration * 0.05))) return "uncovered-tail";
+  // The caller establishes this only from complete input-bound Silero windows.
+  if (uncoveredTail) return "uncovered-tail";
   return null;
 }
 
@@ -315,7 +316,7 @@ export class ParakeetBackend implements STTBackend {
       if ((result.attemptEvidence?.inputSha256 && result.attemptEvidence.inputSha256 !== inputSha256) ||
           (result.attemptEvidence?.inputPath && result.attemptEvidence.inputPath !== inputPath)) return fallback("input-identity", result);
       const accountingGap = smallAccountingGap(result, info);
-      let reason = parakeetOutputRisk(result, info, undefined, accountingGap);
+      let reason = parakeetOutputRisk(result, info, false, accountingGap);
       const duration = info.frames / info.sampleRate;
       if (reason === "invalid-timing" && !accountingGap) {
         console.error(`[voicelayer] ${JSON.stringify({ event: "parakeet_coverage_unavailable", reason })}`);
@@ -326,17 +327,22 @@ export class ParakeetBackend implements STTBackend {
           outcome: "NATIVE_NONEMPTY_COMPLETENESS_UNKNOWN", fallbackEvidencePath, languageWarning, languageEvidence };
       }
       const gaps = internalTokenGaps(result, duration);
-      if ((!reason || (accountingGap && reason === "invalid-timing")) && (accountingGap || (duration >= 8 &&
-          (gaps.length > 0 || (result.last_token_end_s !== null &&
-          duration - result.last_token_end_s > Math.max(3, Math.min(8, duration * 0.05))))))) {
+      if ((!reason || (accountingGap && reason === "invalid-timing")) && (accountingGap || (duration >= 8 && gaps.length > 0) ||
+          (result.last_token_end_s !== null && duration - result.last_token_end_s >
+            INTERNAL_SPEECH_MIN_S + 2 * INTERNAL_TOKEN_MARGIN_S))) {
         try { speechEvidence = await (this.deps.speechProbe ?? probeParakeetSpeech)(inputPath); }
         catch (error) { speechEvidence = { status: "UNKNOWN", threshold: PARAKEET_EMPTY_SPEECH_THRESHOLD, errorType: error instanceof Error ? error.name : "unknown" }; }
         const lastSpeechSeconds = lastSileroSpeech(speechEvidence, info, inputSha256);
         if (lastSpeechSeconds === undefined) console.error(accountingGap
           ? "[voicelayer] Parakeet speech evidence unavailable; accounting gap cannot be verified"
           : "[voicelayer] Parakeet speech evidence unavailable or invalid; keeping Parakeet text (no energy fallback)");
-        reason = parakeetOutputRisk(result, info, lastSpeechSeconds, accountingGap);
         const probabilities = sileroProbabilities(speechEvidence, info, inputSha256);
+        // Reuse the internal-gap rule: >=0.5s consecutive positive complete
+        // windows after the token margin. A distant isolated breath is not enough.
+        const tailSpeech = probabilities && result.last_token_end_s !== null &&
+          uncoveredInternalSpeech([{ start: result.last_token_end_s + INTERNAL_TOKEN_MARGIN_S,
+            end: duration }], probabilities, info).length > 0;
+        reason = parakeetOutputRisk(result, info, !!tailSpeech, accountingGap);
         if (accountingGap) {
           uncoveredSpans = [{ start: result.covered_frames / info.sampleRate, end: duration }];
           if (!probabilities) return fallback("accounting-gap-unverified", result);
@@ -407,7 +413,13 @@ export class ParakeetBackend implements STTBackend {
               const qualified = qualifySpanRepair(repairParakeet.text, plan, speechSeconds);
               accepted = qualified.accepted;
               if (qualified.accepted && qualified.insertion) {
-                text = text.slice(0, plan.offset) + (/^[,.;:!?…)}\]]/u.test(qualified.insertion) ? "" : " ") + qualified.insertion + text.slice(plan.offset);
+                let insertion = qualified.insertion;
+                // A tail anchor excludes punctuation from its lexical match.
+                // Do not append its existing terminator twice; native bytes stay intact.
+                const terminator = result.text.match(/[,.;:!?…)}\]]+$/u)?.[0];
+                if (!plan.right.length && terminator && insertion.startsWith(terminator))
+                  insertion = insertion.slice(terminator.length).trimStart();
+                if (insertion) text = text.slice(0, plan.offset) + (/^[,.;:!?…)}\]]/u.test(insertion) ? "" : " ") + insertion + text.slice(plan.offset);
               } else if (!qualified.accepted) rejection = qualified.reason;
             } catch (error) { rejection = error instanceof Error ? error.name : "unknown"; }
             finally { try { unlinkSync(clipPath); } catch {} }
