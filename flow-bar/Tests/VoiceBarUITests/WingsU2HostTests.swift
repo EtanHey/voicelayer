@@ -146,7 +146,8 @@ final class WingsU2HostTests: XCTestCase {
         let callbacks = Callbacks()
         let host = makeHost(
             state: state,
-            configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 1),
+            configuration: VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 1, leadingCoreInset: VoiceBarPresentation.transcribingMicrophoneCoreInset),
             callbacks: callbacks
         )
         XCTAssertEqual(host.layout.presentation.visualState, .compactStatus)

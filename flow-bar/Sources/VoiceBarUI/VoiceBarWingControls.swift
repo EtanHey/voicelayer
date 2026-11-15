@@ -351,7 +351,7 @@ struct VoiceBarRecordingTrailingRow<Time: View, Meter: View>: View {
     @ViewBuilder let meter: Meter
 
     var body: some View {
-        HStack(alignment: .center, spacing: VoiceBarRecordingWingLabel.recordingMeterGap) {
+        HStack(alignment: .center, spacing: VoiceBarRecordingWingLabel.recordingTimeGap) {
             time
                 .fixedSize(horizontal: true, vertical: false)
                 .layoutPriority(1)
@@ -363,6 +363,9 @@ struct VoiceBarRecordingTrailingRow<Time: View, Meter: View>: View {
                 .frame(minWidth: 0, maxWidth: WaveformLayout.viewportWidth)
                 .frame(height: WaveformLayout.viewportHeight)
                 .clipped()
+                // Restore the 2.3 meter position without moving the clock or resizing the shell.
+                .padding(.trailing, VoiceBarRecordingWingLabel.recordingMeterGap
+                    - VoiceBarRecordingWingLabel.recordingTimeGap)
         }
         // Longer clocks use the meter's leading space; both band edges and the left controls hold still.
         .frame(width: VoiceBarRecordingWingLabel.width + VoiceBarRecordingWingLabel.recordingMeterGap

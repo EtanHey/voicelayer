@@ -1366,12 +1366,14 @@ public struct BarView: View {
             if notchPresentation.bandState == .compactStatus, state.mode == .transcribing {
                 // 2.3 U2: the spinner sits where Stop was, in a control slot so it lines up with it. It is not a
                 // control, so it registers no tooltip (R0856-09: tooltips sit on controls); VoiceOver reads it.
-                // 0510 N9: the microphone control keeps its core-side slot, as on the launcher.
+                // Keep the spinner at its historical core distance, with the microphone one control pitch outside.
                 HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
-                    transcriptionSpinner
                     microphonePickerButton
+                    transcriptionSpinner
                 }
-                // c9-P: the wing keeps the recording band's width; the pair stays on its core-anchored hit slots.
+                .padding(.trailing, VoiceBarPresentation.transcribingSpinnerCoreInset
+                    - VoiceBarNotchContract.compactCoreContentInset)
+                // c9-P: keep the full recording wing; spare width stays beyond the microphone on the outer side.
                 .frame(maxWidth: .infinity, alignment: .trailing)
             } else if let playbackPauseControl {
                 readingTransportControls(playbackPauseControl)
