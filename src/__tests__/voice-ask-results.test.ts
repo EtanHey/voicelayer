@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync,
 import { join } from "path";
 import * as handlers from "../handlers";
 import { getToolDefinitions } from "../mcp-tools";
-import { voiceToolEventToMcpNotification } from "../mcp-notifications";
+import { formatVoiceAskTurnResult } from "../voice-turn-result";
 
 let root: string, saved: string | undefined;
 const id = (n: number) => `2026-01-02T03-04-05-${String(n).padStart(3, "0")}Z-abcdef01`;
@@ -63,13 +63,14 @@ test("invalid input, malformed metadata and symlinks cannot read outside Ask ent
   expect(readdirSync(dir).sort()).toEqual(["agent-transcript.txt", "metadata.json", "voicelayer-transcript.txt"]);
   expect(readFileSync(join(broken, "metadata.json"), "utf8")).toBe("{");
 });
-test("archive receipt becomes a client-visible notification without question or answer", () => {
-  const notification = voiceToolEventToMcpNotification({kind: "voice_ask_archive", archiveId: id(1)} as any);
-  expect(notification.method).toBe("notifications/message");
-  expect(notification.params.data).toEqual({kind: "voice_ask_archive", archive_id: id(1)});
+test("an already-away outcome still carries its allocated archive ID", () => {
+  const result = formatVoiceAskTurnResult({kind: "away", archiveId: id(1)});
+  expect(result.content[0].text).toContain(id(1));
+  expect(result.isError).toBeUndefined();
 });
-test("even a rejected Ask reports an explicit null archive ID", async () => {
-  expect((await handlers.handleVoiceAsk({})).structuredContent).toEqual({ archive_id: null });
+test("a pre-allocation refusal keeps its exact envelope and never fabricates an archive ID", async () => {
+  expect(await handlers.handleVoiceAsk({})).toEqual({content: [{type: "text", text:
+    "Invalid voice_ask arguments: provide exactly one mode — {message: ...} or {retranscribe_archive_id: ...}."}], isError: true});
 });
 
 test("daemon JSON-RPC admits the read-only tool", async () => {
@@ -86,12 +87,14 @@ test("daemon JSON-RPC admits the read-only tool", async () => {
   expect(JSON.stringify(result?.result)).toContain("Synthetic recovered answer");
 });
 
-test("retention notification precedes a gated answer; away is persisted without transcription", async () => {
+test("retention log precedes a gated answer; away is persisted without transcription", async () => {
   const { spyOn } = await import("bun:test");
   const tts = await import("../tts"), input = await import("../input");
   const booking = await import("../session-booking"), recording = await import("../recording-state");
   const socket = await import("../socket-client");
+  const archiveLog: unknown[][] = [];
   const spies = [
+    spyOn(console, "error").mockImplementation((...args) => { archiveLog.push(args); }),
     spyOn(tts, "speak").mockImplementation(async text => ({playbackId: "synthetic", displayText: text,
       engine: "edge-tts" as const, voice: "synthetic", audioArtifact: {bytes: new Uint8Array([73,68,51]), format: "mp3" as const}})),
     spyOn(recording, "getEffectiveRecordingState").mockReturnValue("idle"),
@@ -118,10 +121,11 @@ test("retention notification precedes a gated answer; away is persisted without 
       .then(result => {settled = true; return result;});
     await retained.promise;
     expect(settled).toBe(false);
-    expect(events).toContainEqual({kind: "voice_ask_archive", archiveId: id(1)});
+    expect(archiveLog).toContainEqual([`[voicelayer] voice_ask archive_id=${id(1)}`]);
+    expect(events.every(event => event.kind !== "voice_ask_archive")).toBe(true);
     answer.resolve(null);
     const result = await pending;
-    expect(result.structuredContent).toEqual({archive_id: id(1)});
+    expect(result.content[0].text).toContain(id(1));
     expect((await lookup({archive_id: id(1)}))[0].status).toBe("away");
   } finally {
     answer.resolve(null);

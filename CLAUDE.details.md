@@ -130,5 +130,5 @@ Recordings backup: `bash scripts/backup-recordings-icloud.sh [--dry-run]` copies
 
 ## Naming
 - Primary tools: `voice_speak`, `voice_ask`, `voice_ask_results`
-- `voice_ask_results({archive_id?, limit?})`: read retained Ask answers (default 5, max 20), including raw answer and answered/away/needs-retranscribe status; no speech, capture or retranscription. `voice_ask` emits its archive ID when retained and returns `structuredContent.archive_id` (null before allocation).
+- `voice_ask_results({archive_id?, limit?})`: read retained Ask answers (default 5, max 20), including raw answer and answered/away/needs-retranscribe status; no speech, capture or retranscription. `voice_ask` logs its archive ID when retained, before transcription. Retained-result text includes the ID; no ID exists before allocation.
 - Env vars use a mixed contract: `VOICELAYER_*` is canonical where implemented (currently aggressive-filler control and socket overrides), with legacy `QA_VOICE_*` aliases retained; settings not yet migrated still use `QA_VOICE_*`.

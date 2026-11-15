@@ -116,13 +116,12 @@ export function getToolDefinitions() {
       description:
         "Ask ONE short question aloud (≤600 chars — longer is refused).\n" +
         SPOKEN_STYLE + NO_ANSWER_RULE +
-        "Waits for the user's voice response. BLOCKING: " +
-        "the question is spoken before the microphone opens, and the caller blocks for the entire playback plus the response.\n" +
+        "BLOCKING: the question is spoken before the microphone opens; the caller blocks for the entire playback plus the response.\n" +
         "HARD LIMIT: 600 characters maximum, independent of timeout_seconds. " +
         "Longer messages are refused, not truncated. " +
-        "That is roughly 45 seconds of speech, and it is a question, not a briefing.\n" +
-        "If content the user must understand or respond to is longer, split it into two or more sequential voice_ask calls. " +
-        "Each ask is a checkpoint: the user confirms they absorbed one part before the next is spoken. " +
+        "Roughly 45 seconds of speech; a question, not a briefing.\n" +
+        "Longer content the user must understand or respond to needs two or more sequential voice_ask calls. " +
+        "At each checkpoint the user confirms they absorbed one part before the next. " +
         "voice_speak is only for announcements or status updates that do not need a response.\n" +
         "Auto-waits for any playing voice_speak audio to finish before speaking. " +
         "No detected speech for 120s by default closes the Ask and keeps the recording; first speech cancels this deadline.\n\n" +
@@ -135,9 +134,9 @@ export function getToolDefinitions() {
         "Captured user audio is always kept, including cancel, abort, and hard-timeout paths. " +
         "If transcription cannot finish after audio exists, the non-fatal result includes an archive ID and audio path. " +
         "Recover it with Re-transcribe in VoiceBar History; do not ask the user to repeat.\n" +
-        "Optional archive retranscription is explicit only and never automatic: call voice_ask with only retranscribe_archive_id from the preceding successful Ask. " +
-        "It binds to that exact receipt, sends the complete retained response audio to STT, does not speak and does not open the microphone, and returns the result only to this caller.\n" +
-        "An archive ID notification is emitted as soon as the captured take is retained, before transcription completes. Every result includes structuredContent.archive_id (null before allocation). Recover interrupted answers with voice_ask_results. Returns: transcribed text on success, recoverable archive details when captured audio needs retranscription, " +
+        "Retranscription is explicit only, never automatic: call voice_ask with only retranscribe_archive_id from the preceding successful Ask. " +
+        "It uses that exact receipt's complete retained response audio for STT, does not speak, does not open the microphone, and returns only to this caller.\n" +
+        "Archive ID logged at retention, before transcription, and included in retained results. Recover interrupted answers with voice_ask_results. Returns: transcribed text on success, recoverable archive details when captured audio needs retranscription, " +
         "error if busy, if the prompt or the recorder never finished so the microphone never opened, or if the capture pipeline is stuck with zero recoverable audio.\n" +
         "Prerequisites: sox (recording), whisper.cpp or Wispr Flow (STT), python3 + edge-tts (TTS).",
       annotations: {
