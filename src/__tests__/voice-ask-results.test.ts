@@ -65,7 +65,7 @@ test("invalid input, malformed metadata and symlinks cannot read outside Ask ent
 });
 test("an already-away outcome still carries its allocated archive ID", () => {
   const result = formatVoiceAskTurnResult({kind: "away", archiveId: id(1)});
-  expect(result.content[0].text).toContain(id(1));
+  expect(result.content[0].text).toBe(`Still no answer. Do not make another voice call; continue as if the user is away. (archive ${id(1)})`);
   expect(result.isError).toBeUndefined();
 });
 test("a pre-allocation refusal keeps its exact envelope and never fabricates an archive ID", async () => {
@@ -142,3 +142,5 @@ test("empty archive and maximum page size are deterministic", async () => {
   expect(page[0].id).toBe(id(21));
   expect(page[19].id).toBe(id(2));
 });
+
+test("a spoken-question ID explicitly has no Ask answer", async () => { fixture(1, undefined, "speak"); expect(JSON.parse((await handlers.handleVoiceAskResults({archive_id: id(1)})).content[0].text)).toEqual({results: [], message: "No Ask answer exists for this archive ID."}); });

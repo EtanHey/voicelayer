@@ -40,7 +40,7 @@ export function formatVoiceAskTurnResult(outcome: VoiceAskTurnOutcome): McpTextR
         ...(outcome.archiveId ? { archiveId: outcome.archiveId } : {}),
         promptPlayback: outcome.promptPlayback,
       }));
-    case "away": return textResult(outcome.archiveId ? `${STILL_AWAY} (archive ${outcome.archiveId}).` : STILL_AWAY);
+    case "away": return textResult(outcome.archiveId ? `${STILL_AWAY} (archive ${outcome.archiveId})` : STILL_AWAY);
     case "no-answer":
       return textResult(`No answer within ${outcome.timeoutSeconds === 120 ? "2 minutes" : `${outcome.timeoutSeconds} seconds`}; recording kept at ${outcome.recovery.audioPath} (archive ${outcome.recovery.archiveId}). You may make ONE follow-up voice_speak or voice_ask, then continue as if the user is away; do not keep asking.`);
     case "no-speech":

@@ -54,5 +54,5 @@ export async function handleVoiceAskResults(args: unknown): Promise<McpTextResul
     results.sort((a, b) => Date.parse(b.asked_at) - Date.parse(a.asked_at) || b.id.localeCompare(a.id));
     results = results.slice(0, parsed.data.limit);
   }
-  return { content: [{ type: "text", text: JSON.stringify({ results }) }] };
+  return { content: [{ type: "text", text: JSON.stringify({ results, ...(parsed.data.archive_id && results.length === 0 ? { message: "No Ask answer exists for this archive ID." } : {}) }) }] };
 }
