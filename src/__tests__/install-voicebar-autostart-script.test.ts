@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -21,6 +22,23 @@ const installScript = join(
   "scripts",
   "install-voicebar-autostart.sh",
 );
+
+function expectValidPlist(path: string) {
+  const result = spawnSync("python3", ["-c",
+    "import plistlib,sys; plistlib.load(open(sys.argv[1],'rb'))", path], {
+    encoding: "utf8",
+    env: process.env,
+  });
+  expect(result.error).toBeUndefined();
+  expect(result.status, `${path}: ${result.stderr}`).toBe(0);
+}
+
+const launchdDir = join(import.meta.dir, "../../launchd");
+for (const name of readdirSync(launchdDir).filter((name) => name.endsWith(".plist")).sort()) {
+  test(`valid XML plist template: launchd/${name}`, () => {
+    expectValidPlist(join(launchdDir, name));
+  });
+}
 
 // The stub directory is the ENTIRE PATH the script runs under, so `xattr` is
 // genuinely absent when we say it is -- inheriting /usr/bin would hand the
@@ -326,6 +344,12 @@ describe("install-voicebar-autostart.sh log paths", () => {
     );
   }
 
+  test("valid XML plist after installer substitution", () => {
+    const workspace = makeWorkspace({ printLoaded: 0 });
+    expect(runInstaller(workspace).status).toBe(0);
+    expectValidPlist(join(workspace.home, "Library/LaunchAgents/com.voicelayer.voicebar.plist"));
+  });
+
   function logDir(workspace: Workspace): string {
     return join(workspace.home, "Library", "Logs", "voicelayer");
   }
@@ -416,6 +440,7 @@ describe("install-voicebar-autostart.sh log paths", () => {
       ),
       "utf8",
     );
+    expectValidPlist(join(hostileHome, "Library/LaunchAgents/com.voicelayer.voicebar.plist"));
     expect(plist).toContain(
       `<string>${hostileHome.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")}/Library/Logs/voicelayer/voicebar-err.log</string>`,
     );
