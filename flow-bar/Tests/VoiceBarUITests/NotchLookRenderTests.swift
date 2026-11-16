@@ -22,7 +22,7 @@ final class NotchLookRenderTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         for inset: CGFloat in [0, 12] {
             for light in [false, true] {
-                for phase in ["recording-first", "recording-live", "recording-lock", "history-0", "history-50", "history-100", "history-armed"] {
+                for phase in ["recording-first", "recording-live", "recording-lock", "history-0", "history-50", "history-100", "history-armed", "dictionary"] {
                     let state = VoiceState(
                         recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
                         recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in },
@@ -58,7 +58,11 @@ final class NotchLookRenderTests: XCTestCase {
                         let progress: CGFloat = phase == "history-0" ? 1 : phase == "history-50" ? 1.15 : 1.3
                         bar = (phase == "history-armed" ? bar.presentingSettingsPullHintForShots() : bar.presentingHistoryForShots()).freezingHistoryMorph(at: progress)
                     }
-                    let view = bar.environment(\.colorScheme, light ? .light : .dark)
+                    let content = phase == "dictionary"
+                        ? AnyView(SettingsDrawerLaneS3Tests.pane(.dictionary).notchDrawerPane(.dictionary)
+                            .environment(\.settingsHoverPreview, SettingsHoverPreview(termRowID: "personal:Kubernetes"))
+                            .frame(width: 420, height: 600)) : AnyView(bar)
+                    let view = content.environment(\.colorScheme, light ? .light : .dark)
                         .environment(\.visualRenderTime, 101.5)
                         .frame(width: 700, height: 680, alignment: .top)
                     let host = NSHostingView(rootView: view)
