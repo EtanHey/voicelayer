@@ -102,6 +102,11 @@ public struct VoiceBarNotchHistoryMorphInput: Equatable {
 
 /// The History shell at an animated progress: geometry and radii are derived per frame, so the shape, the
 /// radii and the rows (driven by the same value) can never drift apart.
+///
+/// Owner r2 / review r1 (lead decision): this shape deliberately hands the wing content no live wings
+/// (`VoiceBarNotchLiveWingsProviding`), so the History drawer's open and close are OUT of the icons-travel rule. Its
+/// top row is drawn flush with the 420 pt panel while the band's controls stay in their slots; letting them ride that
+/// edge would move the recording controls on every drawer pull, which X4 J2 forbids.
 public struct VoiceBarNotchHistoryMorphShape: Shape {
     public var morph: VoiceBarNotchHistoryMorphInput
     public let coreAnchorX: CGFloat?
