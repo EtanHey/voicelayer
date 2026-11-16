@@ -1,0 +1,102 @@
+{
+  "method": "AX bounds select regions; actual glyph/glass pixels segmented. Point units are pixels/2. Threshold-dependent estimates, not optical approval.",
+  "rows": [
+    {
+      "arm": "before",
+      "theme": "light",
+      "state": "c-recording-live",
+      "image": "images/before-light-c-recording-live.png",
+      "innermost_left_control": "Cancel recording",
+      "left_control_to_notch_pt": 22.0,
+      "notch_to_timer_pt": 8.5,
+      "left_wing_width_pt": 102.5,
+      "right_wing_width_pt": 101.5,
+      "status": "screenshot threshold estimate; native pixels / 2; threshold sensitive"
+    },
+    {
+      "arm": "before",
+      "theme": "light",
+      "state": "c2-recording-lock",
+      "image": "images/before-light-c2-recording-lock.png",
+      "innermost_left_control": "Lock recording",
+      "left_control_to_notch_pt": 22.5,
+      "notch_to_timer_pt": 8.5,
+      "left_wing_width_pt": 102.5,
+      "right_wing_width_pt": 101.5,
+      "status": "screenshot threshold estimate; native pixels / 2; threshold sensitive"
+    },
+    {
+      "arm": "before",
+      "theme": "dark",
+      "state": "c-recording-live",
+      "image": "images/before-dark-c-recording-live.png",
+      "innermost_left_control": "Cancel recording",
+      "left_control_to_notch_pt": 22.0,
+      "notch_to_timer_pt": 8.5,
+      "left_wing_width_pt": 103.0,
+      "right_wing_width_pt": 102.0,
+      "status": "screenshot threshold estimate; native pixels / 2; threshold sensitive"
+    },
+    {
+      "arm": "before",
+      "theme": "dark",
+      "state": "c2-recording-lock",
+      "image": "images/before-dark-c2-recording-lock.png",
+      "innermost_left_control": "Lock recording",
+      "left_control_to_notch_pt": 22.5,
+      "notch_to_timer_pt": 8.5,
+      "left_wing_width_pt": 103.0,
+      "right_wing_width_pt": 102.0,
+      "status": "screenshot threshold estimate; native pixels / 2; threshold sensitive"
+    },
+    {
+      "arm": "after",
+      "theme": "light",
+      "state": "c-recording-live",
+      "image": "images/after-light-c-recording-live.png",
+      "innermost_left_control": "Cancel recording",
+      "left_control_to_notch_pt": 14.0,
+      "notch_to_timer_pt": 8.5,
+      "left_wing_width_pt": 94.5,
+      "right_wing_width_pt": 101.5,
+      "status": "screenshot threshold estimate; native pixels / 2; threshold sensitive"
+    },
+    {
+      "arm": "after",
+      "theme": "light",
+      "state": "c2-recording-lock",
+      "image": "images/after-light-c2-recording-lock.png",
+      "innermost_left_control": "Lock recording",
+      "left_control_to_notch_pt": 14.5,
+      "notch_to_timer_pt": 8.5,
+      "left_wing_width_pt": 94.5,
+      "right_wing_width_pt": 101.5,
+      "status": "screenshot threshold estimate; native pixels / 2; threshold sensitive"
+    },
+    {
+      "arm": "after",
+      "theme": "dark",
+      "state": "c-recording-live",
+      "image": "images/after-dark-c-recording-live.png",
+      "innermost_left_control": "Cancel recording",
+      "left_control_to_notch_pt": 14.0,
+      "notch_to_timer_pt": 8.5,
+      "left_wing_width_pt": 95.0,
+      "right_wing_width_pt": 102.0,
+      "status": "screenshot threshold estimate; native pixels / 2; threshold sensitive"
+    },
+    {
+      "arm": "after",
+      "theme": "dark",
+      "state": "c2-recording-lock",
+      "image": "images/after-dark-c2-recording-lock.png",
+      "innermost_left_control": "Lock recording",
+      "left_control_to_notch_pt": 14.5,
+      "notch_to_timer_pt": 8.5,
+      "left_wing_width_pt": 95.0,
+      "right_wing_width_pt": 102.0,
+      "status": "screenshot threshold estimate; native pixels / 2; threshold sensitive"
+    }
+  ],
+  "hint_bands": "UNKNOWN: list fade and capsule boundaries require separate segmentation; no source-derived substitute used"
+}
