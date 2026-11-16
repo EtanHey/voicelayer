@@ -1169,7 +1169,7 @@ function formatSpokenYears(text: string): string {
   const unit = "(?:one|two|three|four|five|six|seven|eight|nine)";
   const teen = "(?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)";
   const year = new RegExp(`\\b(nineteen|twenty)[ \\t]+(${tens}(?:(?:[ \\t]+|-)${unit})?|${teen}|oh[ \\t]+${unit})\\b`, "gi");
-  const temporal = /\b(?:in|since|of|late|early|during|by|before|after|from|until|to|through|for|year|years|the|was|is|mid|between|around|january|february|march|april|may|june|july|august|september|october|november|december)[ \t]+$/i;
+  const temporal = /\b(?:in|since|of|late|early|during|by|before|after|from|until|to|through|for|year|years|the|mid|between|around|january|february|march|april|may|june|july|august|september|october|november|december)[ \t]+$/i;
   const numeric = (word: string) => NUMBER_WORDS.has(word.toLowerCase()) || /^(?:oh|point|\d+)$/i.test(word);
   const nonPlural = new Set("was is has as its his this thus plus versus yes us always perhaps unless whereas across besides".split(" "));
   // Singular/irregular units need an explicit guard; regular plurals are caught
