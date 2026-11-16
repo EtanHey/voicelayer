@@ -23,6 +23,10 @@ public enum Theme {
     /// Pressed, but the recorder has not delivered a frame yet. Reuses the
     /// vetted idle gray so the waveform never shows red before capture exists.
     public static let captureBootingColor = idleColor
+    /// The pre-capture bed needs dark ink on light glass; active and paused meters keep their own colours.
+    public static func captureBootingColor(for appearance: VoiceBarNotchAppearance) -> Color {
+        appearance == .light ? Color(hex: 0x6E6E73) : captureBootingColor
+    }
     /// Reported 2026-11-12 (c9-P): make the processing ripple visibly distinct and sufficiently contrasted.
     /// Its blue uses the processing hue (`speakingColor`, 211°),
     /// lifted to 206° / HSL lightness 0.82 so it holds ≥ 3:1 on the M4's grey glass, measured at (106, 115, 125)
