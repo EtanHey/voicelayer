@@ -10,7 +10,8 @@ import XCTest
     func testActionsCentreOnTitleInkWithAndWithoutVariants() throws {
         for large in [false, true] {
             let entries = [STTDictionaryEntry(canonical: "SWIFTUI", variants: []),
-                           STTDictionaryEntry(canonical: "TYPESCRIPT", variants: ["typed script"])]
+                           STTDictionaryEntry(canonical: "TYPESCRIPT", variants: ["typed script"]),
+                           STTDictionaryEntry(canonical: "COMPOSER", variants: ["an extended developer term variant that wraps onto several lines"])]
             let preview = STTVocabularyPreview(updatedAt: nil, entries: entries)
             let pane = SettingsView(hotkeyEnabled: true, missingPermissions: [], availableDevices: { [] },
                 selectedDeviceID: { nil }, modelsStatus: { .loading }, onRefreshModelsStatus: {},
@@ -25,11 +26,13 @@ import XCTest
             let request = VNRecognizeTextRequest(); request.recognitionLevel = .accurate
             request.usesLanguageCorrection = false
             try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage), options: [:]).perform([request])
+            var titleCentres: [CGFloat] = []
             for entry in entries {
                 let row = try XCTUnwrap(request.results?.first { $0.topCandidates(1).first?.string.contains(entry.canonical) == true })
                 let titleY = (1-row.boundingBox.midY)*700
                 let title = try XCTUnwrap(NotchDesignPixels.inkBounds(bitmap,
                     rect: CGRect(x: 15, y: titleY-9, width: 40, height: 18)))
+                titleCentres.append(title.midY)
                 for rect in [CGRect(x: 368, y: title.midY-15, width: 24, height: 30),
                              CGRect(x: 394, y: title.midY-15, width: 24, height: 30)] {
                     let glyph = try XCTUnwrap(NotchDesignPixels.inkBounds(bitmap, rect: rect))
@@ -37,6 +40,8 @@ import XCTest
                     XCTAssertEqual(glyph.midY, title.midY, accuracy: 1, "action ink must centre on the capital title ink")
                 }
             }
+            XCTAssertEqual(titleCentres[1] - titleCentres[0], 33, accuracy: 0.5,
+                           "ordinary rows keep their original pitch after action alignment")
         }
     }
 }
