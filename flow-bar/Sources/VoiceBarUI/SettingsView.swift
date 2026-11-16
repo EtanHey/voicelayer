@@ -2904,6 +2904,7 @@ public struct SettingsView: View {
     static func dictionaryTermLine(_ entry: STTDictionaryEntry) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             ClippingAwareText(text: entry.canonical, font: SettingsRowLabel.titleFont, lineLimit: nil)
+                .alignmentGuide(.settingsTitleCapCentre) { $0[.firstTextBaseline] - SettingsRowLabel.titleNSFont.capHeight / 2 }
                 .foregroundStyle(.primary).layoutPriority(1)
             if let first = entry.variants.first {
                 ClippingAwareText(text: variantSummary([first]).lowercasedFirst, font: SettingsRowLabel.descriptionFont, lineLimit: nil)
@@ -2929,7 +2930,7 @@ public struct SettingsView: View {
         let isSelected = selectedTermRowID == rowID
         let label = Self.dictionaryTermLine(entry)
             .frame(minWidth: SettingsRowLabel.textMinWidth, maxWidth: .infinity, alignment: .leading)
-        return SettingsRowLayout {
+        return SettingsRowLayout(controlsFollowTitle: true) {
             label
             HStack(spacing: 2) {
                 if isEditable {
