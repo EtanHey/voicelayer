@@ -282,10 +282,19 @@ public struct VoiceBarNotchPresentation: Equatable {
     /// eight lines in the compact state too (`VoiceBarNotchMorphCanvasLayout`), so Hide, Show and Pause never
     /// shrink the canvas or the window under a shell that is still collapsing.
     public private(set) var holdsReadingCanvas = false
+    /// Owner r2: a band just closed to hidden keeps its canvas while its glass closes and its icons ride inward
+    /// (`VoiceBarNotchPresentationModel.closingCanvasReleaseDelay`); the window shrinks to the core afterwards.
+    public private(set) var holdsClosingCanvas = false
 
     public func holdingReadingCanvas(_ holds: Bool) -> Self {
         var copy = self
         copy.holdsReadingCanvas = holds
+        return copy
+    }
+
+    public func holdingClosingCanvas(_ holds: Bool) -> Self {
+        var copy = self
+        copy.holdsClosingCanvas = holds
         return copy
     }
 
@@ -321,7 +330,7 @@ public struct VoiceBarNotchPresentation: Equatable {
             visibleCoreOcclusionInset: visibleCoreOcclusionInset, virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
             contentRoles: contentRoles, accessibilityLabel: accessibilityLabel,
             transientNoteWidth: transientNoteWidth, feedback: feedback, drawerBand: drawerBand,
-            holdsReadingCanvas: holdsReadingCanvas)
+            holdsReadingCanvas: holdsReadingCanvas, holdsClosingCanvas: holdsClosingCanvas)
     }
 
     /// Where the transient note draws: the band directly under the top row, across the lower body. Any
@@ -351,7 +360,7 @@ public struct VoiceBarNotchPresentation: Equatable {
             contentRoles: contentRoles,
             accessibilityLabel: accessibilityLabel,
             transientNoteWidth: transientNoteWidth, feedback: feedback, drawerBand: drawerBand,
-            holdsReadingCanvas: holdsReadingCanvas
+            holdsReadingCanvas: holdsReadingCanvas, holdsClosingCanvas: holdsClosingCanvas
         )
     }
 
