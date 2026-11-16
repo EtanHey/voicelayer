@@ -86,7 +86,7 @@ import XCTest
         settle()
         let stop = try XCTUnwrap(frame("Stop recording", host)); let cancel = try XCTUnwrap(frame("Cancel recording", host))
         state.recordingMode = "ptt"; settle()
-        let microphone = try XCTUnwrap(frame("Pause recording", host))
+        let microphone = try XCTUnwrap(frame("Mute microphone", host))
         XCTAssertEqual(microphone.midX, (stop.midX + cancel.midX) / 2, accuracy: 0.001,
                        "the microphone fills the slot reserved between Stop and Cancel")
         XCTAssertEqual(try XCTUnwrap(frame("Stop recording", host)), stop, "late PTT must not move Stop")
@@ -94,14 +94,14 @@ import XCTest
         state.setRecordingPaused(true); settle()
         XCTAssertEqual(try XCTUnwrap(frame("Stop recording", host)), stop)
         XCTAssertEqual(try XCTUnwrap(frame("Cancel recording", host)), cancel)
-        let pausedMicrophone = try XCTUnwrap(frame("Resume recording", host))
+        let pausedMicrophone = try XCTUnwrap(frame("Unmute microphone", host))
         XCTAssertEqual(pausedMicrophone, microphone, "pausing keeps the microphone frame")
         state.handleEvent(["type": "state", "state": "recording", "mode": "ptt", "mic_take_id": "B",
             "recording_jobs": [["take_id": "A", "kind": "live", "phase": "processing"],
                                ["take_id": "B", "kind": "live", "phase": "capturing"]]]); settle()
         XCTAssertEqual(try XCTUnwrap(frame("Stop recording", host)), stop)
         XCTAssertEqual(try XCTUnwrap(frame("Cancel recording", host)), cancel)
-        let micAfterSpinner = frame("Resume recording", host) ?? frame("Pause recording", host)
+        let micAfterSpinner = frame("Unmute microphone", host) ?? frame("Mute microphone", host)
         XCTAssertEqual(try XCTUnwrap(micAfterSpinner), microphone, "spinner arrival keeps the microphone frame")
         state.handleEvent(["type": "state", "state": "idle", "recording_jobs": []]); settle()
         // VAD type is supplied in the state event before recording is published. Lock selection and an earlier

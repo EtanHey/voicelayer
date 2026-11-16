@@ -120,7 +120,8 @@ final class NotchRealGeometryTests: XCTestCase {
                     visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
                 )
                 if side == .leading {
-                    let contentMaxX = coreMinX - slot.coreInset
+                    let inkBearing = surface == .recording ? try RecordingOpticalInsetTests.cancelInkBearing() : 0
+                    let contentMaxX = coreMinX - slot.coreInset - inkBearing
                     XCTAssertLessThanOrEqual(contentMaxX, notch.minX - clearance + 0.001,
                                              "\(surface) leading content is \(notch.minX - contentMaxX) pt from the notch")
                     XCTAssertGreaterThan(wing - slot.coreInset - slot.outerInset, 0, "\(surface) leading lane is not empty")
@@ -136,10 +137,11 @@ final class NotchRealGeometryTests: XCTestCase {
                 presentation: presentation, canvasGeometry: VoiceBarNotchMorphCanvasLayout.resolve(for: presentation).canvasGeometry
             )
             let region = VoiceBarNotchHitRegion(geometry: geometry, configuration: .fallback(for: presentation))
-            for rect in region.rects where rect.minY >= geometry.lowerSurfaceHeight && rect.height < geometry.topHeight {
+            for (index, rect) in region.rects.enumerated() where rect.minY >= geometry.lowerSurfaceHeight && rect.height < geometry.topHeight {
                 let onScreen = rect.offsetBy(dx: panel.minX, dy: 0)
                 let gap = onScreen.maxX <= notch.midX ? notch.minX - onScreen.maxX : onScreen.minX - notch.maxX
-                XCTAssertGreaterThanOrEqual(gap, clearance - 0.001, "\(surface): a control \(gap) pt from the notch")
+                let inkBearing = surface == .recording && index == 0 ? try RecordingOpticalInsetTests.cancelInkBearing() : 0
+                XCTAssertGreaterThanOrEqual(gap + inkBearing, clearance - 0.001, "\(surface): a control \(gap) pt from the notch")
             }
             XCTAssertLessThanOrEqual(layout.panelSize.width, screenFixture.frame.width, "\(surface) fits the screen")
             XCTAssertLessThanOrEqual(geometry.totalHeight + 17, screenFixture.visibleFrame.height,
@@ -147,13 +149,14 @@ final class NotchRealGeometryTests: XCTestCase {
         }
     }
 
-    /// The clearance rule itself: every core-side inset the wings use is at least 8 pt.
-    func testEveryCoreSideInsetIsAtLeastTheClearance() {
+    /// Every core-side ink edge clears the notch by 8 pt, including the measured recording glyph side bearing.
+    func testEveryCoreSideInkEdgeIsAtLeastTheClearance() throws {
         let states: [VoiceBarNotchVisualState] = [.hoverLauncher, .recording, .compactStatus, .teleprompter, .history]
         for state in states {
             for side in [VoiceBarNotchSide.leading, .trailing] {
                 let slot = VoiceBarNotchContract.material.wingContentLayout(for: side, state: state)
-                XCTAssertGreaterThanOrEqual(slot.coreInset, VoiceBarNotchContract.physicalNotchClearance, "\(state) \(side)")
+                let bearing = state == .recording && side == .leading ? try RecordingOpticalInsetTests.cancelInkBearing() : 0
+                XCTAssertGreaterThanOrEqual(slot.coreInset + bearing, VoiceBarNotchContract.physicalNotchClearance, "\(state) \(side)")
             }
         }
         XCTAssertGreaterThanOrEqual(VoiceBarNotchContract.compactCoreContentInset, VoiceBarNotchContract.physicalNotchClearance)

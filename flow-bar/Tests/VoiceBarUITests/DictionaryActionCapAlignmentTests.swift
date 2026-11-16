@@ -29,7 +29,7 @@ import XCTest
                 let row = try XCTUnwrap(request.results?.first { $0.topCandidates(1).first?.string.contains(entry.canonical) == true })
                 let titleY = (1-row.boundingBox.midY)*700
                 let title = try XCTUnwrap(NotchDesignPixels.inkBounds(bitmap,
-                    rect: CGRect(x: 15, y: titleY-9, width: 100, height: 18)))
+                    rect: CGRect(x: 15, y: titleY-9, width: 40, height: 18)))
                 for rect in [CGRect(x: 368, y: title.midY-15, width: 24, height: 30),
                              CGRect(x: 394, y: title.midY-15, width: 24, height: 30)] {
                     let glyph = try XCTUnwrap(NotchDesignPixels.inkBounds(bitmap, rect: rect))

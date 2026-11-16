@@ -52,7 +52,7 @@ enum SettingsPanePalette {
 /// text shows when the row is selected, and as a tooltip only when the rendered text is actually clipped.
 struct SettingsRowLabel: View {
     static let titleNSFont = NSFont.systemFont(ofSize: 13, weight: .medium)
-    static let titleFont = Font(titleNSFont)
+    static let titleFont = Font.system(size: 13, weight: .medium)
     static let descriptionFont = Font.system(size: 11.5)
     static let lineLimit = 2
     /// Trailing controls never squeeze the text column below this; they wrap under it instead.
