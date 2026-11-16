@@ -253,7 +253,7 @@ final class WingLayoutX4Tests: XCTestCase {
                 .frame(width: WaveformLayout.viewportWidth, alignment: .trailing)
         } stop: {
             VoiceBarPillControlButton(icon: "stop.fill", optics: .resolve(for: "stop.fill"), foreground: .white,
-                                      halo: .clear, isSelected: false, isDestructive: true,
+                                      isSelected: false, isDestructive: true,
                                       accessibilityLabel: "Stop speaking", accessibilityHint: "", action: {})
         }
         .padding(.leading, inset)
@@ -600,7 +600,7 @@ final class WingLayoutX4Tests: XCTestCase {
                         .offset(x: 270 - g.coreWidth / 2 - inset)
                     ForEach(0 ..< 3, id: \.self) { index in
                         VoiceBarPillControlButton(icon: icons[index], optics: .resolve(for: icons[index]),
-                                                  foreground: .white, halo: .clear, isSelected: false,
+                                                  foreground: .white, isSelected: false,
                                                   isDestructive: index == 0, accessibilityLabel: icons[index],
                                                   accessibilityHint: "", action: {})
                             .frame(width: size, height: bandHeight)

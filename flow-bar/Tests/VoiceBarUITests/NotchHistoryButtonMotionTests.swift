@@ -163,7 +163,7 @@ private struct SelectionHarness: View {
         )
         VoiceBarPillControlButton(
             icon: "clock.arrow.circlepath", optics: .resolve(for: "clock.arrow.circlepath"),
-            foreground: role == .stateAccent ? Theme.recordingColor : box.isDark ? .white : .black, halo: .clear,
+            foreground: role == .stateAccent ? Theme.recordingColor : box.isDark ? .white : .black,
             isSelected: box.isSelected, selectionStyle: .navigation, isDestructive: false,
             accessibilityLabel: "History", accessibilityHint: "", action: {}
         )

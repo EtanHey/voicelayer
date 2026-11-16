@@ -48,6 +48,26 @@ public enum Theme {
         Color(hex: appearance == .light ? 0x0050B2 : 0x3D9BFF)
     }
 
+    /// An engaged recording control (Lock or Pause held) draws its glyph in red on its 30 % red plate. With no
+    /// outline (owner r1) `recordingColor` reads 1.4:1 on that plate over the light glass and 2.9:1 over the dark
+    /// band, so each appearance takes the nearest red of the same hue that clears 3:1 on its plate.
+    public static func recordingStateGlyphColor(for appearance: VoiceBarNotchAppearance) -> Color {
+        Color(hex: appearance == .light ? 0x971616 : 0xE86363)
+    }
+
+    /// The compact status icon outside idle and error, coloured by state for the notch's appearance. The legacy
+    /// `stateColor` tokens were made for the old dark pill; on the light glass they fall to 1.1-1.7:1 without the
+    /// outline, so the notch uses its own state tokens: the engaged-recording red, the spinner's processing blue
+    /// and, when disconnected, the palette's tertiary ink on light (dark keeps the vetted idle grey).
+    public static func notchStateGlyphColor(for mode: VoiceMode, appearance: VoiceBarNotchAppearance) -> Color {
+        switch mode {
+        case .recording, .error: recordingStateGlyphColor(for: appearance)
+        case .speaking, .transcribing: transcribingSpinnerColor(for: appearance)
+        case .idle, .disconnected:
+            appearance == .light ? VoiceBarNotchContrastPalette.resolve(for: .light).tertiary.color : stateColor(for: mode)
+        }
+    }
+
     // MARK: - Pill background
 
     /// Solid dark background — works on any wallpaper, no vibrancy edge artifacts.

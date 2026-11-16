@@ -115,7 +115,8 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertTrue(source.contains(".frame(width: Self.hitDiameter, height: Self.hitDiameter)"))
         XCTAssertTrue(source.contains(".contentShape(Circle())"))
         XCTAssertTrue(source.contains(".padding(-Self.hitOverhang)"))
-        XCTAssertTrue(source.contains("if isDestructive {"))
+        // Stop's square stays white on its red container (owner r1: no glyph has an outline any more).
+        XCTAssertTrue(source.contains(".foregroundStyle(isDestructive ? Color.white : foreground)"))
     }
 
     func testNativeNotchShellUsesApprovedBoundsForPrimaryStates() {
