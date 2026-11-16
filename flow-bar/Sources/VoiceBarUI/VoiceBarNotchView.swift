@@ -549,6 +549,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                 let leadingWing = layout.leadingWingRect
                 if leadingWing.width > 0 {
                     wingSlot(closing.leading ?? AnyView(EmptyView()), side: .leading, band: band)
+                        .modifier(VoiceBarNotchInertContent())
                         .frame(width: leadingWing.width, height: leadingWing.height)
                         .modifier(VoiceBarNotchWingTravel(side: .leading, settledWidth: leadingWing.width, isEnabled: true))
                         .position(x: leadingWing.midX, y: leadingWing.midY)
@@ -556,6 +557,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                 let trailingWing = layout.trailingWingRect
                 if trailingWing.width > 0 {
                     wingSlot(closing.trailing ?? AnyView(EmptyView()), side: .trailing, band: band)
+                        .modifier(VoiceBarNotchInertContent())
                         .frame(width: trailingWing.width, height: trailingWing.height)
                         .modifier(VoiceBarNotchWingTravel(side: .trailing, settledWidth: trailingWing.width, isEnabled: true))
                         .position(x: trailingWing.midX, y: trailingWing.midY)
@@ -625,6 +627,18 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
             leadingWingWidth: (band?.geometry ?? slotGeometry).leadingWingWidth
         )
         return content.modifier(VoiceBarNotchWingSlot(slot: slot))
+    }
+}
+
+/// Review r1: a band closing to hidden is a picture of its controls while it rides under the notch. From the close's
+/// first frame until it is removed it takes no pointer, no keyboard focus or action, and is hidden from VoiceOver.
+/// Applied inside the native glass's own host, where the retained content lives.
+struct VoiceBarNotchInertContent: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .disabled(true)
+            .accessibilityHidden(true)
+            .allowsHitTesting(false)
     }
 }
 
