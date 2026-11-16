@@ -197,7 +197,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
             let leading = material.wingContentLayout(for: .leading, state: state)
             let trailing = material.wingContentLayout(for: .trailing, state: state)
 
-            XCTAssertEqual(leading.coreInset, state == .recording ? 8 : 13.5)
+            XCTAssertEqual(leading.coreInset, state == .recording ? 2.5 : 13.5)
             XCTAssertEqual(leading.outerInset, 14)
             // 2.3 U2: the fixed right wing centres its content between equal 8 pt insets.
             XCTAssertEqual(trailing.coreInset, VoiceBarNotchContract.fixedWingContentInset)
