@@ -452,7 +452,9 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
 
     @ViewBuilder
     private var fixedHardwareCore: some View {
-        if presentation.visualState != .idle {
+        // Real-screen capture r5 (item o): a band closing to hidden keeps the core drawn until it is removed, so the
+        // closing shell has the open band's shape (the glass under the core's edges stays covered, as when open).
+        if presentation.visualState != .idle || closing.band != nil {
             VoiceBarNotchHardwareCoreShape(
                 lowerCornerRadius: VoiceBarNotchContract.material.hardwareCoreLowerCornerRadius
             )
