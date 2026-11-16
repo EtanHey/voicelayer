@@ -153,7 +153,7 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertEqual(
             makeHost(state: recording, router: SpyCommandRouter()).bounds.size,
             // Recording reserves three left slots; each wing uses its own content and insets.
-            NSSize(width: 381, height: 32)
+            NSSize(width: 375.5, height: 32)
         )
 
         let teleprompter = VoiceState()
@@ -1170,7 +1170,7 @@ final class BarViewClickabilityTests: XCTestCase {
 
     private func recordingCancelButtonCenter(in host: NSView) -> NSPoint {
         let coreLeft = host.bounds.width - VoiceBarNotchContract.coreWidth - VoiceBarNotchContract.recordingTrailingWingWidth
-        return NSPoint(x: coreLeft - 8 - 10, y: host.bounds.midY)
+        return NSPoint(x: coreLeft - 2.5 - 10, y: host.bounds.midY)
     }
 
     private func recordingHoldButtonCenter(in host: NSView) -> NSPoint {

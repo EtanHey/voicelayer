@@ -13,10 +13,10 @@ final class RecordingEarlierTakeSpinnerTests: XCTestCase {
 
     func testTheLeftWingGainsOneOuterSlotForTheSpinner() {
         let slot = VoiceBarNotchContract.material.compactControlSpacing + VoiceBarNotchContract.material.compactControlSize
-        XCTAssertEqual(resolve(earlier: false).geometry.leadingWingWidth, 94, accuracy: 0.001)
-        XCTAssertEqual(resolve(earlier: true).geometry.leadingWingWidth, 94 + slot, accuracy: 0.001)
+        XCTAssertEqual(resolve(earlier: false).geometry.leadingWingWidth, 88.5, accuracy: 0.001)
+        XCTAssertEqual(resolve(earlier: true).geometry.leadingWingWidth, 88.5 + slot, accuracy: 0.001)
         let both = resolve(earlier: true, hold: true).geometry
-        XCTAssertEqual(both.leadingWingWidth, 120, accuracy: 0.001)
+        XCTAssertEqual(both.leadingWingWidth, 114.5, accuracy: 0.001)
         XCTAssertLessThanOrEqual(both.leadingWingWidth, VoiceBarNotchContract.morphCanvasWingCapacity)
         XCTAssertEqual(resolve(earlier: true).geometry.trailingWingWidth, 102, "spinner changes only the left payload")
         XCTAssertEqual(resolve(earlier: true, mode: .transcribing).geometry, resolve(earlier: false, mode: .transcribing).geometry)

@@ -9,7 +9,7 @@ final class NotchLookR2Tests: XCTestCase {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         return try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/" + name + ".swift"))
     }
-    func testRecordingWingsHugContentWithEqualInnerGaps() {
+    func testRecordingWingsHugContentWithOpticalInnerInsets() {
         let m = VoiceBarNotchContract.material
         for inset: CGFloat in [0, 12] {
             for third in [false, true] {
@@ -22,9 +22,9 @@ final class NotchLookR2Tests: XCTestCase {
                     let left = p.geometry.leadingWingWidth - m.compactContentInset - row
                     let right = p.geometry.trailingWingWidth - m.compactContentInset - VoiceBarRecordingWingLabel.width
                         - VoiceBarRecordingWingLabel.recordingMeterGap - WaveformLayout.viewportWidth
-                    XCTAssertEqual(left, right, accuracy: 0.5)
-                    XCTAssertEqual(left, inset + VoiceBarNotchContract.fixedWingContentInset, accuracy: 0.5)
-                    XCTAssertEqual(p.geometry.leadingWingWidth, row + inset + 8 + m.compactContentInset, accuracy: 0.5)
+                    XCTAssertEqual(left + 5.5, right, accuracy: 0.5)
+                    XCTAssertEqual(left, inset + 2.5, accuracy: 0.5)
+                    XCTAssertEqual(p.geometry.leadingWingWidth, row + inset + 2.5 + m.compactContentInset, accuracy: 0.5)
                 }
             }
         }

@@ -298,7 +298,7 @@ final class WingLayoutX4Tests: XCTestCase {
                 let g = presentation(fixture, inset: inset).geometry
                 print("[X4-2] \(fixture.rawValue) inset=\(inset): wings L/R=\(g.leadingWingWidth)/\(g.trailingWingWidth)")
                 if fixture == .recordingPTT || fixture == .recordingVAD {
-                    XCTAssertEqual(g.leadingWingWidth, 94 + inset, accuracy: 0.5, "reserved recording controls")
+                    XCTAssertEqual(g.leadingWingWidth, 88.5 + inset, accuracy: 0.5, "reserved recording controls")
                     XCTAssertEqual(g.trailingWingWidth, 102 + inset, accuracy: 0.5, "independent timer/meter payload")
                 } else {
                     XCTAssertEqual(g.leadingWingWidth, g.trailingWingWidth, accuracy: 0.5,

@@ -15,7 +15,7 @@ final class VoiceBarNotchShapeTests: XCTestCase {
             in: CGRect(origin: .zero, size: layout.totalSize)
         )
 
-        XCTAssertEqual(layout.coreRect, CGRect(x: 94, y: 0, width: 185, height: 32))
+        XCTAssertEqual(layout.coreRect, CGRect(x: 88.5, y: 0, width: 185, height: 32))
         XCTAssertTrue(path.contains(CGPoint(x: 20, y: 16)))
         XCTAssertTrue(path.contains(CGPoint(x: layout.trailingWingRect.midX, y: 16)))
         XCTAssertFalse(path.contains(CGPoint(x: layout.coreRect.midX, y: 16)))
@@ -23,7 +23,7 @@ final class VoiceBarNotchShapeTests: XCTestCase {
             XCTAssertFalse(path.contains(CGPoint(x: x, y: 16)), "glass must leave the housing cutout clear")
         }
         XCTAssertTrue(path.quadCurveEndPoints.contains(CGPoint(x: 15, y: 32)))
-        XCTAssertTrue(path.quadCurveEndPoints.contains(CGPoint(x: 366, y: 32)))
+        XCTAssertTrue(path.quadCurveEndPoints.contains(CGPoint(x: 360.5, y: 32)))
     }
 
     func testTeleprompterKeepsTheHousingCenteredWithNoLeadingTopWing() {

@@ -164,9 +164,9 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
         )
         let panelBounds = CGRect(origin: .zero, size: layout.panelSize)
 
-        XCTAssertEqual(recording.geometry.leadingWingWidth, 94)
+        XCTAssertEqual(recording.geometry.leadingWingWidth, 88.5)
         XCTAssertEqual(recording.geometry.trailingWingWidth, 102)
-        XCTAssertEqual(recording.geometry.totalWidth, 381)
+        XCTAssertEqual(recording.geometry.totalWidth, 375.5)
         XCTAssertEqual(canvas.canvasGeometry.totalWidth, 545)
         XCTAssertGreaterThanOrEqual(canvas.canvasGeometry.totalWidth, recording.geometry.totalWidth)
         XCTAssertEqual(canvas.canvasGeometry.lowerSurfaceHeight, VoiceBarNotchContract.transientNoteCanvasReserve)

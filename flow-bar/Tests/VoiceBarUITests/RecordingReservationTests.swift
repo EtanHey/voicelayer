@@ -18,8 +18,8 @@ import XCTest
                 visibleCoreOcclusionInset: inset))
             let spinner = VoiceBarPresentation.notchPresentation(from: .init(mode: .recording,
                 visibleCoreOcclusionInset: inset, showsEarlierTakeProcessing: true))
-            XCTAssertEqual(plain.geometry.leadingWingWidth, 94 + inset)
-            XCTAssertEqual(spinner.geometry.leadingWingWidth, 120 + inset)
+            XCTAssertEqual(plain.geometry.leadingWingWidth, 88.5 + inset)
+            XCTAssertEqual(spinner.geometry.leadingWingWidth, 114.5 + inset)
             let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: plain).canvasGeometry
             print("R1_CANVAS inset=\(inset) leading=\(spinner.geometry.leadingWingWidth) capacity=\(canvas.leadingWingWidth)")
             XCTAssertEqual(canvas, VoiceBarNotchMorphCanvasLayout.resolve(for: spinner).canvasGeometry,
@@ -49,7 +49,7 @@ import XCTest
         let p = VoiceBarPresentation.notchPresentation(from: .init(mode: .recording,
             coreWidth: screen.housingFrame.width, visibleCoreOcclusionInset: screen.visibleCoreOcclusionInset,
             showsEarlierTakeProcessing: true))
-        XCTAssertEqual(p.geometry.leadingWingWidth, 128.5)
+        XCTAssertEqual(p.geometry.leadingWingWidth, 123)
         XCTAssertLessThanOrEqual(p.geometry.leadingWingWidth, 130, "recorded M4 fits even the compact bound")
         XCTAssertLessThanOrEqual(p.geometry.leadingWingWidth,
             VoiceBarNotchMorphCanvasLayout.resolve(for: p).canvasGeometry.leadingWingWidth)
@@ -86,11 +86,24 @@ import XCTest
         settle()
         let stop = try XCTUnwrap(frame("Stop recording", host)); let cancel = try XCTUnwrap(frame("Cancel recording", host))
         state.recordingMode = "ptt"; settle()
+        let microphone = try XCTUnwrap(frame("Pause recording", host))
+        XCTAssertEqual(microphone.midX, (stop.midX + cancel.midX) / 2, accuracy: 0.001,
+                       "the microphone fills the slot reserved between Stop and Cancel")
         XCTAssertEqual(try XCTUnwrap(frame("Stop recording", host)), stop, "late PTT must not move Stop")
         XCTAssertEqual(try XCTUnwrap(frame("Cancel recording", host)), cancel, "late PTT must not move Cancel")
         state.setRecordingPaused(true); settle()
         XCTAssertEqual(try XCTUnwrap(frame("Stop recording", host)), stop)
         XCTAssertEqual(try XCTUnwrap(frame("Cancel recording", host)), cancel)
+        let pausedMicrophone = try XCTUnwrap(frame("Resume recording", host))
+        XCTAssertEqual(pausedMicrophone, microphone, "pausing keeps the microphone frame")
+        state.handleEvent(["type": "state", "state": "recording", "mode": "ptt", "mic_take_id": "B",
+            "recording_jobs": [["take_id": "A", "kind": "live", "phase": "processing"],
+                               ["take_id": "B", "kind": "live", "phase": "capturing"]]]); settle()
+        XCTAssertEqual(try XCTUnwrap(frame("Stop recording", host)), stop)
+        XCTAssertEqual(try XCTUnwrap(frame("Cancel recording", host)), cancel)
+        let micAfterSpinner = frame("Resume recording", host) ?? frame("Pause recording", host)
+        XCTAssertEqual(try XCTUnwrap(micAfterSpinner), microphone, "spinner arrival keeps the microphone frame")
+        state.handleEvent(["type": "state", "state": "idle", "recording_jobs": []]); settle()
         // VAD type is supplied in the state event before recording is published. Lock selection and an earlier
         // take may arrive later; neither changes these controls' positions.
         state.mode = .idle; state.recordingMode = "vad"; state.mode = .recording; settle()

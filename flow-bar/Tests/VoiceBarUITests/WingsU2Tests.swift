@@ -36,7 +36,7 @@ final class WingsU2Tests: XCTestCase {
         XCTAssertEqual(VoiceBarNotchContract.fixedWingWidth, 73.5, accuracy: 0.001,
                        "13.5 core inset + two 20 pt controls + 6 pt spacing + 14 pt outer inset")
         XCTAssertEqual(VoiceBarNotchContract.hoverLauncherTrailingWingWidth, VoiceBarNotchContract.fixedWingWidth)
-        XCTAssertEqual(VoiceBarNotchContract.recordingLeadingWingWidth, 94, "three reserved slots, 8/14 pt insets")
+        XCTAssertEqual(VoiceBarNotchContract.recordingLeadingWingWidth, 88.5, "three reserved slots, 2.5/14 pt insets")
     }
 
     func testEveryMockedStateKeepsBothWingsAtTheFixedWidth() {
@@ -65,7 +65,7 @@ final class WingsU2Tests: XCTestCase {
         let recording = resolve(.recording)
         XCTAssertEqual(recording.visualState, .recording)
         // Recording reserves three left slots; each wing uses its own content and insets.
-        XCTAssertEqual(recording.geometry.leadingWingWidth, 94, accuracy: 0.001)
+        XCTAssertEqual(recording.geometry.leadingWingWidth, 88.5, accuracy: 0.001)
         XCTAssertEqual(recording.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth,
                        accuracy: 0.001)
         XCTAssertEqual(VoiceBarNotchContract.recordingTrailingWingWidth, 102, accuracy: 0.001)
@@ -92,7 +92,7 @@ final class WingsU2Tests: XCTestCase {
     /// extra slots. They keep today's wider left wing instead of losing the control.
     func testOnlyControlsTheMockDoesNotDrawWidenTheLeftWing() {
         // Recording reserves three left slots; each wing uses its own content and insets.
-        let held: CGFloat = 94 // the third slot is reserved before the mode arrives
+        let held: CGFloat = 88.5 // the third slot is reserved before the mode arrives
         XCTAssertEqual(resolve(.recording, showsRecordingHold: true).geometry.leadingWingWidth, held, accuracy: 0.001)
         XCTAssertGreaterThan(resolve(.speaking, isTeleprompterDismissed: true, readQueueLeadingSlotCount: 3)
             .geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth)
