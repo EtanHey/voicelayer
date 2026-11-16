@@ -2353,9 +2353,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 trailingControlCountFromCore: 2
             )
         case .recording:
-            // Stop and Cancel, plus a third slot beside Stop: Lock on a VAD take, Pause on a PTT take. The count
-            // follows the same `showsRecordingHold || showsRecordingPause` the presentation sizes the wing from, so
-            // Stop, the outermost control, stays inside the hit region.
+            // Three control positions are reserved from recording's first frame. Claim only mounted controls;
+            // optimistic PTT uses slots 0 and 2 until Pause fills the middle position.
             let hasThirdControl = state.recordingMode == "vad" || state.recordingMode == "ptt"
             let earlierTake = VoiceBarPresentation.showsEarlierTakeProcessing(for: state)
             // C7-W: the row sits where BarView draws it, out from the core by the wing's spare width.

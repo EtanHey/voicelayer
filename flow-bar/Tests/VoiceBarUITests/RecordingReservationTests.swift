@@ -21,6 +21,7 @@ import XCTest
             XCTAssertEqual(plain.geometry.leadingWingWidth, 94 + inset)
             XCTAssertEqual(spinner.geometry.leadingWingWidth, 120 + inset)
             let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: plain).canvasGeometry
+            print("R1_CANVAS inset=\(inset) leading=\(spinner.geometry.leadingWingWidth) capacity=\(canvas.leadingWingWidth)")
             XCTAssertEqual(canvas, VoiceBarNotchMorphCanvasLayout.resolve(for: spinner).canvasGeometry,
                            "spinner arrival cannot resize the canvas or move the core")
             XCTAssertLessThanOrEqual(spinner.geometry.leadingWingWidth, canvas.leadingWingWidth)
@@ -28,6 +29,40 @@ import XCTest
             let layout = VoiceBarPanelLayout.make(presentation: spinner, canvasGeometry: canvas)
             XCTAssertGreaterThanOrEqual(layout.visibleContentRect.minX, 0)
             XCTAssertLessThanOrEqual(layout.visibleContentRect.maxX, layout.panelSize.width)
+        }
+    }
+
+    func testRecordedM4FourSlotBandAndEntryModelDomain() throws {
+        let path = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/notch-geometry-m4-mac16-5.json")
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [String: Any])
+        let row = try XCTUnwrap((fixture["screens"] as? [[String: Any]])?.first)
+        func rect(_ key: String) throws -> CGRect {
+            let d = try XCTUnwrap(row[key] as? [String: Double])
+            return CGRect(x: try XCTUnwrap(d["x"]), y: try XCTUnwrap(d["y"]),
+                          width: try XCTUnwrap(d["width"]), height: try XCTUnwrap(d["height"]))
+        }
+        let screen = VoiceBarNotchScreenGeometry.resolve(metrics: .init(frame: try rect("frame"),
+            visibleFrame: try rect("visibleFrame"), safeAreaTop: 32,
+            auxiliaryTopLeftArea: try rect("auxiliaryTopLeftArea"), auxiliaryTopRightArea: try rect("auxiliaryTopRightArea")))
+        XCTAssertEqual(screen.visibleCoreOcclusionInset, 8.5)
+        let p = VoiceBarPresentation.notchPresentation(from: .init(mode: .recording,
+            coreWidth: screen.housingFrame.width, visibleCoreOcclusionInset: screen.visibleCoreOcclusionInset,
+            showsEarlierTakeProcessing: true))
+        XCTAssertEqual(p.geometry.leadingWingWidth, 128.5)
+        XCTAssertLessThanOrEqual(p.geometry.leadingWingWidth, 130, "recorded M4 fits even the compact bound")
+        XCTAssertLessThanOrEqual(p.geometry.leadingWingWidth,
+            VoiceBarNotchMorphCanvasLayout.resolve(for: p).canvasGeometry.leadingWingWidth)
+        for inset: CGFloat in [0, screen.visibleCoreOcclusionInset] {
+            for earlier in [false, true] {
+                let p = VoiceBarPresentation.notchPresentation(from: .init(mode: .recording,
+                    visibleCoreOcclusionInset: inset, showsEarlierTakeProcessing: earlier))
+                let growth = p.geometry.leadingWingWidth - VoiceBarNotchContract.fixedWingWidth
+                XCTAssertGreaterThan(growth, 0, "wing-entry's growing-wing premise is restored")
+                let ticks = VoiceBarNotchWingContentEntry.delay(forGrowth: growth) * 120
+                XCTAssertLessThanOrEqual(ticks, 21, "supported flat/M4 cover stays within the existing model's 21 ticks")
+                print("R1_ENTRY inset=\(inset) earlier=\(earlier) growth=\(growth) coverTicks=\(ticks)")
+            }
         }
     }
 

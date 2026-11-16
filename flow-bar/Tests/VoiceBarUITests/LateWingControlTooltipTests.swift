@@ -50,9 +50,7 @@ final class LateWingControlTooltipTests: XCTestCase {
         "playbackLeadingControls|playbackPauseButton|pause": 1,
         "playbackLeadingControls|notchButton|readQueueControl.accessibilityLabel": 1,
         #"readingTransportControls|notchButton|"Next read""#: 1,
-        // Trailing wing. c9-P: the recording/transcribing meter row comes first (it holds no control); the band's other
-        // trailing content moved into `notchTrailingStatusContent`, and a transcribing take no longer shows History
-        // or Settings in the compact status (they come back with the launcher).
+        // Recording owns the time/meter row. Transcribing owns the microphone plus History/Settings navigation.
         "notchTrailingContent|notchTrailingStatusContent|": 1,
         "notchTrailingStatusContent|historyButton|": 1,
         "notchTrailingStatusContent|settingsButton|": 1,

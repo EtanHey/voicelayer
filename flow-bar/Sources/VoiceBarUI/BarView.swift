@@ -389,7 +389,6 @@ public struct BarView: View {
     /// The Settings drawer's data and actions. Without it the gear keeps opening the Settings window (2.3).
     private let settingsDrawer: NotchSettingsDrawerContext?
     @State private var modalObserver: NotchModalObserver?
-    /// c9-P round 2 (F4): the recording clock's last shown text, whose width class the transcribing time lane keeps.
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isMorphTeleprompterContentPresented = false
     /// The History panel is on screen (open, opening, closing or being pulled). The window keeps the panel's size

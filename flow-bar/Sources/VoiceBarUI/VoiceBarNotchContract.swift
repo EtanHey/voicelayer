@@ -164,8 +164,8 @@ public struct VoiceBarNotchMaterialContract: Equatable {
         state: VoiceBarNotchVisualState,
         visibleCoreOcclusionInset: CGFloat = 0
     ) -> VoiceBarNotchWingContentLayout {
-        // P16: every leading wing, the teleprompter's pause/play included, uses the idle-hover mic's lane
-        // (P16 design: share the idle microphone alignment).
+        // Launcher and playback leading controls share the idle microphone lane.
+        // Recording instead clears the calibrated physical notch by the same inset as its timer.
         // 2.3 U2 (3-wings mock): the right wing is a fixed 73.5 pt in every state, so its content sits centred
         // between the shared fixed-wing insets instead of the old waveform lane (24 pt from the core). That room
         // is what fits the reading time beside Stop without widening the wing.
@@ -178,8 +178,7 @@ public struct VoiceBarNotchMaterialContract: Equatable {
         // `visibleCoreOcclusionInset` points on a hardware notch (0 on a flat display).
         let isRecordingTrailing = side == .trailing && state == .recording
         let hiddenByGlass = state == .recording ? max(0, visibleCoreOcclusionInset) : 0
-        // C7-W (Etan, QA 2026-11-11): the recording row ends `compactContentInset` from the wing's outer edge, the
-        // inset Stop keeps from the left edge, and is pinned there; spare width faces the notch.
+        // Recording content fills its reserved width between a calibrated core inset and 14 pt outside.
         return VoiceBarNotchWingContentLayout(
             side: side,
             coreInset: isFixedTrailing || state == .recording

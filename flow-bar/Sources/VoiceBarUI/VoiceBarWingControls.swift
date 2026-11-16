@@ -402,17 +402,9 @@ public struct VoiceBarRecordingTimeRegion: View {
                             ? microphoneName.map { "\(time), \($0)" } ?? time : "Starting microphone")
             }
             .frame(width: VoiceBarRecordingWingLabel.clockWidth(for: time), alignment: .trailing)
-            // c9-P round 2 (F4): the shown clock's text, so a transcribing take keeps its width class.
-            .preference(key: VoiceBarRecordingClockTextKey.self, value: time)
         }
         .background(PillControlTooltip(text: microphoneName))
     }
-}
-
-/// c9-P round 2 (F4): the text the recording clock last showed (nil where no clock is mounted).
-struct VoiceBarRecordingClockTextKey: PreferenceKey {
-    static let defaultValue: String? = nil
-    static func reduce(value: inout String?, nextValue: () -> String?) { value = nextValue() ?? value }
 }
 
 /// Reported 2026-11-09 (T5/T7): share recording time geometry, typography, and meter layout when reading.

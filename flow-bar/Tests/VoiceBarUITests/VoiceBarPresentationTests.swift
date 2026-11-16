@@ -426,7 +426,7 @@ final class VoiceBarPresentationTests: XCTestCase {
         XCTAssertEqual(processing.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth)
     }
 
-    func testRecordingWingFitsMountedControlsInsteadOfKeepingAGhostTail() {
+    func testRecordingWingReservesTheThirdSlotBeforeTheTakeTypeArrives() {
         let pushToTalk = VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(
                 mode: .recording,
