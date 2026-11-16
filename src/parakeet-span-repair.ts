@@ -65,7 +65,7 @@ export function fallbackOutputRisk(candidate: string, speechSeconds?: number): s
 }
 
 export function qualifySpanRepair(candidate: string, plan: SpanRepair, speechSeconds: number):
-  { accepted: true; insertion: string } | { accepted: false; reason: string } {
+  { accepted: true; insertion: string; from: number; to: number } | { accepted: false; reason: string } {
   const risk = fallbackOutputRisk(candidate, speechSeconds);
   if (risk) return { accepted: false, reason: risk };
   const ws = words(candidate);
@@ -79,7 +79,40 @@ export function qualifySpanRepair(candidate: string, plan: SpanRepair, speechSec
   // Only interior words qualify; one outer neighbour on either edge is context.
   const insertion = leftEnd === rightStart ? "" :
     candidate.slice(ws[leftEnd - 1]!.end, plan.right.length ? ws[rightStart]!.start : undefined).trim();
-  return { accepted: true, insertion };
+  return { accepted: true, insertion, from: ws[leftEnd - 1]!.end, to: plan.right.length ? ws[rightStart]!.start : candidate.length };
+}
+
+// Parakeet TDT encoder timestamps advance in 80ms frames. Cropping shifts
+// that grid relative to the native take; allow one frame at either word edge.
+const PARAKEET_ENCODER_FRAME_S = 0.08;
+
+/** Fail closed on untimed/misaligned crop words. Times are relative to the crop,
+ * while the uncovered span is relative to the full take. Never trim native text
+ * or salvage only some candidate words when an insertion crosses its evidence. */
+export function qualifyTimedSpanRepair(candidate: ParakeetResponse, plan: SpanRepair, speechSeconds: number, margin: number) {
+  const qualified = qualifySpanRepair(candidate.text, plan, speechSeconds);
+  if (!qualified.accepted || !qualified.insertion) return qualified;
+  const parsed = tokensSchema.safeParse(candidate.raw_token_times);
+  if (!parsed.success || parsed.data.some((t, i, all) => t.end > plan.end - plan.start + 1 / 16000 ||
+      (i > 0 && t.start < all[i - 1]!.start)))
+    return { accepted: false as const, reason: "invalid-insertion-timing" };
+  const joined = parsed.data.map(t => t.text).join("");
+  if (joined.trim() !== candidate.text) return { accepted: false as const, reason: "unaligned-insertion-timing" };
+  let position = -(joined.length - joined.trimStart().length);
+  const timed = parsed.data.map(t => {
+    const from = position; position += t.text.length; return { ...t, from, to: position };
+  });
+  const inserted = words(candidate.text).filter(w => w.start >= qualified.from && w.end <= qualified.to);
+  // spanWav floors the crop's start to a sample boundary.
+  const origin = Math.floor(plan.start * 16000) / 16000;
+  const lower = plan.gap.start - margin - PARAKEET_ENCODER_FRAME_S;
+  const upper = plan.gap.end + margin + PARAKEET_ENCODER_FRAME_S;
+  for (const word of inserted) {
+    const tokens = timed.filter(t => t.to > word.start && t.from < word.end);
+    if (!tokens.length || tokens.some(t => t.start + origin < lower || t.end + origin > upper))
+      return { accepted: false as const, reason: "insertion-outside-uncovered-span" };
+  }
+  return qualified;
 }
 
 /** Canonical clip header; every selected PCM sample is copied unchanged. */
