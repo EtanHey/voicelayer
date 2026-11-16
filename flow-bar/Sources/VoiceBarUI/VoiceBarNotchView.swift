@@ -268,7 +268,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                     surfaceRevealProgress = transition.revealProgress
                 } completion: {
                     // The tracker is a reference, so this write reaches the view whichever copy ran the change.
-                    if let closingSerial, tracker.band?.serial == closingSerial { tracker.band = nil }
+                    if let closingSerial { tracker.complete(closingSerial) }
                 }
             }
             guard endpoints.start != renderedGeometry else {
@@ -356,18 +356,10 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         guard presentation.visualState == .idle, let previous, previous != .idle, !accessibilityReduceMotion,
               historyMorph == nil, settled.leadingWingWidth + settled.trailingWingWidth > 0,
               settled.lowerSurfaceHeight == 0 || closing.band != nil else {
-            if closing.band != nil, presentation.visualState != .idle { closing.band = nil }
+            if closing.band != nil, presentation.visualState != .idle { closing.cancel() }
             return closing.band?.serial
         }
-        let serial = (closing.band?.serial ?? 0) &+ 1
-        let band = closing.band
-        closing.band = VoiceBarNotchClosingBand(
-            serial: serial,
-            geometry: band?.geometry ?? settled,
-            bandState: band?.bandState ?? previous,
-            trailingLayoutState: band?.trailingLayoutState ?? trailingWingLayoutState
-        )
-        return serial
+        return closing.begin(geometry: settled, bandState: previous, trailingLayoutState: trailingWingLayoutState)
     }
 
     private var shellAnimation: Animation {

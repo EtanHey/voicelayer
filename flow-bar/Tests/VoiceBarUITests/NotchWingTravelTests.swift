@@ -145,6 +145,30 @@ final class NotchWingTravelTests: XCTestCase {
         return all(root).filter { String(describing: type(of: $0)).contains("KeyViewProxy") }.count
     }
 
+    /// Review r1 (blocking 2): a close's completion ends only its own close. Close A, reopen, close B, then A's late
+    /// completion: B's band stays until B's own completion.
+    func testALateCompletionNeverEndsALaterClose() {
+        let tracker = VoiceBarNotchClosingTracker()
+        let launcher = VoiceBarNotchContract.geometry(for: .hoverLauncher)
+        let a = tracker.begin(geometry: launcher, bandState: .hoverLauncher, trailingLayoutState: nil)
+        tracker.cancel()
+        let b = tracker.begin(geometry: launcher, bandState: .hoverLauncher, trailingLayoutState: nil)
+        XCTAssertNotEqual(a, b, "each close has its own generation")
+        tracker.complete(a)
+        XCTAssertNotNil(tracker.band, "close A's late completion leaves close B's band in place")
+        tracker.complete(b)
+        XCTAssertNil(tracker.band, "close B's own completion ends it")
+        // A close continued while still closing (a second change to idle) keeps its band and the newest generation.
+        let c = tracker.begin(geometry: launcher, bandState: .hoverLauncher, trailingLayoutState: nil)
+        let d = tracker.begin(geometry: VoiceBarNotchContract.geometry(for: .recording), bandState: .recording,
+                              trailingLayoutState: nil)
+        XCTAssertEqual(tracker.band?.geometry, launcher)
+        tracker.complete(c)
+        XCTAssertNotNil(tracker.band, "the superseded animation's completion does not end the continued close")
+        tracker.complete(d)
+        XCTAssertNil(tracker.band)
+    }
+
     /// The slot offset is the gap between the drawn outer edge and the settled one, on each side; no live wings (any
     /// shell but the state shell) means no travel.
     func testTheSlotOffsetFollowsTheDrawnOuterEdge() {

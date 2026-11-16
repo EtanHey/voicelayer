@@ -76,8 +76,31 @@ struct VoiceBarNotchClosingBand: Equatable {
 
 @Observable
 final class VoiceBarNotchClosingTracker {
-    var band: VoiceBarNotchClosingBand?
+    private(set) var band: VoiceBarNotchClosingBand?
+    /// Review r1: a monotonic generation, never reset (a reopen does not restart it), so a late completion from an
+    /// earlier close can never end a later one.
+    @ObservationIgnored private(set) var generation = 0
     /// The last visible band's wing content. Recorded while the band shows; read only while it closes.
     @ObservationIgnored var leading: AnyView?
     @ObservationIgnored var trailing: AnyView?
+
+    /// Starts a close to hidden from `geometry` (or continues the one under way, keeping its band) and returns the
+    /// generation its animation's completion must present to end it.
+    func begin(geometry: VoiceBarNotchGeometry, bandState: VoiceBarNotchVisualState,
+               trailingLayoutState: VoiceBarNotchVisualState?) -> Int {
+        generation &+= 1
+        let serial = generation
+        band = VoiceBarNotchClosingBand(serial: serial, geometry: band?.geometry ?? geometry,
+                                        bandState: band?.bandState ?? bandState,
+                                        trailingLayoutState: band?.trailingLayoutState ?? trailingLayoutState)
+        return serial
+    }
+
+    /// The band reopened: the close is over without waiting for its completion.
+    func cancel() { band = nil }
+
+    /// An animation's completion: ends the close it was started for, and only that one.
+    func complete(_ serial: Int) {
+        if band?.serial == serial { band = nil }
+    }
 }
