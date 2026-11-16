@@ -553,7 +553,8 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         let slot = VoiceBarNotchContract.material.wingContentLayout(
             for: side,
             state: side == .trailing ? (trailingWingLayoutState ?? presentation.bandState) : presentation.bandState,
-            visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
+            visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset,
+            leadingWingWidth: slotGeometry.leadingWingWidth
         )
         return content.modifier(VoiceBarNotchWingSlot(slot: slot))
     }

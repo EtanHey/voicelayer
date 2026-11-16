@@ -10,7 +10,7 @@ final class NotchLookTests: XCTestCase {
         for inset: CGFloat in [0, 12, 24] {
             let p = VoiceBarPresentation.notchPresentation(from: VoiceBarNotchOperationalInput(
                 mode: .transcribing, visibleCoreOcclusionInset: inset))
-            XCTAssertEqual(p.geometry.leadingWingWidth, 73.5)
+            XCTAssertEqual(p.geometry.leadingWingWidth, 70, "owner r2: the launcher's left wing, chevron on the rule")
             XCTAssertEqual(p.geometry.trailingWingWidth, 73.5)
         }
     }

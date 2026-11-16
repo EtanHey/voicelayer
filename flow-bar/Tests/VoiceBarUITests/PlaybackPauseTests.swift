@@ -600,18 +600,25 @@ final class PlaybackPauseTests: XCTestCase {
         let material = VoiceBarNotchContract.material
         let micSlot = material.wingContentLayout(for: .leading, state: mic.visualState)
 
-        let teleprompter = presentation(for: state)
+        // Owner r2 (one rule for the left side): each left wing puts its innermost glyph's ink 16.5 pt from the notch.
+        // The launcher's row (chevron innermost, the mic one slot out) starts 10 pt off the core; a live read's
+        // transport (Forward innermost, Pause one slot out since T1/T6) starts 12.5 pt off. Both keep the same 26 pt
+        // pitch and the compact outer inset; the pause no longer shares the mic's exact x.
+        XCTAssertEqual(micSlot.coreInset, VoiceBarNotchContract.compactCoreContentInset,
+                       "without its width the slot keeps the compact inset")
+        XCTAssertEqual(material.wingContentLayout(for: .leading, state: mic.visualState,
+                                                  leadingWingWidth: mic.geometry.leadingWingWidth).coreInset,
+                       VoiceBarNotchContract.launcherLeadingContentInset)
+        let teleprompter = presentation(for: state, slots: VoiceBarPresentation.playbackLeadingSlotCount(for: state))
         state.dismissTeleprompter()
-        let compact = presentation(for: state)
+        let compact = presentation(for: state, slots: VoiceBarPresentation.playbackLeadingSlotCount(for: state))
         for speaking in [teleprompter, compact] {
-            XCTAssertEqual(speaking.geometry.leadingWingWidth, mic.geometry.leadingWingWidth, "\(speaking.visualState)")
-            XCTAssertEqual(material.wingContentLayout(for: .leading, state: speaking.visualState), micSlot)
-            let micLayout = VoiceBarNotchShapeLayout(geometry: mic.geometry)
-            let layout = VoiceBarNotchShapeLayout(geometry: speaking.geometry)
-            XCTAssertEqual(
-                layout.coreRect.minX - layout.leadingWingRect.minX,
-                micLayout.coreRect.minX - micLayout.leadingWingRect.minX
-            )
+            XCTAssertEqual(speaking.geometry.leadingWingWidth, VoiceBarPresentation.readingTransportWingWidth,
+                           "\(speaking.visualState)")
+            let slot = material.wingContentLayout(for: .leading, state: speaking.visualState,
+                                                  leadingWingWidth: speaking.geometry.leadingWingWidth)
+            XCTAssertEqual(slot.coreInset, VoiceBarNotchContract.readingLeadingContentInset, "\(speaking.visualState)")
+            XCTAssertEqual(slot.outerInset, micSlot.outerInset)
         }
         state.showTeleprompter()
 
@@ -699,13 +706,14 @@ final class PlaybackPauseTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.02))
     }
 
-    private func presentation(for state: VoiceState) -> VoiceBarNotchPresentation {
+    private func presentation(for state: VoiceState, slots: Int = 1) -> VoiceBarNotchPresentation {
         VoiceBarPresentation.notchPresentation(from: VoiceBarNotchOperationalInput(
             mode: state.mode,
             hasTeleprompterText: state.teleprompterText != nil,
             isTeleprompterDismissed: state.isTeleprompterDismissed,
             isTeleprompterReadback: state.isTeleprompterReadback,
             isPlaybackPaused: state.isPlaybackPaused,
+            readQueueLeadingSlotCount: slots,
             isCollapsed: state.isCollapsed
         ))
     }

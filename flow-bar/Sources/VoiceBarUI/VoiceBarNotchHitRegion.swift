@@ -51,10 +51,28 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
     public static let historyPanel = VoiceBarNotchInteractionConfiguration(
         leadingControlCount: 2,
         trailingControlCountFromCore: 2,
-        lowerSurfaceIsInteractive: true
+        lowerSurfaceIsInteractive: true,
+        leadingCoreInset: VoiceBarNotchContract.launcherLeadingContentInset
     )
 
     public static let none = VoiceBarNotchInteractionConfiguration()
+
+    /// Owner r2: the left hit slots follow the painted row. A configuration left at the compact default inset over a
+    /// left wing that is the launcher's (the resident app builds the launcher's and an idle notice's that way) takes
+    /// the launcher's inset, where the mic and chevron are drawn. Recording and explicit insets are kept.
+    func followingLeadingRow(of presentation: VoiceBarNotchPresentation) -> Self {
+        guard presentation.bandState != .recording, leadingControlCount > 0,
+              abs(leadingCoreInset - VoiceBarNotchContract.compactCoreContentInset) < 0.01 else { return self }
+        let painted = VoiceBarNotchContract.leadingCoreContentInset(leadingWingWidth: presentation.geometry.leadingWingWidth)
+        guard painted != leadingCoreInset else { return self }
+        return VoiceBarNotchInteractionConfiguration(
+            leadingControlCount: leadingControlCount, trailingControlCountFromCore: trailingControlCountFromCore,
+            trailingControlCountFromOuter: trailingControlCountFromOuter, trailingOuterInset: trailingOuterInset,
+            lowerControlCount: lowerControlCount, lowerSurfaceIsInteractive: lowerSurfaceIsInteractive,
+            leadingOutermostControlWidth: leadingOutermostControlWidth, lowerTerminalControl: lowerTerminalControl,
+            lowerControlBottomInset: lowerControlBottomInset, leadingCoreInset: painted,
+            leadingControlSlotIndices: leadingControlSlotIndices)
+    }
 
     /// The same band controls over a live drawer body (0510 R3: a drawer under the recording or status wings).
     public var withInteractiveLowerSurface: Self {
@@ -78,7 +96,8 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
         case .hoverLauncher:
             VoiceBarNotchInteractionConfiguration(
                 leadingControlCount: 2,
-                trailingControlCountFromCore: 2
+                trailingControlCountFromCore: 2,
+                leadingCoreInset: VoiceBarNotchContract.launcherLeadingContentInset
             )
         case .recording:
             VoiceBarNotchInteractionConfiguration(leadingControlCount: 2,

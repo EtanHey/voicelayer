@@ -39,24 +39,28 @@ final class WingsU2Tests: XCTestCase {
         XCTAssertEqual(VoiceBarNotchContract.recordingLeadingWingWidth, 88.5, "three reserved slots, 2.5/14 pt insets")
     }
 
+    /// Owner r2: the left wing holds the mic and chevron from 10 pt off the notch (the chevron's ink on the 16.5 pt
+    /// left-side rule), so it is 3.5 pt narrower than the fixed right wing; the outline still never moves between the
+    /// launcher and History.
     func testEveryMockedStateKeepsBothWingsAtTheFixedWidth() {
         let fixed = VoiceBarNotchContract.fixedWingWidth
+        let left = VoiceBarNotchContract.launcherLeadingWingWidth
         let states: [(String, VoiceBarNotchPresentation, VoiceBarNotchVisualState)] = [
             ("idle launcher", resolve(.idle, hovered: true), .hoverLauncher),
             ("history", resolve(.idle, hovered: true, historyOpen: true), .history),
         ]
         for (name, presentation, visualState) in states {
             XCTAssertEqual(presentation.visualState, visualState, name)
-            XCTAssertEqual(presentation.geometry.leadingWingWidth, fixed, accuracy: 0.001, "\(name) left wing")
+            XCTAssertEqual(presentation.geometry.leadingWingWidth, left, accuracy: 0.001, "\(name) left wing")
             XCTAssertEqual(presentation.geometry.trailingWingWidth, fixed, accuracy: 0.001, "\(name) right wing")
-            XCTAssertEqual(presentation.geometry.topWidth, VoiceBarNotchContract.coreWidth + 2 * fixed,
+            XCTAssertEqual(presentation.geometry.topWidth, VoiceBarNotchContract.coreWidth + left + fixed,
                            accuracy: 0.001, "\(name): the outline never moves")
         }
     }
 
     func testTranscribingUsesFixedControlWings() {
         let p = resolve(.transcribing)
-        XCTAssertEqual(p.geometry.leadingWingWidth, 73.5)
+        XCTAssertEqual(p.geometry.leadingWingWidth, 70) // owner r2: the launcher's left wing
         XCTAssertEqual(p.geometry.trailingWingWidth, 73.5)
     }
 
@@ -76,8 +80,9 @@ final class WingsU2Tests: XCTestCase {
     /// inside the 130 pt morph canvas, open or collapsed, so the outline does not move between them.
     func testReadingAloudUsesTheTransportWingAndTheRecordingStyleRightWing() {
         let transport = VoiceBarPresentation.readingTransportSlotCount
-        XCTAssertEqual(VoiceBarPresentation.readingTransportWingWidth, 129.5, accuracy: 0.001,
-                       "13.5 core inset + three 20 pt controls + three 6 pt gaps + 30 pt speed chip + 8 pt outer inset")
+        XCTAssertEqual(VoiceBarPresentation.readingTransportWingWidth, 128.5, accuracy: 0.001,
+                       "12.5 core inset (owner r2: Forward's ink on the 16.5 pt left-side rule) + three 20 pt controls "
+                       + "+ three 6 pt gaps + 30 pt speed chip + 8 pt outer inset")
         XCTAssertLessThanOrEqual(VoiceBarPresentation.readingTransportWingWidth, VoiceBarNotchContract.morphCanvasWingCapacity)
         for presentation in [resolve(.speaking, hasTeleprompterText: true, readQueueLeadingSlotCount: transport),
                              resolve(.speaking, isTeleprompterDismissed: true, readQueueLeadingSlotCount: transport)] {

@@ -62,7 +62,7 @@ final class WingsU2HostTests: XCTestCase {
             callbacks: callbacks
         )
         XCTAssertEqual(host.layout.presentation.visualState, .hoverLauncher)
-        assertFixedWings(host, leading: 2, trailing: 2)
+        assertFixedWings(host, leading: 2, trailing: 2, leadingWidth: VoiceBarNotchContract.launcherLeadingWingWidth)
 
         // Hit rects run from the core outward: the chevron sits beside the core, the mic outside it.
         firstClick(host, control: 1)
@@ -89,7 +89,7 @@ final class WingsU2HostTests: XCTestCase {
             configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 2, trailingControlCountFromCore: 2),
             callbacks: callbacks
         )
-        assertFixedWings(host, leading: 2, trailing: 2)
+        assertFixedWings(host, leading: 2, trailing: 2, leadingWidth: VoiceBarNotchContract.launcherLeadingWingWidth)
         firstClick(host, control: 3)
         XCTAssertEqual(callbacks.calls, ["setup"], "the badged gear goes to the setup spot, not plain Settings")
         XCTAssertEqual(
@@ -145,7 +145,7 @@ final class WingsU2HostTests: XCTestCase {
             configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 1,
                 trailingControlCountFromCore: 2,
                 leadingCoreInset: VoiceBarPresentation.transcribingMicrophoneCoreInset), callbacks: callbacks)
-        assertFixedWings(host, leading: 1, trailing: 2)
+        assertFixedWings(host, leading: 1, trailing: 2, leadingWidth: VoiceBarNotchContract.launcherLeadingWingWidth)
         firstClick(host, control: 2)
         XCTAssertEqual(callbacks.calls, ["settings"])
         firstClick(host, control: 1)
@@ -338,7 +338,9 @@ final class WingsU2HostTests: XCTestCase {
         panel.orderBack(nil)
         windows.append(panel)
         host.layoutSubtreeIfNeeded()
-        let region = VoiceBarNotchHitRegion(geometry: presentation.geometry, configuration: configuration)
+        // Owner r2: the rects the panel layout gates on (it moves a default-inset left row onto the painted one).
+        let region = VoiceBarNotchHitRegion(geometry: presentation.geometry,
+                                            configuration: configuration.followingLeadingRow(of: presentation))
         let rects = region.rects.map {
             $0.offsetBy(dx: layout.visibleContentRect.minX, dy: layout.visibleContentRect.minY)
         }
