@@ -2366,7 +2366,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                         showsThirdControl: hasThirdControl, showsEarlierTakeProcessing: earlierTake,
                         visibleCoreOcclusionInset: visibleCoreOcclusionInset),
                     showsEarlierTakeProcessing: earlierTake,
-                    visibleCoreOcclusionInset: visibleCoreOcclusionInset)
+                    visibleCoreOcclusionInset: visibleCoreOcclusionInset),
+                leadingControlSlotIndices: hasThirdControl ? nil : [0, 2]
             )
         case .compactStatus:
             switch state.mode {

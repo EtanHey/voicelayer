@@ -4,6 +4,8 @@ import SwiftUI
 struct NotchSettingsPullHint: View {
     let ink: Color
     var progress: CGFloat = 1
+    var verticalOffset: CGFloat = 0
+    var isHovered = false
     @State private var identity = UUID()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -16,7 +18,7 @@ struct NotchSettingsPullHint: View {
         let labelWidth = (NotchHistoryPresentation.settingsPullHint as NSString).size(
             withAttributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium)]).width + 35
         Capsule(style: .continuous)
-            .fill(ink.opacity(0.14 + (1 - p) * (NotchHistoryMorph.handleOpacity - 0.14)))
+            .fill(ink.opacity(0.14 + (1 - p) * ((isHovered ? NotchHistoryMorph.handleHoverOpacity : NotchHistoryMorph.handleOpacity) - 0.14)))
             .frame(width: NotchHistoryMorph.handleWidth + (labelWidth - NotchHistoryMorph.handleWidth) * p,
                    height: NotchHistoryMorph.handleThickness + (NotchHistoryPresentation.settingsPullHintHeight - NotchHistoryMorph.handleThickness) * p)
             .overlay {
@@ -29,6 +31,18 @@ struct NotchSettingsPullHint: View {
                 .fixedSize()
                 .opacity(Double(max(0, (p - 0.8) / 0.2)))
             }
+            #if DEBUG
+            .background {
+                GeometryReader { proxy in
+                    let frame = proxy.frame(in: .global)
+                    Color.clear.onChange(of: frame, initial: true) { _, frame in
+                        NotchPullHintProbe.rectObserver?(frame)
+                    }
+                }
+            }
+            #endif
+            .offset(y: verticalOffset)
+            .animation(.easeOut(duration: 0.12), value: isHovered)
             .animation(reduceMotion ? nil : .spring(response: NotchHistoryMorph.springResponse,
                        dampingFraction: NotchHistoryMorph.springDampingFraction), value: p)
             #if DEBUG
@@ -47,5 +61,6 @@ struct NotchSettingsPullHint: View {
 #if DEBUG
 @MainActor enum NotchPullHintProbe {
     static var observer: ((UUID, CGFloat) -> Void)?
+    static var rectObserver: ((CGRect) -> Void)?
 }
 #endif

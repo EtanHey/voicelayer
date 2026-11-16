@@ -17,7 +17,7 @@ final class NotchLookR2Tests: XCTestCase {
                     let p = VoiceBarPresentation.notchPresentation(from: VoiceBarNotchOperationalInput(
                         mode: .recording, showsRecordingHold: third, visibleCoreOcclusionInset: inset,
                         showsEarlierTakeProcessing: earlier))
-                    let slots: CGFloat = 2 + (third ? 1 : 0) + (earlier ? 1 : 0)
+                    let slots: CGFloat = 3 + (earlier ? 1 : 0)
                     let row = slots * m.compactControlSize + (slots - 1) * m.compactControlSpacing
                     let left = p.geometry.leadingWingWidth - m.compactContentInset - row
                     let right = p.geometry.trailingWingWidth - m.compactContentInset - VoiceBarRecordingWingLabel.width

@@ -116,7 +116,7 @@ final class NotchShellCentredTests: XCTestCase {
             (.hoverLauncher, twoControls), // the mic + chevron (2.3 U2)
             (.history, twoControls), // the mic + chevron (2.3 U2)
             (.compactStatus, oneControl), // the status indicator (transcribing, transcript shown)
-            (.recording, twoControls), // cancel + stop
+            (.recording, 94), // Stop, reserved Pause/Lock, Cancel
         ]
         for (state, width) in expected {
             XCTAssertEqual(VoiceBarNotchContract.geometry(for: state).leadingWingWidth, width, "\(state)")
@@ -186,10 +186,10 @@ final class NotchShellCentredTests: XCTestCase {
         let states: [(String, VoiceBarNotchPresentation, Int)] = [
             ("hover", resolve(VoiceBarNotchOperationalInput(mode: .idle, isHovered: true)), 2),
             ("History", presentation(history: true), 2),
-            ("recording", resolve(VoiceBarNotchOperationalInput(mode: .recording)), 2),
+            ("recording", resolve(VoiceBarNotchOperationalInput(mode: .recording)), 3),
             ("recording + hold lock",
              resolve(VoiceBarNotchOperationalInput(mode: .recording, showsRecordingHold: true)), 3),
-            ("transcribing", resolve(VoiceBarNotchOperationalInput(mode: .transcribing)), 1),
+            ("transcribing", resolve(VoiceBarNotchOperationalInput(mode: .transcribing)), 2),
             ("transcript shown",
              resolve(VoiceBarNotchOperationalInput(mode: .idle, confirmationText: "Pasted", statusText: "Pasted")), 1),
         ]
@@ -198,7 +198,8 @@ final class NotchShellCentredTests: XCTestCase {
         XCTAssertEqual(expected, -23.5)
         for (name, presentation, controlCount) in states {
             XCTAssertEqual(
-                drawnCoreSideLeadingControlMidX(presentation, controlCount: controlCount), expected,
+                drawnCoreSideLeadingControlMidX(presentation, controlCount: controlCount),
+                name.hasPrefix("recording") ? -18 : expected,
                 accuracy: 0.001, "\(name): the core-side control moved"
             )
             // 2.3 U2: every state the 3-wings mock draws uses the fixed two-control wing; only a third control (the
@@ -207,11 +208,10 @@ final class NotchShellCentredTests: XCTestCase {
                 contentWidth: CGFloat(controlCount) * VoiceBarNotchContract.material.compactControlSize
                     + CGFloat(controlCount - 1) * VoiceBarNotchContract.material.compactControlSpacing
             )
-            // c9-P: transcribing keeps the recording band's wings (its meter keeps its frame).
+            // Recording reserves three left slots; each wing uses its own content and insets.
             XCTAssertEqual(
                 presentation.geometry.leadingWingWidth,
-                name.hasPrefix("recording") || name == "transcribing"
-                    ? max(VoiceBarNotchContract.recordingTrailingWingWidth, fit)
+                name.hasPrefix("recording") ? 94 : name == "transcribing" ? 73.5
                     : name == "transcript shown" ? fit : max(VoiceBarNotchContract.fixedWingWidth, fit),
                 "\(name): the leading wing is not the fixed wing for its \(controlCount) control(s)"
             )

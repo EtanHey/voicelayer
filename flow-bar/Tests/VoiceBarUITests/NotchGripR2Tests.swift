@@ -19,16 +19,9 @@ import XCTest
         XCTAssertFalse(hint.contains(".transition("))
     }
     func testCompactFooterAndReduceMotion() throws {
-        let closed = VoiceBarNotchContract.geometry(for: .hoverLauncher)
-        let open = VoiceBarNotchContract.geometry(for: .history)
-        let morph = VoiceBarNotchHistoryMorphInput(progress: 1.3, closed: closed, open: open)
-        let bottom = morph.geometry(at: NotchHistoryMorph.rubberBand(NotchHistoryMorph.settingsPullThreshold)).lowerSurfaceHeight
-        let fade = open.lowerSurfaceHeight - NotchHistoryMorph.handleBandHeight
-        let rect = try XCTUnwrap(NotchHistoryPresentation.settingsPullHintRect(fadeBottom: fade,
-            drawerSize: CGSize(width: 420, height: bottom), hintWidth: 160))
+        let (rect, _, fade, bottom) = try NotchGripPaintTests.render(progress: 1, rows: 6, light: false)
         XCTAssertEqual(rect.minY - fade, 8, accuracy: 0.5)
         XCTAssertEqual(bottom - rect.maxY, 8, accuracy: 0.5)
-        XCTAssertFalse(rect.intersects(CGRect(x: 0, y: 0, width: 420, height: fade)))
         for p: CGFloat in [0, 0.5, 1] {
             XCTAssertEqual(NotchSettingsPullHint.phase(p, reduceMotion: false), p)
             XCTAssertEqual(NotchSettingsPullHint.phase(p, reduceMotion: true), p == 1 ? 1 : 0)

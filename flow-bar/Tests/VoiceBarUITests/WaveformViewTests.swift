@@ -446,9 +446,20 @@ final class WaveformViewTests: XCTestCase {
         let transcribingBranch = try XCTUnwrap(leadingCompactStatusBranch.components(
             separatedBy: "if notchPresentation.bandState == .compactStatus, state.mode == .transcribing {").dropFirst().first)
             .components(separatedBy: "} else if")[0]
-        let spinner = try XCTUnwrap(transcribingBranch.range(of: "transcriptionSpinner")).lowerBound
-        let chevron = try XCTUnwrap(transcribingBranch.range(of: "microphonePickerButton")).lowerBound
-        XCTAssertLessThan(spinner, chevron, "lead ruling 2026-11-15: the microphone sits on the outer side of the spinner, the spinner nearest the notch")
+        XCTAssertTrue(transcribingBranch.contains("if VoiceBarPresentation.transcribingCaretNextToCore"))
+        let geometry = VoiceBarPresentation.notchPresentation(from: .init(mode: .transcribing)).geometry
+        let hits = VoiceBarNotchHitRegion(geometry: geometry, configuration: .init(leadingControlCount: 1,
+            leadingCoreInset: VoiceBarPresentation.transcribingMicrophoneCoreInset)).rects
+        XCTAssertEqual(hits.count, 1)
+        XCTAssertEqual(geometry.coreOriginX - hits[0].midX, 23.5)
+        let spinnerCenter = CGPoint(x: geometry.coreOriginX - VoiceBarPresentation.transcribingSpinnerCoreInset - 10,
+                                    y: geometry.topHeight / 2)
+        XCTAssertFalse(hits[0].contains(spinnerCenter), "the outer decorative spinner must never receive a mic click")
+        XCTAssertTrue(VoiceBarPresentation.transcribingCaretNextToCore)
+        XCTAssertEqual(VoiceBarPresentation.transcribingMicrophoneCoreInset,
+                       VoiceBarNotchContract.compactCoreContentInset, "the selected caret/mic is nearest the core")
+        XCTAssertEqual(VoiceBarPresentation.transcribingSpinnerCoreInset - VoiceBarPresentation.transcribingMicrophoneCoreInset,
+                       26, "the decorative spinner is one 20 pt slot plus 6 pt spacing outside the microphone")
         XCTAssertTrue(leadingCompactStatusBranch.contains("ProcessingSpinner(transcribing: notchAppearance)"))
         XCTAssertFalse(leadingCompactStatusBranch.contains("statusLabel"))
         XCTAssertFalse(leadingCompactStatusBranch.contains("WaveformView("))

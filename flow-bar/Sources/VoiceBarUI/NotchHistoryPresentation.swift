@@ -140,14 +140,6 @@ public enum NotchHistoryPresentation {
     /// 0510 N6: the overpull hint, which sits in the handle's band and never over a row.
     public static let settingsPullHint = "Release for Settings"
     public static let settingsPullHintIdentifier = "notch-settings-pull-hint"
-    /// A hint fits only in the clear footer below the list's fade, centred in both axes.
-    public static func settingsPullHintRect(fadeBottom: CGFloat, drawerSize: CGSize, hintWidth: CGFloat) -> CGRect? {
-        guard drawerSize.height - fadeBottom >= settingsPullHintHeight else { return nil }
-        return CGRect(x: (drawerSize.width - hintWidth) / 2,
-            y: (fadeBottom + drawerSize.height - settingsPullHintHeight) / 2,
-            width: hintWidth, height: settingsPullHintHeight)
-    }
-
     public static let settingsPullHintHeight: CGFloat = NotchHistoryMorph.handleBandHeight
 
     // V12: what a row's text column can show while its hover actions are out (the 404 pt list, the row's insets,

@@ -570,11 +570,12 @@ public enum VoiceBarPresentation {
         VoiceBarNotchContract.fixedWingWidth
     }
 
-    /// The leading recording wing contains exactly its visible controls and the shared insets.
+    /// Reserve Pause/Lock from the first recording frame; later mode metadata cannot move Stop.
+    /// An earlier take adds only an outer spinner slot.
     public static func recordingWingWidth(showsThirdControl: Bool, showsEarlierTakeProcessing: Bool,
                                           visibleCoreOcclusionInset: CGFloat) -> CGFloat {
         let material = VoiceBarNotchContract.material
-        let slots: CGFloat = 2 + (showsThirdControl ? 1 : 0) + (showsEarlierTakeProcessing ? 1 : 0)
+        let slots: CGFloat = 3 + (showsEarlierTakeProcessing ? 1 : 0)
         return recordingLeadingCoreInset(wingWidth: 0, showsEarlierTakeProcessing: false,
                                          visibleCoreOcclusionInset: visibleCoreOcclusionInset)
             + slots * material.compactControlSize + (slots - 1) * material.compactControlSpacing

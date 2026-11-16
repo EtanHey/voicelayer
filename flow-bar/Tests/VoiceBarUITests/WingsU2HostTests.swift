@@ -117,14 +117,14 @@ final class WingsU2HostTests: XCTestCase {
         // Mirrors AppDelegate's PTT recording configuration (AppLifecycleTests): Stop · Pause · ✕.
         let host = makeHost(
             state: state,
-            configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
+            configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 3, leadingCoreInset: 8)
         )
         XCTAssertEqual(host.layout.presentation.visualState, .recording)
-        // Pause takes the third left-wing slot, as Lock does on a VAD take. C7-W: both wings take the time/meter
+        // Recording reserves three left slots; each wing uses its own content and insets.
         // wing's width (102 pt, wider than the three controls' 99.5); the right wing still holds no control.
         assertFixedWings(host, leading: 3, trailing: 0,
                          trailingWidth: VoiceBarNotchContract.recordingTrailingWingWidth,
-                         leadingWidth: VoiceBarNotchContract.recordingTrailingWingWidth)
+                         leadingWidth: 94)
         // From the core outward: Cancel, then Pause, then Stop.
         firstClick(host, control: 0)
         XCTAssertEqual(host.router.calls, ["cancel"])

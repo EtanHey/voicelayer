@@ -567,7 +567,8 @@ public enum VoiceBarNotchContract {
         material.compactControlSpacing +
         material.compactControlSize
 
-    public static let recordingLeadingWingWidth = fixedWingWidth
+    public static let recordingLeadingWingWidth = fixedWingContentInset
+        + 3 * material.compactControlSize + 2 * material.compactControlSpacing + material.compactContentInset
 
     /// The time/meter row with its insets: 8 pt clear of the physical notch, and (C7-W) the left wing's own outer
     /// inset past the meter, so the band's two ends match.
@@ -580,7 +581,7 @@ public enum VoiceBarNotchContract {
     public static var recordingTrailingWingWidth: CGFloat { recordingTrailingWingWidth(visibleCoreOcclusionInset: 0) }
 
     public static let recordingLeadingWingWidthWithHoldControl: CGFloat =
-        recordingLeadingWingWidth + material.compactControlSpacing + material.compactControlSize
+        recordingLeadingWingWidth
 
     /// The fixed morph canvas reserves this much space on either side of the
     /// hardware core. Dynamic content must lay itself out inside this bound so
@@ -704,8 +705,8 @@ public enum VoiceBarNotchContract {
             geometry(
                 coreWidth: coreWidth,
                 topHeight: resolvedTopHeight,
-                leadingWingWidth: fixedWingWidth,
-                trailingWingWidth: fixedWingWidth
+                leadingWingWidth: recordingLeadingWingWidth + max(0, visibleCoreOcclusionInset),
+                trailingWingWidth: recordingTrailingWingWidth(visibleCoreOcclusionInset: visibleCoreOcclusionInset)
             )
         case .compactStatus:
             geometry(

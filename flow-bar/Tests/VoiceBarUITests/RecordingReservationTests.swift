@@ -12,6 +12,25 @@ import XCTest
         func handleReplay() {}
         func handleRetranscribeHistoryEntry(recordingPath: String) {}
     }
+    func testCalibratedFourSlotWingFitsTheStableCanvas() {
+        for inset: CGFloat in [0, 8.5, 10, 12, 24] {
+            let plain = VoiceBarPresentation.notchPresentation(from: .init(mode: .recording,
+                visibleCoreOcclusionInset: inset))
+            let spinner = VoiceBarPresentation.notchPresentation(from: .init(mode: .recording,
+                visibleCoreOcclusionInset: inset, showsEarlierTakeProcessing: true))
+            XCTAssertEqual(plain.geometry.leadingWingWidth, 94 + inset)
+            XCTAssertEqual(spinner.geometry.leadingWingWidth, 120 + inset)
+            let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: plain).canvasGeometry
+            XCTAssertEqual(canvas, VoiceBarNotchMorphCanvasLayout.resolve(for: spinner).canvasGeometry,
+                           "spinner arrival cannot resize the canvas or move the core")
+            XCTAssertLessThanOrEqual(spinner.geometry.leadingWingWidth, canvas.leadingWingWidth)
+            XCTAssertLessThanOrEqual(spinner.geometry.trailingWingWidth, canvas.trailingWingWidth)
+            let layout = VoiceBarPanelLayout.make(presentation: spinner, canvasGeometry: canvas)
+            XCTAssertGreaterThanOrEqual(layout.visibleContentRect.minX, 0)
+            XCTAssertLessThanOrEqual(layout.visibleContentRect.maxX, layout.panelSize.width)
+        }
+    }
+
     func testLateTakeTypeAndEarlierSpinnerKeepStopAndCancelFrames() throws {
         let state = VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
             recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in },

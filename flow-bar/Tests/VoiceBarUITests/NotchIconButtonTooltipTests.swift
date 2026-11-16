@@ -164,10 +164,10 @@ final class NotchIconButtonTooltipTests: XCTestCase {
         assertEveryControlHasATooltip("transcribing", try mount(bar(transcribing)),
                                      // c9-P: the right wing is the rippling meter (no controls); the microphone
                                      // control stays on the left (0510 N9).
-                                     expecting: ["Choose microphone"])
+                                     expecting: ["Choose microphone", "History", "Settings"])
         let transcribingTips = try mount(bar(transcribing)).tooltips.map(\.text)
-        XCTAssertFalse(transcribingTips.contains("History"), "c9-P: History leaves the meter's slot while transcribing")
-        XCTAssertFalse(transcribingTips.contains("Settings"), "c9-P: Settings leaves the meter's slot while transcribing")
+        XCTAssertTrue(transcribingTips.contains("History"), "transcribing exposes History navigation")
+        XCTAssertTrue(transcribingTips.contains("Settings"), "transcribing exposes Settings navigation")
         let error = state { $0.handleEvent(["type": "error", "message": "Synthetic diagnostic for the tooltip test."]) }
         assertEveryControlHasATooltip("error", try mount(bar(error)),
                                      expecting: ["Synthetic diagnostic for the tooltip test.", "Dismiss error",

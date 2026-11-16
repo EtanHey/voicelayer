@@ -1195,7 +1195,7 @@ public struct BarView: View {
         guard fromCentre < 0 else { return true }
         let material = VoiceBarNotchContract.material
         let earlierTake = VoiceBarPresentation.showsEarlierTakeProcessing(for: state)
-        let slots: CGFloat = 2 + (recordingPauseControl != nil || recordingHoldControl != nil ? 1 : 0) + (earlierTake ? 1 : 0)
+        let slots: CGFloat = 3 + (earlierTake ? 1 : 0)
         let inner = geometry.coreWidth / 2 + VoiceBarPresentation.recordingLeadingCoreInset(
             wingWidth: geometry.leadingWingWidth, showsEarlierTakeProcessing: earlierTake,
             visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset)
@@ -1327,9 +1327,9 @@ public struct BarView: View {
                 }
                 // Recording pause sits beside Stop, in its own control slot.
                 // X16 (Etan J4; M4 live bisection): no per-item insertion transition here. The daemon's `ptt` event
-                // inserts this control after the wing exists, and with `VoiceBarNotchWingContentEntry.transition` on it
+                // fills its reserved slot after the wing exists, and with `VoiceBarNotchWingContentEntry.transition` on it
                 // AppKit never showed its tooltip while Stop and Cancel beside it did. It enters the slot Stop leaves,
-                // which the glass already covers; Stop is what moves out with the growing wing.
+                // which the glass already covers; Stop and Cancel keep their frames.
                 if let recordingPauseControl {
                     notchButton(
                         icon: recordingPauseControl.iconName,
@@ -1342,14 +1342,20 @@ public struct BarView: View {
                         state.setRecordingPaused(!state.isRecordingPaused)
                     }
                     .contentTransition(.symbolEffect(.replace))
+                } else if recordingHoldControl == nil {
+                    // Optimistic F5 recording is PTT: reserve Pause's exact position until the type arrives.
+                    // A VAD state event supplies its type before publishing recording, so Lock owns the core slot.
+                    Color.clear.frame(width: VoiceBarNotchContract.material.compactControlSize,
+                                      height: VoiceBarNotchContract.material.compactControlSize)
+                        .allowsHitTesting(false).accessibilityHidden(true)
                 }
                 notchButton(icon: "xmark", accessibilityLabel: "Cancel recording") {
                     commandRouter.handleCancel()
                 }
                 // X21 (as X16 for mute): no per-item insertion transition here. The daemon's `vad` event inserts Lock
-                // after the wing exists, growing it by one slot; with `VoiceBarNotchWingContentEntry.transition` on a
+                // with the recording state; with `VoiceBarNotchWingContentEntry.transition` on a
                 // late control AppKit does not show its tooltip (bisected live on the M4 for mute). Lock takes the slot
-                // Cancel vacates, which the glass already covers; Cancel and Stop move out with the growing wing.
+                // reserved at the core, which the glass already covers; Cancel and Stop stay in place.
                 if let recordingHoldControl {
                     notchButton(
                         icon: recordingHoldControl.iconName,
@@ -1812,8 +1818,9 @@ public struct BarView: View {
                     palette: notchPalette,
                     rows: (historyRows, NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count),
                            adjustHistoryRows),
-                    settingsHintProgress: isSettingsPullArmed ? 1 : min(1, max(0, ((historyFrozenProgress ?? historyPull.rawProgress) - 1)
-                        / (NotchHistoryMorph.settingsPullThreshold - 1))),
+                    settingsHintProgress: settingsDrawer != nil && !isSettingsDrawerOpen
+                        ? (isSettingsPullArmed ? 1 : min(1, max(0, ((historyFrozenProgress ?? historyPull.rawProgress) - 1)
+                            / (NotchHistoryMorph.settingsPullThreshold - 1)))) : 0,
                     settingsHintOffset: historyMorphInput.map {
                         max(0, $0.geometry(at: $0.progress).lowerSurfaceHeight - $0.openLowerSurfaceHeight) / 2
                     } ?? 0,

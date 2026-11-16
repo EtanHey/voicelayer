@@ -34,7 +34,7 @@ final class LateWingControlTooltipTests: XCTestCase {
     static let conditionalControls: [String: Int] = [
         // Leading wing: launcher (switch case).
         #"notchLeadingContent|notchButton|"Start voice recording""#: 1,
-        "notchLeadingContent|microphonePickerButton|": 3,
+        "notchLeadingContent|microphonePickerButton|": 4,
         // Leading wing: recording (switch case, and the two late controls).
         #"notchLeadingContent|notchButton|"Stop recording""#: 1,
         "notchLeadingContent|notchButton|recordingPauseControl.accessibilityLabel": 1,
@@ -59,6 +59,8 @@ final class LateWingControlTooltipTests: XCTestCase {
         "notchTrailingStatusContent|notchSpeakingTrailingContent|": 1,
         "notchTrailingStatusContent|notchCompactStatusContent|": 1,
         "notchCompactStatusContent|notchSpeakingTrailingContent|": 1,
+        "notchCompactStatusContent|historyButton|": 1,
+        "notchCompactStatusContent|settingsButton|": 1,
         #"notchCompactStatusContent|notchButton|"Dismiss error""#: 1,
         #"notchSpeakingTrailingContent|notchTeleprompterButton|"Show teleprompter""#: 1,
         // The reading row helper inserts Stop only while collapsed.

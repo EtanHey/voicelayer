@@ -52,7 +52,8 @@ final class NotchLookRenderTests: XCTestCase {
                         recordingTrailingWingWidth: p.geometry.trailingWingWidth,
                         visibleCoreOcclusionInset: inset)
                     var bar = BarView(state: state, commandRouter: Router(), onOpenSettings: {}, onOpenHistory: {},
-                        presentationModel: model, includesPanelOutsets: true)
+                        presentationModel: model, includesPanelOutsets: true,
+                        settingsDrawer: NotchSettingsDrawerContext(updates: nil, pane: { tab, _ in AnyView(Text(tab.title)) }))
                     if phase.hasPrefix("history-") {
                         model.setHistoryPanelOpen(true)
                         let progress: CGFloat = phase == "history-0" ? 1 : phase == "history-50" ? 1.15 : 1.3

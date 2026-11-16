@@ -29,12 +29,13 @@ struct NotchHistoryExtendHandle: View {
         ZStack {
             Group {
                 if let settingsHintProgress {
-                    NotchSettingsPullHint(ink: palette.primary.color, progress: settingsHintProgress)
-                        .offset(y: settingsHintOffset)
+                    NotchSettingsPullHint(ink: palette.primary.color, progress: settingsHintProgress,
+                        verticalOffset: settingsHintOffset, isHovered: isHovered)
                 } else {
                     Capsule(style: .continuous)
                         .fill(palette.primary.color.opacity(isHovered ? NotchHistoryMorph.handleHoverOpacity : NotchHistoryMorph.handleOpacity))
                         .frame(width: NotchHistoryMorph.handleWidth, height: NotchHistoryMorph.handleThickness)
+                        .animation(.easeOut(duration: 0.12), value: isHovered)
                 }
             }
                 .frame(width: NotchHistoryMorph.handleHitWidth, height: NotchHistoryMorph.handleBandHeight)
