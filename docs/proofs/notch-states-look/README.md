@@ -1,307 +1,363 @@
-# Native notch states look proof
+# Native M1 notch proof, R4
 
-Status: PARTIAL. Only the artifacts inventoried here are proved.
+Status: requested R4 captures complete. Five native windows opened no earlier than 13:00:00 local; the last closed at 13:06:06.173, before the 13:20:00 deadline. The original first History trial failed its cancel-release check; its adverse outcome is retained below. No product or supplied-bundle edits were made for capture.
 
-BEFORE `7faf0a0e43f5afa2c135950bb15daafe473b39c6`. AFTER `afacf26aa7ae206dca1acc27ab7174cc92a6fcbb`.
+## Capture specification
 
-Real built-in hardware-notch screen, 1512 x 982 points, native 2x stills, light and dark. Existing UIE2E display-only app with synthetic setup/permission rows, the seeded QA initial dictionary row, common bundled TypeScript term, and invented QA history rows and device-free meter. Crops contain the notch band/drawer on the broker's black backdrop; no full-desktop captures.
+- BEFORE: main `7faf0a0e43f5afa2c135950bb15daafe473b39c6`.
+- AFTER: look candidate `1ed722648420f395abb077d9ca8c4fd2e20899ac`.
+- Native hardware-notch M1 display, 1512 × 982 points, scale 2. Stills are native 2x pixels from the exact QA app, cropped without resampling. Black notch and transparent canvas regions are retained.
+- Display-only synthetic fixtures; no microphone, live speech, clipboard or real History data. The General pane in the fixture shows setup controls, not a system permission dialog.
+- Recorder frames are native 1x, never upscaled: **1x recorder frame, for position and visibility only, not for text**. Original movie presentation timestamps are preserved. GIFs are 1x previews with codec-rounded timing; PNGs plus recorded PTS are authoritative.
+- Recorder contact sheets show original-size top64px band crops, labelled per frame. History contact sheets are downsampled overviews; inspect each linked native2x stage for text.
+- Existing BEFORE a/b/c/c2/d/g stills and the 32-frame BEFORE/light e sequence were reused from the same pinned build. Every AFTER image in this packet is newly captured from 1ed72264.
+- Capture admission was explicitly 60 seconds for this granted run, while the tool default remains 600. Prewindow input restarts admission; foreign input during a window still stops and restores. Windows used the existing ownership/permission broker and resident restore path.
 
-Run method: a capture adapter imports the harness ownership/permission APIs under its supervisor lock. This is **not the stock suite**. `NativeHost.permissions` creates the ownership snapshot; `NativeHost.remember` checks kernel birth and canonical executable path; the unchanged runner `Boundary` starts the broker. Every action/still is gated.
+## Numbered before / after pairs
 
-## 1. a-idle-hovered, light
+### 1. a-idle-hovered, light
 
-![before light a-idle-hovered](images/before-light-a-idle-hovered.png)
+| BEFORE, native2x | AFTER, native2x |
+|---|---|
+| ![Before a-idle-hovered light](images/before-light-a-idle-hovered.png) | ![After a-idle-hovered light](images/after-light-a-idle-hovered.png) |
 
-![after light a-idle-hovered](images/after-light-a-idle-hovered.png)
+The opposite-tone edges around the mic, chevron, History and gear are gone; launcher geometry is retained.
 
-The captured idle launcher is unchanged.
+### 2. a-idle-hovered, dark
 
-## 1. a-idle-hovered, dark
+| BEFORE, native2x | AFTER, native2x |
+|---|---|
+| ![Before a-idle-hovered dark](images/before-dark-a-idle-hovered.png) | ![After a-idle-hovered dark](images/after-dark-a-idle-hovered.png) |
 
-![before dark a-idle-hovered](images/before-dark-a-idle-hovered.png)
+The opposite-tone edges around the mic, chevron, History and gear are gone; launcher geometry is retained.
 
-![after dark a-idle-hovered](images/after-dark-a-idle-hovered.png)
+### 3. b-recording-first-frame, light
 
-The captured idle launcher is unchanged.
+| BEFORE, native2x | AFTER, native2x |
+|---|---|
+| ![Before b-recording-first-frame light](images/before-light-b-recording-first-frame.png) | ![After b-recording-first-frame light](images/after-light-b-recording-first-frame.png) |
 
-## 2. b-recording-first-frame, light
+The left recording wing is narrower, the X is closer to the notch, the timer is present at 0:00, and light pre-capture dots are darker. Glyph edges are removed.
 
-![before light b-recording-first-frame](images/before-light-b-recording-first-frame.png)
+### 4. b-recording-first-frame, dark
 
-![after light b-recording-first-frame](images/after-light-b-recording-first-frame.png)
+| BEFORE, native2x | AFTER, native2x |
+|---|---|
+| ![Before b-recording-first-frame dark](images/before-dark-b-recording-first-frame.png) | ![After b-recording-first-frame dark](images/after-dark-b-recording-first-frame.png) |
 
-AFTER shows 0:00 before capture becomes live.
+The left recording wing is narrower, the X is closer to the notch, the timer is present at 0:00, and light pre-capture dots are darker. Glyph edges are removed.
 
-## 2. b-recording-first-frame, dark
+### 5. c-recording-live, light
 
-![before dark b-recording-first-frame](images/before-dark-b-recording-first-frame.png)
+| BEFORE, native2x | AFTER, native2x |
+|---|---|
+| ![Before c-recording-live light](images/before-light-c-recording-live.png) | ![After c-recording-live light](images/after-light-c-recording-live.png) |
 
-![after dark b-recording-first-frame](images/after-dark-b-recording-first-frame.png)
+The live controls move toward the notch inside the narrower left wing; right timer/waveform geometry is retained.
 
-AFTER shows 0:00 before capture becomes live.
+### 6. c-recording-live, dark
 
-## 3. c-recording-live, light
+| BEFORE, native2x | AFTER, native2x |
+|---|---|
+| ![Before c-recording-live dark](images/before-dark-c-recording-live.png) | ![After c-recording-live dark](images/after-dark-c-recording-live.png) |
 
-![before light c-recording-live](images/before-light-c-recording-live.png)
+The live controls move toward the notch inside the narrower left wing; right timer/waveform geometry is retained.
 
-![after light c-recording-live](images/after-light-c-recording-live.png)
+### 7. c2-recording-lock, light
 
-AFTER moves the left recording controls closer to the physical notch; the right timer stays in place.
+| BEFORE, native2x | AFTER, native2x |
+|---|---|
+| ![Before c2-recording-lock light](images/before-light-c2-recording-lock.png) | ![After c2-recording-lock light](images/after-light-c2-recording-lock.png) |
 
-## 3. c-recording-live, dark
+The locked recording layout uses the narrower left wing; glyph edges are removed.
 
-![before dark c-recording-live](images/before-dark-c-recording-live.png)
+### 8. c2-recording-lock, dark
 
-![after dark c-recording-live](images/after-dark-c-recording-live.png)
+| BEFORE, native2x | AFTER, native2x |
+|---|---|
+| ![Before c2-recording-lock dark](images/before-dark-c2-recording-lock.png) | ![After c2-recording-lock dark](images/after-dark-c2-recording-lock.png) |
 
-AFTER moves the left recording controls closer to the physical notch; the right timer stays in place.
+The locked recording layout uses the narrower left wing; glyph edges are removed.
 
-## 4. c2-recording-lock, light
+### 9. d-transcribing, light
 
-![before light c2-recording-lock](images/before-light-c2-recording-lock.png)
+| BEFORE, native2x | AFTER, native2x |
+|---|---|
+| ![Before d-transcribing light](images/before-light-d-transcribing.png) | ![After d-transcribing light](images/after-light-d-transcribing.png) |
 
-![after light c2-recording-lock](images/after-light-c2-recording-lock.png)
+Transcribing uses the compact launcher geometry with History and gear at the same pixel positions as idle; the dark spinner arc is lighter.
 
-AFTER reduces the left gap with Lock present; Lock remains mounted.
+### 10. d-transcribing, dark
 
-## 4. c2-recording-lock, dark
+| BEFORE, native2x | AFTER, native2x |
+|---|---|
+| ![Before d-transcribing dark](images/before-dark-d-transcribing.png) | ![After d-transcribing dark](images/after-dark-d-transcribing.png) |
 
-![before dark c2-recording-lock](images/before-dark-c2-recording-lock.png)
+Transcribing uses the compact launcher geometry with History and gear at the same pixel positions as idle; the dark spinner arc is lighter.
 
-![after dark c2-recording-lock](images/after-dark-c2-recording-lock.png)
+### 11. g-dictionary, light
 
-AFTER reduces the left gap with Lock present; Lock remains mounted.
-
-## 5. d-transcribing, light
-
-![before light d-transcribing](images/before-light-d-transcribing.png)
-
-![after light d-transcribing](images/after-light-d-transcribing.png)
-
-AFTER removes the waveform, compacts the wings and places History/Settings on the right.
-
-## 5. d-transcribing, dark
-
-![before dark d-transcribing](images/before-dark-d-transcribing.png)
-
-![after dark d-transcribing](images/after-dark-d-transcribing.png)
-
-AFTER removes the waveform, compacts the wings and places History/Settings on the right.
-
-## 6. g-dictionary, light
-
-![before light g-dictionary](images/before-light-g-dictionary.png)
-
-![after light g-dictionary](images/after-light-g-dictionary.png)
-
-AFTER removes the extra chevron beside the row ellipsis.
-
-## 6. g-dictionary, dark
-
-![before dark g-dictionary](images/before-dark-g-dictionary.png)
-
-![after dark g-dictionary](images/after-dark-g-dictionary.png)
-
-AFTER removes the extra chevron beside the row ellipsis.
-
-## 7. h-general-top-observed, light
-
-![before light h-general-top-observed](images/before-light-h-general-top-observed.png)
-
-![after light h-general-top-observed](images/after-light-h-general-top-observed.png)
-
-Observed General pane top only; footer NOT_RUN.
-
-## 7. h-general-top-observed, dark
-
-![before dark h-general-top-observed](images/before-dark-h-general-top-observed.png)
-
-![after dark h-general-top-observed](images/after-dark-h-general-top-observed.png)
-
-Observed General pane top only; footer NOT_RUN.
-
-## e. Recording to transcribing sparse samples, light
-
-![before 1](images/before-light-e-burst-01.png)
-
-![before 8](images/before-light-e-burst-08.png)
-
-![after 1](images/after-light-e-burst-01.png)
-
-![after 8](images/after-light-e-burst-08.png)
-
-Sparse before/after samples; sub-frame continuity and the armed grip hint are NOT_VERIFIED.
-
-## e. Recording to transcribing sparse samples, dark
-
-![before 1](images/before-dark-e-burst-01.png)
-
-![before 8](images/before-dark-e-burst-08.png)
-
-![after 1](images/after-dark-e-burst-01.png)
-
-![after 8](images/after-dark-e-burst-08.png)
-
-Sparse before/after samples; sub-frame continuity and the armed grip hint are NOT_VERIFIED.
-
-## f. Native grip attempt, partial growth only, light
-
-![before 1](images/before-light-f-burst-01.png)
-
-![before 8](images/before-light-f-burst-08.png)
-
-![after 1](images/after-light-f-burst-01.png)
-
-![after 8](images/after-light-f-burst-08.png)
-
-Sparse before/after samples; sub-frame continuity and the armed grip hint are NOT_VERIFIED.
-
-## f. Native grip attempt, partial growth only, dark
-
-![before 1](images/before-dark-f-burst-01.png)
-
-![before 8](images/before-dark-f-burst-08.png)
-
-![after 1](images/after-dark-f-burst-01.png)
-
-![after 8](images/after-dark-f-burst-08.png)
-
-Sparse before/after samples; sub-frame continuity and the armed grip hint are NOT_VERIFIED.
-
-## Motion samples
-
-Native2x still bursts carry capture-request-start timestamps relative to each burst start (capture completes later). The salvaged BEFORE/light hand-over also has31 original1x recorder frames with exact movie presentation timestamps, extracted with -vsync0 and never upscaled. These are sparse samples across the state change, not frame-complete flicker or timing proof. Item e/f is incomplete unless at least eight corresponding samples exist; a missing stage is not inferred from another image.
-
-| Image | State | Time (ms) | Scale/use |
-|---|---|---:|---|
-| [before-light-e-burst-01.png](images/before-light-e-burst-01.png) | e-burst-01 | 898.398 | 2x still, sparse position/visibility sample |
-| [before-light-e-burst-02.png](images/before-light-e-burst-02.png) | e-burst-02 | 1762.698 | 2x still, sparse position/visibility sample |
-| [before-light-e-burst-03.png](images/before-light-e-burst-03.png) | e-burst-03 | 3502.553 | 2x still, sparse position/visibility sample |
-| [before-light-e-burst-04.png](images/before-light-e-burst-04.png) | e-burst-04 | 4337.931 | 2x still, sparse position/visibility sample |
-| [before-light-e-burst-05.png](images/before-light-e-burst-05.png) | e-burst-05 | 5175.009 | 2x still, sparse position/visibility sample |
-| [before-light-e-burst-06.png](images/before-light-e-burst-06.png) | e-burst-06 | 6041.304 | 2x still, sparse position/visibility sample |
-| [before-light-e-burst-07.png](images/before-light-e-burst-07.png) | e-burst-07 | 6882.673 | 2x still, sparse position/visibility sample |
-| [before-light-e-burst-08.png](images/before-light-e-burst-08.png) | e-burst-08 | 7737.023 | 2x still, sparse position/visibility sample |
-| [before-dark-e-burst-01.png](images/before-dark-e-burst-01.png) | e-burst-01 | 893.419 | 2x still, sparse position/visibility sample |
-| [before-dark-e-burst-02.png](images/before-dark-e-burst-02.png) | e-burst-02 | 1735.573 | 2x still, sparse position/visibility sample |
-| [before-dark-e-burst-03.png](images/before-dark-e-burst-03.png) | e-burst-03 | 3505.252 | 2x still, sparse position/visibility sample |
-| [before-dark-e-burst-04.png](images/before-dark-e-burst-04.png) | e-burst-04 | 4382.495 | 2x still, sparse position/visibility sample |
-| [before-dark-e-burst-05.png](images/before-dark-e-burst-05.png) | e-burst-05 | 5310.178 | 2x still, sparse position/visibility sample |
-| [before-dark-e-burst-06.png](images/before-dark-e-burst-06.png) | e-burst-06 | 6182.956 | 2x still, sparse position/visibility sample |
-| [before-dark-e-burst-07.png](images/before-dark-e-burst-07.png) | e-burst-07 | 7074.868 | 2x still, sparse position/visibility sample |
-| [before-dark-e-burst-08.png](images/before-dark-e-burst-08.png) | e-burst-08 | 7955.675 | 2x still, sparse position/visibility sample |
-| [after-light-e-burst-01.png](images/after-light-e-burst-01.png) | e-burst-01 | 983.259 | 2x still, sparse position/visibility sample |
-| [after-light-e-burst-02.png](images/after-light-e-burst-02.png) | e-burst-02 | 1907.727 | 2x still, sparse position/visibility sample |
-| [after-light-e-burst-03.png](images/after-light-e-burst-03.png) | e-burst-03 | 3802.809 | 2x still, sparse position/visibility sample |
-| [after-light-e-burst-04.png](images/after-light-e-burst-04.png) | e-burst-04 | 4740.951 | 2x still, sparse position/visibility sample |
-| [after-light-e-burst-05.png](images/after-light-e-burst-05.png) | e-burst-05 | 5663.913 | 2x still, sparse position/visibility sample |
-| [after-light-e-burst-06.png](images/after-light-e-burst-06.png) | e-burst-06 | 6561.828 | 2x still, sparse position/visibility sample |
-| [after-light-e-burst-07.png](images/after-light-e-burst-07.png) | e-burst-07 | 7445.917 | 2x still, sparse position/visibility sample |
-| [after-light-e-burst-08.png](images/after-light-e-burst-08.png) | e-burst-08 | 8349.014 | 2x still, sparse position/visibility sample |
-| [after-dark-e-burst-01.png](images/after-dark-e-burst-01.png) | e-burst-01 | 979.193 | 2x still, sparse position/visibility sample |
-| [after-dark-e-burst-02.png](images/after-dark-e-burst-02.png) | e-burst-02 | 1901.992 | 2x still, sparse position/visibility sample |
-| [after-dark-e-burst-03.png](images/after-dark-e-burst-03.png) | e-burst-03 | 3871.683 | 2x still, sparse position/visibility sample |
-| [after-dark-e-burst-04.png](images/after-dark-e-burst-04.png) | e-burst-04 | 4857.799 | 2x still, sparse position/visibility sample |
-| [after-dark-e-burst-05.png](images/after-dark-e-burst-05.png) | e-burst-05 | 5841.066 | 2x still, sparse position/visibility sample |
-| [after-dark-e-burst-06.png](images/after-dark-e-burst-06.png) | e-burst-06 | 6796.29 | 2x still, sparse position/visibility sample |
-| [after-dark-e-burst-07.png](images/after-dark-e-burst-07.png) | e-burst-07 | 7755.04 | 2x still, sparse position/visibility sample |
-| [after-dark-e-burst-08.png](images/after-dark-e-burst-08.png) | e-burst-08 | 8719.217 | 2x still, sparse position/visibility sample |
-| [before-light-f-burst-01.png](images/before-light-f-burst-01.png) | f-burst-01 | 998.804 | 2x still, sparse position/visibility sample |
-| [before-light-f-burst-02.png](images/before-light-f-burst-02.png) | f-burst-02 | 1959.451 | 2x still, sparse position/visibility sample |
-| [before-light-f-burst-03.png](images/before-light-f-burst-03.png) | f-burst-03 | 3359.945 | 2x still, sparse position/visibility sample |
-| [before-light-f-burst-04.png](images/before-light-f-burst-04.png) | f-burst-04 | 4309.189 | 2x still, sparse position/visibility sample |
-| [before-light-f-burst-05.png](images/before-light-f-burst-05.png) | f-burst-05 | 5156.724 | 2x still, sparse position/visibility sample |
-| [before-light-f-burst-06.png](images/before-light-f-burst-06.png) | f-burst-06 | 5995.839 | 2x still, sparse position/visibility sample |
-| [before-light-f-burst-07.png](images/before-light-f-burst-07.png) | f-burst-07 | 6831.976 | 2x still, sparse position/visibility sample |
-| [before-light-f-burst-08.png](images/before-light-f-burst-08.png) | f-burst-08 | 7682.846 | 2x still, sparse position/visibility sample |
-| [before-dark-f-burst-01.png](images/before-dark-f-burst-01.png) | f-burst-01 | 995.634 | 2x still, sparse position/visibility sample |
-| [before-dark-f-burst-02.png](images/before-dark-f-burst-02.png) | f-burst-02 | 1951.584 | 2x still, sparse position/visibility sample |
-| [before-dark-f-burst-03.png](images/before-dark-f-burst-03.png) | f-burst-03 | 3333.42 | 2x still, sparse position/visibility sample |
-| [before-dark-f-burst-04.png](images/before-dark-f-burst-04.png) | f-burst-04 | 4266.681 | 2x still, sparse position/visibility sample |
-| [before-dark-f-burst-05.png](images/before-dark-f-burst-05.png) | f-burst-05 | 5177.114 | 2x still, sparse position/visibility sample |
-| [before-dark-f-burst-06.png](images/before-dark-f-burst-06.png) | f-burst-06 | 6077.806 | 2x still, sparse position/visibility sample |
-| [before-dark-f-burst-07.png](images/before-dark-f-burst-07.png) | f-burst-07 | 6966.214 | 2x still, sparse position/visibility sample |
-| [before-dark-f-burst-08.png](images/before-dark-f-burst-08.png) | f-burst-08 | 7843.491 | 2x still, sparse position/visibility sample |
-| [after-light-f-burst-01.png](images/after-light-f-burst-01.png) | f-burst-01 | 1028.082 | 2x still, sparse position/visibility sample |
-| [after-light-f-burst-02.png](images/after-light-f-burst-02.png) | f-burst-02 | 2066.393 | 2x still, sparse position/visibility sample |
-| [after-light-f-burst-03.png](images/after-light-f-burst-03.png) | f-burst-03 | 3507.767 | 2x still, sparse position/visibility sample |
-| [after-light-f-burst-04.png](images/after-light-f-burst-04.png) | f-burst-04 | 4492.034 | 2x still, sparse position/visibility sample |
-| [after-light-f-burst-05.png](images/after-light-f-burst-05.png) | f-burst-05 | 5373.829 | 2x still, sparse position/visibility sample |
-| [after-light-f-burst-06.png](images/after-light-f-burst-06.png) | f-burst-06 | 6271.262 | 2x still, sparse position/visibility sample |
-| [after-light-f-burst-07.png](images/after-light-f-burst-07.png) | f-burst-07 | 7189.928 | 2x still, sparse position/visibility sample |
-| [after-light-f-burst-08.png](images/after-light-f-burst-08.png) | f-burst-08 | 8080.767 | 2x still, sparse position/visibility sample |
-| [after-dark-f-burst-01.png](images/after-dark-f-burst-01.png) | f-burst-01 | 1023.503 | 2x still, sparse position/visibility sample |
-| [after-dark-f-burst-02.png](images/after-dark-f-burst-02.png) | f-burst-02 | 1999.24 | 2x still, sparse position/visibility sample |
-| [after-dark-f-burst-03.png](images/after-dark-f-burst-03.png) | f-burst-03 | 3432.821 | 2x still, sparse position/visibility sample |
-| [after-dark-f-burst-04.png](images/after-dark-f-burst-04.png) | f-burst-04 | 4408.953 | 2x still, sparse position/visibility sample |
-| [after-dark-f-burst-05.png](images/after-dark-f-burst-05.png) | f-burst-05 | 5339.712 | 2x still, sparse position/visibility sample |
-| [after-dark-f-burst-06.png](images/after-dark-f-burst-06.png) | f-burst-06 | 6257.473 | 2x still, sparse position/visibility sample |
-| [after-dark-f-burst-07.png](images/after-dark-f-burst-07.png) | f-burst-07 | 7154.685 | 2x still, sparse position/visibility sample |
-| [after-dark-f-burst-08.png](images/after-dark-f-burst-08.png) | f-burst-08 | 8076.229 | 2x still, sparse position/visibility sample |
-| [before-light-e-recorder-001.png](images/before-light-e-recorder-001.png) | e-recorder-001 | 0.0 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-002.png](images/before-light-e-recorder-002.png) | e-recorder-002 | 75.0 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-003.png](images/before-light-e-recorder-003.png) | e-recorder-003 | 141.667 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-004.png](images/before-light-e-recorder-004.png) | e-recorder-004 | 208.333 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-005.png](images/before-light-e-recorder-005.png) | e-recorder-005 | 283.333 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-006.png](images/before-light-e-recorder-006.png) | e-recorder-006 | 350.0 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-007.png](images/before-light-e-recorder-007.png) | e-recorder-007 | 416.667 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-008.png](images/before-light-e-recorder-008.png) | e-recorder-008 | 483.333 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-009.png](images/before-light-e-recorder-009.png) | e-recorder-009 | 558.333 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-010.png](images/before-light-e-recorder-010.png) | e-recorder-010 | 616.667 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-011.png](images/before-light-e-recorder-011.png) | e-recorder-011 | 691.667 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-012.png](images/before-light-e-recorder-012.png) | e-recorder-012 | 766.667 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-013.png](images/before-light-e-recorder-013.png) | e-recorder-013 | 833.333 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-014.png](images/before-light-e-recorder-014.png) | e-recorder-014 | 900.0 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-015.png](images/before-light-e-recorder-015.png) | e-recorder-015 | 975.0 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-016.png](images/before-light-e-recorder-016.png) | e-recorder-016 | 1041.667 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-017.png](images/before-light-e-recorder-017.png) | e-recorder-017 | 1108.333 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-018.png](images/before-light-e-recorder-018.png) | e-recorder-018 | 1158.333 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-019.png](images/before-light-e-recorder-019.png) | e-recorder-019 | 1250.0 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-020.png](images/before-light-e-recorder-020.png) | e-recorder-020 | 1316.667 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-021.png](images/before-light-e-recorder-021.png) | e-recorder-021 | 1383.333 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-022.png](images/before-light-e-recorder-022.png) | e-recorder-022 | 1450.0 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-023.png](images/before-light-e-recorder-023.png) | e-recorder-023 | 1516.667 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-024.png](images/before-light-e-recorder-024.png) | e-recorder-024 | 1583.333 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-025.png](images/before-light-e-recorder-025.png) | e-recorder-025 | 1658.333 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-026.png](images/before-light-e-recorder-026.png) | e-recorder-026 | 1725.0 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-027.png](images/before-light-e-recorder-027.png) | e-recorder-027 | 1791.667 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-028.png](images/before-light-e-recorder-028.png) | e-recorder-028 | 1858.333 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-029.png](images/before-light-e-recorder-029.png) | e-recorder-029 | 1925.0 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-030.png](images/before-light-e-recorder-030.png) | e-recorder-030 | 1991.667 | 1x still, sparse position/visibility sample |
-| [before-light-e-recorder-031.png](images/before-light-e-recorder-031.png) | e-recorder-031 | 2058.333 | 1x still, sparse position/visibility sample |
-
-## Screenshot measurements
-
-Innermost left control to physical notch, notch to timer, and wing-width estimates are in [measurements.json](measurements.json). For a VAD take, the innermost control is selected from the real AX regions, including Lock. Values use screenshot ink/glass pixels, not source constants. Hint bands remain UNKNOWN.
-
-
-| Build | Theme | State | Inner control to notch (pt) | Notch to timer (pt) | Left/right wing (pt) |
-|---|---|---|---:|---:|---:|
-| before | light | c-recording-live | 22.0 | 8.5 | 102.5 / 101.5 |
-| before | light | c2-recording-lock | 22.5 | 8.5 | 102.5 / 101.5 |
-| before | dark | c-recording-live | 22.0 | 8.5 | 103.0 / 102.0 |
-| before | dark | c2-recording-lock | 22.5 | 8.5 | 103.0 / 102.0 |
-| after | light | c-recording-live | 14.0 | 8.5 | 94.5 / 101.5 |
-| after | light | c2-recording-lock | 14.5 | 8.5 | 94.5 / 101.5 |
-| after | dark | c-recording-live | 14.0 | 8.5 | 95.0 / 102.0 |
-| after | dark | c2-recording-lock | 14.5 | 8.5 | 95.0 / 102.0 |
-
-## Item outcomes
-
-- Initial BEFORE/light row-creation attempt failed; later Dictionary captures use the existing QA seed and were inspected.
-- Initial BEFORE/light General navigation failed; later captures reached General but not its footer.
-- Last targeted window stopped at native modal inventory NOT_PROVEN; resident/audio/appearance restored cleanly. Raw refusal remains in private receipt.
+| BEFORE, native2x | AFTER, native2x |
+|---|---|
+| ![Before g-dictionary light](images/before-light-g-dictionary.png) | ![After g-dictionary light](images/after-light-g-dictionary.png) |
+
+Pencil and ellipsis sit on the title line; the row retains its synthetic seed. Drawer and band glyph edges are removed.
+
+### 12. g-dictionary, dark
+
+| BEFORE, native2x | AFTER, native2x |
+|---|---|
+| ![Before g-dictionary dark](images/before-dark-g-dictionary.png) | ![After g-dictionary dark](images/after-dark-g-dictionary.png) |
+
+Pencil and ellipsis sit on the title line; the row retains its synthetic seed. Drawer and band glyph edges are removed.
+
+## AFTER dark screenshot measurements
+
+Points, 2px = 1pt. AX frames select ROIs; measurements use actual ink/glass pixels, not layout slots. The visible rendered notch seam is x384–720px in the 1104px crop (global x671–839pt). The preflight physical safe-area enclosure is x663–848pt; substituting it would shift gaps by 8–9pt. Glass edges use a >15 threshold at y32px; neutral ink uses >120 per channel within the actual control region. Threshold and antialias uncertainty is about 0.5pt. Colored stop-circle, meter and spinner ink are included in outer padding.
+
+| State | Left wing | Right wing | Inner left ink → notch | Notch → first right ink | Outer pad L / R |
+|---|---:|---:|---:|---:|---:|
+| a | 74.0 | 74.0 | 20.0 | 16.5 | 20.0 / 18.0 |
+| b | 97.5 | 111.0 | 16.5 | 17.5 | 14.5 / 14.5 |
+| c | 97.5 | 111.0 | 16.5 | 17.5 | 14.5 / 14.5 |
+| c2 | 97.5 | 111.0 | 17.0 | 17.5 | 14.5 / 14.5 |
+| d | 74.0 | 74.0 | 20.0 | 16.5 | 15.5 / 18.0 |
+
+In c2 the innermost left glyph is Lock; in a/d it is the chevron. In b/c it is X. a and d have identical measured History and gear ink boxes: History x753–780px, gear x806–832px. Thus History begins 16.5pt from the notch and the gear has an 18.0pt outer pad in both states.
+
+### Color, glyph edges and Dictionary alignment
+
+- Light pre-capture dot: RGB (106, 106, 112) against (171, 171, 171); relative-luminance contrast 2.340:1.
+- Dark spinner arc: RGB (101, 176, 252) against (35, 35, 35); contrast 6.862:1.
+- Mic, X and gear: two-pixel bands immediately outside core ink were sampled in both appearances. All six samples contain zero opposite-polarity outline pixels (5-level tolerance beyond the band); modal outside colors match the band, RGB171 in light and RGB35 in dark. Visual inspection agrees: no contrasting ring remains in these samples. This does not assert every glyph on every possible background.
+- Dictionary title capital-A ink centre y370.5px; pencil y372.0px and ellipsis y371.5px, in both themes. The actions are 0.75pt and 0.50pt below the cap-height centre, respectively; these are pixel observations, not an assertion of exact mathematical centring.
+- [measurements.json](measurements.json) retains coordinates, thresholds, sampled RGB values and individual edge-ring counts.
+
+## e: recording → transcribing
+
+The AFTER frames show the band contracting to the compact launcher and replacing recording controls with a spinner and navigation. BEFORE retains wide wings and changes its waveform from recording red toward processing blue. These sequences contain real captured transition samples, not only two endpoints. They do not establish sub-frame continuity.
+
+### BEFORE light: 32 native1x frames
+
+PTS 0.000–2158.333ms. [1x motion preview](images/before-light-e.gif).
+
+![before light contact](images/before-light-e-contact.png)
+
+| Frame | Original PTS (ms) | Band edges at y16px | Scale / meaning |
+|---|---:|---|---|
+| [001](images/before-light-e-recorder-001.png) | 0.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [002](images/before-light-e-recorder-002.png) | 91.667 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [003](images/before-light-e-recorder-003.png) | 158.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [004](images/before-light-e-recorder-004.png) | 225.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [005](images/before-light-e-recorder-005.png) | 295.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [006](images/before-light-e-recorder-006.png) | 358.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [007](images/before-light-e-recorder-007.png) | 433.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [008](images/before-light-e-recorder-008.png) | 500.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [009](images/before-light-e-recorder-009.png) | 575.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [010](images/before-light-e-recorder-010.png) | 650.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [011](images/before-light-e-recorder-011.png) | 716.667 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [012](images/before-light-e-recorder-012.png) | 791.667 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [013](images/before-light-e-recorder-013.png) | 858.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [014](images/before-light-e-recorder-014.png) | 925.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [015](images/before-light-e-recorder-015.png) | 1000.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [016](images/before-light-e-recorder-016.png) | 1066.667 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [017](images/before-light-e-recorder-017.png) | 1133.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [018](images/before-light-e-recorder-018.png) | 1200.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [019](images/before-light-e-recorder-019.png) | 1275.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [020](images/before-light-e-recorder-020.png) | 1341.667 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [021](images/before-light-e-recorder-021.png) | 1408.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [022](images/before-light-e-recorder-022.png) | 1475.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [023](images/before-light-e-recorder-023.png) | 1541.667 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [024](images/before-light-e-recorder-024.png) | 1608.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [025](images/before-light-e-recorder-025.png) | 1675.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [026](images/before-light-e-recorder-026.png) | 1741.667 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [027](images/before-light-e-recorder-027.png) | 1816.667 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [028](images/before-light-e-recorder-028.png) | 1883.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [029](images/before-light-e-recorder-029.png) | 1950.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [030](images/before-light-e-recorder-030.png) | 2025.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [031](images/before-light-e-recorder-031.png) | 2091.667 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [032](images/before-light-e-recorder-032.png) | 2158.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+
+### AFTER dark: 32 native1x frames
+
+PTS 0.000–2075.000ms. [1x motion preview](images/after-dark-e.gif).
+
+![after dark contact](images/after-dark-e-contact.png)
+
+| Frame | Original PTS (ms) | Band edges at y16px | Scale / meaning |
+|---|---:|---|---|
+| [001](images/after-dark-e-recorder-001.png) | 0.000 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [002](images/after-dark-e-recorder-002.png) | 66.667 | [95, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [003](images/after-dark-e-recorder-003.png) | 133.333 | [95, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [004](images/after-dark-e-recorder-004.png) | 200.000 | [95, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [005](images/after-dark-e-recorder-005.png) | 266.667 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [006](images/after-dark-e-recorder-006.png) | 333.333 | [95, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [007](images/after-dark-e-recorder-007.png) | 408.333 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [008](images/after-dark-e-recorder-008.png) | 475.000 | [95, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [009](images/after-dark-e-recorder-009.png) | 541.667 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [010](images/after-dark-e-recorder-010.png) | 608.333 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [011](images/after-dark-e-recorder-011.png) | 675.000 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [012](images/after-dark-e-recorder-012.png) | 741.667 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [013](images/after-dark-e-recorder-013.png) | 808.333 | [98, 468] | 1x recorder frame, for position and visibility only, not for text |
+| [014](images/after-dark-e-recorder-014.png) | 875.000 | [110, 449] | 1x recorder frame, for position and visibility only, not for text |
+| [015](images/after-dark-e-recorder-015.png) | 950.000 | [116, 440] | 1x recorder frame, for position and visibility only, not for text |
+| [016](images/after-dark-e-recorder-016.png) | 1016.667 | [118, 436] | 1x recorder frame, for position and visibility only, not for text |
+| [017](images/after-dark-e-recorder-017.png) | 1083.333 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [018](images/after-dark-e-recorder-018.png) | 1150.000 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [019](images/after-dark-e-recorder-019.png) | 1216.667 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [020](images/after-dark-e-recorder-020.png) | 1283.333 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [021](images/after-dark-e-recorder-021.png) | 1341.667 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [022](images/after-dark-e-recorder-022.png) | 1408.333 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [023](images/after-dark-e-recorder-023.png) | 1475.000 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [024](images/after-dark-e-recorder-024.png) | 1541.667 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [025](images/after-dark-e-recorder-025.png) | 1608.333 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [026](images/after-dark-e-recorder-026.png) | 1675.000 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [027](images/after-dark-e-recorder-027.png) | 1741.667 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [028](images/after-dark-e-recorder-028.png) | 1808.333 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [029](images/after-dark-e-recorder-029.png) | 1875.000 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [030](images/after-dark-e-recorder-030.png) | 1941.667 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [031](images/after-dark-e-recorder-031.png) | 2008.333 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [032](images/after-dark-e-recorder-032.png) | 2075.000 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+
+### AFTER light: 37 native1x frames
+
+PTS 0.000–2403.333ms. [1x motion preview](images/after-light-e.gif).
+
+![after light contact](images/after-light-e-contact.png)
+
+| Frame | Original PTS (ms) | Band edges at y16px | Scale / meaning |
+|---|---:|---|---|
+| [001](images/after-light-e-recorder-001.png) | 0.000 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [002](images/after-light-e-recorder-002.png) | 66.667 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [003](images/after-light-e-recorder-003.png) | 133.333 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [004](images/after-light-e-recorder-004.png) | 200.000 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [005](images/after-light-e-recorder-005.png) | 266.667 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [006](images/after-light-e-recorder-006.png) | 333.333 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [007](images/after-light-e-recorder-007.png) | 400.000 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [008](images/after-light-e-recorder-008.png) | 475.000 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [009](images/after-light-e-recorder-009.png) | 541.667 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [010](images/after-light-e-recorder-010.png) | 608.333 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [011](images/after-light-e-recorder-011.png) | 675.000 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [012](images/after-light-e-recorder-012.png) | 741.667 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [013](images/after-light-e-recorder-013.png) | 808.333 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [014](images/after-light-e-recorder-014.png) | 866.667 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [015](images/after-light-e-recorder-015.png) | 933.333 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [016](images/after-light-e-recorder-016.png) | 1000.000 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [017](images/after-light-e-recorder-017.png) | 1050.000 | [96, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [018](images/after-light-e-recorder-018.png) | 1150.000 | [101, 464] | 1x recorder frame, for position and visibility only, not for text |
+| [019](images/after-light-e-recorder-019.png) | 1216.667 | [111, 448] | 1x recorder frame, for position and visibility only, not for text |
+| [020](images/after-light-e-recorder-020.png) | 1283.333 | [117, 439] | 1x recorder frame, for position and visibility only, not for text |
+| [021](images/after-light-e-recorder-021.png) | 1350.000 | [118, 436] | 1x recorder frame, for position and visibility only, not for text |
+| [022](images/after-light-e-recorder-022.png) | 1416.667 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [023](images/after-light-e-recorder-023.png) | 1486.667 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [024](images/after-light-e-recorder-024.png) | 1550.000 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [025](images/after-light-e-recorder-025.png) | 1616.667 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [026](images/after-light-e-recorder-026.png) | 1670.000 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [027](images/after-light-e-recorder-027.png) | 1736.667 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [028](images/after-light-e-recorder-028.png) | 1803.333 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [029](images/after-light-e-recorder-029.png) | 1870.000 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [030](images/after-light-e-recorder-030.png) | 1936.667 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [031](images/after-light-e-recorder-031.png) | 2003.333 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [032](images/after-light-e-recorder-032.png) | 2070.000 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [033](images/after-light-e-recorder-033.png) | 2136.667 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [034](images/after-light-e-recorder-034.png) | 2203.333 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [035](images/after-light-e-recorder-035.png) | 2270.000 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [036](images/after-light-e-recorder-036.png) | 2336.667 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+| [037](images/after-light-e-recorder-037.png) | 2403.333 | [119, 435] | 1x recorder frame, for position and visibility only, not for text |
+
+### BEFORE dark: 33 native1x frames
+
+PTS 0.000–2200.000ms. [1x motion preview](images/before-dark-e.gif).
+
+![before dark contact](images/before-dark-e-contact.png)
+
+| Frame | Original PTS (ms) | Band edges at y16px | Scale / meaning |
+|---|---:|---|---|
+| [001](images/before-dark-e-recorder-001.png) | 0.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [002](images/before-dark-e-recorder-002.png) | 66.667 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [003](images/before-dark-e-recorder-003.png) | 133.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [004](images/before-dark-e-recorder-004.png) | 208.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [005](images/before-dark-e-recorder-005.png) | 283.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [006](images/before-dark-e-recorder-006.png) | 358.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [007](images/before-dark-e-recorder-007.png) | 425.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [008](images/before-dark-e-recorder-008.png) | 500.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [009](images/before-dark-e-recorder-009.png) | 566.667 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [010](images/before-dark-e-recorder-010.png) | 633.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [011](images/before-dark-e-recorder-011.png) | 708.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [012](images/before-dark-e-recorder-012.png) | 775.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [013](images/before-dark-e-recorder-013.png) | 841.667 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [014](images/before-dark-e-recorder-014.png) | 900.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [015](images/before-dark-e-recorder-015.png) | 966.667 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [016](images/before-dark-e-recorder-016.png) | 1050.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [017](images/before-dark-e-recorder-017.png) | 1116.667 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [018](images/before-dark-e-recorder-018.png) | 1183.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [019](images/before-dark-e-recorder-019.png) | 1233.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [020](images/before-dark-e-recorder-020.png) | 1316.667 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [021](images/before-dark-e-recorder-021.png) | 1383.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [022](images/before-dark-e-recorder-022.png) | 1450.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [023](images/before-dark-e-recorder-023.png) | 1533.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [024](images/before-dark-e-recorder-024.png) | 1600.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [025](images/before-dark-e-recorder-025.png) | 1666.667 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [026](images/before-dark-e-recorder-026.png) | 1733.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [027](images/before-dark-e-recorder-027.png) | 1800.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [028](images/before-dark-e-recorder-028.png) | 1866.667 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [029](images/before-dark-e-recorder-029.png) | 1933.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [030](images/before-dark-e-recorder-030.png) | 2000.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [031](images/before-dark-e-recorder-031.png) | 2066.667 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [032](images/before-dark-e-recorder-032.png) | 2133.333 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+| [033](images/before-dark-e-recorder-033.png) | 2200.000 | [82, 472] | 1x recorder frame, for position and visibility only, not for text |
+
+[motion.json](motion.json) records every original frame PTS and a per-frame horizontal band-edge measurement. AFTER/dark starts at half-open x96–472px and settles at x119–435px; BEFORE/dark remains x82–472px. The measurements are recorder pixels (1px = 1pt), not native2x text evidence.
+
+## f: held History over-pull, dark
+
+The final native run captured rest, about50%, about100%, armed, backoff with hint gone, unarmed release retaining History, a second armed pull, and armed release opening General/Settings in both builds. Percentages name commanded travel toward the raw1.3 threshold, not calibrated hint opacity; the about100% checkpoint already shows the hint. Armed is supported by both the `notch-settings-pull-hint` identifier and visible hint pixels. The pointer stayed down between held stages.
+
+### AFTER dark held stages
+
+![after held sequence](images/after-dark-f-contact.png)
+
+| Stage | Native2x image |
+|---|---|
+| f0-rest | [after-dark-f0-rest.png](images/after-dark-f0-rest.png) |
+| f1-50 | [after-dark-f1-50.png](images/after-dark-f1-50.png) |
+| f2-100 | [after-dark-f2-100.png](images/after-dark-f2-100.png) |
+| f3-armed | [after-dark-f3-armed.png](images/after-dark-f3-armed.png) |
+| f4-back-below-threshold | [after-dark-f4-back-below-threshold.png](images/after-dark-f4-back-below-threshold.png) |
+| f5-released-history | [after-dark-f5-released-history.png](images/after-dark-f5-released-history.png) |
+| f6-armed-release-variant | [after-dark-f6-armed-release-variant.png](images/after-dark-f6-armed-release-variant.png) |
+| f7-release-opens-settings | [after-dark-f7-release-opens-settings.png](images/after-dark-f7-release-opens-settings.png) |
+
+### BEFORE dark held stages
+
+![before held sequence](images/before-dark-f-contact.png)
+
+| Stage | Native2x image |
+|---|---|
+| f0-rest | [before-dark-f0-rest.png](images/before-dark-f0-rest.png) |
+| f1-50 | [before-dark-f1-50.png](images/before-dark-f1-50.png) |
+| f2-100 | [before-dark-f2-100.png](images/before-dark-f2-100.png) |
+| f3-armed | [before-dark-f3-armed.png](images/before-dark-f3-armed.png) |
+| f4-back-below-threshold | [before-dark-f4-back-below-threshold.png](images/before-dark-f4-back-below-threshold.png) |
+| f5-released-history | [before-dark-f5-released-history.png](images/before-dark-f5-released-history.png) |
+| f6-armed-release-variant | [before-dark-f6-armed-release-variant.png](images/before-dark-f6-armed-release-variant.png) |
+| f7-release-opens-settings | [before-dark-f7-release-opens-settings.png](images/before-dark-f7-release-opens-settings.png) |
+
+### Original adverse trial retained
+
+The first trial armed in both builds, but the fast upward backoff closed History on release. The helper sent the return in twelve40ms samples, consistent with an upward closing flick beyond the source0.5progress/s rule; a later hold does not erase the last sampled velocity. The capture helper alone changed upward samples to100ms. The final trial then retained History on unarmed release and reached Settings on armed release, with the original checks unchanged. No product code or QA bundle changed.
+
+| First-trial AFTER collapse | First-trial BEFORE collapse |
+|---|---|
+| ![Adverse AFTER](images/after-dark-f-first-trial-collapsed.png) | ![Adverse BEFORE](images/before-dark-f-first-trial-collapsed.png) |
 
 ## Not shown / not verified
 
-- Item i, F5 while a read has queued Next: NOT_RUN. The existing QA host disables global hotkeys and has no supported provider.
-- Any missing before/after pair or burst stage.
-- Frame-complete hand-over/over-pull motion; the recorder initially gave1x frames and the old extraction duplicated variable-rate input, causing a timestamp-count mismatch. A separate offline -vsync0 extraction matched31 frames/PTS for BEFORE/light; the original failure receipt remains unchanged. Other pairs use sparse2x bursts. No upscaled frames are included.
-- General footer: NOT_RUN. Native scroll input did not reach it; delivered General images show the top of the pane only.
-- Armed grip hint and exact 50%/100% stages: NOT_VERIFIED. Native grip attempts show partial drawer growth, not the armed capsule.
-- Hint fade/capsule band measurements: UNKNOWN.
-- Real microphone, live STT or transcription paste.
-- Installed candidate release and real-agent acceptance.
-- Human design approval.
+- h General version footer: NOT_SHOWN; the frozen fixture host omits it. General-top images from the armed release do not stand in for the footer.
+- i F5 during a read with queued Next: NOT_SHOWN; the fixture host cannot stage it.
+- f in light: NOT_RUN in R4; only the requested dark comparison is shown.
+- Microphone, live STT, live dictation, paste, actual user History and real-agent voice acceptance: NOT_RUN.
+- Installed candidate release, another Mac/display background, native human-return interruption and production readiness: NOT_VERIFIED. The restored installed app remains2.4.2; the QA candidate was never installed.
+- Exact hint-opacity percentages and sub-frame flicker absence: NOT_VERIFIED.
 
-Prior r8 motion samples were excluded after inspection found a lingering QA Add sheet in e and an incorrect drag start in f. They remain in private receipts as adverse evidence. Exact 50%/100% grip checkpoints are NOT_VERIFIED; burst samples are not an animation-completeness claim. All public paths are relative; raw lifecycle, permission, broker and ownership receipts remain private. [inventory.json](inventory.json) lists every delivered PNG, build, theme, scale and available timestamp.
+All delivered PNG metadata, scale labels and byte hashes are in [inventory.json](inventory.json). Raw ownership, permission, admission, failed-trial and restoration receipts remain private. No home-folder paths or private utterances are published.

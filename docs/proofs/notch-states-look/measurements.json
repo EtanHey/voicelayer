@@ -1,102 +1,658 @@
 {
-  "method": "AX bounds select regions; actual glyph/glass pixels segmented. Point units are pixels/2. Threshold-dependent estimates, not optical approval.",
-  "rows": [
+  "method": "Native2x image pixels divided by2; rendered black notch boundary at y20px, glass threshold>15 at y32px; neutral bright ink>120 within actual AX control ROIs; half-open bounding boxes. Values can shift0.5pt with antialias thresholds. Preflight physical enclosure is reported separately, not substituted for visible seam.",
+  "preflight_display": {
+    "notchLeft": 663,
+    "notchRight": 848,
+    "safeAreaTop": 32,
+    "scale": 2,
+    "screen": "{{0, 0}, {1512, 982}}"
+  },
+  "dark_table": [
     {
-      "arm": "before",
-      "theme": "light",
-      "state": "c-recording-live",
-      "image": "images/before-light-c-recording-live.png",
-      "innermost_left_control": "Cancel recording",
-      "left_control_to_notch_pt": 22.0,
-      "notch_to_timer_pt": 8.5,
-      "left_wing_width_pt": 102.5,
-      "right_wing_width_pt": 101.5,
-      "status": "screenshot threshold estimate; native pixels / 2; threshold sensitive"
+      "state": "a",
+      "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+      "notch_boundary_px": [
+        384,
+        720
+      ],
+      "glass_edges_px": [
+        236,
+        868
+      ],
+      "glyphs": [
+        {
+          "id": "mic.fill",
+          "description": "Start voice recording",
+          "ink": [
+            276,
+            19,
+            294,
+            45
+          ]
+        },
+        {
+          "id": "chevron.down",
+          "description": "Choose microphone",
+          "ink": [
+            329,
+            28,
+            344,
+            37
+          ]
+        },
+        {
+          "id": "clock.arrow.circlepath",
+          "description": "History",
+          "ink": [
+            753,
+            21,
+            780,
+            45
+          ]
+        },
+        {
+          "id": "gearshape",
+          "description": "Settings",
+          "ink": [
+            806,
+            19,
+            832,
+            45
+          ]
+        }
+      ],
+      "left_wing_pt": 74.0,
+      "right_wing_pt": 74.0,
+      "inner_left_ink_gap_pt": 20.0,
+      "first_right_ink_gap_pt": 16.5,
+      "outer_pad_left_pt": 20.0,
+      "outer_pad_right_pt": 18.0
     },
     {
-      "arm": "before",
-      "theme": "light",
-      "state": "c2-recording-lock",
-      "image": "images/before-light-c2-recording-lock.png",
-      "innermost_left_control": "Lock recording",
-      "left_control_to_notch_pt": 22.5,
-      "notch_to_timer_pt": 8.5,
-      "left_wing_width_pt": 102.5,
-      "right_wing_width_pt": 101.5,
-      "status": "screenshot threshold estimate; native pixels / 2; threshold sensitive"
+      "state": "b",
+      "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+      "notch_boundary_px": [
+        384,
+        720
+      ],
+      "glass_edges_px": [
+        189,
+        942
+      ],
+      "glyphs": [
+        {
+          "id": "stop.fill",
+          "description": "Stop recording",
+          "ink": [
+            232,
+            26,
+            245,
+            39
+          ]
+        },
+        {
+          "id": "mic.fill",
+          "description": "Mute microphone",
+          "ink": [
+            281,
+            19,
+            299,
+            45
+          ]
+        },
+        {
+          "id": "xmark",
+          "description": "Cancel recording",
+          "ink": [
+            332,
+            23,
+            351,
+            42
+          ]
+        },
+        {
+          "id": "",
+          "description": "Recording time",
+          "ink": [
+            755,
+            24,
+            803,
+            40
+          ]
+        },
+        {
+          "id": "stop.fill",
+          "description": "Stop recording full colored ink",
+          "ink": [
+            218,
+            12,
+            258,
+            52
+          ]
+        },
+        {
+          "id": "",
+          "description": "Input level full colored ink",
+          "ink": [
+            821,
+            29,
+            913,
+            35
+          ]
+        }
+      ],
+      "left_wing_pt": 97.5,
+      "right_wing_pt": 111.0,
+      "inner_left_ink_gap_pt": 16.5,
+      "first_right_ink_gap_pt": 17.5,
+      "outer_pad_left_pt": 14.5,
+      "outer_pad_right_pt": 14.5
     },
     {
-      "arm": "before",
-      "theme": "dark",
-      "state": "c-recording-live",
-      "image": "images/before-dark-c-recording-live.png",
-      "innermost_left_control": "Cancel recording",
-      "left_control_to_notch_pt": 22.0,
-      "notch_to_timer_pt": 8.5,
-      "left_wing_width_pt": 103.0,
-      "right_wing_width_pt": 102.0,
-      "status": "screenshot threshold estimate; native pixels / 2; threshold sensitive"
+      "state": "c",
+      "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+      "notch_boundary_px": [
+        384,
+        720
+      ],
+      "glass_edges_px": [
+        189,
+        942
+      ],
+      "glyphs": [
+        {
+          "id": "stop.fill",
+          "description": "Stop recording",
+          "ink": [
+            232,
+            26,
+            245,
+            39
+          ]
+        },
+        {
+          "id": "mic.fill",
+          "description": "Mute microphone",
+          "ink": [
+            281,
+            19,
+            299,
+            45
+          ]
+        },
+        {
+          "id": "xmark",
+          "description": "Cancel recording",
+          "ink": [
+            332,
+            23,
+            351,
+            42
+          ]
+        },
+        {
+          "id": "",
+          "description": "Recording time",
+          "ink": [
+            755,
+            23,
+            803,
+            40
+          ]
+        },
+        {
+          "id": "stop.fill",
+          "description": "Stop recording full colored ink",
+          "ink": [
+            218,
+            12,
+            258,
+            52
+          ]
+        },
+        {
+          "id": "",
+          "description": "Input level full colored ink",
+          "ink": [
+            821,
+            27,
+            913,
+            37
+          ]
+        }
+      ],
+      "left_wing_pt": 97.5,
+      "right_wing_pt": 111.0,
+      "inner_left_ink_gap_pt": 16.5,
+      "first_right_ink_gap_pt": 17.5,
+      "outer_pad_left_pt": 14.5,
+      "outer_pad_right_pt": 14.5
     },
     {
-      "arm": "before",
-      "theme": "dark",
-      "state": "c2-recording-lock",
-      "image": "images/before-dark-c2-recording-lock.png",
-      "innermost_left_control": "Lock recording",
-      "left_control_to_notch_pt": 22.5,
-      "notch_to_timer_pt": 8.5,
-      "left_wing_width_pt": 103.0,
-      "right_wing_width_pt": 102.0,
-      "status": "screenshot threshold estimate; native pixels / 2; threshold sensitive"
+      "state": "c2",
+      "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+      "notch_boundary_px": [
+        384,
+        720
+      ],
+      "glass_edges_px": [
+        189,
+        942
+      ],
+      "glyphs": [
+        {
+          "id": "stop.fill",
+          "description": "Stop recording",
+          "ink": [
+            232,
+            26,
+            245,
+            39
+          ]
+        },
+        {
+          "id": "xmark",
+          "description": "Cancel recording",
+          "ink": [
+            280,
+            23,
+            299,
+            42
+          ]
+        },
+        {
+          "id": "lock.fill",
+          "description": "Lock recording",
+          "ink": [
+            334,
+            21,
+            350,
+            44
+          ]
+        },
+        {
+          "id": "",
+          "description": "Recording time",
+          "ink": [
+            755,
+            23,
+            803,
+            40
+          ]
+        },
+        {
+          "id": "stop.fill",
+          "description": "Stop recording full colored ink",
+          "ink": [
+            218,
+            12,
+            258,
+            52
+          ]
+        },
+        {
+          "id": "",
+          "description": "Input level full colored ink",
+          "ink": [
+            821,
+            26,
+            913,
+            38
+          ]
+        }
+      ],
+      "left_wing_pt": 97.5,
+      "right_wing_pt": 111.0,
+      "inner_left_ink_gap_pt": 17.0,
+      "first_right_ink_gap_pt": 17.5,
+      "outer_pad_left_pt": 14.5,
+      "outer_pad_right_pt": 14.5
     },
     {
-      "arm": "after",
-      "theme": "light",
-      "state": "c-recording-live",
-      "image": "images/after-light-c-recording-live.png",
-      "innermost_left_control": "Cancel recording",
-      "left_control_to_notch_pt": 14.0,
-      "notch_to_timer_pt": 8.5,
-      "left_wing_width_pt": 94.5,
-      "right_wing_width_pt": 101.5,
-      "status": "screenshot threshold estimate; native pixels / 2; threshold sensitive"
-    },
-    {
-      "arm": "after",
-      "theme": "light",
-      "state": "c2-recording-lock",
-      "image": "images/after-light-c2-recording-lock.png",
-      "innermost_left_control": "Lock recording",
-      "left_control_to_notch_pt": 14.5,
-      "notch_to_timer_pt": 8.5,
-      "left_wing_width_pt": 94.5,
-      "right_wing_width_pt": 101.5,
-      "status": "screenshot threshold estimate; native pixels / 2; threshold sensitive"
-    },
-    {
-      "arm": "after",
-      "theme": "dark",
-      "state": "c-recording-live",
-      "image": "images/after-dark-c-recording-live.png",
-      "innermost_left_control": "Cancel recording",
-      "left_control_to_notch_pt": 14.0,
-      "notch_to_timer_pt": 8.5,
-      "left_wing_width_pt": 95.0,
-      "right_wing_width_pt": 102.0,
-      "status": "screenshot threshold estimate; native pixels / 2; threshold sensitive"
-    },
-    {
-      "arm": "after",
-      "theme": "dark",
-      "state": "c2-recording-lock",
-      "image": "images/after-dark-c2-recording-lock.png",
-      "innermost_left_control": "Lock recording",
-      "left_control_to_notch_pt": 14.5,
-      "notch_to_timer_pt": 8.5,
-      "left_wing_width_pt": 95.0,
-      "right_wing_width_pt": 102.0,
-      "status": "screenshot threshold estimate; native pixels / 2; threshold sensitive"
+      "state": "d",
+      "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+      "notch_boundary_px": [
+        384,
+        720
+      ],
+      "glass_edges_px": [
+        236,
+        868
+      ],
+      "glyphs": [
+        {
+          "id": "chevron.down",
+          "description": "Choose microphone",
+          "ink": [
+            329,
+            28,
+            344,
+            37
+          ]
+        },
+        {
+          "id": "clock.arrow.circlepath",
+          "description": "History",
+          "ink": [
+            753,
+            21,
+            780,
+            45
+          ]
+        },
+        {
+          "id": "gearshape",
+          "description": "Settings",
+          "ink": [
+            806,
+            19,
+            832,
+            45
+          ]
+        },
+        {
+          "id": "",
+          "description": "Transcribing full colored ink",
+          "ink": [
+            267,
+            14,
+            302,
+            50
+          ]
+        }
+      ],
+      "left_wing_pt": 74.0,
+      "right_wing_pt": 74.0,
+      "inner_left_ink_gap_pt": 20.0,
+      "first_right_ink_gap_pt": 16.5,
+      "outer_pad_left_pt": 15.5,
+      "outer_pad_right_pt": 18.0
     }
   ],
-  "hint_bands": "UNKNOWN: list fade and capsule boundaries require separate segmentation; no source-derived substitute used"
+  "color_and_alignment_samples": {
+    "pre_capture_light": {
+      "dot_rgb": [
+        106,
+        106,
+        112
+      ],
+      "band_rgb": [
+        171,
+        171,
+        171
+      ],
+      "contrast_ratio": 2.339771099389249,
+      "dot_roi_px": [
+        817,
+        27,
+        917,
+        37
+      ],
+      "band_roi_px": [
+        810,
+        42,
+        920,
+        49
+      ]
+    },
+    "dark_spinner": {
+      "arc_rgb": [
+        101,
+        176,
+        252
+      ],
+      "band_rgb": [
+        35,
+        35,
+        35
+      ],
+      "contrast_ratio": 6.862362730712453,
+      "arc_roi_px": [
+        267,
+        14,
+        303,
+        51
+      ],
+      "band_roi_px": [
+        305,
+        16,
+        321,
+        45
+      ]
+    },
+    "glyph_outer_rings": [
+      {
+        "theme": "light",
+        "glyph": "mic.fill",
+        "roi_px": [
+          259,
+          6,
+          311,
+          58
+        ],
+        "band_rgb": [
+          171,
+          171,
+          171
+        ],
+        "ring_mode_rgb": [
+          171,
+          171,
+          171
+        ],
+        "sampled_ring_pixels": 287,
+        "opposite_polarity_outline_pixels": 0,
+        "result": "No contrasting edge ring in sampled two-pixel outside-ink band"
+      },
+      {
+        "theme": "light",
+        "glyph": "xmark",
+        "roi_px": [
+          316,
+          6,
+          368,
+          58
+        ],
+        "band_rgb": [
+          171,
+          171,
+          171
+        ],
+        "ring_mode_rgb": [
+          171,
+          171,
+          171
+        ],
+        "sampled_ring_pixels": 278,
+        "opposite_polarity_outline_pixels": 0,
+        "result": "No contrasting edge ring in sampled two-pixel outside-ink band"
+      },
+      {
+        "theme": "light",
+        "glyph": "gearshape",
+        "roi_px": [
+          793,
+          6,
+          845,
+          58
+        ],
+        "band_rgb": [
+          171,
+          171,
+          171
+        ],
+        "ring_mode_rgb": [
+          171,
+          171,
+          171
+        ],
+        "sampled_ring_pixels": 469,
+        "opposite_polarity_outline_pixels": 0,
+        "result": "No contrasting edge ring in sampled two-pixel outside-ink band"
+      },
+      {
+        "theme": "dark",
+        "glyph": "mic.fill",
+        "roi_px": [
+          259,
+          6,
+          311,
+          58
+        ],
+        "band_rgb": [
+          35,
+          35,
+          35
+        ],
+        "ring_mode_rgb": [
+          35,
+          35,
+          35
+        ],
+        "sampled_ring_pixels": 292,
+        "opposite_polarity_outline_pixels": 0,
+        "result": "No contrasting edge ring in sampled two-pixel outside-ink band"
+      },
+      {
+        "theme": "dark",
+        "glyph": "xmark",
+        "roi_px": [
+          316,
+          6,
+          368,
+          58
+        ],
+        "band_rgb": [
+          35,
+          35,
+          35
+        ],
+        "ring_mode_rgb": [
+          35,
+          35,
+          35
+        ],
+        "sampled_ring_pixels": 264,
+        "opposite_polarity_outline_pixels": 0,
+        "result": "No contrasting edge ring in sampled two-pixel outside-ink band"
+      },
+      {
+        "theme": "dark",
+        "glyph": "gearshape",
+        "roi_px": [
+          793,
+          6,
+          845,
+          58
+        ],
+        "band_rgb": [
+          35,
+          35,
+          35
+        ],
+        "ring_mode_rgb": [
+          35,
+          35,
+          35
+        ],
+        "sampled_ring_pixels": 494,
+        "opposite_polarity_outline_pixels": 0,
+        "result": "No contrasting edge ring in sampled two-pixel outside-ink band"
+      }
+    ],
+    "dictionary_centres": [
+      {
+        "theme": "light",
+        "samples": {
+          "title_cap_A": {
+            "roi_px": [
+              180,
+              350,
+              196,
+              390
+            ],
+            "ink_y_px": [
+              361,
+              380
+            ],
+            "centre_y_px": 370.5
+          },
+          "pencil": {
+            "roi_px": [
+              862,
+              350,
+              891,
+              390
+            ],
+            "ink_y_px": [
+              362,
+              382
+            ],
+            "centre_y_px": 372.0
+          },
+          "ellipsis": {
+            "roi_px": [
+              907,
+              350,
+              941,
+              390
+            ],
+            "ink_y_px": [
+              369,
+              374
+            ],
+            "centre_y_px": 371.5
+          }
+        },
+        "pencil_delta_pt": 0.75,
+        "ellipsis_delta_pt": 0.5
+      },
+      {
+        "theme": "dark",
+        "samples": {
+          "title_cap_A": {
+            "roi_px": [
+              180,
+              350,
+              196,
+              390
+            ],
+            "ink_y_px": [
+              361,
+              380
+            ],
+            "centre_y_px": 370.5
+          },
+          "pencil": {
+            "roi_px": [
+              862,
+              350,
+              891,
+              390
+            ],
+            "ink_y_px": [
+              362,
+              382
+            ],
+            "centre_y_px": 372.0
+          },
+          "ellipsis": {
+            "roi_px": [
+              907,
+              350,
+              941,
+              390
+            ],
+            "ink_y_px": [
+              369,
+              374
+            ],
+            "centre_y_px": 371.5
+          }
+        },
+        "pencil_delta_pt": 0.75,
+        "ellipsis_delta_pt": 0.5
+      }
+    ]
+  }
 }
