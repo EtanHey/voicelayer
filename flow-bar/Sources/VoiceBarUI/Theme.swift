@@ -44,8 +44,12 @@ public enum Theme {
     /// The M4 glass behind the right wing as recorded on 2026-11-12 (the backdrop sets it; see the c9-P report).
     static let measuredM4GlassRGB: (red: Double, green: Double, blue: Double) = (106.3, 114.8, 125.0)
 
+    /// The transcribing ring: the processing hue (211°), saturated, no outline. Owner r1: the dark ring moved a step
+    /// lighter, `#3D9BFF` to `#66B2FF` (7.0:1 on the dark glass, rgb 35), still a working blue and short of the old
+    /// pale wash (rgb 160/211/251). The light ring stays `#0050B2` (3.28:1 on the light glass, rgb 171): any lighter
+    /// falls under 3:1 there. `TranscribingSpinnerBlueTests` pins both.
     public static func transcribingSpinnerColor(for appearance: VoiceBarNotchAppearance) -> Color {
-        Color(hex: appearance == .light ? 0x0050B2 : 0x3D9BFF)
+        Color(hex: appearance == .light ? 0x0050B2 : 0x66B2FF)
     }
 
     /// An engaged recording control (Lock or Pause held) draws its glyph in red on its 30 % red plate. With no
