@@ -103,8 +103,7 @@ public struct ProcessingSpinner: View {
                 showsTrack: showsTrack,
                 color: color,
                 lineWidth: transcribingAppearance == nil ? 2.2 : 2.6,
-                trackOpacity: transcribingAppearance == nil ? 0.28 : 0.24,
-                edgeColor: transcribingAppearance.map { VoiceBarNotchGlyphContrastTreatment.resolve(for: $0).color }
+                trackOpacity: transcribingAppearance == nil ? 0.28 : 0.24
             )
         }
         .frame(width: size, height: size)
@@ -121,10 +120,9 @@ struct ProcessingSpinnerFrame: View {
 
     var lineWidth: CGFloat = 2.2
     var trackOpacity: Double = 0.28
-    var edgeColor: Color?
 
     var body: some View {
-        let rings = ZStack {
+        ZStack {
             if showsTrack {
                 Circle()
                     .stroke(color.opacity(trackOpacity), lineWidth: lineWidth)
@@ -138,7 +136,6 @@ struct ProcessingSpinnerFrame: View {
                 .rotationEffect(.degrees(angle))
         }
         .frame(width: diameter, height: diameter)
-        if let edgeColor { rings.notchAdaptiveGlyphEdge(edgeColor) } else { rings }
     }
 }
 
@@ -186,19 +183,6 @@ extension VoiceBarNotchWingContentEntry {
     }
 }
 
-extension View {
-    /// The notch's glyph treatment: a 0.75 pt contrast edge drawn as four hard shadows. It also renders the glyph
-    /// through its own shadow layer, the path every band glyph takes; Etan's 0510 S4 shows those painting while the
-    /// drawer's plain glyphs vanished in the same unfocused frame (N3), so every notch glyph takes it. HYPOTHESIS:
-    /// the unfocused vanishing was never reproduced and its root cause is unknown; confirm on the real app.
-    func notchAdaptiveGlyphEdge(_ color: Color) -> some View {
-        shadow(color: color, radius: 0, x: -0.75, y: 0)
-            .shadow(color: color, radius: 0, x: 0.75, y: 0)
-            .shadow(color: color, radius: 0, x: 0, y: -0.75)
-            .shadow(color: color, radius: 0, x: 0, y: 0.75)
-    }
-}
-
 private struct VoiceBarPillPressStyle: ButtonStyle {
     var previewPressed = false
 
@@ -215,7 +199,6 @@ struct VoiceBarPillControlButton: View {
     let icon: String
     let optics: VoiceBarNotchControlOptics
     let foreground: Color
-    let halo: Color
     let isSelected: Bool
     let selectionStyle: VoiceBarNotchSelectionStyle
     let isDestructive: Bool
@@ -238,7 +221,6 @@ struct VoiceBarPillControlButton: View {
         icon: String,
         optics: VoiceBarNotchControlOptics,
         foreground: Color,
-        halo: Color,
         isSelected: Bool,
         selectionStyle: VoiceBarNotchSelectionStyle = .navigation,
         isDestructive: Bool,
@@ -252,7 +234,6 @@ struct VoiceBarPillControlButton: View {
         self.icon = icon
         self.optics = optics
         self.foreground = foreground
-        self.halo = halo
         self.isSelected = isSelected
         self.selectionStyle = selectionStyle
         self.isDestructive = isDestructive
@@ -306,15 +287,11 @@ struct VoiceBarPillControlButton: View {
         }
     }
 
-    @ViewBuilder private var glyph: some View {
-        let image = Image(systemName: icon)
+    /// No outline (owner r1): the glyph's own colour carries its contrast against the band.
+    private var glyph: some View {
+        Image(systemName: icon)
             .font(.system(size: optics.pointSize, weight: .medium))
             .foregroundStyle(isDestructive ? Color.white : foreground)
-        if isDestructive {
-            image
-        } else {
-            image.notchAdaptiveGlyphEdge(halo)
-        }
     }
 }
 
@@ -1698,7 +1675,6 @@ public struct BarView: View {
             if let feedback = notchPresentation.feedback {
                 VoiceBarNotchFeedbackBand(feedback: feedback, onOpenHistory: onOpenHistory)
                     .foregroundStyle(notchPrimaryLabelColor)
-                    .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
             } else if notchPresentation.transientNoteRect != nil, let note = state.selectionFeedbackNote {
                 transientNoteBand(note)
             }
@@ -1715,7 +1691,6 @@ public struct BarView: View {
         VoiceBarNotchTransientNoteBand(text: note, width: VoiceBarNotchContract.noteColumnWidth(
             for: notchPresentation.geometry, ownBodyHeight: notchPresentation.ownBodyHeight))
             .foregroundStyle(notchPrimaryLabelColor)
-            .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
             .allowsHitTesting(false)
             // NOTCH2: in after the shell has started opening, out before it starts closing (the shell waits
             // `contentExitDuration` for this fade, see `VoiceBarNotchShellTransition`).
@@ -2086,9 +2061,8 @@ public struct BarView: View {
         return Image(systemName: iconName)
             .font(.system(size: optics.pointSize, weight: .semibold))
             .foregroundStyle(
-                state.mode == .idle ? notchPrimaryLabelColor : Theme.stateColor(for: state.mode)
+                state.mode == .idle ? notchPrimaryLabelColor : Theme.notchStateGlyphColor(for: state.mode, appearance: notchAppearance)
             )
-            .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
             .offset(x: optics.offsetX, y: optics.offsetY)
             .frame(
                 width: VoiceBarNotchContract.material.compactControlSize,
@@ -2177,10 +2151,6 @@ public struct BarView: View {
     /// appearance for one frame, camouflaging controls after a live toggle.
     private var notchPrimaryLabelColor: Color {
         notchPalette.primary.color
-    }
-
-    private var notchGlyphContrastHaloColor: Color {
-        VoiceBarNotchGlyphContrastTreatment.resolve(for: notchAppearance).color
     }
 
     private var historyButton: some View {
@@ -2407,8 +2377,7 @@ public struct BarView: View {
         return VoiceBarPillControlButton(
             icon: icon,
             optics: optics,
-            foreground: foregroundRole == .stateAccent ? Theme.recordingColor : notchPrimaryLabelColor,
-            halo: notchGlyphContrastHaloColor,
+            foreground: foregroundRole.color(for: notchAppearance),
             isSelected: isSelected,
             selectionStyle: selectionStyle,
             isDestructive: isDestructive && icon == "stop.fill",
@@ -2436,7 +2405,6 @@ public struct BarView: View {
             Image(systemName: icon)
                 .font(.system(size: pointSize, weight: .semibold))
                 .foregroundStyle(hasStopContainer ? Color.white : notchPrimaryLabelColor)
-                .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
                 .frame(
                     width: VoiceBarNotchContract.material.compactControlSize,
                     height: VoiceBarNotchContract.material.compactControlSize

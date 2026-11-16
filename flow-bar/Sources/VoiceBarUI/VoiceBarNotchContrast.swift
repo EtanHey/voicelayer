@@ -30,6 +30,15 @@ public enum VoiceBarNotchGlyphForegroundRole: Equatable {
     ) -> Self {
         isDestructive || (isSelected && selectionStyle == .recordingState) ? .stateAccent : .primaryLabel
     }
+
+    /// The glyph's own colour on the band. Notch glyphs wear no outline (owner r1), so this colour alone holds the
+    /// 3:1 control contrast against the band material (`VoiceBarNotchGlyphTokenTests`).
+    public func color(for appearance: VoiceBarNotchAppearance) -> Color {
+        switch self {
+        case .primaryLabel: VoiceBarNotchContrastPalette.resolve(for: appearance).primary.color
+        case .stateAccent: Theme.recordingStateGlyphColor(for: appearance)
+        }
+    }
 }
 
 public enum VoiceBarNotchControlPlate: Equatable {
@@ -144,21 +153,6 @@ public struct VoiceBarNotchContrastPalette: Equatable {
         for appearance: VoiceBarNotchAppearance
     ) -> Double {
         appearance == .light ? 0.72 : 0.58
-    }
-}
-
-/// Keeps compact wing symbols legible when the menu-bar content beneath the
-/// glass has the opposite polarity from the app's settled appearance. The
-/// primary symbol keeps its semantic foreground while a tight, opposite-tone
-/// edge supplies local contrast over either black or bright pixels.
-public enum VoiceBarNotchGlyphContrastTreatment {
-    public static func resolve(for appearance: VoiceBarNotchAppearance) -> VoiceBarRGBA {
-        switch appearance {
-        case .light:
-            VoiceBarRGBA(red: 1, green: 1, blue: 1, alpha: 0.96)
-        case .dark:
-            VoiceBarRGBA(red: 0, green: 0, blue: 0, alpha: 0.96)
-        }
     }
 }
 

@@ -54,7 +54,7 @@ final class NotchControlSpacingTests: XCTestCase {
 
     private func button(_ icon: String, destructive: Bool) -> VoiceBarPillControlButton {
         VoiceBarPillControlButton(
-            icon: icon, optics: .resolve(for: icon), foreground: .white, halo: .clear,
+            icon: icon, optics: .resolve(for: icon), foreground: .white,
             isSelected: false, isDestructive: destructive, accessibilityLabel: icon, accessibilityHint: "",
             action: {}
         )
@@ -65,12 +65,12 @@ final class NotchControlSpacingTests: XCTestCase {
         for (appearance, foreground) in [(NSAppearance.Name.darkAqua, Color.white), (.aqua, Color.black)] {
             let pair = HStack(spacing: spacing) {
                 VoiceBarPillControlButton(
-                    icon: "stop.fill", optics: .resolve(for: "stop.fill"), foreground: foreground, halo: .clear,
+                    icon: "stop.fill", optics: .resolve(for: "stop.fill"), foreground: foreground,
                     isSelected: false, isDestructive: true, accessibilityLabel: "Stop", accessibilityHint: "",
                     action: {}
                 )
                 VoiceBarPillControlButton(
-                    icon: "xmark", optics: .resolve(for: "xmark"), foreground: foreground, halo: .clear,
+                    icon: "xmark", optics: .resolve(for: "xmark"), foreground: foreground,
                     isSelected: false, isDestructive: false, accessibilityLabel: "Cancel", accessibilityHint: "",
                     previewHovered: true, action: {}
                 )

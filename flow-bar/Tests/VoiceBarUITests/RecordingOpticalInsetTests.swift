@@ -36,7 +36,7 @@ import XCTest
     }
     static func cancelInkBearing() throws -> CGFloat {
         let button = VoiceBarPillControlButton(icon: "xmark", optics: .resolve(for: "xmark"), foreground: .white,
-            halo: .black, isSelected: false, isDestructive: false, accessibilityLabel: "Cancel", accessibilityHint: "", action: {})
+            isSelected: false, isDestructive: false, accessibilityLabel: "Cancel", accessibilityHint: "", action: {})
         let bitmap = try NotchDesignPixels.render(button.frame(width: 20, height: 20).padding(10).background(.black),
                                                  size: CGSize(width: 40, height: 40))
         let ink = try XCTUnwrap(NotchDesignPixels.inkBounds(bitmap, rect: CGRect(x: 10, y: 10, width: 20, height: 20)))
