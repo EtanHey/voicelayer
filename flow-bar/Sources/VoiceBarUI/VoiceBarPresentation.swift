@@ -337,7 +337,8 @@ public enum VoiceBarPresentation {
             compactStatusLeadingWingWidth: compactStatusLeadingWingWidth(input: input),
             compactStatusTrailingWingWidth: compactStatusTrailingWingWidth(input: input),
             recordingLeadingWingWidth: recordingWing,
-            recordingTrailingWingWidth: recordingWing,
+            recordingTrailingWingWidth: input.mode == .recording
+                ? VoiceBarNotchContract.recordingTrailingWingWidth(visibleCoreOcclusionInset: input.visibleCoreOcclusionInset) : nil,
             teleprompterLeadingWingWidth: input.mode == .speaking
                 ? readingLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
                 : nil,
@@ -569,23 +570,21 @@ public enum VoiceBarPresentation {
         VoiceBarNotchContract.fixedWingWidth
     }
 
-    /// Both recording wings (they are equal about the notch): the wider of the controls' wing and the time/meter's.
+    /// The leading recording wing contains exactly its visible controls and the shared insets.
     public static func recordingWingWidth(showsThirdControl: Bool, showsEarlierTakeProcessing: Bool,
                                           visibleCoreOcclusionInset: CGFloat) -> CGFloat {
-        max(recordingLeadingWingWidth(mode: .recording, showsRecordingHold: showsThirdControl,
-                                      showsEarlierTakeProcessing: showsEarlierTakeProcessing) ?? 0,
-            VoiceBarNotchContract.recordingTrailingWingWidth(visibleCoreOcclusionInset: visibleCoreOcclusionInset))
+        let material = VoiceBarNotchContract.material
+        let slots: CGFloat = 2 + (showsThirdControl ? 1 : 0) + (showsEarlierTakeProcessing ? 1 : 0)
+        return recordingLeadingCoreInset(wingWidth: 0, showsEarlierTakeProcessing: false,
+                                         visibleCoreOcclusionInset: visibleCoreOcclusionInset)
+            + slots * material.compactControlSize + (slots - 1) * material.compactControlSpacing
+            + material.compactContentInset
     }
 
-    /// C7-W (Etan, QA 2026-11-11): Stop sits `compactContentInset` from the band's left edge, the inset the meter
-    /// keeps from the right edge. The controls stay one row counted from the core, so this is the row's distance from
-    /// the core: whatever the wing has left past Stop, Cancel and the third slot (Mute or Lock; reserved before the
-    /// daemon names the take's mode, so Cancel never moves when it arrives) and the earlier take's spinner.
-    public static func recordingLeadingCoreInset(wingWidth: CGFloat, showsEarlierTakeProcessing: Bool) -> CGFloat {
-        let material = VoiceBarNotchContract.material
-        let slots: CGFloat = showsEarlierTakeProcessing ? 4 : 3
-        let row = slots * material.compactControlSize + (slots - 1) * material.compactControlSpacing
-        return max(VoiceBarNotchContract.compactCoreContentInset, wingWidth - material.compactContentInset - row)
+    /// Both rows start the same distance beyond the occluded part of the core.
+    public static func recordingLeadingCoreInset(wingWidth: CGFloat, showsEarlierTakeProcessing: Bool,
+                                                 visibleCoreOcclusionInset: CGFloat = 0) -> CGFloat {
+        max(0, visibleCoreOcclusionInset) + VoiceBarNotchContract.fixedWingContentInset
     }
 
     private static func recordingLeadingWingWidth(

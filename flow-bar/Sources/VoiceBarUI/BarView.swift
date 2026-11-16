@@ -1200,7 +1200,8 @@ public struct BarView: View {
         let earlierTake = VoiceBarPresentation.showsEarlierTakeProcessing(for: state)
         let slots: CGFloat = 2 + (recordingPauseControl != nil || recordingHoldControl != nil ? 1 : 0) + (earlierTake ? 1 : 0)
         let inner = geometry.coreWidth / 2 + VoiceBarPresentation.recordingLeadingCoreInset(
-            wingWidth: geometry.leadingWingWidth, showsEarlierTakeProcessing: earlierTake)
+            wingWidth: geometry.leadingWingWidth, showsEarlierTakeProcessing: earlierTake,
+            visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset)
         let row = slots * material.compactControlSize + (slots - 1) * material.compactControlSpacing
         let overhang = VoiceBarPillControlButton.hitOverhang
         return !(inner - overhang ... inner + row + overhang).contains(-fromCentre)
@@ -1364,12 +1365,6 @@ public struct BarView: View {
                     }
                 }
             }
-            // C7-W: Stop keeps the meter's inset from the band's edge; the row is still counted from the core.
-            .padding(.trailing, VoiceBarPresentation.recordingLeadingCoreInset(
-                wingWidth: notchPresentation.geometry.leadingWingWidth,
-                showsEarlierTakeProcessing: VoiceBarPresentation.showsEarlierTakeProcessing(for: state)
-            ) - VoiceBarNotchContract.compactCoreContentInset)
-            // Keep the controls on their core-anchored hit regions as the symmetric wing grows.
             .frame(maxWidth: .infinity, alignment: .trailing)
             // R0856-05: the recording controls arrive with a wider wing; they show once its glass covers them.
             .transition(VoiceBarNotchWingContentEntry.transition(growth: leadingWingGrowth))

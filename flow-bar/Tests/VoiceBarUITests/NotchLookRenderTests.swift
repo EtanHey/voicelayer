@@ -22,7 +22,7 @@ final class NotchLookRenderTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         for inset: CGFloat in [0, 12] {
             for light in [false, true] {
-                for phase in ["transcribing", "recording-first", "recording-live", "history-overpull"] {
+                for phase in ["recording-first", "recording-live", "recording-lock", "history-0", "history-50", "history-100", "history-armed"] {
                     let state = VoiceState(
                         recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
                         recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in },
@@ -36,13 +36,13 @@ final class NotchLookRenderTests: XCTestCase {
                         RecentTranscriptionEntry(text: "Synthetic garden row \($0)", recordingPath: "/synthetic/\($0).wav")
                     }
                     if phase.hasPrefix("recording") {
-                        state.handleEvent(["type": "state", "state": "recording", "mode": "ptt"])
-                        if phase == "recording-live" { state.handleEvent(["type": "audio_level", "rms": 0.45]) }
+                        state.handleEvent(["type": "state", "state": "recording", "mode": phase == "recording-lock" ? "vad" : "ptt"])
+                        if phase != "recording-first" { state.handleEvent(["type": "audio_level", "rms": 0.45]) }
                     } else if phase == "transcribing" {
                         state.handleEvent(["type": "state", "state": "transcribing"])
                     }
                     let p = VoiceBarPresentation.notchPresentation(from: VoiceBarNotchOperationalInput(
-                        mode: state.mode, isCollapsed: false, visibleCoreOcclusionInset: inset))
+                        mode: state.mode, showsRecordingHold: phase == "recording-lock", showsRecordingPause: phase != "recording-lock" && phase.hasPrefix("recording"), isCollapsed: false, visibleCoreOcclusionInset: inset))
                     let model = VoiceBarNotchPresentationModel()
                     model.updateOperationalEnvelope(hasTeleprompter: false,
                         isRecording: phase.hasPrefix("recording"), hasCompactStatus: phase == "transcribing",
@@ -53,9 +53,10 @@ final class NotchLookRenderTests: XCTestCase {
                         visibleCoreOcclusionInset: inset)
                     var bar = BarView(state: state, commandRouter: Router(), onOpenSettings: {}, onOpenHistory: {},
                         presentationModel: model, includesPanelOutsets: true)
-                    if phase == "history-overpull" {
+                    if phase.hasPrefix("history-") {
                         model.setHistoryPanelOpen(true)
-                        bar = bar.presentingSettingsPullHintForShots().freezingHistoryMorph(at: 1.12)
+                        let progress: CGFloat = phase == "history-0" ? 1 : phase == "history-50" ? 1.15 : 1.3
+                        bar = (phase == "history-armed" ? bar.presentingSettingsPullHintForShots() : bar.presentingHistoryForShots()).freezingHistoryMorph(at: progress)
                     }
                     let view = bar.environment(\.colorScheme, light ? .light : .dark)
                         .environment(\.visualRenderTime, 101.5)

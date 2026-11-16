@@ -177,12 +177,12 @@ public struct VoiceBarNotchMaterialContract: Equatable {
         // 2.3 N1 (Etan, real M4): the recording time starts 8 pt past the PHYSICAL notch, which hides the wing's first
         // `visibleCoreOcclusionInset` points on a hardware notch (0 on a flat display).
         let isRecordingTrailing = side == .trailing && state == .recording
-        let hiddenByGlass = isRecordingTrailing ? max(0, visibleCoreOcclusionInset) : 0
+        let hiddenByGlass = state == .recording ? max(0, visibleCoreOcclusionInset) : 0
         // C7-W (Etan, QA 2026-11-11): the recording row ends `compactContentInset` from the wing's outer edge, the
         // inset Stop keeps from the left edge, and is pinned there; spare width faces the notch.
         return VoiceBarNotchWingContentLayout(
             side: side,
-            coreInset: isFixedTrailing
+            coreInset: isFixedTrailing || state == .recording
                 ? hiddenByGlass + VoiceBarNotchContract.fixedWingContentInset
                 : VoiceBarNotchContract.compactCoreContentInset,
             outerInset: isFixedTrailing && !isRecordingTrailing

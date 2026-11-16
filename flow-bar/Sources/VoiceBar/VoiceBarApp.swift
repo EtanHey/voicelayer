@@ -2365,7 +2365,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     wingWidth: VoiceBarPresentation.recordingWingWidth(
                         showsThirdControl: hasThirdControl, showsEarlierTakeProcessing: earlierTake,
                         visibleCoreOcclusionInset: visibleCoreOcclusionInset),
-                    showsEarlierTakeProcessing: earlierTake)
+                    showsEarlierTakeProcessing: earlierTake,
+                    visibleCoreOcclusionInset: visibleCoreOcclusionInset)
             )
         case .compactStatus:
             switch state.mode {
