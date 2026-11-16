@@ -25,7 +25,7 @@ public enum Theme {
     public static let captureBootingColor = idleColor
     /// The pre-capture bed needs dark ink on light glass; active and paused meters keep their own colours.
     public static func captureBootingColor(for appearance: VoiceBarNotchAppearance) -> Color {
-        appearance == .light ? Color(hex: 0x6E6E73) : captureBootingColor
+        appearance == .light ? Color(hex: 0x6A6A6F) : captureBootingColor
     }
     /// Reported 2026-11-12 (c9-P): make the processing ripple visibly distinct and sufficiently contrasted.
     /// Its blue uses the processing hue (`speakingColor`, 211°),
