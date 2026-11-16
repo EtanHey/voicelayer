@@ -96,6 +96,79 @@ final class NotchWingTravelTests: XCTestCase {
         print("WING_TRAVEL\n" + report.joined(separator: "\n"))
     }
 
+    /// Review r1 (blocking 1): while a closed band rides under the notch its controls are pictures, not controls. From
+    /// the close's first frame until the band is removed, none of the launcher's controls can take keyboard focus:
+    /// SwiftUI registers one key-view proxy per focusable control in the glass's own host (four in the open launcher),
+    /// and the retained band registers none. VoiceOver: this Mac's offscreen hosts never build SwiftUI's accessibility
+    /// tree without an assistive client (`docs.local/2.4.3/owner-r2/r1-axprobe.log`), so the retained branch's
+    /// accessibility hiding is pinned in source below alongside the measured focus check.
+    func testTheClosingBandIsInertForAccessibilityAndFocus() throws {
+        let rig = try mount()
+        rig.hover(true)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+        let open = try measure(rig.host, time: 0)
+        let openLeft = try XCTUnwrap(open.leftEdge, "the open band paints")
+        XCTAssertEqual(Self.focusableControls(rig.host), 4, "fixture: the open launcher's four controls take focus")
+        rig.hover(false)
+        var checked = 0
+        let start = Date()
+        while Date().timeIntervalSince(start) < 0.5 {
+            RunLoop.main.run(until: Date().addingTimeInterval(1.0 / 60.0))
+            let frame = try measure(rig.host, time: 0)
+            // Only frames where the band is still drawn part-way (the retained close) count.
+            guard let left = frame.leftEdge, left > openLeft + 1 else { continue }
+            checked += 1
+            let at = String(format: "%.0f ms into the close", Date().timeIntervalSince(start) * 1000)
+            XCTAssertEqual(Self.focusableControls(rig.host), 0, "\(at): a retained control can take keyboard focus")
+        }
+        XCTAssertGreaterThanOrEqual(checked, 2, "fixture: the close was sampled while the band was still drawn")
+
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/VoiceBarUI/VoiceBarNotchView.swift"), encoding: .utf8)
+        let retained = try XCTUnwrap(source.components(separatedBy: "if let band = closing.band {").dropFirst().first)
+            .components(separatedBy: "} else {")[0]
+        for guardText in [".modifier(VoiceBarNotchInertContent())"] {
+            XCTAssertTrue(retained.contains(guardText), "the retained band's slots carry \(guardText)")
+        }
+        let inert = try XCTUnwrap(source.components(separatedBy: "struct VoiceBarNotchInertContent").dropFirst().first)
+        for modifier in [".disabled(true)", ".accessibilityHidden(true)", ".allowsHitTesting(false)"] {
+            XCTAssertTrue(inert.prefix(900).contains(modifier), "VoiceBarNotchInertContent applies \(modifier)")
+        }
+    }
+
+    /// SwiftUI's key-view proxies: one per control that can take keyboard focus in a hosting view.
+    static func focusableControls(_ root: NSView) -> Int {
+        // SwiftUI (re)builds its proxies when AppKit asks for the key-view loop.
+        root.window?.recalculateKeyViewLoop()
+        func all(_ view: NSView) -> [NSView] { view.subviews + view.subviews.flatMap(all) }
+        return all(root).filter { String(describing: type(of: $0)).contains("KeyViewProxy") }.count
+    }
+
+    /// Review r1 (blocking 2): a close's completion ends only its own close. Close A, reopen, close B, then A's late
+    /// completion: B's band stays until B's own completion.
+    func testALateCompletionNeverEndsALaterClose() {
+        let tracker = VoiceBarNotchClosingTracker()
+        let launcher = VoiceBarNotchContract.geometry(for: .hoverLauncher)
+        let a = tracker.begin(geometry: launcher, bandState: .hoverLauncher, trailingLayoutState: nil)
+        tracker.cancel()
+        let b = tracker.begin(geometry: launcher, bandState: .hoverLauncher, trailingLayoutState: nil)
+        XCTAssertNotEqual(a, b, "each close has its own generation")
+        tracker.complete(a)
+        XCTAssertNotNil(tracker.band, "close A's late completion leaves close B's band in place")
+        tracker.complete(b)
+        XCTAssertNil(tracker.band, "close B's own completion ends it")
+        // A close continued while still closing (a second change to idle) keeps its band and the newest generation.
+        let c = tracker.begin(geometry: launcher, bandState: .hoverLauncher, trailingLayoutState: nil)
+        let d = tracker.begin(geometry: VoiceBarNotchContract.geometry(for: .recording), bandState: .recording,
+                              trailingLayoutState: nil)
+        XCTAssertEqual(tracker.band?.geometry, launcher)
+        tracker.complete(c)
+        XCTAssertNotNil(tracker.band, "the superseded animation's completion does not end the continued close")
+        tracker.complete(d)
+        XCTAssertNil(tracker.band)
+    }
+
     /// The slot offset is the gap between the drawn outer edge and the settled one, on each side; no live wings (any
     /// shell but the state shell) means no travel.
     func testTheSlotOffsetFollowsTheDrawnOuterEdge() {

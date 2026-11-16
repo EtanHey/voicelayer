@@ -591,9 +591,10 @@ final class PlaybackPauseTests: XCTestCase {
 
     // MARK: - Geometry
 
-    /// Reported 2026-10-20: align the pause control with the idle microphone. The pause slot is the
-    /// mic's slot: same lane width, same insets, same distance from the core, in every speaking layout.
-    func testPauseGlyphSlotMatchesTheIdleHoverMicrophone() {
+    /// Reported 2026-10-20 the pause control was aligned with the idle microphone; since T1/T6 and owner r2 each
+    /// left wing instead puts its innermost ink on the 16.5 pt rule. This checks the reading transport's left wing
+    /// and row inset in both speaking layouts, beside the launcher's.
+    func testReadingTransportWingKeepsItsLeftRuleInsetInBothLayouts() {
         let (state, _) = speakingState()
         let mic = VoiceBarPresentation.notchPresentation(from: .init(mode: .idle, isHovered: true))
         XCTAssertEqual(mic.visualState, .hoverLauncher)

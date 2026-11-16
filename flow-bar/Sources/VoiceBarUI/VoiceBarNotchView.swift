@@ -102,6 +102,11 @@ public struct VoiceBarNotchHistoryMorphInput: Equatable {
 
 /// The History shell at an animated progress: geometry and radii are derived per frame, so the shape, the
 /// radii and the rows (driven by the same value) can never drift apart.
+///
+/// Owner r2 / review r1 (lead decision): this shape deliberately hands the wing content no live wings
+/// (`VoiceBarNotchLiveWingsProviding`), so the History drawer's open and close are OUT of the icons-travel rule. Its
+/// top row is drawn flush with the 420 pt panel while the band's controls stay in their slots; letting them ride that
+/// edge would move the recording controls on every drawer pull, which X4 J2 forbids.
 public struct VoiceBarNotchHistoryMorphShape: Shape {
     public var morph: VoiceBarNotchHistoryMorphInput
     public let coreAnchorX: CGFloat?
@@ -268,7 +273,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                     surfaceRevealProgress = transition.revealProgress
                 } completion: {
                     // The tracker is a reference, so this write reaches the view whichever copy ran the change.
-                    if let closingSerial, tracker.band?.serial == closingSerial { tracker.band = nil }
+                    if let closingSerial { tracker.complete(closingSerial) }
                 }
             }
             guard endpoints.start != renderedGeometry else {
@@ -356,18 +361,10 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         guard presentation.visualState == .idle, let previous, previous != .idle, !accessibilityReduceMotion,
               historyMorph == nil, settled.leadingWingWidth + settled.trailingWingWidth > 0,
               settled.lowerSurfaceHeight == 0 || closing.band != nil else {
-            if closing.band != nil, presentation.visualState != .idle { closing.band = nil }
+            if closing.band != nil, presentation.visualState != .idle { closing.cancel() }
             return closing.band?.serial
         }
-        let serial = (closing.band?.serial ?? 0) &+ 1
-        let band = closing.band
-        closing.band = VoiceBarNotchClosingBand(
-            serial: serial,
-            geometry: band?.geometry ?? settled,
-            bandState: band?.bandState ?? previous,
-            trailingLayoutState: band?.trailingLayoutState ?? trailingWingLayoutState
-        )
-        return serial
+        return closing.begin(geometry: settled, bandState: previous, trailingLayoutState: trailingWingLayoutState)
     }
 
     private var shellAnimation: Animation {
@@ -549,6 +546,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                 let leadingWing = layout.leadingWingRect
                 if leadingWing.width > 0 {
                     wingSlot(closing.leading ?? AnyView(EmptyView()), side: .leading, band: band)
+                        .modifier(VoiceBarNotchInertContent())
                         .frame(width: leadingWing.width, height: leadingWing.height)
                         .modifier(VoiceBarNotchWingTravel(side: .leading, settledWidth: leadingWing.width, isEnabled: true))
                         .position(x: leadingWing.midX, y: leadingWing.midY)
@@ -556,6 +554,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                 let trailingWing = layout.trailingWingRect
                 if trailingWing.width > 0 {
                     wingSlot(closing.trailing ?? AnyView(EmptyView()), side: .trailing, band: band)
+                        .modifier(VoiceBarNotchInertContent())
                         .frame(width: trailingWing.width, height: trailingWing.height)
                         .modifier(VoiceBarNotchWingTravel(side: .trailing, settledWidth: trailingWing.width, isEnabled: true))
                         .position(x: trailingWing.midX, y: trailingWing.midY)
@@ -625,6 +624,18 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
             leadingWingWidth: (band?.geometry ?? slotGeometry).leadingWingWidth
         )
         return content.modifier(VoiceBarNotchWingSlot(slot: slot))
+    }
+}
+
+/// Review r1: a band closing to hidden is a picture of its controls while it rides under the notch. From the close's
+/// first frame until it is removed it takes no pointer, no keyboard focus or action, and is hidden from VoiceOver.
+/// Applied inside the native glass's own host, where the retained content lives.
+struct VoiceBarNotchInertContent: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .disabled(true)
+            .accessibilityHidden(true)
+            .allowsHitTesting(false)
     }
 }
 

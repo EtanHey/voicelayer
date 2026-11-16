@@ -164,7 +164,7 @@
       "PlaybackPauseTests/testRepeatedClicksAcrossATransitionKeepTheirOwnScope",
       "PlaybackPauseTests/testDaemonWithoutSpeakingIdentityAcceptsOnlyItsOwnPauseConfirmation",
       "PlaybackPauseTests/testStopWhilePausedRetainsTheReadbackAtThePausedPosition",
-      "PlaybackPauseTests/testPauseGlyphSlotMatchesTheIdleHoverMicrophone",
+      "PlaybackPauseTests/testReadingTransportWingKeepsItsLeftRuleInsetInBothLayouts",
       "PlaybackPauseTests/testManualSpeechPauseDuringCaptureUsesScopedExistingPauseCommand",
       "PlaybackPauseTests/testF5SettlementOnlyDaemonResumesAndLateIdleIsNoop",
       "PlaybackPauseTests/testPreparingPauseOwnerIsControllableBeforeAFirstChunkExists"
