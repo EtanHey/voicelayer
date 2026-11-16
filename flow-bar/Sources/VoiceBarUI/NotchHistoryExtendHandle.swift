@@ -16,8 +16,9 @@ struct NotchHistoryExtendHandle: View {
     var rows: (current: Int, maximum: Int, onAdjust: (Int) -> Void)?
     /// The Settings drawer's rows and their one-row VoiceOver steps (N16).
     var settingsRows: (current: Int, onAdjust: (Int) -> Void)?
-    /// 0510 N6: while a pull is armed for Settings its hint takes the grip's band, so the grip is not drawn.
-    var showsGrip = true
+    /// History always mounts one grip/hint shape; Settings retains its plain resize grip.
+    var settingsHintProgress: CGFloat?
+    var settingsHintOffset: CGFloat = 0
     var onDrag: ((CGFloat, TimeInterval) -> Void)?
     var onDragEnd: ((Bool) -> Void)?
     @State private var isHovered = false
@@ -26,13 +27,16 @@ struct NotchHistoryExtendHandle: View {
 
     var body: some View {
         ZStack {
-            Capsule(style: .continuous)
-                .fill(palette.primary.color.opacity(
-                    !showsGrip ? 0 : isHovered ? NotchHistoryMorph.handleHoverOpacity : NotchHistoryMorph.handleOpacity
-                ))
-                .frame(width: NotchHistoryMorph.handleWidth, height: NotchHistoryMorph.handleThickness)
-                .animation(.easeOut(duration: 0.12), value: isHovered)
-                .animation(NotchDrawerMotion.gripAnimation(showsGrip: showsGrip), value: showsGrip)
+            Group {
+                if let settingsHintProgress {
+                    NotchSettingsPullHint(ink: palette.primary.color, progress: settingsHintProgress)
+                        .offset(y: settingsHintOffset)
+                } else {
+                    Capsule(style: .continuous)
+                        .fill(palette.primary.color.opacity(isHovered ? NotchHistoryMorph.handleHoverOpacity : NotchHistoryMorph.handleOpacity))
+                        .frame(width: NotchHistoryMorph.handleWidth, height: NotchHistoryMorph.handleThickness)
+                }
+            }
                 .frame(width: NotchHistoryMorph.handleHitWidth, height: NotchHistoryMorph.handleBandHeight)
                 .contentShape(Rectangle())
                 .onHover { hovering in
@@ -44,7 +48,7 @@ struct NotchHistoryExtendHandle: View {
                     if isHovered { NSCursor.pop() }
                     isHovered = false
                 }
-                .accessibilityHidden(true)
+                .accessibilityHidden((settingsHintProgress ?? 0) < 1)
             if let rows {
                 NotchHistoryExtendAccessibility(rows: rows.current, maximumRows: rows.maximum, onAdjust: rows.onAdjust)
                     .frame(width: NotchHistoryMorph.handleHitWidth, height: NotchHistoryMorph.handleBandHeight)

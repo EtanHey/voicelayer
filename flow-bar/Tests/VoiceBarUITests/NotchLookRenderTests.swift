@@ -70,6 +70,7 @@ final class NotchLookRenderTests: XCTestCase {
                     window.appearance = host.appearance
                     window.contentView = host
                     defer { window.contentView = nil; window.close() }
+                    VLOrderCompositorTestWindow(window)
                     host.layoutSubtreeIfNeeded()
                     RunLoop.main.run(until: Date().addingTimeInterval(0.8))
                     host.layoutSubtreeIfNeeded()

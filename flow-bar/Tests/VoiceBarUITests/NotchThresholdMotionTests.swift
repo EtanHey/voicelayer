@@ -350,6 +350,10 @@ final class NotchThresholdMotionTests: XCTestCase {
 
     /// N17: the grip hands off to "Release for Settings" and back as one crossfade, never a one-frame swap.
     func testTheReleaseHintHandsOffFromTheGripAndBack() throws {
+        var identities: [UUID] = []
+        var phases: [CGFloat] = []
+        NotchPullHintProbe.observer = { id, p in identities.append(id); phases.append(p) }
+        defer { NotchPullHintProbe.observer = nil }
         let harness = makeHarness()
         openDrawer(harness, .openHistory)
         let hint = NotchHistoryPresentation.settingsPullHintIdentifier
@@ -367,25 +371,20 @@ final class NotchThresholdMotionTests: XCTestCase {
         }
         XCTAssertTrue(visible(harness).contains(hint), "pulling past open arms the Settings hint")
         drain(0.4)
-        XCTAssertGreaterThan(updates(harness, .resting, NotchDrawerMotion.easeOut(NotchDrawerMotion.hintInDuration)), 0,
-                             "the hint arrives under its fade-in")
-        let fadeIn = harness.frames.midway(.resting)
 
         // Back above the threshold: the hint fades out rather than vanishing in the next frame.
         harness.frames.reset()
         try send(.leftMouseDragged, at: NSPoint(x: start.x, y: start.y - 6), to: harness.panel)
         drain(0.6)
-        XCTAssertGreaterThan(updates(harness, .leaving, NotchDrawerMotion.easeOut(NotchDrawerMotion.hintOutDuration)), 0,
-                             "the hint leaves under its fade-out")
-        let fadeOut = harness.frames.midway(.leaving)
         XCTAssertFalse(visible(harness).contains(hint), "and then it is gone")
         try send(.leftMouseUp, at: NSPoint(x: start.x, y: start.y - 6), to: harness.panel)
         drain(0.5)
 
-        try requireDrawnAnimationFrames()
-        XCTAssertFalse(fadeIn.isEmpty, "the hint fades in over the grip")
-        XCTAssertFalse(fadeOut.isEmpty, "the hint fades out across frames")
+        XCTAssertTrue(phases.contains(1), "the actual armed drag reaches the full capsule")
+        XCTAssertEqual(Set(identities).count, 1, "the grip survives the threshold and reversal")
+        XCTAssertTrue(phases.contains { $0 > 0 && $0 < 1 }, "the actual drag grows the same shape")
     }
+
 }
 
 /// The capability probe's animated value: a known-good animation, reported on every frame SwiftUI draws.

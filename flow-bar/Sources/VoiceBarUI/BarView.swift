@@ -941,11 +941,8 @@ public struct BarView: View {
         let armed = settingsDrawer != nil && !isSettingsDrawerOpen
             && historyPull.rawProgress >= NotchHistoryMorph.settingsPullThreshold
         if armed != isSettingsPullArmed {
-            // C6 L2 (N17): the grip and "Release for Settings" cross in one beat, never a one-frame swap.
-            withAnimation(NotchDrawerMotion.easeOut(armed ? NotchDrawerMotion.hintInDuration
-                                                          : NotchDrawerMotion.hintOutDuration)) {
-                isSettingsPullArmed = armed
-            }
+            // The persistent grip reads pull progress; arming still controls release routing.
+            isSettingsPullArmed = armed
         }
         historyFlight = nil // the pointer owns the value now
         historyBridge?.historyOpenRequested() // grabbing History cancels a waiting notch menu
@@ -1815,7 +1812,11 @@ public struct BarView: View {
                     palette: notchPalette,
                     rows: (historyRows, NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count),
                            adjustHistoryRows),
-                    showsGrip: !isSettingsPullArmed,
+                    settingsHintProgress: isSettingsPullArmed ? 1 : min(1, max(0, ((historyFrozenProgress ?? historyPull.rawProgress) - 1)
+                        / (NotchHistoryMorph.settingsPullThreshold - 1))),
+                    settingsHintOffset: historyMorphInput.map {
+                        max(0, $0.geometry(at: $0.progress).lowerSurfaceHeight - $0.openLowerSurfaceHeight) / 2
+                    } ?? 0,
                     onDrag: dragHistoryHandle,
                     onDragEnd: { cancelled in
                         if historyRowsPull.phase != .idle { endHistoryRowsPull(cancelled: cancelled) }
@@ -1823,25 +1824,6 @@ public struct BarView: View {
                 )
             }
                 .frame(maxHeight: .infinity, alignment: .top)
-                .overlay {
-                    GeometryReader { proxy in
-                        let fadeBottom = NotchHistoryMorph.listTopInset + min(
-                            NotchHistoryMorph.listHeight(rows: historyRowsExtent),
-                            NotchHistoryMorph.historyCanvasLowerSurfaceHeight - notchPresentation.feedbackHeight
-                                - NotchHistoryMorph.listTopInset - NotchHistoryMorph.handleBandHeight)
-                        // Rows keep their open layout while the shell stretches past it.
-                        let overpull = historyMorphInput.map {
-                            max(0, $0.geometry(at: $0.progress).lowerSurfaceHeight - $0.openLowerSurfaceHeight)
-                        } ?? 0
-                        if isSettingsPullArmed, let rect = NotchHistoryPresentation.settingsPullHintRect(
-                            fadeBottom: fadeBottom,
-                            drawerSize: CGSize(width: proxy.size.width, height: proxy.size.height + overpull), hintWidth: 0) {
-                            settingsPullHint
-                                .position(x: rect.midX, y: rect.midY)
-                        }
-                    }
-                    .allowsHitTesting(false)
-                }
                 .modifier(NotchHistoryRowsMorph(progress: historyFrozenProgress ?? historyProgress,
                                                 keepsPointer: drawerHoldsPointer))
         }
@@ -1854,10 +1836,6 @@ public struct BarView: View {
         return surface.drawer == nil && pullOpensSettings ? .general : nil
     }
 
-    /// Shown while a pull past open is armed: releasing opens Settings. It fits the handle's 18 pt band (0510 N6).
-    private var settingsPullHint: some View {
-        NotchSettingsPullHint(ink: notchPalette.primary.color)
-    }
 
     @ViewBuilder
     private var notchTeleprompterTimeline: some View {
