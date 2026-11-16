@@ -578,6 +578,8 @@ public struct BarView: View {
             morphVariant: morphSelection?.variant ?? .p1Matched,
             canvasGeometry: includesPanelOutsets ? canvas.canvasGeometry : nil,
             historyMorph: historyMorphInput,
+            // Transcribing mounts the same navigation row as the launcher, with its exact slot insets.
+            trailingWingLayoutState: state.mode == .transcribing ? .hoverLauncher : nil,
             onHoverChanged: { hovering in
                 guard !includesPanelOutsets else { return }
                 state.setHovering(hovering)
