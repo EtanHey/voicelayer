@@ -17,13 +17,14 @@ final class VoiceBarNotchContractTests: XCTestCase {
         )
         XCTAssertEqual(
             VoiceBarNotchContract.geometry(for: .hoverLauncher),
-            // 2.3 U2: both wings are the fixed 73.5 pt (mic + chevron | History + Settings).
+            // 2.3 U2: mic + chevron | History + Settings. Owner r2: the left row sits 3.5 pt nearer the notch (the
+            // chevron's ink on the 16.5 pt left-side rule), so the left wing is 70 pt.
             VoiceBarNotchGeometry(
                 coreWidth: 185,
                 topHeight: 32,
-                leadingWingWidth: 73.5,
+                leadingWingWidth: 70,
                 trailingWingWidth: 73.5,
-                bodyLeadingExtent: 73.5,
+                bodyLeadingExtent: 70,
                 bodyTrailingExtent: 73.5,
                 lowerSurfaceHeight: 0
             )
@@ -63,9 +64,9 @@ final class VoiceBarNotchContractTests: XCTestCase {
         XCTAssertEqual(idle.topWidth, 185)
         XCTAssertEqual(idle.totalWidth, 185)
         XCTAssertEqual(idle.totalHeight, 32)
-        // 2.3 U2: the outline never moves between the launcher and recording (185 + 2 × 73.5).
-        XCTAssertEqual(hover.topWidth, 332)
-        XCTAssertEqual(hover.totalWidth, 332)
+        // Owner r2: 185 + 70 + 73.5 (the left wing holds the mic and chevron on the left-side ink rule).
+        XCTAssertEqual(hover.topWidth, 328.5)
+        XCTAssertEqual(hover.totalWidth, 328.5)
         XCTAssertEqual(recording.topWidth, 375.5)
         XCTAssertEqual(recording.totalWidth, 375.5)
         XCTAssertEqual(teleprompter.topWidth, 258.5)
@@ -79,7 +80,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
         let recording = VoiceBarNotchContract.geometry(for: .recording)
         let status = VoiceBarNotchContract.geometry(for: .compactStatus)
 
-        XCTAssertEqual(hover.leadingWingWidth, 73.5)
+        XCTAssertEqual(hover.leadingWingWidth, 70) // owner r2: the left-side ink rule
         XCTAssertEqual(recording.leadingWingWidth, 88.5)
         XCTAssertEqual(recording.trailingWingWidth, 102)
         XCTAssertEqual(status.leadingWingWidth, 47.5)
@@ -99,12 +100,12 @@ final class VoiceBarNotchContractTests: XCTestCase {
         let recording = VoiceBarNotchContract.geometry(for: .recording)
         let teleprompter = VoiceBarNotchContract.geometry(for: .teleprompter)
 
-        // 2.3 U2: the mic + chevron wing fits two controls, like History + Settings.
+        // 2.3 U2: the mic + chevron wing fits two controls, like History + Settings. Owner r2: from 10 pt off the
+        // notch (the chevron's ink on the 16.5 pt left-side rule) instead of 13.5.
         XCTAssertEqual(
             hover.leadingWingWidth,
-            VoiceBarNotchContract.compactContentFitWingWidth(
-                contentWidth: 2 * material.compactControlSize + material.compactControlSpacing
-            )
+            VoiceBarNotchContract.launcherLeadingContentInset + 2 * material.compactControlSize
+                + material.compactControlSpacing + material.compactContentInset
         )
         XCTAssertEqual(
             hover.trailingWingWidth,
@@ -113,7 +114,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
                     material.compactControlSpacing
             )
         )
-        XCTAssertEqual(hover.leadingWingWidth, hover.trailingWingWidth)
+        XCTAssertEqual(hover.leadingWingWidth, hover.trailingWingWidth - 3.5)
 
         XCTAssertEqual(teleprompter.leadingWingWidth, 0)
         XCTAssertEqual(
@@ -332,7 +333,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
             isKeyboardFocused: false
         )
 
-        XCTAssertEqual(presentation.geometry.totalWidth, 332)
+        XCTAssertEqual(presentation.geometry.totalWidth, 328.5) // owner r2: 185 + 70 + 73.5
         XCTAssertEqual(presentation.contentRoles, [.microphone, .history, .dictionary])
         XCTAssertEqual(presentation.accessibilityLabel, "VoiceBar launcher")
     }

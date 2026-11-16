@@ -78,7 +78,8 @@ public struct VoiceBarNotchMorphCanvasLayout: Equatable, Sendable {
         for presentation: VoiceBarNotchPresentation
     ) -> VoiceBarNotchMorphCanvasLayout {
         // C4 F4: an idle shell still collapsing from a read keeps the read's canvas until the hold releases.
-        guard presentation.visualState != .idle || presentation.holdsReadingCanvas else {
+        guard presentation.visualState != .idle || presentation.holdsReadingCanvas || presentation.holdsClosingCanvas
+        else {
             return VoiceBarNotchMorphCanvasLayout(
                 canvasGeometry: presentation.geometry,
                 contentOffsetX: 0

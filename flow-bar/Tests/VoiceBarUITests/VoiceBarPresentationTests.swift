@@ -379,7 +379,7 @@ final class VoiceBarPresentationTests: XCTestCase {
             )
         )
         // c9-P: the spinner on the left, the rippling recording meter on the right, in the recording band's wings.
-        XCTAssertEqual(baseline.geometry.leadingWingWidth, 73.5)
+        XCTAssertEqual(baseline.geometry.leadingWingWidth, 70) // owner r2: the launcher's left wing (chevron on the rule)
         XCTAssertEqual(baseline.geometry.trailingWingWidth, 73.5)
         XCTAssertEqual(baseline.geometry.topHeight, 32)
         XCTAssertEqual(warmup.geometry.leadingWingWidth, baseline.geometry.leadingWingWidth)
@@ -407,9 +407,10 @@ final class VoiceBarPresentationTests: XCTestCase {
         // The launcher retains its fixed wings; recording's symmetric wings fit the time/meter row with its 8 pt gap
         // Recording reserves three left slots; each wing uses its own content and insets.
         // place). The fitted F5 hint remains independent.
-        XCTAssertEqual(launcher.geometry.leadingWingWidth, 73.5)
+        // Owner r2: the launcher's and transcribing's left wing is 70 pt (the chevron's ink on the left-side rule).
+        XCTAssertEqual(launcher.geometry.leadingWingWidth, 70)
         XCTAssertEqual(launcher.geometry.trailingWingWidth, 73.5)
-        XCTAssertEqual(processing.geometry.leadingWingWidth, 73.5)
+        XCTAssertEqual(processing.geometry.leadingWingWidth, 70)
         XCTAssertEqual(processing.geometry.trailingWingWidth, 73.5)
         XCTAssertEqual(recording.geometry.leadingWingWidth, 88.5)
         XCTAssertEqual(recording.geometry.trailingWingWidth, 102)

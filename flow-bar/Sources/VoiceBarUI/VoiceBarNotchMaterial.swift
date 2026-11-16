@@ -146,7 +146,10 @@ public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier, Animatab
     }
 
     public func body(content: Content) -> some View {
-        materialBody(content: content.clipShape(shape))
+        // Owner r2: this body runs on every frame of a morph, with the interpolated shape; the wings it draws reach
+        // the content (hosted in the glass's own view, which gets no animation) so the icons ride the outer edges.
+        materialBody(content: content.clipShape(shape)
+            .environment(\.voiceBarNotchLiveWings, (shape as? any VoiceBarNotchLiveWingsProviding)?.liveWings))
             .overlay {
                 shape.stroke(.white.opacity(0.14), lineWidth: 0.7)
                     .allowsHitTesting(false)

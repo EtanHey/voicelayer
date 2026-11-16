@@ -173,7 +173,7 @@ final class EtanQA0510Tests: XCTestCase {
         input.showsIdleMicrophoneControl = true
         let typed = VoiceBarPresentation.notchPresentation(from: input)
         XCTAssertEqual(typed.visualState, .compactStatus)
-        XCTAssertEqual(typed.geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth,
+        XCTAssertEqual(typed.geometry.leadingWingWidth, VoiceBarNotchContract.launcherLeadingWingWidth,
                        "[N9] Typed's left wing holds the mic and its control, like the launcher's")
         state.mode = .recording
         XCTAssertFalse(VoiceBarPresentation.showsIdleMicrophoneControl(for: state))

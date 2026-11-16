@@ -54,7 +54,7 @@ final class NotchGlassMorphTests: XCTestCase {
     /// Recording reserves three controls; Cancel restores the launcher while the core and band height stay pinned.
     func testRecordingReservationGrowsAndCancelRestoresTheGlassOutline() throws {
         let launcher = Self.presentation().geometry, recording = Self.presentation(recording: true).geometry
-        XCTAssertEqual(launcher.leadingWingWidth, 73.5)
+        XCTAssertEqual(launcher.leadingWingWidth, 70, "owner r2: the chevron on the left-side ink rule")
         XCTAssertEqual(launcher.trailingWingWidth, 73.5)
         XCTAssertEqual(recording.leadingWingWidth, 88.5)
         XCTAssertEqual(recording.trailingWingWidth, 102)

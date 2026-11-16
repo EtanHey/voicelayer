@@ -162,7 +162,8 @@ public struct VoiceBarNotchMaterialContract: Equatable {
     public func wingContentLayout(
         for side: VoiceBarNotchSide,
         state: VoiceBarNotchVisualState,
-        visibleCoreOcclusionInset: CGFloat = 0
+        visibleCoreOcclusionInset: CGFloat = 0,
+        leadingWingWidth: CGFloat? = nil
     ) -> VoiceBarNotchWingContentLayout {
         // Launcher and playback leading controls share the idle microphone lane.
         // Recording uses the glyph optical inset beyond the calibrated occlusion.
@@ -184,6 +185,8 @@ public struct VoiceBarNotchMaterialContract: Equatable {
             coreInset: isFixedTrailing || state == .recording
                 ? hiddenByGlass + (side == .leading && state == .recording
                     ? VoiceBarNotchContract.recordingLeadingContentInset : VoiceBarNotchContract.fixedWingContentInset)
+                : side == .leading
+                ? VoiceBarNotchContract.leadingCoreContentInset(leadingWingWidth: leadingWingWidth)
                 : VoiceBarNotchContract.compactCoreContentInset,
             outerInset: isFixedTrailing && !isRecordingTrailing
                 ? VoiceBarNotchContract.fixedWingContentInset : compactContentInset,
@@ -279,10 +282,19 @@ public struct VoiceBarNotchPresentation: Equatable {
     /// eight lines in the compact state too (`VoiceBarNotchMorphCanvasLayout`), so Hide, Show and Pause never
     /// shrink the canvas or the window under a shell that is still collapsing.
     public private(set) var holdsReadingCanvas = false
+    /// Owner r2: a band just closed to hidden keeps its canvas while its glass closes and its icons ride inward
+    /// (`VoiceBarNotchPresentationModel.closingCanvasReleaseDelay`); the window shrinks to the core afterwards.
+    public private(set) var holdsClosingCanvas = false
 
     public func holdingReadingCanvas(_ holds: Bool) -> Self {
         var copy = self
         copy.holdsReadingCanvas = holds
+        return copy
+    }
+
+    public func holdingClosingCanvas(_ holds: Bool) -> Self {
+        var copy = self
+        copy.holdsClosingCanvas = holds
         return copy
     }
 
@@ -318,7 +330,7 @@ public struct VoiceBarNotchPresentation: Equatable {
             visibleCoreOcclusionInset: visibleCoreOcclusionInset, virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
             contentRoles: contentRoles, accessibilityLabel: accessibilityLabel,
             transientNoteWidth: transientNoteWidth, feedback: feedback, drawerBand: drawerBand,
-            holdsReadingCanvas: holdsReadingCanvas)
+            holdsReadingCanvas: holdsReadingCanvas, holdsClosingCanvas: holdsClosingCanvas)
     }
 
     /// Where the transient note draws: the band directly under the top row, across the lower body. Any
@@ -348,7 +360,7 @@ public struct VoiceBarNotchPresentation: Equatable {
             contentRoles: contentRoles,
             accessibilityLabel: accessibilityLabel,
             transientNoteWidth: transientNoteWidth, feedback: feedback, drawerBand: drawerBand,
-            holdsReadingCanvas: holdsReadingCanvas
+            holdsReadingCanvas: holdsReadingCanvas, holdsClosingCanvas: holdsClosingCanvas
         )
     }
 
@@ -555,6 +567,42 @@ public enum VoiceBarNotchContract {
 
     public static let hoverLauncherTrailingWingWidth = fixedWingWidth
 
+    /// Owner r2 (2.4.3), one rule for the left side: in every state with a left wing, the innermost left control's
+    /// ink sits this far from the notch's visible edge, as the right side's innermost ink does (16.5 to 17.5 pt) and as
+    /// the recording X does (`recordingLeadingContentInset` + its 5.5 pt bearing + the 8.5 pt hardware occlusion).
+    public static let leadingInnerInkClearance: CGFloat = 16.5
+
+    /// The microphone chevron's optical side bearing: its 9 pt glyph leaves 6.5 pt of its 20 pt plate empty on the
+    /// core side (NotchLeftInkRuleTests measures it).
+    public static let microphoneChevronSideBearing: CGFloat = 6.5
+
+    /// The launcher's left row (the mic, then the chevron) starts this far from the notch, so the chevron's ink lands
+    /// on the rule (10 pt, was 13.5: the chevron sat at 20 pt while the recording X sat at 16.5).
+    public static let launcherLeadingContentInset = leadingInnerInkClearance - microphoneChevronSideBearing
+
+    /// The left wing of every state whose innermost left control is the microphone chevron: the launcher, History over
+    /// it, transcribing and an idle notice (Typed). It holds the mic and the chevron and nothing more (70 pt).
+    public static let launcherLeadingWingWidth = launcherLeadingContentInset +
+        2 * material.compactControlSize + material.compactControlSpacing + material.compactContentInset
+
+    /// The reading transport's innermost control, Forward (`forward.end.fill`), leaves 4 pt of its plate empty on
+    /// the core side, so its row starts 12.5 pt from the notch (was 13.5: its ink sat at 17.5 pt).
+    public static let readingForwardSideBearing: CGFloat = 4
+    public static let readingLeadingContentInset = leadingInnerInkClearance - readingForwardSideBearing
+
+    /// Where a non-recording left wing's row starts from the core. The wing's width says what it holds (the only
+    /// channel the resident app's wing widths give the layout): exactly the launcher's holds the chevron innermost,
+    /// exactly the reading transport's holds Forward innermost. Every other compact left wing (an error glyph, a queued
+    /// read's Next) keeps the compact inset, where its glyph already meets the rule (NotchLeftInkRuleTests).
+    public static func leadingCoreContentInset(leadingWingWidth: CGFloat?) -> CGFloat {
+        guard let leadingWingWidth else { return compactCoreContentInset }
+        if abs(leadingWingWidth - launcherLeadingWingWidth) < 0.01 { return launcherLeadingContentInset }
+        if abs(leadingWingWidth - VoiceBarPresentation.readingTransportWingWidth) < 0.01 {
+            return readingLeadingContentInset
+        }
+        return compactCoreContentInset
+    }
+
     public static let waveformWingWidth = WaveformLayout.coreGap +
         material.waveformSlotWidth + WaveformLayout.outerInset
 
@@ -699,9 +747,9 @@ public enum VoiceBarNotchContract {
             geometry(
                 coreWidth: coreWidth,
                 topHeight: resolvedTopHeight,
-                leadingWingWidth: fixedWingWidth,
+                leadingWingWidth: launcherLeadingWingWidth,
                 trailingWingWidth: fixedWingWidth,
-                bodyLeadingExtent: fixedWingWidth,
+                bodyLeadingExtent: launcherLeadingWingWidth,
                 bodyTrailingExtent: fixedWingWidth
             )
         case .recording:
@@ -734,7 +782,7 @@ public enum VoiceBarNotchContract {
             geometry(
                 coreWidth: coreWidth,
                 topHeight: resolvedTopHeight,
-                leadingWingWidth: fixedWingWidth,
+                leadingWingWidth: launcherLeadingWingWidth,
                 trailingWingWidth: fixedWingWidth,
                 bodyLeadingExtent: historyBodyExtent(coreWidth: coreWidth),
                 bodyTrailingExtent: historyBodyExtent(coreWidth: coreWidth),

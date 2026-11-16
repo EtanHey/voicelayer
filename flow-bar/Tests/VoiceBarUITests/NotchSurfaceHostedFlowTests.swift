@@ -317,6 +317,8 @@ extension NotchSurfaceHostedFlowTests {
     /// Puts the notch in `activity` the way the app feeds it (VoiceState plus the presentation model's envelope).
     private func enter(_ activity: Activity, _ harness: Harness) {
         let fixed = VoiceBarNotchContract.fixedWingWidth
+        // Owner r2: the app sends the launcher's left wing for transcribing and an idle notice (VoiceBarPresentation).
+        let left = VoiceBarNotchContract.launcherLeadingWingWidth
         switch activity {
         case .launcher:
             return
@@ -329,13 +331,13 @@ extension NotchSurfaceHostedFlowTests {
             harness.state.mode = .transcribing
             harness.model.updateOperationalEnvelope(
                 hasTeleprompter: false, isRecording: false, hasCompactStatus: true,
-                compactStatusLeadingWingWidth: fixed, compactStatusTrailingWingWidth: fixed)
+                compactStatusLeadingWingWidth: left, compactStatusTrailingWingWidth: fixed)
         case .typed:
             harness.state.mode = .idle
             harness.state.confirmationText = "Typed"
             harness.model.updateOperationalEnvelope(
                 hasTeleprompter: false, isRecording: false, hasCompactStatus: true,
-                compactStatusLeadingWingWidth: fixed, compactStatusTrailingWingWidth: 60)
+                compactStatusLeadingWingWidth: left, compactStatusTrailingWingWidth: 60)
         }
         resize(harness)
         drain(0.6)
@@ -392,7 +394,8 @@ extension NotchSurfaceHostedFlowTests {
         for activity in [Activity.launcher, .transcribing, .typed] {
             let harness = makeHarness()
             enter(activity, harness)
-            XCTAssertEqual(harness.model.presentation.geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth,
+            XCTAssertEqual(harness.model.presentation.geometry.leadingWingWidth,
+                           VoiceBarNotchContract.launcherLeadingWingWidth,
                            "[N9] \(activity): the same two-slot left wing")
             let current = layout(harness.model)
             // VoiceBarApp.notchInteractionConfiguration is in the executable target, which this UI test target
