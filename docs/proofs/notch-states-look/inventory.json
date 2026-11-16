@@ -5,10 +5,11 @@
     "state": "a-idle-hovered",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
     "nativeScale": 2,
+    "label": "native2x still, text and edges",
     "image": "images/before-light-a-idle-hovered.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 550
+    "height_px": 550,
+    "sha256": "d65e99654c3f9ca825125fa76795bc488adbe56f8264129721237291421831e3"
   },
   {
     "arm": "before",
@@ -16,10 +17,11 @@
     "state": "b-recording-first-frame",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
     "nativeScale": 2,
+    "label": "native2x still, text and edges",
     "image": "images/before-light-b-recording-first-frame.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 550
+    "height_px": 550,
+    "sha256": "4f47be5c81016a4e8e987473acf1ba04780bb2cb335ba3651cfc9242d54ea830"
   },
   {
     "arm": "before",
@@ -27,10 +29,11 @@
     "state": "c-recording-live",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
     "nativeScale": 2,
+    "label": "native2x still, text and edges",
     "image": "images/before-light-c-recording-live.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 550
+    "height_px": 550,
+    "sha256": "85b99cd9214f1973efd82391e82bd0e0779480a30eec6e8861e4b076804b87f8"
   },
   {
     "arm": "before",
@@ -38,10 +41,11 @@
     "state": "c2-recording-lock",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
     "nativeScale": 2,
+    "label": "native2x still, text and edges",
     "image": "images/before-light-c2-recording-lock.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 550
+    "height_px": 550,
+    "sha256": "660c2e4ad3ab6481b07a08ba9eb08169a7ab3af7d92aef5ff1839462205230b4"
   },
   {
     "arm": "before",
@@ -49,114 +53,11 @@
     "state": "d-transcribing",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
     "nativeScale": 2,
+    "label": "native2x still, text and edges",
     "image": "images/before-light-d-transcribing.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "before",
-    "theme": "light",
-    "state": "e-burst-01",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-light-e-burst-01.png",
-    "timestamp_ms": 898.398,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "before",
-    "theme": "light",
-    "state": "e-burst-02",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-light-e-burst-02.png",
-    "timestamp_ms": 1762.698,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "before",
-    "theme": "light",
-    "state": "e-burst-03",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-light-e-burst-03.png",
-    "timestamp_ms": 3502.553,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "before",
-    "theme": "light",
-    "state": "e-burst-04",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-light-e-burst-04.png",
-    "timestamp_ms": 4337.931,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "before",
-    "theme": "light",
-    "state": "e-burst-05",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-light-e-burst-05.png",
-    "timestamp_ms": 5175.009,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "before",
-    "theme": "light",
-    "state": "e-burst-06",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-light-e-burst-06.png",
-    "timestamp_ms": 6041.304,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "before",
-    "theme": "light",
-    "state": "e-burst-07",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-light-e-burst-07.png",
-    "timestamp_ms": 6882.673,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "before",
-    "theme": "light",
-    "state": "e-burst-08",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-light-e-burst-08.png",
-    "timestamp_ms": 7737.023,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
+    "height_px": 550,
+    "sha256": "a5a8c29fd95642c41cfee1dd48aaa7836e99772d4ba759d72b2756a5a967443b"
   },
   {
     "arm": "before",
@@ -164,21 +65,11 @@
     "state": "g-dictionary",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
     "nativeScale": 2,
+    "label": "native2x still, text and edges",
     "image": "images/before-light-g-dictionary.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "before",
-    "theme": "light",
-    "state": "h-general-top-observed",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-light-h-general-top-observed.png",
-    "label": "native2x still, text and edges",
-    "width_px": 1104,
-    "height_px": 1218
+    "height_px": 1218,
+    "sha256": "8afe1847ad8c1a279847227abf1c89a4f0500d8cb93e4c139f249aaa0a36c8d0"
   },
   {
     "arm": "before",
@@ -186,10 +77,11 @@
     "state": "a-idle-hovered",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
     "nativeScale": 2,
+    "label": "native2x still, text and edges",
     "image": "images/before-dark-a-idle-hovered.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 550
+    "height_px": 550,
+    "sha256": "1b81937716c7d49381bb6d4af50db9ab7d8dd23ba79566192f2977cd226d8452"
   },
   {
     "arm": "before",
@@ -197,10 +89,11 @@
     "state": "b-recording-first-frame",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
     "nativeScale": 2,
+    "label": "native2x still, text and edges",
     "image": "images/before-dark-b-recording-first-frame.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 550
+    "height_px": 550,
+    "sha256": "654b2b1d33aa592def770540e6b10ee07c0f033516b70340ca3059bb514c90cd"
   },
   {
     "arm": "before",
@@ -208,10 +101,11 @@
     "state": "c-recording-live",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
     "nativeScale": 2,
+    "label": "native2x still, text and edges",
     "image": "images/before-dark-c-recording-live.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 550
+    "height_px": 550,
+    "sha256": "429de487792fde45ac542de9c5ab6348d62bb55bde1335bcfd543a6701e1a572"
   },
   {
     "arm": "before",
@@ -219,10 +113,11 @@
     "state": "c2-recording-lock",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
     "nativeScale": 2,
+    "label": "native2x still, text and edges",
     "image": "images/before-dark-c2-recording-lock.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 550
+    "height_px": 550,
+    "sha256": "931bc33960bb054b4b94b9a2049bb4477d17b121abf8daa1c39c8206ec1786b6"
   },
   {
     "arm": "before",
@@ -230,114 +125,11 @@
     "state": "d-transcribing",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
     "nativeScale": 2,
+    "label": "native2x still, text and edges",
     "image": "images/before-dark-d-transcribing.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "before",
-    "theme": "dark",
-    "state": "e-burst-01",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-dark-e-burst-01.png",
-    "timestamp_ms": 893.419,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "before",
-    "theme": "dark",
-    "state": "e-burst-02",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-dark-e-burst-02.png",
-    "timestamp_ms": 1735.573,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "before",
-    "theme": "dark",
-    "state": "e-burst-03",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-dark-e-burst-03.png",
-    "timestamp_ms": 3505.252,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "before",
-    "theme": "dark",
-    "state": "e-burst-04",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-dark-e-burst-04.png",
-    "timestamp_ms": 4382.495,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "before",
-    "theme": "dark",
-    "state": "e-burst-05",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-dark-e-burst-05.png",
-    "timestamp_ms": 5310.178,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "before",
-    "theme": "dark",
-    "state": "e-burst-06",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-dark-e-burst-06.png",
-    "timestamp_ms": 6182.956,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "before",
-    "theme": "dark",
-    "state": "e-burst-07",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-dark-e-burst-07.png",
-    "timestamp_ms": 7074.868,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "before",
-    "theme": "dark",
-    "state": "e-burst-08",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-dark-e-burst-08.png",
-    "timestamp_ms": 7955.675,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
+    "height_px": 550,
+    "sha256": "1b040dd47975bcb52716a9a329b314f231ccb7fc406307dfc75d3d1a33c6ee63"
   },
   {
     "arm": "before",
@@ -345,1201 +137,2870 @@
     "state": "g-dictionary",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
     "nativeScale": 2,
+    "label": "native2x still, text and edges",
     "image": "images/before-dark-g-dictionary.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "before",
-    "theme": "dark",
-    "state": "h-general-top-observed",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-dark-h-general-top-observed.png",
-    "label": "native2x still, text and edges",
-    "width_px": 1104,
-    "height_px": 1218
+    "height_px": 1218,
+    "sha256": "72aaa2133fe478a9bab3d8ebaccb2578788497e5fad23f3e3cc48a0af59ce49c"
   },
   {
     "arm": "after",
     "theme": "light",
-    "state": "a-idle-hovered",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
     "nativeScale": 2,
+    "state": "a-idle-hovered",
+    "label": "native2x still, text and edges",
     "image": "images/after-light-a-idle-hovered.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 550
+    "height_px": 550,
+    "sha256": "80e7b3c5a4b981993891f8502db2e3bbc64cbc23c1275bed5c1463c4d0ae465e"
   },
   {
     "arm": "after",
     "theme": "light",
-    "state": "b-recording-first-frame",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
     "nativeScale": 2,
+    "state": "b-recording-first-frame",
+    "label": "native2x still, text and edges",
     "image": "images/after-light-b-recording-first-frame.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 550
+    "height_px": 550,
+    "sha256": "eb5905cc2cd7d3be2f53127615c585cddfcf6907029524a18e5e5cd029c6650a"
   },
   {
     "arm": "after",
     "theme": "light",
-    "state": "c-recording-live",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
     "nativeScale": 2,
+    "state": "c-recording-live",
+    "label": "native2x still, text and edges",
     "image": "images/after-light-c-recording-live.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 550
+    "height_px": 550,
+    "sha256": "9451f175322680212eb8e33cdaf590d6886654bca452e5709ec8ec8079e9b58e"
   },
   {
     "arm": "after",
     "theme": "light",
-    "state": "c2-recording-lock",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
     "nativeScale": 2,
+    "state": "c2-recording-lock",
+    "label": "native2x still, text and edges",
     "image": "images/after-light-c2-recording-lock.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 550
+    "height_px": 550,
+    "sha256": "dd4e74a9d839cfa38a0775f190844abd9927d5b1005c6511aca6addb6165e958"
   },
   {
     "arm": "after",
     "theme": "light",
-    "state": "d-transcribing",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
     "nativeScale": 2,
+    "state": "d-transcribing",
+    "label": "native2x still, text and edges",
     "image": "images/after-light-d-transcribing.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 550
+    "height_px": 550,
+    "sha256": "b82252c9d10719b3c83cd7119397911fb933e26172824d5509fa10f00a9489d8"
   },
   {
     "arm": "after",
     "theme": "light",
-    "state": "e-burst-01",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
     "nativeScale": 2,
-    "image": "images/after-light-e-burst-01.png",
-    "timestamp_ms": 983.259,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "after",
-    "theme": "light",
-    "state": "e-burst-02",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-light-e-burst-02.png",
-    "timestamp_ms": 1907.727,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "after",
-    "theme": "light",
-    "state": "e-burst-03",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-light-e-burst-03.png",
-    "timestamp_ms": 3802.809,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "after",
-    "theme": "light",
-    "state": "e-burst-04",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-light-e-burst-04.png",
-    "timestamp_ms": 4740.951,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "after",
-    "theme": "light",
-    "state": "e-burst-05",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-light-e-burst-05.png",
-    "timestamp_ms": 5663.913,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "after",
-    "theme": "light",
-    "state": "e-burst-06",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-light-e-burst-06.png",
-    "timestamp_ms": 6561.828,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "after",
-    "theme": "light",
-    "state": "e-burst-07",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-light-e-burst-07.png",
-    "timestamp_ms": 7445.917,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "after",
-    "theme": "light",
-    "state": "e-burst-08",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-light-e-burst-08.png",
-    "timestamp_ms": 8349.014,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "after",
-    "theme": "light",
     "state": "g-dictionary",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
+    "label": "native2x still, text and edges",
     "image": "images/after-light-g-dictionary.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "after",
-    "theme": "light",
-    "state": "h-general-top-observed",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-light-h-general-top-observed.png",
-    "label": "native2x still, text and edges",
-    "width_px": 1104,
-    "height_px": 1218
+    "height_px": 1218,
+    "sha256": "eb4a6ff21f4becced8a38cebe772b29acbab47d8081b170dba3e2b907d5b45be"
   },
   {
     "arm": "after",
     "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 2,
     "state": "a-idle-hovered",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
+    "label": "native2x still, text and edges",
     "image": "images/after-dark-a-idle-hovered.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 550
+    "height_px": 550,
+    "sha256": "0a93ea7b953d6ffc819424ae7a2ad1772f0228c2c9284c54edd8d360be4c32f5"
   },
   {
     "arm": "after",
     "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 2,
     "state": "b-recording-first-frame",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
+    "label": "native2x still, text and edges",
     "image": "images/after-dark-b-recording-first-frame.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 550
+    "height_px": 550,
+    "sha256": "a97d0b9ca2fa67272adfb1380129de8ab0e66e60fbd8373c81571457eeaff6ce"
   },
   {
     "arm": "after",
     "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 2,
     "state": "c-recording-live",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
+    "label": "native2x still, text and edges",
     "image": "images/after-dark-c-recording-live.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 550
+    "height_px": 550,
+    "sha256": "debd775d6f400a6b025389bc3a20371ec7adadd9d01098dd52e27a212637992b"
   },
   {
     "arm": "after",
     "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 2,
     "state": "c2-recording-lock",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
+    "label": "native2x still, text and edges",
     "image": "images/after-dark-c2-recording-lock.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 550
+    "height_px": 550,
+    "sha256": "e074d5262e4d64be3e598d02ce70167c364881733622cf5b66e1b83ce3732198"
   },
   {
     "arm": "after",
     "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 2,
     "state": "d-transcribing",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
+    "label": "native2x still, text and edges",
     "image": "images/after-dark-d-transcribing.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 550
+    "height_px": 550,
+    "sha256": "d77b1612e886d07eff6f2a92a754c4d0b14a77cc970436215e026f330388f03f"
   },
   {
     "arm": "after",
     "theme": "dark",
-    "state": "e-burst-01",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
     "nativeScale": 2,
-    "image": "images/after-dark-e-burst-01.png",
-    "timestamp_ms": 979.193,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "after",
-    "theme": "dark",
-    "state": "e-burst-02",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-dark-e-burst-02.png",
-    "timestamp_ms": 1901.992,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "after",
-    "theme": "dark",
-    "state": "e-burst-03",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-dark-e-burst-03.png",
-    "timestamp_ms": 3871.683,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "after",
-    "theme": "dark",
-    "state": "e-burst-04",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-dark-e-burst-04.png",
-    "timestamp_ms": 4857.799,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "after",
-    "theme": "dark",
-    "state": "e-burst-05",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-dark-e-burst-05.png",
-    "timestamp_ms": 5841.066,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "after",
-    "theme": "dark",
-    "state": "e-burst-06",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-dark-e-burst-06.png",
-    "timestamp_ms": 6796.29,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "after",
-    "theme": "dark",
-    "state": "e-burst-07",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-dark-e-burst-07.png",
-    "timestamp_ms": 7755.04,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "after",
-    "theme": "dark",
-    "state": "e-burst-08",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-dark-e-burst-08.png",
-    "timestamp_ms": 8719.217,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 550
-  },
-  {
-    "arm": "after",
-    "theme": "dark",
     "state": "g-dictionary",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
+    "label": "native2x still, text and edges",
     "image": "images/after-dark-g-dictionary.png",
-    "label": "native2x still, text and edges",
     "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "after",
-    "theme": "dark",
-    "state": "h-general-top-observed",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-dark-h-general-top-observed.png",
-    "label": "native2x still, text and edges",
-    "width_px": 1104,
-    "height_px": 1218
+    "height_px": 1218,
+    "sha256": "7c10e264937112e6ec1d50237be095cbd9ed2c5ed4999f130fa5c39d18349987"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "f-burst-01",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-light-f-burst-01.png",
-    "timestamp_ms": 998.804,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "before",
-    "theme": "light",
-    "state": "f-burst-02",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-light-f-burst-02.png",
-    "timestamp_ms": 1959.451,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "before",
-    "theme": "light",
-    "state": "f-burst-03",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-light-f-burst-03.png",
-    "timestamp_ms": 3359.945,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "before",
-    "theme": "light",
-    "state": "f-burst-04",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-light-f-burst-04.png",
-    "timestamp_ms": 4309.189,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "before",
-    "theme": "light",
-    "state": "f-burst-05",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-light-f-burst-05.png",
-    "timestamp_ms": 5156.724,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "before",
-    "theme": "light",
-    "state": "f-burst-06",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-light-f-burst-06.png",
-    "timestamp_ms": 5995.839,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "before",
-    "theme": "light",
-    "state": "f-burst-07",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-light-f-burst-07.png",
-    "timestamp_ms": 6831.976,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "before",
-    "theme": "light",
-    "state": "f-burst-08",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-light-f-burst-08.png",
-    "timestamp_ms": 7682.846,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "before",
-    "theme": "dark",
-    "state": "f-burst-01",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-dark-f-burst-01.png",
-    "timestamp_ms": 995.634,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "before",
-    "theme": "dark",
-    "state": "f-burst-02",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-dark-f-burst-02.png",
-    "timestamp_ms": 1951.584,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "before",
-    "theme": "dark",
-    "state": "f-burst-03",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-dark-f-burst-03.png",
-    "timestamp_ms": 3333.42,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "before",
-    "theme": "dark",
-    "state": "f-burst-04",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-dark-f-burst-04.png",
-    "timestamp_ms": 4266.681,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "before",
-    "theme": "dark",
-    "state": "f-burst-05",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-dark-f-burst-05.png",
-    "timestamp_ms": 5177.114,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "before",
-    "theme": "dark",
-    "state": "f-burst-06",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-dark-f-burst-06.png",
-    "timestamp_ms": 6077.806,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "before",
-    "theme": "dark",
-    "state": "f-burst-07",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-dark-f-burst-07.png",
-    "timestamp_ms": 6966.214,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "before",
-    "theme": "dark",
-    "state": "f-burst-08",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 2,
-    "image": "images/before-dark-f-burst-08.png",
-    "timestamp_ms": 7843.491,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "after",
-    "theme": "light",
-    "state": "f-burst-01",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-light-f-burst-01.png",
-    "timestamp_ms": 1028.082,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "after",
-    "theme": "light",
-    "state": "f-burst-02",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-light-f-burst-02.png",
-    "timestamp_ms": 2066.393,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "after",
-    "theme": "light",
-    "state": "f-burst-03",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-light-f-burst-03.png",
-    "timestamp_ms": 3507.767,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "after",
-    "theme": "light",
-    "state": "f-burst-04",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-light-f-burst-04.png",
-    "timestamp_ms": 4492.034,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "after",
-    "theme": "light",
-    "state": "f-burst-05",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-light-f-burst-05.png",
-    "timestamp_ms": 5373.829,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "after",
-    "theme": "light",
-    "state": "f-burst-06",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-light-f-burst-06.png",
-    "timestamp_ms": 6271.262,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "after",
-    "theme": "light",
-    "state": "f-burst-07",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-light-f-burst-07.png",
-    "timestamp_ms": 7189.928,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "after",
-    "theme": "light",
-    "state": "f-burst-08",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-light-f-burst-08.png",
-    "timestamp_ms": 8080.767,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "after",
-    "theme": "dark",
-    "state": "f-burst-01",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-dark-f-burst-01.png",
-    "timestamp_ms": 1023.503,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "after",
-    "theme": "dark",
-    "state": "f-burst-02",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-dark-f-burst-02.png",
-    "timestamp_ms": 1999.24,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "after",
-    "theme": "dark",
-    "state": "f-burst-03",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-dark-f-burst-03.png",
-    "timestamp_ms": 3432.821,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "after",
-    "theme": "dark",
-    "state": "f-burst-04",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-dark-f-burst-04.png",
-    "timestamp_ms": 4408.953,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "after",
-    "theme": "dark",
-    "state": "f-burst-05",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-dark-f-burst-05.png",
-    "timestamp_ms": 5339.712,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "after",
-    "theme": "dark",
-    "state": "f-burst-06",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-dark-f-burst-06.png",
-    "timestamp_ms": 6257.473,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "after",
-    "theme": "dark",
-    "state": "f-burst-07",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-dark-f-burst-07.png",
-    "timestamp_ms": 7154.685,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "after",
-    "theme": "dark",
-    "state": "f-burst-08",
-    "build": "afacf26aa7ae206dca1acc27ab7174cc92a6fcbb",
-    "nativeScale": 2,
-    "image": "images/after-dark-f-burst-08.png",
-    "timestamp_ms": 8076.229,
-    "timestamp_kind": "capture request start relative to burst start; capture completes later",
-    "label": "native2x still burst; sparse samples, no frame-complete flicker proof",
-    "width_px": 1104,
-    "height_px": 1218
-  },
-  {
-    "arm": "before",
-    "theme": "light",
-    "state": "e-recorder-001",
-    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
-    "image": "images/before-light-e-recorder-001.png",
+    "nativeScale": 1.0,
     "timestamp_ms": 0.0,
-    "timestamp_kind": "movie presentation timestamp",
     "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-light-e-recorder-001.png",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "b69e87f361d622bc771f8563d3d75b0a242229d520f1e5121c90169f8735fe5b",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-002",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 91.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-002.png",
-    "timestamp_ms": 75.0,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "b85744ff8ba77eaaaa5feadbae83299b9d71c4fdcf004513aec4541784167f9c",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-003",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 158.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-003.png",
-    "timestamp_ms": 141.667,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "ee7340804a2dfe09a471309d181b8353be333a876f523d90484d5b413cdbc128",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-004",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 225.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-004.png",
-    "timestamp_ms": 208.333,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "44b5851b5020f7c48e3e4610428d22c35d893537b9ed5d16c07d42d2e55a9fe5",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-005",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 295.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-005.png",
-    "timestamp_ms": 283.333,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "b3b7386f965a7a29d3a868bbbc6693e77de34be7f819467c334ebc7e4852fd21",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-006",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 358.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-006.png",
-    "timestamp_ms": 350.0,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "b890a34228dd6291dc9ad12cd2bed63116c41c11906adc5fb345d7eb56c6f6ef",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-007",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 433.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-007.png",
-    "timestamp_ms": 416.667,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "0178f67e95a38efe371e47b998573e80a9584dcc3efd6d97c6e19b5c65699b7c",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-008",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 500.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-008.png",
-    "timestamp_ms": 483.333,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "e725e707052c71e1edf774e4ac1be9776c791cec0d4d25730cd5c3201cb202a0",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-009",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 575.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-009.png",
-    "timestamp_ms": 558.333,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "007c13d4278265407fdcf6126ae71e2cbddb80d6e3bbd95d1c577d634e2372eb",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-010",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 650.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-010.png",
-    "timestamp_ms": 616.667,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "aeb907b05c4a72762d8b8c0f626cf66bb93abdc4ccdc56e5db166970fb1e525c",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-011",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 716.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-011.png",
-    "timestamp_ms": 691.667,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "451bebe49872e290e6de416477c7a78ffafad63adb46f2a4c72d26ec36847d77",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-012",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 791.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-012.png",
-    "timestamp_ms": 766.667,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "66d41dd7e2b2929e33d6b92a114ee06c06cf49e61303b4e4912b99ea62e30aac",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-013",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 858.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-013.png",
-    "timestamp_ms": 833.333,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "6e0bfe787dc1ba2377b61e0400b9212b6b75c085acc8b01a55e704c20d1cef8b",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-014",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 925.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-014.png",
-    "timestamp_ms": 900.0,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "0fa504484a638665b95c6fc94f8c5499dbf9a7b29f7648d564f20d537a3880d9",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-015",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 1000.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-015.png",
-    "timestamp_ms": 975.0,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "3f7570bc091e3cecf113e384cdacd9cff15727f4421d9f874bd565f683650723",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-016",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 1066.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-016.png",
-    "timestamp_ms": 1041.667,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "07d7b90be9155c1c1d5eb2eb30b0ddeaf3066ae8e7bbe6a65eb8273ec97e206d",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-017",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 1133.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-017.png",
-    "timestamp_ms": 1108.333,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "501a9b948bc47dd043b47fb01ab091a67eae47f1c826ece7c43b5b075e83619d",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-018",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 1200.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-018.png",
-    "timestamp_ms": 1158.333,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "e5f6685a789f59373a5b73ae682a183c31f14e181d1a9b64a365abc765d57b3c",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-019",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 1275.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-019.png",
-    "timestamp_ms": 1250.0,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "f677a44c6511d87a95241946932de22141739399964de350128adad9dba48075",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-020",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 1341.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-020.png",
-    "timestamp_ms": 1316.667,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "81594db4bb072aac73dfe298cba10df49e3062a65cdcbb9b54ea2a6b0c270ede",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-021",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 1408.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-021.png",
-    "timestamp_ms": 1383.333,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "c15ebe674201b92773ee6a615619da4174c390b08a97e73eeefdd7526a4f8594",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-022",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 1475.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-022.png",
-    "timestamp_ms": 1450.0,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "f76c473ca8c35d17b6bf0cb6bd57b151eedb6382d7136b431c262c14600c654f",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-023",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 1541.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-023.png",
-    "timestamp_ms": 1516.667,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "66b3b5ae47014141479876811dcf36c6873d0490063f59db37402a9a4b1ffe8e",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-024",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 1608.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-024.png",
-    "timestamp_ms": 1583.333,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "55d871f214dc0a969f82d4bb77cf56fa896d89ea07c1d20627c6597a1e4e4005",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-025",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 1675.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-025.png",
-    "timestamp_ms": 1658.333,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "e3f0a607c090240f8ffbe4b5cff2f885bbbe8fb7bbd3f42c31ea5a3a195d35be",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-026",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 1741.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-026.png",
-    "timestamp_ms": 1725.0,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "aa120c8f280ea5ea20017568b2b0aff508e3758f5afddae053685d505c7f0677",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-027",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 1816.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-027.png",
-    "timestamp_ms": 1791.667,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "cc860ff03adb0feb823b205e5ed831b16f9e5890b4d3b9f698e1fcedb2145b81",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-028",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 1883.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-028.png",
-    "timestamp_ms": 1858.333,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "9584391999734c4a260145497e178617bcc69ee95a0020749e900592d568baeb",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-029",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 1950.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-029.png",
-    "timestamp_ms": 1925.0,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "10b10f7e6a61a5f9fdf26e6dbcd2b231ff2cacbbd15e316382a6f66f9e02b7b8",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-030",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
-    "nativeScale": 1,
+    "nativeScale": 1.0,
+    "timestamp_ms": 2025.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
     "image": "images/before-light-e-recorder-030.png",
-    "timestamp_ms": 1991.667,
-    "timestamp_kind": "movie presentation timestamp",
-    "label": "1x recorder frame, for position and visibility only, not for text",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "1b8a95dc4c8da4b2f1740980ca66ca712d60a38e13a204a288f6209b98d4e5c0",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
   },
   {
     "arm": "before",
     "theme": "light",
-    "state": "e-recorder-031",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 2091.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-light-e-recorder-031.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "2544a1e4953d6794ab78d1ac9768100748581b0bc95929f96ea12a600688714f",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "light",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 2158.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-light-e-recorder-032.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "b6ed6dd95659d1d2585acd62d54cdd317531e48d0b19997e4e16d6ad953a1a2b",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "light",
+    "state": "e-contact",
     "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
     "nativeScale": 1,
-    "image": "images/before-light-e-recorder-031.png",
-    "timestamp_ms": 2058.333,
-    "timestamp_kind": "movie presentation timestamp",
+    "label": "1x recorder frames; original top64px crops, exact PTS; position and visibility only, not for text",
+    "image": "images/before-light-e-contact.png",
+    "width_px": 1104,
+    "height_px": 1568,
+    "sha256": "4e6ddd4c9e10cf460c20193201857b8bd44bdfa2efcd09aa408d1231d4db3c63"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 0.0,
     "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-001.png",
     "width_px": 552,
-    "height_px": 274
+    "height_px": 274,
+    "sha256": "4f4ebabeaa5c739fb2ca383c841a3d4f7b8d98ee0817422619c8924a59f5c6fb",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 66.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-002.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "2044fcb40f6779eefabb50c6019901c4e9ff2ee19c8c8f056c11539d1534ae52",
+    "band_edges_at_y16_px": [
+      95,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 133.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-003.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "4c72efe4c344cf87698d35ce5675a7e645bd0d6a0d29744dc55bc9ae1d0e2bf4",
+    "band_edges_at_y16_px": [
+      95,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 200.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-004.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "2044fcb40f6779eefabb50c6019901c4e9ff2ee19c8c8f056c11539d1534ae52",
+    "band_edges_at_y16_px": [
+      95,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 266.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-005.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "9c8c3a613c0eb4a175fb8aba8ac9e610feffde7f88bda0adca2021a0ac53d0be",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 333.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-006.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "a0d44a9cc33aaeb9a693373ea7625527bf12aa579b16781bf560ae5dce6fc42a",
+    "band_edges_at_y16_px": [
+      95,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 408.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-007.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "94c1af5a24cfd6d5f3b62e97565483f026aa26a84d48d48809afb1fe7937869f",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 475.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-008.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "40e69876800a7eb9213476f76908e48854e6e549a367e100e6dadf77ed8e78d2",
+    "band_edges_at_y16_px": [
+      95,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 541.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-009.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "c806236426074872ecfcaa497f256e3a2dafd7a57b7c82d576467cd977217a28",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 608.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-010.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "bc811587cfdd9c74cb27736e90e78a442af8e13a9af408f97760b27636defe82",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 675.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-011.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "899741851e9d34f706b0757efb580504dd71fd6074d97b0bfd9c67c1ed8e62d4",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 741.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-012.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "231898e1fd197ed7b1bb435c6b0c18569b94659c3b0a4f366af8772472a17b5e",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 808.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-013.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "1c64f87c98bc537c1ae37bafa45b3ee4f2dd5cb1a667631920d96efd6c91b3e8",
+    "band_edges_at_y16_px": [
+      98,
+      468
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 875.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-014.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "9f5cecb4d4256d610ebd56fb7fabd51875f398551b4c0e7cb7eb43766634b967",
+    "band_edges_at_y16_px": [
+      110,
+      449
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 950.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-015.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "24dae1639cafceb8af8aff79466dcd8ed766ef5b026f23a195bf6fd7be3c1c32",
+    "band_edges_at_y16_px": [
+      116,
+      440
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1016.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-016.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "51b5cb73abaa74ba578863cfebb7755480c8e36b2274a45017df7008e85d79e1",
+    "band_edges_at_y16_px": [
+      118,
+      436
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1083.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-017.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "00db1c030a8200e5070a6d6b824759cbd8817894086e4a416d3f12c532edc976",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1150.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-018.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "911729de2d48f66f570ed20100779a7716669a945a17c6a7acac0fa250d6e699",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1216.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-019.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "531d0242a193eaf0681518bbf20dcd0cce71e3a0c8983001b7b6f4c8c6079292",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1283.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-020.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "b8f5f217f8cf9b3992edc21959c6b5dc9aadfd2966f392a9eef6ef09c8354f8e",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1341.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-021.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "32178f5f1537e58b423d8f8cf30e2c306ff5c175dac900c200fc0b9908c86792",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1408.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-022.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "97b1c2784772de14ecdbd51e27c43331eeeb1a1b18c279f5d367ae8e2bead6fa",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1475.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-023.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "bc5e1095e6bcfd8fcefcd78d2b3d29c35b57f2c04b71ce3de075996f786b8a29",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1541.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-024.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "e379f2c7220ef3d305fc4518dd0beb5e623ab5ffd69e2234793cfb73b0ba1023",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1608.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-025.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "0d8f9948ffb6e9d5f3c8bcd8f0b5407e608722b7271bcfbcbafc3ed81402636e",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1675.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-026.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "a70b174834b2a4472a20360036d0697005c42aae257ab2fe2ac819aad9ce4a54",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1741.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-027.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "d0cc3f288e158995255550976dd60d3550deb468c40915e3f388840415b69b34",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1808.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-028.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "fe1dd0549812e45f85682df58e4ed5247077e694224dd48a94e459a6603d4fa3",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1875.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-029.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "cb1dc496eea3b0349af9b00bdf84a6e7382150abc2e6900390736cbc363a0078",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1941.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-030.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "80fa7140cc7d4ec4383cfa5c55d03c904d493effbe3f15d0dab5d2efc1913b1f",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 2008.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-031.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "c4512fc49b94f9a60f6cac2c1c338a868ebf1a16295e252c2d56ec96672cb9c2",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 2075.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-dark-e-recorder-032.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "2b04740f74638f097164df464e9261efd3d5eb2f6da88f5c2f82e458e496724a",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "state": "e-contact",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1,
+    "label": "1x recorder frames; original top64px crops, exact PTS; position and visibility only, not for text",
+    "image": "images/after-dark-e-contact.png",
+    "width_px": 1104,
+    "height_px": 1568,
+    "sha256": "976f3417d3dfd77e775119d8f2fdb9e70734d142850319f505384751a470b2c7"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 0.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-001.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "43cf1048c049812ceb1977d8f6bde064fd5430b8389f14d7b035450507c4749b",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 66.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-002.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "b471d46b8064c4eac9243839459db74eaef22c505bef5b14347c8ed1a7b1b760",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 133.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-003.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "af463d6ea4ff19af9357b832e6b72697e392eb0dcff5e6431bef73fc93218689",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 200.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-004.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "44711475eea94018aaef607b6f252b727bdbae34f75ad118421c7a0b8e2e9735",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 266.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-005.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "2365f4af426a7325e825111bd76428711ceb963361a76bd0a57c8839114ee1b8",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 333.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-006.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "4c165db314c68ea38e8187bce988aeeff3616fa86832b1bef4a1b781a033c903",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 400.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-007.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "9cad4f77adb2cc580b2e470bb0b7e93f009df68d33f55eadae367d9b0523ba57",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 475.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-008.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "5b88d0724ccc9a863f86bee0082f20b30ce3effb777966219aefce5eb4cdc1ce",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 541.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-009.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "228f7f278309bef8a0972523b5876f55077d5c8dc4ba01f7a9851ade30f90be8",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 608.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-010.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "8f7a67d7b843858682a422a67db087b116c2d312a2425ee8af7c98b8fbc0cbd3",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 675.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-011.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "0274c88066dc3d257940bc0019e169aafcb168ff470c4d2a24fb02f77fce7a47",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 741.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-012.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "4eb2037ecd5b813a1590314f74266dc78a30683fa3337ecb64153526ec39afc8",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 808.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-013.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "e95591374d49b9636352f0fe2fabaac5df2c1dc48040afc3f2616df23a0307ce",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 866.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-014.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "0d6248e6367dc28cff8c68e48021f05cfb17fa6ecd688c7272d1167dd4c5b810",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 933.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-015.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "3fdefa64c6a1d11bbc9efb29adae3096adef2333a29cd8d52a88ad51a00bf145",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1000.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-016.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "246a93ef39f983189d42ed16a5586d04b0b08ed2f42d2093b49b12c1680f89f6",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1050.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-017.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "1c3271720f0cd5bf23a064e91a25868f3fc9d7925a281d57d4a37d8b7eb857d9",
+    "band_edges_at_y16_px": [
+      96,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1150.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-018.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "3f1b5a2af377571ae8929d63ba96b7f976d02db4a281b96d971a01c366f2ec78",
+    "band_edges_at_y16_px": [
+      101,
+      464
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1216.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-019.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "78cbee22f33a739a76c422ede64e09dce3a79344dd963499f47d7203d869ba95",
+    "band_edges_at_y16_px": [
+      111,
+      448
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1283.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-020.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "a55260774ed48a35c5bc7822d17dd1750ab9f263d84e05365e7287266e9b99ba",
+    "band_edges_at_y16_px": [
+      117,
+      439
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1350.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-021.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "faa4d381234f2a4b2c2c2cdab81d6d665acd150a08a18158e04979b7fe4b8f77",
+    "band_edges_at_y16_px": [
+      118,
+      436
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1416.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-022.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "f82972cfdb4508073524b0e5ece03c4d598bdc57c51424a7ffa8ce939d828790",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1486.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-023.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "8ec880aad615032e883be479666ac7512cd6ca83ed57b95174a09195db4a1e8e",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1550.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-024.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "834430da778e48ca843beffee8915f2a75773ee7a3ab82f267de1f357b5e4dc8",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1616.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-025.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "d74fbc3809f0227d747994598da7d824fb6607fa444fc500b0453900d52171db",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1670.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-026.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "f74532194887245224244ac6d938cd348c7ef26d0a2ef40ca46f627962ac04c0",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1736.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-027.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "4d5bb82faaeee0940bb875315c4f6f9027ec89d1917196b769ac7c14cb54dd1f",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1803.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-028.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "fc5841357678ffea503db4282ff353fb1140f2262ab6c594328ca204c323d60c",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1870.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-029.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "6f488ba813b759d16f21c9ce8909d0e617af378cdd5cbc38ee0f9fa874633e06",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1936.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-030.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "77ae6fb0fc4a3ddb5548a9922bdad2ab29679f628bce7f52bff4ef0485b68c92",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 2003.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-031.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "0e3c01dd5fa0244001ac516e24e5fbc423da16f66fb10ab1c6e58dfaf6c5e480",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 2070.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-032.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "16a496467fdf7342fcd110ca7570df5e2539ad1e94c99e6f88ef71173e45f551",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 2136.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-033.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "004c162d4825364b8fc47014575156d738ae540c73047c3159bcf70ccad12754",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 2203.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-034.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "9f1e043d35016bc54160084ec8052b7c712c0e0332e305e47d1d5875fabc48c5",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 2270.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-035.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "5ffcce94d30078cb176716681073f0c5d78388fba3c0dc6436ead38d1197e4d8",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 2336.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-036.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "3ee14ef8e4bb1ee2ae7266a5b7b1fd4c32a4f1768096f55a8582151bc3effb43",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1.0,
+    "timestamp_ms": 2403.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/after-light-e-recorder-037.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "da31a1fda5dba8567b1f68dfe6515d32ee0b1e36e9c55f40ae99b8ff00f777b3",
+    "band_edges_at_y16_px": [
+      119,
+      435
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "state": "e-contact",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 1,
+    "label": "1x recorder frames; original top64px crops, exact PTS; position and visibility only, not for text",
+    "image": "images/after-light-e-contact.png",
+    "width_px": 1104,
+    "height_px": 1862,
+    "sha256": "f6d2dde99a4229960923a7811cd561d12813ff511b8f9e2ce3b18ff00e33faa8"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 0.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-001.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "05c201cc8259b6006717dd6c3acc4853d69daae427bcb48f1cef32caf32106be",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 66.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-002.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "291301b2e4557fbbd4fbaa3b03b30121bb7a71fb9d14642be62d1daa218e00d9",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 133.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-003.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "1a80f6c5cebf0ac8a03b2b46e472b8515a6a896aa4f4ed5a6764301c077fac3f",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 208.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-004.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "7a3604bfc354a02c4d518dfaa9a6ee091b06d83737564441a9203d652bf060c3",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 283.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-005.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "c179a5861f7874b953af65daa262ae6054f7bb463eebf66fa472e87393f8a858",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 358.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-006.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "3cbf2aeb4438cc964aa82ba603df78b471a88cd8d6aa1a09311bbcad3df8c488",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 425.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-007.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "e867835878ae1e3a8cb9709e75fb19f096f3573056db389b4c761bbd339b9df0",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 500.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-008.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "0c3e7249dc624b89ce37f63e3dacfa3ceb3453b58896f95ef5f8e640fa014ad1",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 566.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-009.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "d4b2840dd704c5e7a603573d3034acabbab79e9d9919b398e2acae1ef544d263",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 633.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-010.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "d94b8df41d25b9e2ec872cec769d027d57c75bdcfc9566fb466a4a7d310b2875",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 708.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-011.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "ea77f72dde036906e33d56319f7e31fb8728d917ba4e5e49e0da5717a2ce4e22",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 775.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-012.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "7af72709d072debfe9c3c35333ea149ed9f19e84f3f19486c12efaafd6e6911c",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 841.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-013.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "46812449499933e13c345f49a27e7eb22efe7e5338436fb49443edc6e07cfba7",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 900.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-014.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "88c6781739aecfa9e4c516b44920b721464eea3d7cd1b262cb6c2c9d061e718d",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 966.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-015.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "297de2082e6995aabbac14f6941ba6553a1b5ceff329e6cabfcb6ee0e31110e0",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1050.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-016.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "99d9c30d4247f88af5f3bab596d805c9095965cfd51fd41e494573b0c96c3791",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1116.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-017.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "a948e00bb671098910e139c05816e5d7be92966f561e7cf8bd1beb8bdb0dbb25",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1183.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-018.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "cbf1049535dc735c60bba9bb5e42a3bc9c92c25a5886e4788a137863f78da011",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1233.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-019.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "c57862263919e535fef8f70d71192a15e6cb647709eff158c7b62b90dd0162d1",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1316.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-020.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "1801f7e06d595c9f885829479452919fece57ca1eb66fc0cbfcc843774348e35",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1383.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-021.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "04c49e30dd016cbc1e8be803a46c9545562fcb394881d2e186e4a179dfe4c480",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1450.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-022.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "d43361c40aac327cf2776ea6412a638193c2d1b28a086500951f1138260c2e5c",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1533.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-023.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "b7d69d41e65ad4b3ffaef680db5202be1c9bfc07f90a1135e0215481645eadee",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1600.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-024.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "d77b0cb980aba32a0612cf5b84702be0e77175079ef7cf65cdbf650fc68529a0",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1666.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-025.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "cbcd6da42f50b2bd092f88a0c24baccb4c554fddb06d89bb608ad38a5ea30c1b",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1733.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-026.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "b587b4e3fe96c621ba9e22731d913c475a6849cd304da83597712959661de730",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1800.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-027.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "cdd4790f368af44ef0e012bdc911806999c72c71ccc66023051e69ade8f5b314",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1866.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-028.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "c4679c904ff18feb0929a9937c481d86d6806c9909c1fe904b628d449ea5ccbc",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 1933.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-029.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "4c520a91585be4b24c53b95d4df2206c1553169ad67346e02b263a66ab6caa6e",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 2000.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-030.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "9055ed827406fc5d97e475528f7e5ec67dcd1cbfc2337257051e32163930c8b6",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 2066.667,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-031.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "2d01fb4e66439b137a9ac1a337c5ee8c0edc11ad421e3f3994bc955c6a834718",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 2133.333,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-032.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "18f05b2b58c33c87447f3c8f34a60ffb4741b742a553a175ee4b6f6c367a8033",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1.0,
+    "timestamp_ms": 2200.0,
+    "label": "1x recorder frame, for position and visibility only, not for text",
+    "state": "e",
+    "image": "images/before-dark-e-recorder-033.png",
+    "width_px": 552,
+    "height_px": 274,
+    "sha256": "48e88b01a9c144f88f29654c0a150e07a89170fbe2a4b3e84adb0f5e24f8d4e4",
+    "band_edges_at_y16_px": [
+      82,
+      472
+    ],
+    "timestamp_kind": "original movie best_effort_timestamp_time, milliseconds"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "state": "e-contact",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 1,
+    "label": "1x recorder frames; original top64px crops, exact PTS; position and visibility only, not for text",
+    "image": "images/before-dark-e-contact.png",
+    "width_px": 1104,
+    "height_px": 1666,
+    "sha256": "fd3f45d4aa0f2cbb4a5c9f59501fa99d619785a65236e64d1d9c3fa383a97e7b"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "state": "f0-rest",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 2,
+    "request_monotonic_ms": 9213258.537,
+    "label": "native2x held-stage still; capture request monotonic timestamp, not movie PTS",
+    "image": "images/after-dark-f0-rest.png",
+    "width_px": 1104,
+    "height_px": 1218,
+    "sha256": "5e11fa426e27be51a6bcb7d81c7c334a4cbb82f5b74abd499c40bb5332ff8faa"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "state": "f1-50",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 2,
+    "request_monotonic_ms": 9215654.511,
+    "label": "native2x held-stage still; capture request monotonic timestamp, not movie PTS",
+    "image": "images/after-dark-f1-50.png",
+    "width_px": 1104,
+    "height_px": 1218,
+    "sha256": "1cbf7f692724473ff459cd03af83c550068ee9f6163d25224eec52d606ff8cf3"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "state": "f2-100",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 2,
+    "request_monotonic_ms": 9217545.814,
+    "label": "native2x held-stage still; capture request monotonic timestamp, not movie PTS",
+    "image": "images/after-dark-f2-100.png",
+    "width_px": 1104,
+    "height_px": 1218,
+    "sha256": "299332a9b38a1f20e1028e0218262872067c0fc76ad161857abf43739aafd469"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "state": "f3-armed",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 2,
+    "request_monotonic_ms": 9219441.862,
+    "label": "native2x held-stage still; capture request monotonic timestamp, not movie PTS",
+    "image": "images/after-dark-f3-armed.png",
+    "width_px": 1104,
+    "height_px": 1218,
+    "sha256": "027e910dad8377b18c18de210c14338134b2b2b30a4879a8c3a0b0661b86f5eb"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "state": "f4-back-below-threshold",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 2,
+    "request_monotonic_ms": 9222348.491,
+    "label": "native2x held-stage still; capture request monotonic timestamp, not movie PTS",
+    "image": "images/after-dark-f4-back-below-threshold.png",
+    "width_px": 1104,
+    "height_px": 1218,
+    "sha256": "1a206a3530086d2d8882d80236b7bfc7202698414fe566a9c344215cdcf86ba2"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "state": "f5-released-history",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 2,
+    "request_monotonic_ms": 9224078.518,
+    "label": "native2x held-stage still; capture request monotonic timestamp, not movie PTS",
+    "image": "images/after-dark-f5-released-history.png",
+    "width_px": 1104,
+    "height_px": 1218,
+    "sha256": "9d98203ab3466ac4f98531d2e513730c117fda706fe9c3ab873d872db37286b6"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "state": "f6-armed-release-variant",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 2,
+    "request_monotonic_ms": 9228020.961,
+    "label": "native2x held-stage still; capture request monotonic timestamp, not movie PTS",
+    "image": "images/after-dark-f6-armed-release-variant.png",
+    "width_px": 1104,
+    "height_px": 1218,
+    "sha256": "67dd3317c7d5ff7c30b391678b3f28eed8f647f316c544e393e01ee0418b485c"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "state": "f7-release-opens-settings",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 2,
+    "request_monotonic_ms": 9229860.519,
+    "label": "native2x held-stage still; capture request monotonic timestamp, not movie PTS",
+    "image": "images/after-dark-f7-release-opens-settings.png",
+    "width_px": 1104,
+    "height_px": 1218,
+    "sha256": "1b6dee17485f35bab9099a8b4410dad29cac2aa69bc5c546640c73587df81011"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "state": "f0-rest",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 2,
+    "request_monotonic_ms": 9234792.467,
+    "label": "native2x held-stage still; capture request monotonic timestamp, not movie PTS",
+    "image": "images/before-dark-f0-rest.png",
+    "width_px": 1104,
+    "height_px": 1218,
+    "sha256": "1977bd088bfea334cabac6865119c68de29c3243a9eb5235143c83ff0fa0ba5f"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "state": "f1-50",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 2,
+    "request_monotonic_ms": 9237146.352,
+    "label": "native2x held-stage still; capture request monotonic timestamp, not movie PTS",
+    "image": "images/before-dark-f1-50.png",
+    "width_px": 1104,
+    "height_px": 1218,
+    "sha256": "475be61ba7e329b92aef7575b02fe6b5ba877d2d2fbfc3f51dedf229bd228b6c"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "state": "f2-100",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 2,
+    "request_monotonic_ms": 9238997.732,
+    "label": "native2x held-stage still; capture request monotonic timestamp, not movie PTS",
+    "image": "images/before-dark-f2-100.png",
+    "width_px": 1104,
+    "height_px": 1218,
+    "sha256": "977ba14ba1c9b45337e10214244d6f0abbdb18d933f394d6114589b7f0000dc1"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "state": "f3-armed",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 2,
+    "request_monotonic_ms": 9240994.363,
+    "label": "native2x held-stage still; capture request monotonic timestamp, not movie PTS",
+    "image": "images/before-dark-f3-armed.png",
+    "width_px": 1104,
+    "height_px": 1218,
+    "sha256": "779c69f1e2fb13aa3c4ee01761ce50ae6351e3793a1c949633c5d059b62d5334"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "state": "f4-back-below-threshold",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 2,
+    "request_monotonic_ms": 9243897.887,
+    "label": "native2x held-stage still; capture request monotonic timestamp, not movie PTS",
+    "image": "images/before-dark-f4-back-below-threshold.png",
+    "width_px": 1104,
+    "height_px": 1218,
+    "sha256": "72e0aac89d17ae667871e6c9f8bdbb4b78673fec7df5d93f328035166d892d72"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "state": "f5-released-history",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 2,
+    "request_monotonic_ms": 9245625.161,
+    "label": "native2x held-stage still; capture request monotonic timestamp, not movie PTS",
+    "image": "images/before-dark-f5-released-history.png",
+    "width_px": 1104,
+    "height_px": 1218,
+    "sha256": "97653134c34aa1c84cad5e391288c57c3d224eff62fe7658292e55309c65ed15"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "state": "f6-armed-release-variant",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 2,
+    "request_monotonic_ms": 9249525.199,
+    "label": "native2x held-stage still; capture request monotonic timestamp, not movie PTS",
+    "image": "images/before-dark-f6-armed-release-variant.png",
+    "width_px": 1104,
+    "height_px": 1218,
+    "sha256": "2855f675e3b979ce8e8de6626f92a67e7346a83b3888e5e5d4aba7f5b5fa26ef"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "state": "f7-release-opens-settings",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 2,
+    "request_monotonic_ms": 9251337.285,
+    "label": "native2x held-stage still; capture request monotonic timestamp, not movie PTS",
+    "image": "images/before-dark-f7-release-opens-settings.png",
+    "width_px": 1104,
+    "height_px": 1218,
+    "sha256": "65b6f3b9397d5a308a3441ff60cedd291e7a05d385c4c8b8d2d3ff8c8498927b"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "state": "f-contact",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": null,
+    "label": "Downsampled contact overview; native2x individual PNGs authoritative",
+    "image": "images/after-dark-f-contact.png",
+    "width_px": 1104,
+    "height_px": 652,
+    "sha256": "7e3c97aa38622ea61b2ca8455b598392558cbd9b966812186fb912bfbcaed502"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+    "nativeScale": 2,
+    "state": "f-first-trial-collapsed",
+    "label": "Adverse first trial: fast upward backoff closed History; never a passing cancel proof",
+    "image": "images/after-dark-f-first-trial-collapsed.png",
+    "width_px": 1104,
+    "height_px": 550,
+    "sha256": "0a93ea7b953d6ffc819424ae7a2ad1772f0228c2c9284c54edd8d360be4c32f5"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "state": "f-contact",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": null,
+    "label": "Downsampled contact overview; native2x individual PNGs authoritative",
+    "image": "images/before-dark-f-contact.png",
+    "width_px": 1104,
+    "height_px": 652,
+    "sha256": "9308c130530cd381d5a08a226c90e5c52244ac40d3a5cf0f6d3d8a068543ed48"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "build": "7faf0a0e43f5afa2c135950bb15daafe473b39c6",
+    "nativeScale": 2,
+    "state": "f-first-trial-collapsed",
+    "label": "Adverse first trial: fast upward backoff closed History; never a passing cancel proof",
+    "image": "images/before-dark-f-first-trial-collapsed.png",
+    "width_px": 1104,
+    "height_px": 550,
+    "sha256": "1b81937716c7d49381bb6d4af50db9ab7d8dd23ba79566192f2977cd226d8452"
   }
 ]

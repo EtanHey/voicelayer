@@ -1,0 +1,1122 @@
+[
+  {
+    "arm": "before",
+    "theme": "light",
+    "frames": 32,
+    "first_pts_ms": 0.0,
+    "last_pts_ms": 2158.333,
+    "nativeScale": 1,
+    "series": [
+      {
+        "frame": 1,
+        "pts_ms": 0.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 2,
+        "pts_ms": 91.667,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 3,
+        "pts_ms": 158.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 4,
+        "pts_ms": 225.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 5,
+        "pts_ms": 295.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 6,
+        "pts_ms": 358.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 7,
+        "pts_ms": 433.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 8,
+        "pts_ms": 500.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 9,
+        "pts_ms": 575.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 10,
+        "pts_ms": 650.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 11,
+        "pts_ms": 716.667,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 12,
+        "pts_ms": 791.667,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 13,
+        "pts_ms": 858.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 14,
+        "pts_ms": 925.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 15,
+        "pts_ms": 1000.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 16,
+        "pts_ms": 1066.667,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 17,
+        "pts_ms": 1133.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 18,
+        "pts_ms": 1200.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 19,
+        "pts_ms": 1275.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 20,
+        "pts_ms": 1341.667,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 21,
+        "pts_ms": 1408.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 22,
+        "pts_ms": 1475.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 23,
+        "pts_ms": 1541.667,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 24,
+        "pts_ms": 1608.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 25,
+        "pts_ms": 1675.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 26,
+        "pts_ms": 1741.667,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 27,
+        "pts_ms": 1816.667,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 28,
+        "pts_ms": 1883.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 29,
+        "pts_ms": 1950.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 30,
+        "pts_ms": 2025.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 31,
+        "pts_ms": 2091.667,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 32,
+        "pts_ms": 2158.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      }
+    ],
+    "gif": "images/before-light-e.gif",
+    "gif_note": "1x preview; GIF timing rounded to codec ticks; original PNGs and movie PTS are authoritative"
+  },
+  {
+    "arm": "after",
+    "theme": "dark",
+    "frames": 32,
+    "first_pts_ms": 0.0,
+    "last_pts_ms": 2075.0,
+    "nativeScale": 1,
+    "series": [
+      {
+        "frame": 1,
+        "pts_ms": 0.0,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 2,
+        "pts_ms": 66.667,
+        "band_edges_px": [
+          95,
+          472
+        ]
+      },
+      {
+        "frame": 3,
+        "pts_ms": 133.333,
+        "band_edges_px": [
+          95,
+          472
+        ]
+      },
+      {
+        "frame": 4,
+        "pts_ms": 200.0,
+        "band_edges_px": [
+          95,
+          472
+        ]
+      },
+      {
+        "frame": 5,
+        "pts_ms": 266.667,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 6,
+        "pts_ms": 333.333,
+        "band_edges_px": [
+          95,
+          472
+        ]
+      },
+      {
+        "frame": 7,
+        "pts_ms": 408.333,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 8,
+        "pts_ms": 475.0,
+        "band_edges_px": [
+          95,
+          472
+        ]
+      },
+      {
+        "frame": 9,
+        "pts_ms": 541.667,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 10,
+        "pts_ms": 608.333,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 11,
+        "pts_ms": 675.0,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 12,
+        "pts_ms": 741.667,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 13,
+        "pts_ms": 808.333,
+        "band_edges_px": [
+          98,
+          468
+        ]
+      },
+      {
+        "frame": 14,
+        "pts_ms": 875.0,
+        "band_edges_px": [
+          110,
+          449
+        ]
+      },
+      {
+        "frame": 15,
+        "pts_ms": 950.0,
+        "band_edges_px": [
+          116,
+          440
+        ]
+      },
+      {
+        "frame": 16,
+        "pts_ms": 1016.667,
+        "band_edges_px": [
+          118,
+          436
+        ]
+      },
+      {
+        "frame": 17,
+        "pts_ms": 1083.333,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 18,
+        "pts_ms": 1150.0,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 19,
+        "pts_ms": 1216.667,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 20,
+        "pts_ms": 1283.333,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 21,
+        "pts_ms": 1341.667,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 22,
+        "pts_ms": 1408.333,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 23,
+        "pts_ms": 1475.0,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 24,
+        "pts_ms": 1541.667,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 25,
+        "pts_ms": 1608.333,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 26,
+        "pts_ms": 1675.0,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 27,
+        "pts_ms": 1741.667,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 28,
+        "pts_ms": 1808.333,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 29,
+        "pts_ms": 1875.0,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 30,
+        "pts_ms": 1941.667,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 31,
+        "pts_ms": 2008.333,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 32,
+        "pts_ms": 2075.0,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      }
+    ],
+    "gif": "images/after-dark-e.gif",
+    "gif_note": "1x preview; GIF timing rounded to codec ticks; original PNGs and movie PTS are authoritative"
+  },
+  {
+    "arm": "after",
+    "theme": "light",
+    "frames": 37,
+    "first_pts_ms": 0.0,
+    "last_pts_ms": 2403.333,
+    "nativeScale": 1,
+    "series": [
+      {
+        "frame": 1,
+        "pts_ms": 0.0,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 2,
+        "pts_ms": 66.667,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 3,
+        "pts_ms": 133.333,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 4,
+        "pts_ms": 200.0,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 5,
+        "pts_ms": 266.667,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 6,
+        "pts_ms": 333.333,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 7,
+        "pts_ms": 400.0,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 8,
+        "pts_ms": 475.0,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 9,
+        "pts_ms": 541.667,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 10,
+        "pts_ms": 608.333,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 11,
+        "pts_ms": 675.0,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 12,
+        "pts_ms": 741.667,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 13,
+        "pts_ms": 808.333,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 14,
+        "pts_ms": 866.667,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 15,
+        "pts_ms": 933.333,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 16,
+        "pts_ms": 1000.0,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 17,
+        "pts_ms": 1050.0,
+        "band_edges_px": [
+          96,
+          472
+        ]
+      },
+      {
+        "frame": 18,
+        "pts_ms": 1150.0,
+        "band_edges_px": [
+          101,
+          464
+        ]
+      },
+      {
+        "frame": 19,
+        "pts_ms": 1216.667,
+        "band_edges_px": [
+          111,
+          448
+        ]
+      },
+      {
+        "frame": 20,
+        "pts_ms": 1283.333,
+        "band_edges_px": [
+          117,
+          439
+        ]
+      },
+      {
+        "frame": 21,
+        "pts_ms": 1350.0,
+        "band_edges_px": [
+          118,
+          436
+        ]
+      },
+      {
+        "frame": 22,
+        "pts_ms": 1416.667,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 23,
+        "pts_ms": 1486.667,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 24,
+        "pts_ms": 1550.0,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 25,
+        "pts_ms": 1616.667,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 26,
+        "pts_ms": 1670.0,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 27,
+        "pts_ms": 1736.667,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 28,
+        "pts_ms": 1803.333,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 29,
+        "pts_ms": 1870.0,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 30,
+        "pts_ms": 1936.667,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 31,
+        "pts_ms": 2003.333,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 32,
+        "pts_ms": 2070.0,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 33,
+        "pts_ms": 2136.667,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 34,
+        "pts_ms": 2203.333,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 35,
+        "pts_ms": 2270.0,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 36,
+        "pts_ms": 2336.667,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      },
+      {
+        "frame": 37,
+        "pts_ms": 2403.333,
+        "band_edges_px": [
+          119,
+          435
+        ]
+      }
+    ],
+    "gif": "images/after-light-e.gif",
+    "gif_note": "1x preview; GIF timing rounded to codec ticks; original PNGs and movie PTS are authoritative"
+  },
+  {
+    "arm": "before",
+    "theme": "dark",
+    "frames": 33,
+    "first_pts_ms": 0.0,
+    "last_pts_ms": 2200.0,
+    "nativeScale": 1,
+    "series": [
+      {
+        "frame": 1,
+        "pts_ms": 0.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 2,
+        "pts_ms": 66.667,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 3,
+        "pts_ms": 133.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 4,
+        "pts_ms": 208.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 5,
+        "pts_ms": 283.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 6,
+        "pts_ms": 358.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 7,
+        "pts_ms": 425.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 8,
+        "pts_ms": 500.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 9,
+        "pts_ms": 566.667,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 10,
+        "pts_ms": 633.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 11,
+        "pts_ms": 708.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 12,
+        "pts_ms": 775.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 13,
+        "pts_ms": 841.667,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 14,
+        "pts_ms": 900.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 15,
+        "pts_ms": 966.667,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 16,
+        "pts_ms": 1050.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 17,
+        "pts_ms": 1116.667,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 18,
+        "pts_ms": 1183.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 19,
+        "pts_ms": 1233.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 20,
+        "pts_ms": 1316.667,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 21,
+        "pts_ms": 1383.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 22,
+        "pts_ms": 1450.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 23,
+        "pts_ms": 1533.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 24,
+        "pts_ms": 1600.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 25,
+        "pts_ms": 1666.667,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 26,
+        "pts_ms": 1733.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 27,
+        "pts_ms": 1800.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 28,
+        "pts_ms": 1866.667,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 29,
+        "pts_ms": 1933.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 30,
+        "pts_ms": 2000.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 31,
+        "pts_ms": 2066.667,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 32,
+        "pts_ms": 2133.333,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      },
+      {
+        "frame": 33,
+        "pts_ms": 2200.0,
+        "band_edges_px": [
+          82,
+          472
+        ]
+      }
+    ],
+    "gif": "images/before-dark-e.gif",
+    "gif_note": "1x preview; GIF timing rounded to codec ticks; original PNGs and movie PTS are authoritative"
+  }
+]
