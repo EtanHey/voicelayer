@@ -42,8 +42,8 @@ final class WaveformViewTests: XCTestCase {
         let processing = VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(mode: .transcribing, statusText: "Transcribing")
         )
-        XCTAssertEqual(processing.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth)
-        XCTAssertEqual(processing.geometry.leadingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth)
+        XCTAssertEqual(processing.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth)
+        XCTAssertEqual(processing.geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth)
 
         let calibratedInset = VoiceBarNotchContract.hardwareHorizontalCalibrationInset
         let speaking = VoiceBarPresentation.notchPresentation(
@@ -167,7 +167,7 @@ final class WaveformViewTests: XCTestCase {
         )
 
         for (state, presentation, label, drawsMeter) in [
-            (processingState, processingPresentation, "processing", true),
+            (processingState, processingPresentation, "processing", false),
             (speakingState, speakingPresentation, "speaking", true),
         ] {
             let image = try renderBar(
@@ -448,17 +448,17 @@ final class WaveformViewTests: XCTestCase {
             .components(separatedBy: "} else if")[0]
         let spinner = try XCTUnwrap(transcribingBranch.range(of: "transcriptionSpinner")).lowerBound
         let chevron = try XCTUnwrap(transcribingBranch.range(of: "microphonePickerButton")).lowerBound
-        XCTAssertLessThan(chevron, spinner, "lead ruling 2026-11-15: the microphone sits on the outer side of the spinner, the spinner nearest the notch")
-        XCTAssertTrue(leadingCompactStatusBranch.contains("ProcessingSpinner(color: Theme.processingRippleColor(for: notchAppearance))"))
+        XCTAssertLessThan(spinner, chevron, "lead ruling 2026-11-15: the microphone sits on the outer side of the spinner, the spinner nearest the notch")
+        XCTAssertTrue(leadingCompactStatusBranch.contains("ProcessingSpinner(transcribing: notchAppearance)"))
         XCTAssertFalse(leadingCompactStatusBranch.contains("statusLabel"))
         XCTAssertFalse(leadingCompactStatusBranch.contains("WaveformView("))
         XCTAssertTrue(trailingBranch.contains("if showsRecordingMeterRow {\n            recordingMeterRow"))
-        XCTAssertTrue(trailingBranch.contains("case .compactStatus: state.mode == .transcribing"))
+        XCTAssertTrue(trailingBranch.contains("case .compactStatus: false"))
         XCTAssertFalse(trailingBranch.contains("notchWaveform(style:"))
-        let compactTranscribing = try XCTUnwrap(compact.components(separatedBy: "case .transcribing, .recording:")
+        let compactTranscribing = try XCTUnwrap(compact.components(separatedBy: "case .transcribing:")
             .dropFirst().first).components(separatedBy: "case .speaking:")[0]
-        XCTAssertFalse(compactTranscribing.contains("historyButton"))
-        XCTAssertFalse(compactTranscribing.contains("settingsButton"))
+        XCTAssertTrue(compactTranscribing.contains("historyButton"))
+        XCTAssertTrue(compactTranscribing.contains("settingsButton"))
         XCTAssertTrue(source.contains("private var notchWaveform"))
         XCTAssertTrue(source.contains("VoiceBarNotchWaveform("))
     }

@@ -2370,11 +2370,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .compactStatus:
             switch state.mode {
             case .transcribing:
-                // The microphone is one pitch outside the decorative spinner; keep its hit target on that slot.
-                // c9-P: the right wing is the rippling meter, not controls (History and Settings come back with the
-                // launcher; the drawer pull reaches them meanwhile, as while recording).
+                // Navigation stays live while the decorative spinner occupies the microphone's launcher slot.
                 return VoiceBarNotchInteractionConfiguration(
-                    leadingControlCount: 1, leadingCoreInset: VoiceBarPresentation.transcribingMicrophoneCoreInset)
+                    leadingControlCount: 1, trailingControlCountFromCore: 2,
+                    leadingCoreInset: VoiceBarPresentation.transcribingMicrophoneCoreInset)
             case .speaking:
                 // T1/T6: speed, Back, pause/play and Forward on the left.
                 // T5/T7: collapsed, Stop follows the meter (a hidden read's eye one pitch inside it). X4: the row is
@@ -2497,7 +2496,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             feedback: resolved.feedback,
             holdsReadingCanvas: resolved.holdsReadingCanvas,
             // c9-P round 2 (F1): a transcribing take keeps the recording wings its band was showing.
-            holdsRecordingWings: voiceState.mode == .transcribing
+            holdsRecordingWings: false
         )
         model.setHovered(voiceState.isHovering)
     }

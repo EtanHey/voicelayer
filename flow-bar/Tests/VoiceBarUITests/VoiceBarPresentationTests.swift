@@ -379,8 +379,8 @@ final class VoiceBarPresentationTests: XCTestCase {
             )
         )
         // c9-P: the spinner on the left, the rippling recording meter on the right, in the recording band's wings.
-        XCTAssertEqual(baseline.geometry.leadingWingWidth, 102)
-        XCTAssertEqual(baseline.geometry.trailingWingWidth, 102)
+        XCTAssertEqual(baseline.geometry.leadingWingWidth, 73.5)
+        XCTAssertEqual(baseline.geometry.trailingWingWidth, 73.5)
         XCTAssertEqual(baseline.geometry.topHeight, 32)
         XCTAssertEqual(warmup.geometry.leadingWingWidth, baseline.geometry.leadingWingWidth)
         XCTAssertEqual(warmup.geometry.trailingWingWidth, baseline.geometry.trailingWingWidth)
@@ -409,8 +409,8 @@ final class VoiceBarPresentationTests: XCTestCase {
         // place). The fitted F5 hint remains independent.
         XCTAssertEqual(launcher.geometry.leadingWingWidth, 73.5)
         XCTAssertEqual(launcher.geometry.trailingWingWidth, 73.5)
-        XCTAssertEqual(processing.geometry.leadingWingWidth, 102)
-        XCTAssertEqual(processing.geometry.trailingWingWidth, 102)
+        XCTAssertEqual(processing.geometry.leadingWingWidth, 73.5)
+        XCTAssertEqual(processing.geometry.trailingWingWidth, 73.5)
         XCTAssertEqual(recording.geometry.leadingWingWidth, 102)
         XCTAssertEqual(recording.geometry.trailingWingWidth, 102)
         XCTAssertEqual(quickTap.geometry.leadingWingWidth, 47.5)
@@ -423,7 +423,7 @@ final class VoiceBarPresentationTests: XCTestCase {
                 VoiceBarNotchContract.morphCanvasWingCapacity
             )
         )
-        XCTAssertEqual(processing.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth)
+        XCTAssertEqual(processing.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth)
     }
 
     func testRecordingWingFitsMountedControlsInsteadOfKeepingAGhostTail() {

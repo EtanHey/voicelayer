@@ -54,15 +54,10 @@ final class WingsU2Tests: XCTestCase {
         }
     }
 
-    /// c9-P (Etan, 2026-11-12): transcribing left the mock's fixed wings. Its meter stays and ripples, so the band keeps
-    /// the plain recording band's wings and the outline does not move between recording and transcribing.
-    func testTranscribingKeepsTheRecordingBandsWings() {
-        let transcribing = resolve(.transcribing)
-        let recording = resolve(.recording)
-        XCTAssertEqual(transcribing.visualState, .compactStatus)
-        XCTAssertEqual(transcribing.geometry.leadingWingWidth, recording.geometry.leadingWingWidth, accuracy: 0.001)
-        XCTAssertEqual(transcribing.geometry.trailingWingWidth, recording.geometry.trailingWingWidth, accuracy: 0.001)
-        XCTAssertEqual(transcribing.geometry.topWidth, recording.geometry.topWidth, accuracy: 0.001)
+    func testTranscribingUsesFixedControlWings() {
+        let p = resolve(.transcribing)
+        XCTAssertEqual(p.geometry.leadingWingWidth, 73.5)
+        XCTAssertEqual(p.geometry.trailingWingWidth, 73.5)
     }
 
     /// F2 centres the time/meter row and balances Stop + Cancel with symmetric recording wings.

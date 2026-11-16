@@ -137,29 +137,22 @@ final class WingsU2HostTests: XCTestCase {
         XCTAssertEqual(host.router.calls, ["cancel", "stop"], "Stop stays reachable beside Pause")
     }
 
-    /// c9-P (Etan, 2026-11-12): while transcribing the band keeps the recording wings and the right wing is the
-    /// rippling meter, so it holds no control; the microphone control stays live on the left (0510 N9). History and
-    /// Settings come back with the launcher (the drawer pull reaches them meanwhile, as while recording).
-    func testTranscribingKeepsTheRecordingWingsWithTheMeterRightAndOnlyTheMicrophoneLive() {
+    func testTranscribingHistoryAndSettingsRemainClickable() {
         let state = makeState()
         state.handleEvent(["type": "state", "state": "transcribing"])
         let callbacks = Callbacks()
-        let host = makeHost(
-            state: state,
-            configuration: VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1, leadingCoreInset: VoiceBarPresentation.transcribingMicrophoneCoreInset),
-            callbacks: callbacks
-        )
-        XCTAssertEqual(host.layout.presentation.visualState, .compactStatus)
-        let wing = VoiceBarPresentation.transcribingWingWidth(visibleCoreOcclusionInset: 0)
-        XCTAssertEqual(wing, VoiceBarNotchContract.recordingTrailingWingWidth)
-        assertFixedWings(host, leading: 1, trailing: 0, trailingWidth: wing, leadingWidth: wing)
-        firstClick(host, control: 0)
+        let host = makeHost(state: state,
+            configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 1,
+                trailingControlCountFromCore: 2,
+                leadingCoreInset: VoiceBarPresentation.transcribingMicrophoneCoreInset), callbacks: callbacks)
+        assertFixedWings(host, leading: 1, trailing: 2)
+        firstClick(host, control: 2)
+        XCTAssertEqual(callbacks.calls, ["settings"])
+        firstClick(host, control: 1)
         drainMain()
-        XCTAssertEqual(callbacks.calls, ["microphones"], "the chevron still opens the microphone list")
-        XCTAssertFalse(hasTooltip(host, "History"))
-        XCTAssertFalse(hasTooltip(host, "Settings"))
-        XCTAssertEqual(host.router.calls, [], "the spinner is not a control and nothing cancels the take")
+        XCTAssertTrue(hasTooltip(host, "Close history"))
+        XCTAssertEqual(state.mode, .transcribing)
+        XCTAssertEqual(host.router.calls, [])
     }
 
     /// T1/T6: speed, Back, Pause, Forward on the left (Pause is the second from the core). T5/T7: time, meter and
