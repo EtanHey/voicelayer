@@ -375,28 +375,31 @@ public struct VoiceBarRecordingTimeRegion: View {
     let isCaptureOpen: Bool
     let microphoneName: String?
     let color: Color
+    let armingColor: Color
 
-    public init(elapsedMilliseconds: @escaping () -> Int, isCaptureOpen: Bool, microphoneName: String?, color: Color) {
+    public init(elapsedMilliseconds: @escaping () -> Int, isCaptureOpen: Bool, microphoneName: String?, color: Color, armingColor: Color? = nil) {
         self.elapsedMilliseconds = elapsedMilliseconds
         self.isCaptureOpen = isCaptureOpen
         self.microphoneName = microphoneName
         self.color = color
+        self.armingColor = armingColor ?? color.opacity(0.72)
     }
 
     public var body: some View {
         TimelineView(.periodic(from: .now, by: 0.25)) { _ in
-            let time = VoiceBarReadingTimeLabel.text(elapsedMilliseconds: elapsedMilliseconds())
+            let time = isCaptureOpen
+                ? VoiceBarReadingTimeLabel.text(elapsedMilliseconds: elapsedMilliseconds())
+                : "0:00"
             ZStack(alignment: .trailing) {
                 Color.clear.frame(height: 1)
-                if isCaptureOpen {
                     Text(time)
                         .font(Font(VoiceBarRecordingWingLabel.timeFont))
-                        .foregroundStyle(color)
+                        .foregroundStyle(isCaptureOpen ? color : armingColor)
                         .lineLimit(1)
                         .accessibilityElement()
                         .accessibilityLabel("Recording time")
-                        .accessibilityValue(microphoneName.map { "\(time), \($0)" } ?? time)
-                }
+                        .accessibilityValue(isCaptureOpen
+                            ? microphoneName.map { "\(time), \($0)" } ?? time : "Starting microphone")
             }
             .frame(width: VoiceBarRecordingWingLabel.clockWidth(for: time), alignment: .trailing)
             // c9-P round 2 (F4): the shown clock's text, so a transcribing take keeps its width class.

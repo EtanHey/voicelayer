@@ -1547,7 +1547,8 @@ public struct BarView: View {
                 elapsedMilliseconds: { state.recordingElapsedMilliseconds() },
                 isCaptureOpen: state.isRecordingCaptureOpen,
                 microphoneName: state.recordingMicrophoneName,
-                color: notchPrimaryLabelColor
+                color: notchPrimaryLabelColor,
+                armingColor: notchPalette.tertiary.color
             )
         } meter: {
             notchWaveform(isPaused: isPaused)
