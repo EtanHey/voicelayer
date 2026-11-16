@@ -1826,12 +1826,27 @@ public struct BarView: View {
                         if historyRowsPull.phase != .idle { endHistoryRowsPull(cancelled: cancelled) }
                     }
                 )
-                // 0510 N6: the hint takes the handle's band (the overpull stretches the shell under it), never a row.
-                .overlay {
-                    if isSettingsPullArmed { settingsPullHint }
-                }
             }
                 .frame(maxHeight: .infinity, alignment: .top)
+                .overlay {
+                    GeometryReader { proxy in
+                        let fadeBottom = NotchHistoryMorph.listTopInset + min(
+                            NotchHistoryMorph.listHeight(rows: historyRowsExtent),
+                            NotchHistoryMorph.historyCanvasLowerSurfaceHeight - notchPresentation.feedbackHeight
+                                - NotchHistoryMorph.listTopInset - NotchHistoryMorph.handleBandHeight)
+                        // Rows keep their open layout while the shell stretches past it.
+                        let overpull = historyMorphInput.map {
+                            max(0, $0.geometry(at: $0.progress).lowerSurfaceHeight - $0.openLowerSurfaceHeight)
+                        } ?? 0
+                        if isSettingsPullArmed, let rect = NotchHistoryPresentation.settingsPullHintRect(
+                            fadeBottom: fadeBottom,
+                            drawerSize: CGSize(width: proxy.size.width, height: proxy.size.height + overpull), hintWidth: 0) {
+                            settingsPullHint
+                                .position(x: rect.midX, y: rect.midY)
+                        }
+                    }
+                    .allowsHitTesting(false)
+                }
                 .modifier(NotchHistoryRowsMorph(progress: historyFrozenProgress ?? historyProgress,
                                                 keepsPointer: drawerHoldsPointer))
         }

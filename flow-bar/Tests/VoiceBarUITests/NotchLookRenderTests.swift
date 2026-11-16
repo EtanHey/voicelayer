@@ -55,7 +55,7 @@ final class NotchLookRenderTests: XCTestCase {
                         presentationModel: model, includesPanelOutsets: true)
                     if phase == "history-overpull" {
                         model.setHistoryPanelOpen(true)
-                        bar = bar.presentingSettingsPullHintForShots()
+                        bar = bar.presentingSettingsPullHintForShots().freezingHistoryMorph(at: 1.12)
                     }
                     let view = bar.environment(\.colorScheme, light ? .light : .dark)
                         .environment(\.visualRenderTime, 101.5)
@@ -72,6 +72,14 @@ final class NotchLookRenderTests: XCTestCase {
                     host.layoutSubtreeIfNeeded()
                     RunLoop.main.run(until: Date().addingTimeInterval(0.8))
                     host.layoutSubtreeIfNeeded()
+                    func measure(_ v: NSView) {
+                        if let tooltip = v.toolTip, !v.visibleRect.isEmpty {
+                            let rect = v.convert(v.bounds, to: host)
+                            print("NOTCH_MEASURE \(phase) \(light ? "light" : "dark") inset=\(inset) \(tooltip) \(rect)")
+                        }
+                        v.subviews.forEach(measure)
+                    }
+                    measure(host)
                     let rep = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil,
                         pixelsWide: 1400, pixelsHigh: 1360, bitsPerSample: 8, samplesPerPixel: 4,
                         hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
