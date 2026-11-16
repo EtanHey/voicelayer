@@ -369,7 +369,10 @@ public enum VoiceBarPresentation {
         case .transcribing:
             // Transcribing uses its own two-control navigation envelope: the spinner and the chevron on the left.
             transcribingLeadingWingWidth
-        case .recording, .error, .disconnected:
+        case .error:
+            // CI r3: the error glyph's own lane, so its ink sits on the left-side rule (16.5 pt).
+            VoiceBarNotchContract.errorStatusLeadingWingWidth
+        case .recording, .disconnected:
             VoiceBarNotchContract.compactIndicatorLaneWidth
         }
     }

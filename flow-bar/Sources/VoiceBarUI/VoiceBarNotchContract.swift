@@ -590,16 +590,28 @@ public enum VoiceBarNotchContract {
     public static let readingForwardSideBearing: CGFloat = 4
     public static let readingLeadingContentInset = leadingInnerInkClearance - readingForwardSideBearing
 
+    /// CI r3: the error status glyph (`exclamationmark.triangle.fill`) leaves 3.5 pt of its plate empty on the core
+    /// side (the M1's 2x render; GitHub's runner rasterises it one 2x pixel wider, 4.0), so at the compact inset its
+    /// ink sat at 17.0 pt (17.5 on the runner), off the rule. Its row starts 13 pt from the notch.
+    public static let errorStatusSideBearing: CGFloat = 3.5
+    public static let errorStatusLeadingContentInset = leadingInnerInkClearance - errorStatusSideBearing
+
+    /// The error status's left wing: the one glyph slot, from its own inset (47 pt; the compact indicator lane is
+    /// 47.5). Its width is what tells the layout the row holds the error glyph.
+    public static let errorStatusLeadingWingWidth = errorStatusLeadingContentInset + material.compactControlSize +
+        material.compactContentInset
+
     /// Where a non-recording left wing's row starts from the core. The wing's width says what it holds (the only
     /// channel the resident app's wing widths give the layout): exactly the launcher's holds the chevron innermost,
-    /// exactly the reading transport's holds Forward innermost. Every other compact left wing (an error glyph, a queued
-    /// read's Next) keeps the compact inset, where its glyph already meets the rule (NotchLeftInkRuleTests).
+    /// exactly the reading transport's holds Forward innermost, exactly the error status's holds the error glyph.
+    /// Every other compact left wing (a queued read's Next, the disconnected glyph) keeps the compact inset.
     public static func leadingCoreContentInset(leadingWingWidth: CGFloat?) -> CGFloat {
         guard let leadingWingWidth else { return compactCoreContentInset }
         if abs(leadingWingWidth - launcherLeadingWingWidth) < 0.01 { return launcherLeadingContentInset }
         if abs(leadingWingWidth - VoiceBarPresentation.readingTransportWingWidth) < 0.01 {
             return readingLeadingContentInset
         }
+        if abs(leadingWingWidth - errorStatusLeadingWingWidth) < 0.01 { return errorStatusLeadingContentInset }
         return compactCoreContentInset
     }
 
