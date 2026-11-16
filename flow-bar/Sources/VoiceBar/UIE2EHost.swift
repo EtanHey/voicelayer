@@ -350,9 +350,16 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Same operational input, morph canvas and hit configuration used by the production
     /// host. The QA-only capture placement keeps its core stable and away from Settings.
     /// No AppDelegate is constructed and no production services are started.
+    /// Real-screen capture r5 (item o): the window is framed from the SAME model the BarView renders, as the
+    /// production host frames its panel from its own `notchPresentationModel`. A throwaway model (still used by the
+    /// static `panelLayout(for:)`) never holds the visible canvas through a close, so the window was placed for the
+    /// core-only idle canvas while the band drew 180 pt right of the notch for the whole close.
     func panelLayout() -> VoiceBarPanelLayout {
-        Self.panelLayout(for: model.voice, historyOpen: notchModel?.isHistoryPanelOpen ?? false,
-                         historyRows: notchModel?.historyRows ?? NotchHistoryMorph.visibleRows, screenGeometry: hostGeometry)
+        guard let notchModel else {
+            return Self.panelLayout(for: model.voice, historyOpen: false,
+                                    historyRows: NotchHistoryMorph.visibleRows, screenGeometry: hostGeometry)
+        }
+        return Self.layout(presentation: notchModel.presentation, state: model.voice)
     }
 
     static func panelLayout(for state: VoiceState, historyOpen: Bool = false,
