@@ -24,9 +24,13 @@ final class NotchGlyphNoEdgeTests: XCTestCase {
         (.dark, "dark-band-35", VoiceBarRGB(red: 35 / 255, green: 35 / 255, blue: 35 / 255)),
     ]
 
-    /// Relative luminance step beyond the background that counts as an edge pixel. Antialiasing and the glass
-    /// fallback's own grain stay well inside it; the old edge (white 0.96 over 171 grey) is 0.49 beyond.
+    /// Relative luminance step towards the ink that counts as an ink pixel.
     static let edgeStep = 0.06
+    /// Contrast ratio beyond the background, away from the ink, that counts as an edge pixel. Relative to the
+    /// background (CodeRabbit on #936): a fixed 0.06 luminance step can never be reached below the dark-band-35
+    /// backdrop (luminance 0.0168), so even a black outline passed there. 1.12 sits clear of antialiasing and the glass
+    /// fallback's grain on every backdrop; a black edge on 35 grey is 1.34, the old white edge on 171 grey 2.1.
+    static let edgeContrast = 1.12
 
     func testBandControlsHaveNoEdgeInEitherAppearance() throws {
         for (appearance, label, backdrop) in Self.backdrops {
@@ -70,6 +74,30 @@ final class NotchGlyphNoEdgeTests: XCTestCase {
             print("NO_EDGE drawer-tabs \(label) edge_pixels=\(count.edge) ink_pixels=\(count.ink)")
             XCTAssertGreaterThan(count.ink, 80, "fixture: the drawer drew no tab glyphs on \(label)")
             XCTAssertEqual(count.edge, 0, "the drawer's tab glyphs are outlined on \(label): \(count.edge) edge pixels")
+        }
+    }
+
+    /// CodeRabbit on #936: the classifier itself must catch an outline on every band tone. A glyph wearing the old
+    /// treatment (four hard 0.75 pt shadows in the opposite tone) is drawn on each backdrop; the dark-band-35 check
+    /// used to need a 0.06 luminance step, which even pure black cannot reach below a 0.0168 background.
+    func testTheClassifierCatchesAKnownOutlineOnEveryBackdrop() throws {
+        for (appearance, label, backdrop) in Self.backdrops {
+            let outline: Color = appearance == .light ? .white : .black
+            let glyph = Image(systemName: "xmark")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(VoiceBarNotchGlyphForegroundRole.primaryLabel.color(for: appearance))
+                .shadow(color: outline, radius: 0, x: 0.75, y: 0)
+                .shadow(color: outline, radius: 0, x: -0.75, y: 0)
+                .shadow(color: outline, radius: 0, x: 0, y: 0.75)
+                .shadow(color: outline, radius: 0, x: 0, y: -0.75)
+                .frame(width: 20, height: 20)
+                .padding(6)
+                .background(Color(red: backdrop.red, green: backdrop.green, blue: backdrop.blue))
+            let bitmap = try NotchDesignPixels.render(glyph, size: CGSize(width: 32, height: 32))
+            let count = Self.edgePixels(bitmap, in: CGRect(x: 6, y: 6, width: 20, height: 20), appearance: appearance)
+            print("NO_EDGE known-outline \(label) edge_pixels=\(count.edge) ink_pixels=\(count.ink)")
+            XCTAssertGreaterThan(count.ink, 8, "fixture: the outlined glyph drew no ink on \(label)")
+            XCTAssertGreaterThan(count.edge, 8, "the classifier missed a known outline on \(label)")
         }
     }
 
@@ -197,7 +225,9 @@ final class NotchGlyphNoEdgeTests: XCTestCase {
             for x in minX ..< maxX {
                 guard let l = luminance(x, y) else { continue }
                 let towardsInk = appearance == .light ? background - l : l - background
-                if towardsInk >= edgeStep { ink += 1 } else if -towardsInk >= edgeStep { edge += 1 }
+                // Away from the ink: lighter than the light band, darker than the dark band, by a contrast ratio.
+                let beyond = appearance == .light ? (l + 0.05) / (background + 0.05) : (background + 0.05) / (l + 0.05)
+                if towardsInk >= edgeStep { ink += 1 } else if towardsInk < 0, beyond >= edgeContrast { edge += 1 }
             }
         }
         return EdgeCount(edge: edge, ink: ink)

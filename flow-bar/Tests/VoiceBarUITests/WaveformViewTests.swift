@@ -43,7 +43,8 @@ final class WaveformViewTests: XCTestCase {
             from: VoiceBarNotchOperationalInput(mode: .transcribing, statusText: "Transcribing")
         )
         XCTAssertEqual(processing.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth)
-        XCTAssertEqual(processing.geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth)
+        // Owner r2: the transcribing left wing is the launcher's (the chevron's ink on the left-side rule).
+        XCTAssertEqual(processing.geometry.leadingWingWidth, VoiceBarNotchContract.launcherLeadingWingWidth)
 
         let calibratedInset = VoiceBarNotchContract.hardwareHorizontalCalibrationInset
         let speaking = VoiceBarPresentation.notchPresentation(
@@ -451,13 +452,13 @@ final class WaveformViewTests: XCTestCase {
         let hits = VoiceBarNotchHitRegion(geometry: geometry, configuration: .init(leadingControlCount: 1,
             leadingCoreInset: VoiceBarPresentation.transcribingMicrophoneCoreInset)).rects
         XCTAssertEqual(hits.count, 1)
-        XCTAssertEqual(geometry.coreOriginX - hits[0].midX, 23.5)
+        XCTAssertEqual(geometry.coreOriginX - hits[0].midX, 20) // owner r2: 10 pt off the core, not 13.5
         let spinnerCenter = CGPoint(x: geometry.coreOriginX - VoiceBarPresentation.transcribingSpinnerCoreInset - 10,
                                     y: geometry.topHeight / 2)
         XCTAssertFalse(hits[0].contains(spinnerCenter), "the outer decorative spinner must never receive a mic click")
         XCTAssertTrue(VoiceBarPresentation.transcribingCaretNextToCore)
         XCTAssertEqual(VoiceBarPresentation.transcribingMicrophoneCoreInset,
-                       VoiceBarNotchContract.compactCoreContentInset, "the selected caret/mic is nearest the core")
+                       VoiceBarNotchContract.launcherLeadingContentInset, "the selected caret/mic is nearest the core")
         XCTAssertEqual(VoiceBarPresentation.transcribingSpinnerCoreInset - VoiceBarPresentation.transcribingMicrophoneCoreInset,
                        26, "the decorative spinner is one 20 pt slot plus 6 pt spacing outside the microphone")
         XCTAssertTrue(leadingCompactStatusBranch.contains("ProcessingSpinner(transcribing: notchAppearance)"))

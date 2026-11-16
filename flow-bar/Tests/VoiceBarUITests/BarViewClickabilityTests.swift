@@ -119,6 +119,11 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertTrue(source.contains(".foregroundStyle(isDestructive ? Color.white : foreground)"))
     }
 
+    /// Owner r2: the launcher's left wing is 70 pt (the chevron on the left-side ink rule), its right wing 73.5 pt; the
+    /// host's bounds round the 328.5 pt envelope up.
+    static let launcherEnvelopeWidth = (VoiceBarNotchContract.coreWidth + VoiceBarNotchContract.launcherLeadingWingWidth
+        + VoiceBarNotchContract.fixedWingWidth).rounded(.up)
+
     func testNativeNotchShellUsesApprovedBoundsForPrimaryStates() {
         let idle = VoiceState()
         idle.mode = .idle
@@ -126,8 +131,8 @@ final class BarViewClickabilityTests: XCTestCase {
         idle.isCollapsed = false
         XCTAssertEqual(
             makeHost(state: idle, router: SpyCommandRouter()).bounds.size,
-            NSSize(width: 332, height: 32),
-            "visible idle must hold the launcher envelope through its collapse grace window (2.3 U2: 185 + 2 × 73.5)"
+            NSSize(width: Self.launcherEnvelopeWidth, height: 32),
+            "visible idle must hold the launcher envelope through its collapse grace window (owner r2: 185 + 70 + 73.5)"
         )
 
         idle.isCollapsed = true
@@ -143,7 +148,7 @@ final class BarViewClickabilityTests: XCTestCase {
         hover.isHovering = true
         XCTAssertEqual(
             makeHost(state: hover, router: SpyCommandRouter()).bounds.size,
-            NSSize(width: 332, height: 32)
+            NSSize(width: Self.launcherEnvelopeWidth, height: 32)
         )
 
         let recording = VoiceState()
@@ -1159,9 +1164,10 @@ final class BarViewClickabilityTests: XCTestCase {
         panel.orderBack(nil)
         windows.append(panel)
         host.layoutSubtreeIfNeeded()
+        // Owner r2: the rects the panel layout gates on (it moves a default-inset left row onto the painted one).
         let region = VoiceBarNotchHitRegion(
             geometry: presentation.geometry,
-            configuration: configuration
+            configuration: configuration.followingLeadingRow(of: presentation)
         )
         let controlRects = region.rects.map {
             $0.offsetBy(dx: layout.visibleContentRect.minX, dy: layout.visibleContentRect.minY)

@@ -36,6 +36,15 @@ public final class VoiceBarNotchPresentationModel {
     @ObservationIgnored public var scheduleReadingCanvasRelease: (TimeInterval, @escaping () -> Void) -> Void = { delay, work in
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
+    /// Owner r2: a visible band that just closed to hidden keeps the visible canvas this long, so its glass closes
+    /// and its icons ride inward instead of the window shrinking to the core in the first frame.
+    private var holdsClosingCanvas = false
+    @ObservationIgnored private var closingCanvasReleaseSerial = 0
+    public static let closingCanvasReleaseDelay: TimeInterval = readingCanvasReleaseDelay
+    /// Tests replace this to run the release deterministically.
+    @ObservationIgnored public var scheduleClosingCanvasRelease: (TimeInterval, @escaping () -> Void) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
     private var isRecording = false
     private var hasCompactStatus = false
     private var keepsIdleExpanded = false
@@ -223,7 +232,7 @@ public final class VoiceBarNotchPresentationModel {
     }
 
     private func resolvePresentation() {
-        let next = VoiceBarNotchPresentation.resolve(
+        let resolved = VoiceBarNotchPresentation.resolve(
             hasTeleprompter: hasTeleprompter && !isMenuPresented && !isHistoryPanelOpen,
             isRecording: isRecording,
             hasCompactStatus: hasCompactStatus,
@@ -243,6 +252,22 @@ public final class VoiceBarNotchPresentationModel {
             virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
             transientNoteWidth: transientNoteWidth, feedback: feedback
         ).holdingReadingCanvas(holdsReadingCanvas)
+        let closesToHidden = resolved.visualState == .idle && presentation.visualState != .idle
+            && presentation.geometry.lowerSurfaceHeight == 0 && !isReducedMotionEnabled
+        if resolved.visualState != .idle {
+            closingCanvasReleaseSerial &+= 1
+            holdsClosingCanvas = false
+        } else if closesToHidden {
+            closingCanvasReleaseSerial &+= 1
+            holdsClosingCanvas = true
+            let serial = closingCanvasReleaseSerial
+            scheduleClosingCanvasRelease(Self.closingCanvasReleaseDelay) { [weak self] in
+                guard let self, self.closingCanvasReleaseSerial == serial else { return }
+                self.holdsClosingCanvas = false
+                self.resolvePresentation()
+            }
+        }
+        let next = resolved.holdingClosingCanvas(holdsClosingCanvas)
         guard next != presentation else { return }
 
         motionCoordinator.replaceTarget(

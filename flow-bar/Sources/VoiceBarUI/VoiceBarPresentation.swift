@@ -364,11 +364,11 @@ public enum VoiceBarPresentation {
             readingLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
         case .idle:
             input.showsIdleMicrophoneControl
-                ? VoiceBarNotchContract.fixedWingWidth
+                ? VoiceBarNotchContract.launcherLeadingWingWidth
                 : playbackLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
         case .transcribing:
-            // Transcribing uses its own two-control navigation envelope.
-            transcribingWingWidth(visibleCoreOcclusionInset: input.visibleCoreOcclusionInset)
+            // Transcribing uses its own two-control navigation envelope: the spinner and the chevron on the left.
+            transcribingLeadingWingWidth
         case .recording, .error, .disconnected:
             VoiceBarNotchContract.compactIndicatorLaneWidth
         }
@@ -434,8 +434,9 @@ public enum VoiceBarPresentation {
         let material = VoiceBarNotchContract.material
         return 3 * material.compactControlSize + 3 * material.compactControlSpacing + readingSpeedChipWidth
     }
+    /// Owner r2: the row starts `readingLeadingContentInset` from the notch, so Forward's ink sits on the left-side rule.
     public static var readingTransportWingWidth: CGFloat {
-        VoiceBarNotchContract.compactCoreContentInset + readingTransportContentWidth +
+        VoiceBarNotchContract.readingLeadingContentInset + readingTransportContentWidth +
             VoiceBarNotchContract.fixedWingContentInset
     }
 
@@ -560,7 +561,7 @@ public enum VoiceBarPresentation {
     }
 
     private static func compactTranscribingInset(isCaret: Bool) -> CGFloat {
-        VoiceBarNotchContract.compactCoreContentInset +
+        VoiceBarNotchContract.launcherLeadingContentInset +
             (isCaret == transcribingCaretNextToCore ? 0 :
                 VoiceBarNotchContract.material.compactControlSize + VoiceBarNotchContract.material.compactControlSpacing)
     }
@@ -568,6 +569,10 @@ public enum VoiceBarPresentation {
     public static func transcribingWingWidth(visibleCoreOcclusionInset _: CGFloat) -> CGFloat {
         VoiceBarNotchContract.fixedWingWidth
     }
+
+    /// Owner r2: the transcribing left wing is the launcher's (the chevron innermost, on the left-side rule); its right
+    /// wing stays `transcribingWingWidth`, History and Settings in the launcher's slots.
+    public static var transcribingLeadingWingWidth: CGFloat { VoiceBarNotchContract.launcherLeadingWingWidth }
 
     /// Reserve Pause/Lock from the first recording frame; later mode metadata cannot move Stop.
     /// An earlier take adds only an outer spinner slot.

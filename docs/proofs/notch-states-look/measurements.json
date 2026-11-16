@@ -10,13 +10,13 @@
   "dark_table": [
     {
       "state": "a",
-      "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+      "build": "912d899a31b1edc2fee01b1562e25b82635177e3",
       "notch_boundary_px": [
         384,
         720
       ],
       "glass_edges_px": [
-        236,
+        243,
         868
       ],
       "glyphs": [
@@ -24,9 +24,9 @@
           "id": "mic.fill",
           "description": "Start voice recording",
           "ink": [
-            276,
+            283,
             19,
-            294,
+            301,
             45
           ]
         },
@@ -34,9 +34,9 @@
           "id": "chevron.down",
           "description": "Choose microphone",
           "ink": [
-            329,
+            336,
             28,
-            344,
+            351,
             37
           ]
         },
@@ -61,16 +61,16 @@
           ]
         }
       ],
-      "left_wing_pt": 74.0,
+      "left_wing_pt": 70.5,
       "right_wing_pt": 74.0,
-      "inner_left_ink_gap_pt": 20.0,
+      "inner_left_ink_gap_pt": 16.5,
       "first_right_ink_gap_pt": 16.5,
       "outer_pad_left_pt": 20.0,
       "outer_pad_right_pt": 18.0
     },
     {
       "state": "b",
-      "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+      "build": "912d899a31b1edc2fee01b1562e25b82635177e3",
       "notch_boundary_px": [
         384,
         720
@@ -150,7 +150,7 @@
     },
     {
       "state": "c",
-      "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+      "build": "912d899a31b1edc2fee01b1562e25b82635177e3",
       "notch_boundary_px": [
         384,
         720
@@ -230,7 +230,7 @@
     },
     {
       "state": "c2",
-      "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+      "build": "912d899a31b1edc2fee01b1562e25b82635177e3",
       "notch_boundary_px": [
         384,
         720
@@ -295,9 +295,9 @@
           "description": "Input level full colored ink",
           "ink": [
             821,
-            26,
+            27,
             913,
-            38
+            37
           ]
         }
       ],
@@ -310,13 +310,13 @@
     },
     {
       "state": "d",
-      "build": "1ed722648420f395abb077d9ca8c4fd2e20899ac",
+      "build": "912d899a31b1edc2fee01b1562e25b82635177e3",
       "notch_boundary_px": [
         384,
         720
       ],
       "glass_edges_px": [
-        236,
+        243,
         868
       ],
       "glyphs": [
@@ -324,9 +324,9 @@
           "id": "chevron.down",
           "description": "Choose microphone",
           "ink": [
-            329,
+            336,
             28,
-            344,
+            351,
             37
           ]
         },
@@ -354,22 +354,22 @@
           "id": "",
           "description": "Transcribing full colored ink",
           "ink": [
-            267,
+            280,
             14,
-            302,
+            310,
             50
           ]
         }
       ],
-      "left_wing_pt": 74.0,
+      "left_wing_pt": 70.5,
       "right_wing_pt": 74.0,
-      "inner_left_ink_gap_pt": 20.0,
+      "inner_left_ink_gap_pt": 16.5,
       "first_right_ink_gap_pt": 16.5,
-      "outer_pad_left_pt": 15.5,
+      "outer_pad_left_pt": 18.5,
       "outer_pad_right_pt": 18.0
     }
   ],
-  "color_and_alignment_samples": {
+  "colors": {
     "pre_capture_light": {
       "dot_rgb": [
         106,
@@ -425,9 +425,9 @@
         "theme": "light",
         "glyph": "mic.fill",
         "roi_px": [
-          259,
+          266,
           6,
-          311,
+          318,
           58
         ],
         "band_rgb": [
@@ -494,9 +494,9 @@
         "theme": "dark",
         "glyph": "mic.fill",
         "roi_px": [
-          259,
+          266,
           6,
-          311,
+          318,
           58
         ],
         "band_rgb": [
