@@ -100,6 +100,28 @@ final class NotchLeftInkRuleTests: XCTestCase {
         print("LEFT_INK_RULE\n" + rows.joined(separator: "\n"))
     }
 
+    /// CI r3: the error glyph's row moved onto the rule (its ink sat at 17.0 pt on the M1, 17.5 on GitHub's runner);
+    /// its hit slot follows the painted one. The resident app's error configuration (`VoiceBarApp`'s one leading
+    /// control at the default inset) goes through the panel layout's `followingLeadingRow`, as every panel does.
+    func testTheErrorGlyphsHitSlotFollowsItsPaintedSlot() throws {
+        let fixture = try XCTUnwrap(Self.fixtures.first { $0.name == "compact status (error)" })
+        let painted = try innerInkGap(fixture)
+        let presentation = VoiceBarPresentation.notchPresentation(from: VoiceBarNotchOperationalInput(
+            mode: .error, statusText: VoiceBarPresentation.errorStatusText("Synthetic failure")))
+        XCTAssertEqual(presentation.visualState, .compactStatus)
+        XCTAssertEqual(presentation.geometry.leadingWingWidth, VoiceBarNotchContract.errorStatusLeadingWingWidth)
+        let resident = VoiceBarNotchInteractionConfiguration(leadingControlCount: 1, trailingControlCountFromOuter: 1,
+                                                             trailingOuterInset: WaveformLayout.outerInset)
+        let region = VoiceBarNotchHitRegion(geometry: presentation.geometry,
+                                            configuration: resident.followingLeadingRow(of: presentation))
+        let geometry = presentation.geometry
+        let leading = try XCTUnwrap(region.rects.filter { $0.maxX <= geometry.coreOriginX + 0.01 }.max { $0.maxX < $1.maxX },
+                                    "the error glyph has a hit slot")
+        XCTAssertEqual(geometry.coreOriginX - leading.maxX, painted.slotGap, accuracy: 0.01,
+                       "the error glyph's hit slot sits where its plate is painted")
+        XCTAssertEqual(geometry.coreOriginX - leading.maxX, VoiceBarNotchContract.errorStatusLeadingContentInset)
+    }
+
     /// Review r1 (lead decision): reading aloud while an Ask answer is still transcribing with nothing queued puts the
     /// spinner in Forward's slot. Its ink meets the rule too (it sat at 15.0 pt); the slot and every hit rect stay.
     func testTheSpinnerInForwardsSlotSitsOnTheRule() throws {
