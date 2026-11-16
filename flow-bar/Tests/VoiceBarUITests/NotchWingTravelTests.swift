@@ -30,10 +30,22 @@ final class NotchWingTravelTests: XCTestCase {
     /// The backdrop: a colour no notch pixel has.
     static let backdrop = (r: 1.0, g: 0.0, b: 1.0)
     private var windows: [NSWindow] = []
+    private var restoreReduceMotion: (() -> Void)?
+
+    override func setUp() {
+        super.setUp()
+        // The travel and the retained close are the full-motion path; under Reduce Motion the product keeps the
+        // instant hide and still icons on purpose. GitHub's hosted macOS runner has Reduce Motion ON (#860,
+        // `ReduceMotionOverride`), and these tests failed there with exactly the Reduce Motion frames (CI r3,
+        // run 43970804395), so each test pins the setting it proves instead of inheriting the machine's.
+        restoreReduceMotion = ReduceMotionOverride.pin(false)
+    }
 
     override func tearDown() {
         for window in windows { window.contentView = nil; window.close() }
         windows.removeAll()
+        restoreReduceMotion?()
+        restoreReduceMotion = nil
         super.tearDown()
     }
 
@@ -94,6 +106,48 @@ final class NotchWingTravelTests: XCTestCase {
             RunLoop.main.run(until: Date().addingTimeInterval(1.0))
         }
         print("WING_TRAVEL\n" + report.joined(separator: "\n"))
+    }
+
+    /// Reduce Motion ON, as on GitHub's hosted runner (CI r3). The product's Reduce Motion path: the glass still
+    /// eases open, the icons stay at their settled places (no travel offset), and the close to hidden is the instant
+    /// hide (no retained band, no part-way frame). This is the frame sequence CI printed for the full-motion test
+    /// when it inherited the runner's setting; pinning it here proves that condition, and only it, produces them.
+    func testUnderReduceMotionTheIconsHoldStillAndTheCloseIsInstant() throws {
+        restoreReduceMotion?()
+        restoreReduceMotion = ReduceMotionOverride.pin(true)
+        let rig = try mount()
+        rig.hover(true)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+        let settled = try measure(rig.host, time: 0)
+        let openLeft = try XCTUnwrap(settled.leftEdge, "the open band paints")
+        let openRight = try XCTUnwrap(settled.rightEdge)
+        let settledMic = try XCTUnwrap(settled.leftInk, "the microphone is laid out in the open band")
+        let settledGear = try XCTUnwrap(settled.rightInk, "the gear is laid out in the open band")
+        rig.hover(false)
+        RunLoop.main.run(until: Date().addingTimeInterval(1.0))
+        XCTAssertNil(try measure(rig.host, time: 0).leftEdge, "fixture: the band is hidden again")
+
+        let coreMinX = Self.size.width / 2 - VoiceBarNotchContract.coreWidth / 2
+        let coreMaxX = Self.size.width / 2 + VoiceBarNotchContract.coreWidth / 2
+        func partway(_ frames: [Frame]) -> [Frame] {
+            frames.filter { frame in
+                guard let l = frame.leftEdge, let r = frame.rightEdge else { return false }
+                return l > openLeft + 4 && l < coreMinX - 4 && r < openRight - 4 && r > coreMaxX + 4
+            }
+        }
+        rig.hover(true)
+        let opening = partway(try sample(rig.host))
+        XCTAssertGreaterThanOrEqual(opening.count, 2, "open: the glass still eases open under Reduce Motion")
+        for frame in opening {
+            let at = String(format: "open at %.0f ms", frame.time * 1000)
+            XCTAssertEqual(try XCTUnwrap(frame.leftInk), settledMic, accuracy: 0.5, "\(at): the microphone holds still")
+            XCTAssertEqual(try XCTUnwrap(frame.rightInk), settledGear, accuracy: 0.5, "\(at): the gear holds still")
+        }
+        RunLoop.main.run(until: Date().addingTimeInterval(1.0))
+        rig.hover(false)
+        let closing = try sample(rig.host)
+        XCTAssertEqual(partway(closing).count, 0, "close: Reduce Motion keeps the instant hide")
+        XCTAssertNil(closing.first?.leftEdge, "close: the band is gone from the first sample")
     }
 
     /// Review r1 (blocking 1): while a closed band rides under the notch its controls are pictures, not controls. From
