@@ -153,7 +153,7 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertEqual(
             makeHost(state: recording, router: SpyCommandRouter()).bounds.size,
             // Recording reserves three left slots; each wing uses its own content and insets.
-            NSSize(width: 375.5, height: 32)
+            NSSize(width: ceil(375.5), height: 32)
         )
 
         let teleprompter = VoiceState()
@@ -965,7 +965,7 @@ final class BarViewClickabilityTests: XCTestCase {
         let (host, panel, layout, controlRects) = makeInteractivePanelHost(
             state: state,
             router: router,
-            configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
+            configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 3, leadingCoreInset: 2.5)
         )
 
         XCTAssertTrue(panel.styleMask.contains(.nonactivatingPanel))
@@ -1047,7 +1047,7 @@ final class BarViewClickabilityTests: XCTestCase {
         let (host, panel, layout, controlRects) = makeInteractivePanelHost(
             state: state,
             router: SpyCommandRouter(),
-            configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
+            configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 3, leadingCoreInset: 2.5)
         )
         let wingPoint = NSPoint(
             x: layout.visibleContentRect.minX + layout.presentation.geometry.coreOriginX
