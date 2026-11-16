@@ -56,9 +56,9 @@ final class NotchGlassMorphTests: XCTestCase {
         let launcher = Self.presentation().geometry, recording = Self.presentation(recording: true).geometry
         XCTAssertEqual(launcher.leadingWingWidth, 73.5)
         XCTAssertEqual(launcher.trailingWingWidth, 73.5)
-        XCTAssertEqual(recording.leadingWingWidth, 94)
+        XCTAssertEqual(recording.leadingWingWidth, 88.5)
         XCTAssertEqual(recording.trailingWingWidth, 102)
-        XCTAssertEqual(recording.topWidth, 381)
+        XCTAssertEqual(recording.topWidth, 375.5)
         XCTAssertEqual(launcher.totalHeight, recording.totalHeight)
         XCTAssertEqual(launcher.coreWidth, recording.coreWidth)
         XCTAssertGreaterThan(recording.leadingWingWidth, launcher.leadingWingWidth)

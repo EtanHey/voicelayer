@@ -39,7 +39,7 @@ final class VoiceBarNotchMotionTests: XCTestCase {
             to: .hoverLauncher,
             reducedMotion: false
         )
-        XCTAssertEqual(recording.leadingWingWidth, 94)
+        XCTAssertEqual(recording.leadingWingWidth, 88.5)
         XCTAssertEqual(recording.trailingWingWidth, 102)
         XCTAssertLessThan(launcher.topWidth, recording.topWidth)
         XCTAssertEqual(plan.steps.map(\.component), [.wings, .panel, .content])

@@ -33,7 +33,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
             VoiceBarNotchGeometry(
                 coreWidth: 185,
                 topHeight: 32,
-                leadingWingWidth: 94,
+                leadingWingWidth: 88.5,
                 trailingWingWidth: 102,
                 bodyLeadingExtent: 0,
                 bodyTrailingExtent: 0,
@@ -66,8 +66,8 @@ final class VoiceBarNotchContractTests: XCTestCase {
         // 2.3 U2: the outline never moves between the launcher and recording (185 + 2 × 73.5).
         XCTAssertEqual(hover.topWidth, 332)
         XCTAssertEqual(hover.totalWidth, 332)
-        XCTAssertEqual(recording.topWidth, 381)
-        XCTAssertEqual(recording.totalWidth, 381)
+        XCTAssertEqual(recording.topWidth, 375.5)
+        XCTAssertEqual(recording.totalWidth, 375.5)
         XCTAssertEqual(teleprompter.topWidth, 258.5)
         XCTAssertEqual(teleprompter.bodyWidth, 545, "2.4: the widened teleprompter")
         XCTAssertEqual(teleprompter.totalWidth, 545)
@@ -80,7 +80,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
         let status = VoiceBarNotchContract.geometry(for: .compactStatus)
 
         XCTAssertEqual(hover.leadingWingWidth, 73.5)
-        XCTAssertEqual(recording.leadingWingWidth, 94)
+        XCTAssertEqual(recording.leadingWingWidth, 88.5)
         XCTAssertEqual(recording.trailingWingWidth, 102)
         XCTAssertEqual(status.leadingWingWidth, 47.5)
         XCTAssertEqual(
@@ -127,7 +127,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
         XCTAssertEqual(recording.leadingWingWidth, VoiceBarNotchContract.recordingLeadingWingWidth)
         // 2.3 U2: six level bars fit the fixed right wing.
         XCTAssertEqual(recording.trailingWingWidth, 102)
-        XCTAssertEqual(recording.leadingWingWidth, 94)
+        XCTAssertEqual(recording.leadingWingWidth, 88.5)
     }
 
     func testCompactStatusOverridesPreserveIndependentContentFitWidths() {
@@ -197,7 +197,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
             let leading = material.wingContentLayout(for: .leading, state: state)
             let trailing = material.wingContentLayout(for: .trailing, state: state)
 
-            XCTAssertEqual(leading.coreInset, state == .recording ? 8 : 13.5)
+            XCTAssertEqual(leading.coreInset, state == .recording ? 2.5 : 13.5)
             XCTAssertEqual(leading.outerInset, 14)
             // 2.3 U2: the fixed right wing centres its content between equal 8 pt insets.
             XCTAssertEqual(trailing.coreInset, VoiceBarNotchContract.fixedWingContentInset)

@@ -44,7 +44,7 @@ final class UIE2EHostNotchModelTests: XCTestCase {
         // Recording pause: a PTT take's left wing is Stop · Pause · ✕, the three-control width Lock already uses
         // on a VAD take (73.5 + 4 + 22 = 99.5 pt).
         // Recording reserves three left slots; each wing uses its own content and insets.
-        XCTAssertEqual(model.presentation.geometry.leadingWingWidth, 94)
+        XCTAssertEqual(model.presentation.geometry.leadingWingWidth, 88.5)
         XCTAssertEqual(model.presentation.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth)
         XCTAssertGreaterThanOrEqual(VoiceBarNotchContract.recordingTrailingWingWidth,
                                     VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl)

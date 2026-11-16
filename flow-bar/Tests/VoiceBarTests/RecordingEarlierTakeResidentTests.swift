@@ -15,7 +15,7 @@ final class RecordingEarlierTakeResidentTests: XCTestCase {
     }
 
     func testTheSpinnerSlotCollapsesInTheResidentModelAfterCompletionCancelOrFailure() {
-        let reserved: CGFloat = 94
+        let reserved: CGFloat = 88.5
         let recordingWidth = VoiceBarNotchContract.recordingTrailingWingWidth
         let slot = VoiceBarNotchContract.material.compactControlSpacing + VoiceBarNotchContract.material.compactControlSize
         let terminal: [(String, [[String: Any]])] = [

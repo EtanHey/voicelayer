@@ -108,7 +108,7 @@ final class RecordingWingLabelTests: XCTestCase {
     func testTheRecordingRowFitsReservedWingsWithAndWithoutTheHoldControl() {
         for hold in [false, true] {
             let geometry = resolve(.recording, hold: hold).geometry
-            XCTAssertEqual(geometry.leadingWingWidth, 94)
+            XCTAssertEqual(geometry.leadingWingWidth, 88.5)
             XCTAssertEqual(geometry.trailingWingWidth, 102)
             XCTAssertLessThanOrEqual(geometry.leadingWingWidth, VoiceBarNotchContract.morphCanvasWingCapacity)
             XCTAssertLessThanOrEqual(geometry.trailingWingWidth, VoiceBarNotchContract.morphCanvasWingCapacity)

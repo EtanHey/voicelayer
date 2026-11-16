@@ -138,6 +138,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     private let morphVariant: VoiceBarNotchMorphVariant
     private let canvasGeometry: VoiceBarNotchGeometry?
     private let historyMorph: VoiceBarNotchHistoryMorphInput?
+    private let trailingWingLayoutState: VoiceBarNotchVisualState?
     @State private var renderedGeometry: VoiceBarNotchGeometry
     @State private var renderedOuterCornerRadius: CGFloat
     @State private var renderedShoulderCornerRadius: CGFloat
@@ -156,6 +157,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         morphVariant: VoiceBarNotchMorphVariant = .p1Matched,
         canvasGeometry: VoiceBarNotchGeometry? = nil,
         historyMorph: VoiceBarNotchHistoryMorphInput? = nil,
+        trailingWingLayoutState: VoiceBarNotchVisualState? = nil,
         onHoverChanged: @escaping (Bool) -> Void = { _ in },
         @ViewBuilder leadingContent: () -> LeadingContent,
         @ViewBuilder trailingContent: () -> TrailingContent,
@@ -166,6 +168,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         self.morphVariant = morphVariant
         self.canvasGeometry = canvasGeometry
         self.historyMorph = historyMorph
+        self.trailingWingLayoutState = trailingWingLayoutState
         _renderedGeometry = State(initialValue: presentation.geometry)
         _renderedOuterCornerRadius = State(
             initialValue: VoiceBarNotchContract.material.compactOuterCornerRadius(for: presentation.visualState)
@@ -549,7 +552,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         // reflows: on the M4 the old `.history` insets moved the recording time and meter 4.5 pt toward the notch.
         let slot = VoiceBarNotchContract.material.wingContentLayout(
             for: side,
-            state: presentation.bandState,
+            state: side == .trailing ? (trailingWingLayoutState ?? presentation.bandState) : presentation.bandState,
             visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
         )
         return content.modifier(VoiceBarNotchWingSlot(slot: slot))
