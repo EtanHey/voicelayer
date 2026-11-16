@@ -1162,31 +1162,55 @@ export function isProseOne(words: string[], index: number): boolean {
     /^(?:|now|instead|please|too|as|that|which|with|for)$/u.test(after);
 }
 
-// Two-pair years are ambiguous with lists. Embedded prose needs a temporal
-// cue; a whole-line year needs none. Never consume part of a larger cardinal.
+// Two-pair years need contextual evidence, even in lists. Quantity/plural
+// followers veto each candidate before evidence propagates to list siblings.
 function formatSpokenYears(text: string): string {
   const tens = "(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)";
   const unit = "(?:one|two|three|four|five|six|seven|eight|nine)";
   const teen = "(?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)";
   const year = new RegExp(`\\b(nineteen|twenty)[ \\t]+(${tens}(?:(?:[ \\t]+|-)${unit})?|${teen}|oh[ \\t]+${unit})\\b`, "gi");
-  const temporal = /\b(?:in|since|of|late|early|during|by|before|after|from|until|to|through|for|year|years|january|february|march|april|may|june|july|august|september|october|november|december)[ \t]+$/i;
+  const temporal = /\b(?:in|since|of|late|early|during|by|before|after|from|until|to|through|for|year|years|the|was|is|mid|between|around|january|february|march|april|may|june|july|august|september|october|november|december)[ \t]+$/i;
   const numeric = (word: string) => NUMBER_WORDS.has(word.toLowerCase()) || /^(?:oh|point|\d+)$/i.test(word);
-  let lastYearEnd = -1;
-  return text.replace(year, (match, century: string, pair: string, offset: number) => {
-    const before = text.slice(0, offset);
-    const after = text.slice(offset + match.length);
+  const nonPlural = new Set("was is has as its his this thus plus versus yes us always perhaps unless whereas across besides".split(" "));
+  // Singular/irregular units need an explicit guard; regular plurals are caught
+  // by their final s. Prefer a missed year modifier over an invented quantity.
+  const quantity = /^(?:%|per|percent|percentage|minute|second|hour|day|week|month|year|time|person|people|item|thing|point|dollar|shekel|euro|pound|buck|k|grand|foot|feet|inch|child|children|man|men|woman|women|mile|meter|metre|kilometer|kilometre|gram|kilogram|liter|litre|degree|cent|yen)$/i;
+  const candidates = Array.from(text.matchAll(year), match => {
+    const start = match.index!;
+    const end = start + match[0].length;
+    const before = text.slice(0, start);
+    const after = text.slice(end);
     const previous = /([^ \t]+)[ \t]+$/.exec(before)?.[1] ?? "";
-    const next = /^[ \t]+([^ \t,.!?;:]+)/.exec(after)?.[1] ?? "";
-    if (numeric(previous) || numeric(next) || /[\w`-]$/.test(before) ||
-        /^(?:[\w-]|\.{2,}|…)/u.test(after)) return match;
+    const next = /^(?:[ \t]+|(?=%))(%|[a-z]+(?:-[a-z]+)*|\d+)/i.exec(after)?.[1]?.toLowerCase() ?? "";
+    const valid = !numeric(previous) && !numeric(next) && !/[\w`-]$/.test(before) &&
+      !/^(?:[\w-]|\.{2,}|…)/u.test(after) && !quantity.test(next) &&
+      !(next.endsWith("s") && !nonPlural.has(next));
     const standalone = !before.trim() && /^[,.!?;:]?$/.test(after.trim());
-    const continuation = lastYearEnd >= 0 && /^[ \t,]*(?:not|and|or|with|versus)[ \t]+$/i.test(before.slice(lastYearEnd));
-    if (!standalone && !temporal.test(before) && !continuation) return match;
-    lastYearEnd = offset + match.length;
-    const words = pair.toLowerCase().split(/[ \t-]+/);
+    const sentenceStart = /(?:^|[.!?])[ \t]*$/.test(before) &&
+      /^(?:[,\.]|[ \t]+(?:was|is|will|had)\b)/i.test(after);
+    const words = match[2].toLowerCase().split(/[ \t-]+/);
     const suffix = words[0] === "oh" ? WORD_TO_NUMBER[words[1]] : parseNumberWords(words)!;
-    return String(WORD_TO_NUMBER[century.toLowerCase()] * 100 + suffix);
+    return { start, end, valid, qualifies: valid && (standalone || temporal.test(before) || sentenceStart),
+      value: String(WORD_TO_NUMBER[match[1].toLowerCase()] * 100 + suffix) };
   });
+  // Qualify whole connected lists, not just the siblings following a cue.
+  // Invalid siblings break the chain and can never borrow year evidence.
+  const listGap = /^[ \t]*(?:,[ \t]*(?:(?:not|and|or|with|to|through|versus)[ \t]+)?|(?:not|and|or|with|to|through|versus)[ \t]+)$/i;
+  for (let first = 0; first < candidates.length;) {
+    let end = first + 1;
+    while (end < candidates.length && candidates[end - 1].valid && candidates[end].valid &&
+      listGap.test(text.slice(candidates[end - 1].end, candidates[end].start))) end++;
+    const qualifies = candidates.slice(first, end).some(candidate => candidate.qualifies);
+    for (let i = first; i < end; i++) candidates[i].qualifies = qualifies && candidates[i].valid;
+    first = end;
+  }
+  let cursor = 0;
+  let result = "";
+  for (const candidate of candidates) {
+    result += text.slice(cursor, candidate.start) + (candidate.qualifies ? candidate.value : text.slice(candidate.start, candidate.end));
+    cursor = candidate.end;
+  }
+  return result + text.slice(cursor);
 }
 
 function formatNumbersInLine(text: string): string {

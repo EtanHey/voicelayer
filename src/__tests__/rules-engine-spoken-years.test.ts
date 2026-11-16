@@ -65,3 +65,67 @@ const controls: Record<string, string> = {
   "in twenty zero five": "In 20 0 5",
   "eighteen ninety nine": "18 99"
 };
+
+
+describe("spoken years round 2", () => {
+  test.each([
+    ["for twenty thirty minutes", "For 20 30 minutes"],
+    ["it lasted for twenty thirty years", "It lasted for 20 30 years"],
+    ["of twenty thirty items, ten failed", "Of 20 30 items, 10 failed"],
+    ["one of twenty twenty items", "One of 20 20 items"],
+    ["for twenty twenty-five dollars", "For 20 25 dollars"],
+    ["after twenty thirty minutes it stopped", "After 20 30 minutes it stopped"],
+    ["in twenty thirty%", "In 20 thirty%"],
+    ["in twenty thirty minutes)", "In 20 30 minutes)"],
+    ["up to twenty twenty five people", "Up to 20 25 people"],
+    ["to twenty twenty-five percent", "To 20 25%"],
+    ["around twenty thirty people", "Around 20 30 people"],
+    ["between twenty and thirty", "Between 20 and 30"],
+    ["give me twenty thirty", "Give me 20 30"],
+    ["the twenty twenty-six results", "The 20 26 results"],
+    ["twenty twenty-six was a hard year", "2026 was a hard year"],
+    ["the twenty twenty-six roadmap", "The 2026 roadmap"],
+    ["twenty twenty-six, not twenty twenty-five", "2026, not 2025"],
+    ["mid twenty twenty-six", "Mid 2026"],
+    ["between twenty twenty-five and twenty twenty-seven", "Between 2025 and 2027"],
+    ["in twenty twenty-six, twenty twenty-seven and twenty twenty-eight", "In 2026, 2027 and 2028"],
+    ["twenty twenty-six to twenty twenty-seven", "2026 to 2027"],
+    ["it was twenty twenty-six", "It was 2026"],
+    ["it is twenty twenty-six", "It is 2026"],
+    ["around twenty twenty-six", "Around 2026"],
+    ["done. twenty twenty-six will be busy", "Done. 2026 will be busy"],
+    ["done! twenty twenty-six had a milestone", "Done! 2026 had a milestone"],
+    ["twenty twenty-six. the plan changed", "2026. The plan changed"],
+    ["twenty thirty minutes later", "20 30 minutes later"],
+    ["give me twenty thirty, forty fifty", "Give me 20 thirty, 40 50"],
+    ["in twenty twenty-six, twenty twenty-seven people", "In 2026, 20 27 people"],
+    ["twenty twenty-six or in twenty twenty-seven", "20 26 or in 2027"],
+    ["in twenty twenty-six…", "In 20 twenty-six…"],
+    ["in twenty twenty-six, I mean twenty twenty-seven", "In 2026, I mean 20 27"],
+  ])("formats %s", (raw, expected) => expect(applyRules(raw)).toBe(expected));
+
+  test.each([
+    "percent", "per cent", "%", "minutes", "seconds", "hours", "days", "weeks", "months",
+    "years", "times", "people", "items", "things", "points", "dollars", "shekels", "euros",
+    "pounds", "bucks", "k", "grand", "results", "sales", "feet", "children", "men", "women",
+  ])("keeps cued quantities split before %s", quantity => {
+    const suffix = quantity === "percent" || quantity === "%" ? "%" :
+      quantity === "k" ? "k" : ` ${quantity}`;
+    expect(applyRules(`in twenty thirty ${quantity}`)).toBe(`In 20 30${suffix}`);
+  });
+
+  test.each([
+    "was", "is", "has", "as", "its", "his", "this", "thus", "plus", "versus", "yes", "us",
+    "always", "perhaps", "unless", "whereas", "across", "besides",
+  ])("allows non-plural %s after a cued year", word => {
+    expect(applyRules(`in twenty twenty-six ${word}`)).toBe(`In 2026 ${word}`);
+  });
+
+  test.each(["and", "or", "to", "through", "versus", ","])("propagates across %s both ways", connector => {
+    const gap = connector === "," ? ", " : ` ${connector} `;
+    expect(applyRules(`compare twenty twenty-six${gap}twenty twenty-seven to twenty twenty-eight`))
+      .toBe(`Compare 2026${gap}2027 to 2028`);
+    expect(applyRules(`in twenty twenty-six${gap}twenty twenty-seven${gap}twenty twenty-eight`))
+      .toBe(`In 2026${gap}2027${gap}2028`);
+  });
+});
