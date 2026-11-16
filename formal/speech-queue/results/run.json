@@ -64,7 +64,7 @@
     "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "9e4bfc30e64627da8a74e43caf59c4620b54efb6074faa1a07b2b2b10c4a4ab5",
     "flow-bar/Tests/VoiceBarTests/F5PauseConformanceTests.swift": "6d85e0a93b4adceac6173a6e23a63f994603c76d59a5cb0f49868275166b2782",
     "flow-bar/Tests/VoiceBarTests/F5ResumeIdentityTests.swift": "cf8800989d3d7a5bead74c26271bf21d13cb7bee9a375e4e8dd778321675a825",
-    "flow-bar/Tests/VoiceBarUITests/PlaybackPauseTests.swift": "aa4a13bbd9379e1b35bfc63eb72c55e43b316790ef70b87b10f1de46330e9d89",
+    "flow-bar/Tests/VoiceBarUITests/PlaybackPauseTests.swift": "f8b596720d645422230f96178bc63b772c01094c7f0dd265f09e1f68a3803c56",
     "flow-bar/Tests/VoiceBarUITests/SpeechDataConformanceTests.swift": "b75b60dc19b7d5f663ef8bed1558abf3563fc4f16f8c2accf029fe851f589c3f",
     "formal/corpus_support.py": "0d05415c571fe24ecd143b062344e65bec84a5078d2ab4f514d06fac045a319d",
     "formal/legacy_receipts.py": "83fae1948d340e3e253cbd19aac05814ee2457664397616ffce0de4b502998f0",
