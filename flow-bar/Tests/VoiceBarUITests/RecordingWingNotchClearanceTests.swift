@@ -43,11 +43,11 @@ final class RecordingWingNotchClearanceTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(textMinX - physicalEdge, 8, "\(time) keeps ≥ 8 pt from the real notch")
         }
         let wing = p.geometry.trailingWingWidth
-        XCTAssertEqual(p.geometry.leadingWingWidth, 94 + physicalEdge)
+        XCTAssertEqual(p.geometry.leadingWingWidth, 88.5 + physicalEdge)
         let leftInset = VoiceBarNotchContract.material.wingContentLayout(for: .leading, state: .recording,
             visibleCoreOcclusionInset: physicalEdge).coreInset
-        XCTAssertEqual(leftInset - physicalEdge, slot.coreInset - physicalEdge, accuracy: 0.001,
-                       "reserved innermost slot and timer share the same physical-notch gap")
+        XCTAssertEqual(leftInset - physicalEdge + 5.5, slot.coreInset - physicalEdge, accuracy: 0.001,
+                       "glyph side bearings require 5.5 pt less slot inset than the timer")
         let contentWidth = VoiceBarRecordingWingLabel.width + VoiceBarRecordingWingLabel.recordingMeterGap + WaveformLayout.viewportWidth
         XCTAssertEqual(slot.coreInset + contentWidth + slot.outerInset, wing, accuracy: 0.001,
                        "the row fills the visible wing without an empty outer region")

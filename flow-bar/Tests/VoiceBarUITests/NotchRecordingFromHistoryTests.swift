@@ -114,7 +114,8 @@ final class NotchRecordingFromHistoryTests: XCTestCase {
             .path(in: CGRect(origin: .zero, size: layout.totalSize))
         let material = VoiceBarNotchContract.material
         // The recording controls already at their final place (walkthrough frame, 37.5 s).
-        let minX = shell.coreOriginX - recording.leadingWingWidth + material.compactContentInset
+        // Preserve the historical 94 pt wing as this regression's witness. The optical revision is narrower.
+        let minX = shell.coreOriginX - 94 + material.compactContentInset
         XCTAssertFalse(path.contains(CGPoint(x: minX + 1, y: shell.topHeight / 2)),
                        "regression witness: the outer control sat outside the narrower old wing")
     }

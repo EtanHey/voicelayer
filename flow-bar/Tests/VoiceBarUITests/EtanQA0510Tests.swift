@@ -244,7 +244,7 @@ final class EtanQA0510Tests: XCTestCase {
                 let l = g.coreOriginX - CGFloat(left) / 2
                 let r = CGFloat(right + 1) / 2 - g.coreOriginX - g.coreWidth
                 print("[0449 E2] hold=\(hold) inset=\(inset) left=\(l) right=\(r)")
-                XCTAssertEqual(l, 94 + inset, accuracy: 2, "three reserved controls with calibrated inset")
+                XCTAssertEqual(l, 88.5 + inset, accuracy: 2, "three reserved controls with calibrated inset")
                 XCTAssertEqual(r, 102 + inset, accuracy: 2, "timer/meter with calibrated inset")
             }
         }

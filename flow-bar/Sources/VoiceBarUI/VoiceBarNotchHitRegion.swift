@@ -82,7 +82,7 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
             )
         case .recording:
             VoiceBarNotchInteractionConfiguration(leadingControlCount: 2,
-                leadingCoreInset: presentation.visibleCoreOcclusionInset + VoiceBarNotchContract.fixedWingContentInset,
+                leadingCoreInset: presentation.visibleCoreOcclusionInset + VoiceBarNotchContract.recordingLeadingContentInset,
                 leadingControlSlotIndices: [0, 2])
         case .compactStatus:
             .none
@@ -91,7 +91,7 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
         case .history:
             presentation.bandState == .recording
                 ? VoiceBarNotchInteractionConfiguration(leadingControlCount: 2,
-                    leadingCoreInset: presentation.visibleCoreOcclusionInset + VoiceBarNotchContract.fixedWingContentInset,
+                    leadingCoreInset: presentation.visibleCoreOcclusionInset + VoiceBarNotchContract.recordingLeadingContentInset,
                     leadingControlSlotIndices: [0, 2]).withInteractiveLowerSurface
                 : presentation.bandState == .compactStatus
                 ? VoiceBarNotchInteractionConfiguration.none.withInteractiveLowerSurface

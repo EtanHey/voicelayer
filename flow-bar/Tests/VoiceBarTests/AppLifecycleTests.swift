@@ -248,7 +248,7 @@ final class AppLifecycleTests: XCTestCase {
             wingWidth: VoiceBarPresentation.recordingWingWidth(
                 showsThirdControl: true, showsEarlierTakeProcessing: false, visibleCoreOcclusionInset: 0),
             showsEarlierTakeProcessing: false)
-        XCTAssertEqual(recordingCoreInset, 8)
+        XCTAssertEqual(recordingCoreInset, 2.5)
         state.mode = .recording
         state.recordingMode = "ptt"
         // Recording pause: Stop · Pause · ✕, so Stop stays inside the hit region on a PTT take.

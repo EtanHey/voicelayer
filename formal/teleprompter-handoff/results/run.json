@@ -10,7 +10,7 @@
     "formal/teleprompter-handoff/MutantNoEntry.cfg": "3f77165907cd00b9236f2f3d2ab0f1b596ba6aa2d894b4b6f347f5b661f89fc0",
     "formal/teleprompter-handoff/Fixed.cfg": "f1ee953518951f06402c9e8cbb31727864f77ff7d5af5604ef8acbc7ac7f2bf4",
     "flow-bar/Sources/VoiceBarUI/TeleprompterPreparingHandoff.swift": "69eb35440a5a91b8d062a29a3c1dc6abcf26103cd59f277d0bb250cc5a706335",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "86d5ffda8684f2380a772998951334210cd9676f7d964dbeb7f5a245971fcfc0",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "f69085ec6ff4efa775ba8a4a3b0c58de7b17a987bdd48d7592ac24397e26694c",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {

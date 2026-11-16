@@ -50,7 +50,7 @@ final class RecordingSourceMotionRegressionTests: XCTestCase {
     func testRecordingToTranscribingRetainsOneVisibleOutline() {
         let model = VoiceBarNotchPresentationModel()
         model.updateOperationalEnvelope(hasTeleprompter: false, isRecording: true, hasCompactStatus: false,
-                                        recordingLeadingWingWidth: 94, recordingTrailingWingWidth: 102)
+                                        recordingLeadingWingWidth: 88.5, recordingTrailingWingWidth: 102)
         model.updateOperationalEnvelope(hasTeleprompter: false, isRecording: false, hasCompactStatus: true,
                                         compactStatusLeadingWingWidth: 73.5, compactStatusTrailingWingWidth: 73.5)
         XCTAssertEqual(model.presentation.visualState, .compactStatus)

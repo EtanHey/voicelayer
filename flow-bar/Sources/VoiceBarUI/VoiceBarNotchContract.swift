@@ -165,7 +165,7 @@ public struct VoiceBarNotchMaterialContract: Equatable {
         visibleCoreOcclusionInset: CGFloat = 0
     ) -> VoiceBarNotchWingContentLayout {
         // Launcher and playback leading controls share the idle microphone lane.
-        // Recording instead clears the calibrated physical notch by the same inset as its timer.
+        // Recording uses the glyph optical inset beyond the calibrated occlusion.
         // 2.3 U2 (3-wings mock): the right wing is a fixed 73.5 pt in every state, so its content sits centred
         // between the shared fixed-wing insets instead of the old waveform lane (24 pt from the core). That room
         // is what fits the reading time beside Stop without widening the wing.
@@ -182,7 +182,8 @@ public struct VoiceBarNotchMaterialContract: Equatable {
         return VoiceBarNotchWingContentLayout(
             side: side,
             coreInset: isFixedTrailing || state == .recording
-                ? hiddenByGlass + VoiceBarNotchContract.fixedWingContentInset
+                ? hiddenByGlass + (side == .leading && state == .recording
+                    ? VoiceBarNotchContract.recordingLeadingContentInset : VoiceBarNotchContract.fixedWingContentInset)
                 : VoiceBarNotchContract.compactCoreContentInset,
             outerInset: isFixedTrailing && !isRecordingTrailing
                 ? VoiceBarNotchContract.fixedWingContentInset : compactContentInset,
@@ -566,7 +567,10 @@ public enum VoiceBarNotchContract {
         material.compactControlSpacing +
         material.compactControlSize
 
-    public static let recordingLeadingWingWidth = fixedWingContentInset
+    /// Optical side bearing of the innermost glyph allows a closer slot without changing its pitch.
+    public static let recordingLeadingContentInset: CGFloat = 2.5
+
+    public static let recordingLeadingWingWidth = recordingLeadingContentInset
         + 3 * material.compactControlSize + 2 * material.compactControlSpacing + material.compactContentInset
 
     /// The time/meter row with its insets: 8 pt clear of the physical notch, and (C7-W) the left wing's own outer

@@ -411,7 +411,7 @@ final class VoiceBarPresentationTests: XCTestCase {
         XCTAssertEqual(launcher.geometry.trailingWingWidth, 73.5)
         XCTAssertEqual(processing.geometry.leadingWingWidth, 73.5)
         XCTAssertEqual(processing.geometry.trailingWingWidth, 73.5)
-        XCTAssertEqual(recording.geometry.leadingWingWidth, 94)
+        XCTAssertEqual(recording.geometry.leadingWingWidth, 88.5)
         XCTAssertEqual(recording.geometry.trailingWingWidth, 102)
         XCTAssertEqual(quickTap.geometry.leadingWingWidth, 47.5)
         XCTAssertEqual(
@@ -442,9 +442,9 @@ final class VoiceBarPresentationTests: XCTestCase {
 
         // Recording reserves three left slots; each wing uses its own content and insets.
         // longer changes the band's width.
-        XCTAssertEqual(pushToTalk.geometry.leadingWingWidth, 94)
+        XCTAssertEqual(pushToTalk.geometry.leadingWingWidth, 88.5)
         XCTAssertEqual(pushToTalk.geometry.trailingWingWidth, 102)
-        XCTAssertEqual(vad.geometry.leadingWingWidth, 94)
+        XCTAssertEqual(vad.geometry.leadingWingWidth, 88.5)
         XCTAssertEqual(vad.geometry.trailingWingWidth, 102, "the right wing retains its own content-fit width")
     }
 

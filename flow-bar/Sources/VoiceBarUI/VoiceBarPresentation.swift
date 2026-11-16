@@ -581,10 +581,10 @@ public enum VoiceBarPresentation {
             + material.compactContentInset
     }
 
-    /// Both rows start the same distance beyond the occluded part of the core.
+    /// The recording glyph sits closer than the timer slot to balance their visible ink gaps.
     public static func recordingLeadingCoreInset(wingWidth _: CGFloat, showsEarlierTakeProcessing _: Bool,
                                                  visibleCoreOcclusionInset: CGFloat = 0) -> CGFloat {
-        max(0, visibleCoreOcclusionInset) + VoiceBarNotchContract.fixedWingContentInset
+        max(0, visibleCoreOcclusionInset) + VoiceBarNotchContract.recordingLeadingContentInset
     }
 
     /// 2.3 N1 (Etan, queued-recording clip F1): while this take records, an earlier take is still queued,
