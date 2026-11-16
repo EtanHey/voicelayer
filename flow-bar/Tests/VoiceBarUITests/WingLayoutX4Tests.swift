@@ -297,8 +297,13 @@ final class WingLayoutX4Tests: XCTestCase {
             for fixture in Fixture.allCases {
                 let g = presentation(fixture, inset: inset).geometry
                 print("[X4-2] \(fixture.rawValue) inset=\(inset): wings L/R=\(g.leadingWingWidth)/\(g.trailingWingWidth)")
-                XCTAssertEqual(g.leadingWingWidth, g.trailingWingWidth, accuracy: 0.5,
-                               "[X4-2] \(fixture.rawValue) inset \(inset): equal wings about the notch")
+                if fixture == .recordingPTT || fixture == .recordingVAD {
+                    XCTAssertEqual(g.leadingWingWidth, 94 + inset, accuracy: 0.5, "reserved recording controls")
+                    XCTAssertEqual(g.trailingWingWidth, 102 + inset, accuracy: 0.5, "independent timer/meter payload")
+                } else {
+                    XCTAssertEqual(g.leadingWingWidth, g.trailingWingWidth, accuracy: 0.5,
+                                   "non-recording wings retain their existing symmetry")
+                }
                 XCTAssertLessThanOrEqual(g.trailingWingWidth, VoiceBarNotchContract.morphCanvasWingCapacity,
                                          "\(fixture.rawValue): inside the morph canvas")
             }
@@ -449,7 +454,7 @@ final class WingLayoutX4Tests: XCTestCase {
                   "open gutters L/R=\(leftGutter)/\(rightGutter)")
             XCTAssertEqual(open.stop.minX, closed.stop.minX, accuracy: 0.25, "Stop holds still")
             XCTAssertEqual(open.time.minX, closed.time.minX, accuracy: 0.25, "the time holds still")
-            XCTAssertEqual(leftGutter, rightGutter, accuracy: 0.5, "[C7-W-2] inset \(inset): equal gutters when open")
+            XCTAssertEqual(leftGutter - rightGutter, 8, accuracy: 0.5, "independent recording payloads differ by 8 pt; opening must preserve that")
         }
     }
 
@@ -540,7 +545,7 @@ final class WingLayoutX4Tests: XCTestCase {
                 let region = VoiceBarNotchHitRegion(geometry: canvas, configuration: .init(
                     leadingControlCount: 3,
                     leadingCoreInset: VoiceBarPresentation.recordingLeadingCoreInset(
-                        wingWidth: g.leadingWingWidth, showsEarlierTakeProcessing: false)))
+                        wingWidth: g.leadingWingWidth, showsEarlierTakeProcessing: false, visibleCoreOcclusionInset: inset)))
                 let originX = b.left // the geometry's x = 0 on the 540 pt canvas
                 let xs = region.rects.map { $0.minX + originX }.sorted()
                 XCTAssertEqual(xs.first ?? -1, b.stop.minX, accuracy: 0.5, "\(fixture.rawValue) \(inset): Stop's hit rect")

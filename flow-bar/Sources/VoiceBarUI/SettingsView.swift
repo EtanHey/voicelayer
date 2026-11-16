@@ -2960,6 +2960,7 @@ public struct SettingsView: View {
                         .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
                 }
                 .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
                 .fixedSize()
                 .focusable(isSelected, interactions: .edit)
                 .focused($focusedTermAction, equals: rowID)

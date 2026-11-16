@@ -372,6 +372,20 @@ extension NotchSurfaceHostedFlowTests {
         }
     }
 
+    func testTranscribingButtonsOpenBothDrawersWithoutRecordingCommands() throws {
+        for tooltip in ["Settings", "History"] {
+            let h = makeHarness()
+            enter(.transcribing, h)
+            try click(try drawnControl(tooltip, h), in: h.panel)
+            wait { h.surface.drawer != nil }
+            if tooltip == "Settings" { XCTAssertEqual(h.surface.drawer, .settings(.general)) }
+            else { XCTAssertTrue(h.surface.drawer?.isHistory == true) }
+            XCTAssertEqual(h.state.mode, .transcribing)
+            XCTAssertTrue(h.router.commands.isEmpty)
+            XCTAssertTrue(h.router.actions.isEmpty)
+        }
+    }
+
     /// 0510 N9 (R4): the microphone opens Settings › General in each allowed state. While transcribing it sits
     /// one pitch outside the decorative spinner; launcher and Typed keep the usual core-side slot.
     func testN9TheMicrophoneControlOpensTheNotchMicrophoneSettingEverywhere() throws {

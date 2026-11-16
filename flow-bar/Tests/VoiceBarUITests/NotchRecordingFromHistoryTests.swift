@@ -41,7 +41,7 @@ final class NotchRecordingFromHistoryTests: XCTestCase {
     }
 
     func testAGrowingWingNeverWaitsForTheBodyToEmpty() {
-        // Symmetric recording wings grow past History even before the third control is needed.
+        // The reserved third slot makes the leading recording wing grow from the first frame.
         XCTAssertGreaterThan(geometry(.init(mode: .recording)).leadingWingWidth, history.leadingWingWidth)
         let recording = geometry(.init(mode: .recording, showsRecordingHold: true))
         XCTAssertGreaterThan(recording.leadingWingWidth, history.leadingWingWidth)
@@ -105,7 +105,7 @@ final class NotchRecordingFromHistoryTests: XCTestCase {
 
     /// The old timing, replayed: the content appeared at once and the shell waited 0.12 s.
     func testTheOldTimingClippedTheStopButton() {
-        // 2.3 U2: only the hold lock still widens the wing, so the witness replays that case.
+        // The reserved recording row is wider than History, including before type metadata arrives.
         let recording = geometry(.init(mode: .recording, showsRecordingHold: true))
         let shell = interpolate(history, recording, springProgress(at: 0)) // still waiting out the delay
         let layout = VoiceBarNotchShapeLayout(geometry: shell)

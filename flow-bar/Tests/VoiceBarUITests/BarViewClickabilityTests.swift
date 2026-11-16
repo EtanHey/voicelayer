@@ -152,8 +152,8 @@ final class BarViewClickabilityTests: XCTestCase {
         recording.isCollapsed = false
         XCTAssertEqual(
             makeHost(state: recording, router: SpyCommandRouter()).bounds.size,
-            // C7-W: the recording wing is 102 pt on both sides of the 185 pt core (8 + 26 + 8 + 46 + 14).
-            NSSize(width: 389, height: 32)
+            // Recording reserves three left slots; each wing uses its own content and insets.
+            NSSize(width: 381, height: 32)
         )
 
         let teleprompter = VoiceState()
@@ -875,7 +875,7 @@ final class BarViewClickabilityTests: XCTestCase {
                 let configuration = state.mode == .recording
                     ? VoiceBarNotchInteractionConfiguration(
                         leadingControlCount: 3,
-                        // C7-W: the recording row sits out from the core, as the app configures it.
+                        // Recording reserves three left slots; each wing uses its own content and insets.
                         leadingCoreInset: VoiceBarPresentation.recordingLeadingCoreInset(
                             wingWidth: VoiceBarPresentation.recordingWingWidth(
                                 showsThirdControl: true, showsEarlierTakeProcessing: false,
@@ -1169,11 +1169,8 @@ final class BarViewClickabilityTests: XCTestCase {
     }
 
     private func recordingCancelButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(
-            x: (host.bounds.width - VoiceBarNotchContract.coreWidth) / 2
-                - VoiceBarNotchContract.compactCoreContentInset - 10,
-            y: host.bounds.midY
-        )
+        let coreLeft = host.bounds.width - VoiceBarNotchContract.coreWidth - VoiceBarNotchContract.recordingTrailingWingWidth
+        return NSPoint(x: coreLeft - 8 - 10, y: host.bounds.midY)
     }
 
     private func recordingHoldButtonCenter(in host: NSView) -> NSPoint {
@@ -1181,8 +1178,8 @@ final class BarViewClickabilityTests: XCTestCase {
     }
 
     private func recordingStopButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: (host.bounds.width - VoiceBarNotchContract.coreWidth) / 2
-            - VoiceBarNotchContract.compactCoreContentInset - 10 - 26, y: host.bounds.midY)
+        let cancel = recordingCancelButtonCenter(in: host)
+        return NSPoint(x: cancel.x - 2 * 26, y: cancel.y) // Pause is reserved between Stop and Cancel.
     }
 
     /// T4/T7: Replay and the eye are one centred group; the terminal X sits one pitch (30 pt) to its right. The row

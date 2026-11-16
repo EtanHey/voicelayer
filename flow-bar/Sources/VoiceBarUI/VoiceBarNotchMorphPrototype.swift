@@ -94,7 +94,9 @@ public struct VoiceBarNotchMorphCanvasLayout: Equatable, Sendable {
         let historyReach = VoiceBarNotchContract.geometry(
             for: .history, coreWidth: presentation.geometry.coreWidth
         ).bodyLeadingExtent + NotchHistoryMorph.openTopRadius
-        let maximumCompactWingWidth = max(VoiceBarNotchContract.morphCanvasWingCapacity, historyReach)
+        let recordingReach = VoiceBarPresentation.recordingWingWidth(showsThirdControl: true,
+            showsEarlierTakeProcessing: true, visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset)
+        let maximumCompactWingWidth = max(VoiceBarNotchContract.morphCanvasWingCapacity, historyReach, recordingReach)
         // The canvas's wings reach as far as its body does. `coreOriginX` reads the wings when there is no
         // lower surface and the body when there is one, so wings narrower than the body put the core 10 pt
         // further right once History or the teleprompter opened; the window moved back 10 pt in a separate

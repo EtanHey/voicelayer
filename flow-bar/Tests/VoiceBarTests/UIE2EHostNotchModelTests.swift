@@ -43,8 +43,8 @@ final class UIE2EHostNotchModelTests: XCTestCase {
         XCTAssertEqual(model.presentation.visualState, .recording)
         // Recording pause: a PTT take's left wing is Stop · Pause · ✕, the three-control width Lock already uses
         // on a VAD take (73.5 + 4 + 22 = 99.5 pt).
-        // C7-W: the time/meter wing (102 pt on a flat display) is the wider of the two and sets both wings.
-        XCTAssertEqual(model.presentation.geometry.leadingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth)
+        // Recording reserves three left slots; each wing uses its own content and insets.
+        XCTAssertEqual(model.presentation.geometry.leadingWingWidth, 94)
         XCTAssertEqual(model.presentation.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth)
         XCTAssertGreaterThanOrEqual(VoiceBarNotchContract.recordingTrailingWingWidth,
                                     VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl)

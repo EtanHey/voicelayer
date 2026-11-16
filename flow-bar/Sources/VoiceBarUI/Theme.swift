@@ -40,6 +40,10 @@ public enum Theme {
     /// The M4 glass behind the right wing as recorded on 2026-11-12 (the backdrop sets it; see the c9-P report).
     static let measuredM4GlassRGB: (red: Double, green: Double, blue: Double) = (106.3, 114.8, 125.0)
 
+    public static func transcribingSpinnerColor(for appearance: VoiceBarNotchAppearance) -> Color {
+        Color(hex: appearance == .light ? 0x0050B2 : 0x3D9BFF)
+    }
+
     // MARK: - Pill background
 
     /// Solid dark background — works on any wallpaper, no vibrancy edge artifacts.

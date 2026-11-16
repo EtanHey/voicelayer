@@ -78,14 +78,15 @@ public struct ProcessingSpinner: View {
     private let size: CGFloat
     private let showsTrack: Bool
     private let color: Color
+    private var transcribingAppearance: VoiceBarNotchAppearance?
 
     public init() {
         self.init(diameter: Self.defaultDiameter, showsTrack: false)
     }
 
-    /// c9-P: the transcribing take's spinner takes the ripple's blue (its own commit, so it can be dropped alone).
-    init(color: Color) {
-        self.init(diameter: Self.defaultDiameter, showsTrack: false, color: color)
+    init(transcribing appearance: VoiceBarNotchAppearance) {
+        self.init(diameter: 15, showsTrack: true, color: Theme.transcribingSpinnerColor(for: appearance))
+        transcribingAppearance = appearance
     }
 
     init(diameter: CGFloat, showsTrack: Bool, color: Color = Theme.speakingColor) {
@@ -100,7 +101,10 @@ public struct ProcessingSpinner: View {
                 angle: (renderTime ?? timeline.date.timeIntervalSinceReferenceDate) * 360,
                 diameter: size,
                 showsTrack: showsTrack,
-                color: color
+                color: color,
+                lineWidth: transcribingAppearance == nil ? 2.2 : 2.6,
+                trackOpacity: transcribingAppearance == nil ? 0.28 : 0.24,
+                edgeColor: transcribingAppearance.map { VoiceBarNotchGlyphContrastTreatment.resolve(for: $0).color }
             )
         }
         .frame(width: size, height: size)
@@ -115,21 +119,26 @@ struct ProcessingSpinnerFrame: View {
     var showsTrack = false
     var color: Color = Theme.speakingColor
 
+    var lineWidth: CGFloat = 2.2
+    var trackOpacity: Double = 0.28
+    var edgeColor: Color?
+
     var body: some View {
-        ZStack {
+        let rings = ZStack {
             if showsTrack {
                 Circle()
-                    .stroke(color.opacity(0.28), lineWidth: 2.2)
+                    .stroke(color.opacity(trackOpacity), lineWidth: lineWidth)
             }
             Circle()
                 .trim(from: 0.08, to: 0.74)
                 .stroke(
                     color.opacity(0.98),
-                    style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
+                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
                 )
                 .rotationEffect(.degrees(angle))
         }
         .frame(width: diameter, height: diameter)
+        if let edgeColor { rings.notchAdaptiveGlyphEdge(edgeColor) } else { rings }
     }
 }
 
@@ -380,8 +389,6 @@ public struct BarView: View {
     /// The Settings drawer's data and actions. Without it the gear keeps opening the Settings window (2.3).
     private let settingsDrawer: NotchSettingsDrawerContext?
     @State private var modalObserver: NotchModalObserver?
-    /// c9-P round 2 (F4): the recording clock's last shown text, whose width class the transcribing time lane keeps.
-    @State private var heldRecordingClockText = "0:00"
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isMorphTeleprompterContentPresented = false
     /// The History panel is on screen (open, opening, closing or being pulled). The window keeps the panel's size
@@ -933,11 +940,8 @@ public struct BarView: View {
         let armed = settingsDrawer != nil && !isSettingsDrawerOpen
             && historyPull.rawProgress >= NotchHistoryMorph.settingsPullThreshold
         if armed != isSettingsPullArmed {
-            // C6 L2 (N17): the grip and "Release for Settings" cross in one beat, never a one-frame swap.
-            withAnimation(NotchDrawerMotion.easeOut(armed ? NotchDrawerMotion.hintInDuration
-                                                          : NotchDrawerMotion.hintOutDuration)) {
-                isSettingsPullArmed = armed
-            }
+            // The persistent grip reads pull progress; arming still controls release routing.
+            isSettingsPullArmed = armed
         }
         historyFlight = nil // the pointer owns the value now
         historyBridge?.historyOpenRequested() // grabbing History cancels a waiting notch menu
@@ -1190,9 +1194,10 @@ public struct BarView: View {
         guard fromCentre < 0 else { return true }
         let material = VoiceBarNotchContract.material
         let earlierTake = VoiceBarPresentation.showsEarlierTakeProcessing(for: state)
-        let slots: CGFloat = 2 + (recordingPauseControl != nil || recordingHoldControl != nil ? 1 : 0) + (earlierTake ? 1 : 0)
+        let slots: CGFloat = 3 + (earlierTake ? 1 : 0)
         let inner = geometry.coreWidth / 2 + VoiceBarPresentation.recordingLeadingCoreInset(
-            wingWidth: geometry.leadingWingWidth, showsEarlierTakeProcessing: earlierTake)
+            wingWidth: geometry.leadingWingWidth, showsEarlierTakeProcessing: earlierTake,
+            visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset)
         let row = slots * material.compactControlSize + (slots - 1) * material.compactControlSpacing
         let overhang = VoiceBarPillControlButton.hitOverhang
         return !(inner - overhang ... inner + row + overhang).contains(-fromCentre)
@@ -1321,9 +1326,9 @@ public struct BarView: View {
                 }
                 // Recording pause sits beside Stop, in its own control slot.
                 // X16 (Etan J4; M4 live bisection): no per-item insertion transition here. The daemon's `ptt` event
-                // inserts this control after the wing exists, and with `VoiceBarNotchWingContentEntry.transition` on it
+                // fills its reserved slot after the wing exists, and with `VoiceBarNotchWingContentEntry.transition` on it
                 // AppKit never showed its tooltip while Stop and Cancel beside it did. It enters the slot Stop leaves,
-                // which the glass already covers; Stop is what moves out with the growing wing.
+                // which the glass already covers; Stop and Cancel keep their frames.
                 if let recordingPauseControl {
                     notchButton(
                         icon: recordingPauseControl.iconName,
@@ -1336,14 +1341,20 @@ public struct BarView: View {
                         state.setRecordingPaused(!state.isRecordingPaused)
                     }
                     .contentTransition(.symbolEffect(.replace))
+                } else if recordingHoldControl == nil {
+                    // Optimistic F5 recording is PTT: reserve Pause's exact position until the type arrives.
+                    // A VAD state event supplies its type before publishing recording, so Lock owns the core slot.
+                    Color.clear.frame(width: VoiceBarNotchContract.material.compactControlSize,
+                                      height: VoiceBarNotchContract.material.compactControlSize)
+                        .allowsHitTesting(false).accessibilityHidden(true)
                 }
                 notchButton(icon: "xmark", accessibilityLabel: "Cancel recording") {
                     commandRouter.handleCancel()
                 }
                 // X21 (as X16 for mute): no per-item insertion transition here. The daemon's `vad` event inserts Lock
-                // after the wing exists, growing it by one slot; with `VoiceBarNotchWingContentEntry.transition` on a
+                // with the recording state; with `VoiceBarNotchWingContentEntry.transition` on a
                 // late control AppKit does not show its tooltip (bisected live on the M4 for mute). Lock takes the slot
-                // Cancel vacates, which the glass already covers; Cancel and Stop move out with the growing wing.
+                // reserved at the core, which the glass already covers; Cancel and Stop stay in place.
                 if let recordingHoldControl {
                     notchButton(
                         icon: recordingHoldControl.iconName,
@@ -1356,28 +1367,20 @@ public struct BarView: View {
                     }
                 }
             }
-            // C7-W: Stop keeps the meter's inset from the band's edge; the row is still counted from the core.
-            .padding(.trailing, VoiceBarPresentation.recordingLeadingCoreInset(
-                wingWidth: notchPresentation.geometry.leadingWingWidth,
-                showsEarlierTakeProcessing: VoiceBarPresentation.showsEarlierTakeProcessing(for: state)
-            ) - VoiceBarNotchContract.compactCoreContentInset)
-            // Keep the controls on their core-anchored hit regions as the symmetric wing grows.
             .frame(maxWidth: .infinity, alignment: .trailing)
             // R0856-05: the recording controls arrive with a wider wing; they show once its glass covers them.
             .transition(VoiceBarNotchWingContentEntry.transition(growth: leadingWingGrowth))
         case .compactStatus, .teleprompter:
             if notchPresentation.bandState == .compactStatus, state.mode == .transcribing {
-                // 2.3 U2: the spinner sits where Stop was, in a control slot so it lines up with it. It is not a
-                // control, so it registers no tooltip (R0856-09: tooltips sit on controls); VoiceOver reads it.
-                // Keep the spinner at its historical core distance, with the microphone one control pitch outside.
                 HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
-                    microphonePickerButton
-                    transcriptionSpinner
+                    if VoiceBarPresentation.transcribingCaretNextToCore {
+                        transcriptionSpinner
+                        microphonePickerButton
+                    } else {
+                        microphonePickerButton
+                        transcriptionSpinner
+                    }
                 }
-                .padding(.trailing, VoiceBarPresentation.transcribingSpinnerCoreInset
-                    - VoiceBarNotchContract.compactCoreContentInset)
-                // c9-P: keep the full recording wing; spare width stays beyond the microphone on the outer side.
-                .frame(maxWidth: .infinity, alignment: .trailing)
             } else if let playbackPauseControl {
                 readingTransportControls(playbackPauseControl)
             } else if notchPresentation.bandState == .compactStatus,
@@ -1398,7 +1401,7 @@ public struct BarView: View {
     }
 
     private var transcriptionSpinner: some View {
-        ProcessingSpinner(color: Theme.processingRippleColor(for: notchAppearance))
+        ProcessingSpinner(transcribing: notchAppearance)
             .frame(width: VoiceBarNotchContract.material.compactControlSize,
                    height: VoiceBarNotchContract.material.compactControlSize)
             .accessibilityElement()
@@ -1517,8 +1520,6 @@ public struct BarView: View {
 
     @ViewBuilder
     private var notchTrailingContent: some View {
-        // c9-P: recording and transcribing share ONE meter row (outside the switch, so it keeps its identity): when the
-        // take stops, the red meter hands over to the blue ripple on the same bars instead of leaving the slot.
         if showsRecordingMeterRow {
             recordingMeterRow
         } else {
@@ -1526,55 +1527,36 @@ public struct BarView: View {
         }
     }
 
-    /// c9-P: the band shows the recording time/meter row while recording and, with the meter rippling, while the take
-    /// transcribes (a drawer above either keeps it: `bandState`).
     private var showsRecordingMeterRow: Bool {
         switch notchPresentation.bandState {
         case .recording: true
-        case .compactStatus: state.mode == .transcribing
+        case .compactStatus: false
         case .idle, .hoverLauncher, .history, .teleprompter: false
         }
     }
 
     /// QA 0449: the time/meter group is centred in equal wings, with a clear gap and no blank outer region.
     /// Capture-open still owns the timer; the capturing microphone remains its tooltip and VoiceOver value.
-    /// Reported 2026-11-12 (c9-P): replace the recording timer with a blue processing ripple in place.
     private var recordingMeterRow: some View {
-        let isRecording = notchPresentation.bandState == .recording
-        let isPaused = isRecording && state.isRecordingPaused
-        let padding = isRecording ? (leading: 0, trailing: 0) : VoiceBarPresentation.transcribingMeterRowPadding(
-            visibleCoreOcclusionInset: notchPresentation.visibleCoreOcclusionInset)
+        let isPaused = state.isRecordingPaused
         return VoiceBarRecordingTrailingRow {
-            if isRecording {
-                VoiceBarRecordingTimeRegion(
-                    elapsedMilliseconds: { state.recordingElapsedMilliseconds() },
-                    isCaptureOpen: state.isRecordingCaptureOpen,
-                    microphoneName: state.recordingMicrophoneName,
-                    color: notchPrimaryLabelColor
-                )
-            } else {
-                // c9-P round 2: a still placeholder holds the width class the take's clock last showed (F4: a 10:00
-                // or 1:02:03 take keeps its meter columns) and schedules no clock while transcribing (F6).
-                Color.clear.frame(width: VoiceBarRecordingWingLabel.clockWidth(for: heldRecordingClockText), height: 1)
-            }
+            VoiceBarRecordingTimeRegion(
+                elapsedMilliseconds: { state.recordingElapsedMilliseconds() },
+                isCaptureOpen: state.isRecordingCaptureOpen,
+                microphoneName: state.recordingMicrophoneName,
+                color: notchPrimaryLabelColor,
+                armingColor: notchPalette.tertiary.color
+            )
         } meter: {
             notchWaveform(isPaused: isPaused)
                 .accessibilityElement()
                 .accessibilityLabel(isPaused ? "Recording paused"
-                    : isRecording ? "Input level" : "Transcription progress")
+                    : "Input level")
                 // VoiceOver reads the same frozen time the wing shows.
                 .accessibilityValue(isPaused
                     ? VoiceBarReadingTimeLabel.text(elapsedMilliseconds: state.recordingElapsedMilliseconds()) : "")
         }
-        .padding(.leading, padding.leading)
-        .padding(.trailing, padding.trailing)
-        // Pinned to the outer edge as the recording slot pins it (`.outer`), so a wider wing (F1: an earlier take's
-        // spinner) leaves the spare width facing the notch in both states.
         .frame(maxWidth: .infinity, alignment: .trailing)
-        // A removed clock publishes nil, which keeps the last text it showed.
-        .onPreferenceChange(VoiceBarRecordingClockTextKey.self) { text in
-            if let text { heldRecordingClockText = text }
-        }
     }
 
     @ViewBuilder
@@ -1601,11 +1583,13 @@ public struct BarView: View {
     @ViewBuilder
     private var notchCompactStatusContent: some View {
         switch state.mode {
-        case .transcribing, .recording:
-            // c9-P: a transcribing take's right wing is the meter row (`recordingMeterRow`), never reached here.
-            // History and Settings return with the launcher once the take is done; until then the drawer pull
-            // reaches them, exactly as while recording (0510 N7).
+        case .recording:
             EmptyView()
+        case .transcribing:
+            HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
+                historyButton
+                settingsButton
+            }
         case .speaking:
             notchSpeakingTrailingContent
         case .error:
@@ -1833,16 +1817,17 @@ public struct BarView: View {
                     palette: notchPalette,
                     rows: (historyRows, NotchHistoryMorph.maximumRows(entryCount: state.recentTranscriptionEntries.count),
                            adjustHistoryRows),
-                    showsGrip: !isSettingsPullArmed,
+                    settingsHintProgress: settingsDrawer != nil && !isSettingsDrawerOpen
+                        ? (isSettingsPullArmed ? 1 : min(1, max(0, ((historyFrozenProgress ?? historyPull.rawProgress) - 1)
+                            / (NotchHistoryMorph.settingsPullThreshold - 1)))) : 0,
+                    settingsHintOffset: historyMorphInput.map {
+                        max(0, $0.geometry(at: $0.progress).lowerSurfaceHeight - $0.openLowerSurfaceHeight) / 2
+                    } ?? 0,
                     onDrag: dragHistoryHandle,
                     onDragEnd: { cancelled in
                         if historyRowsPull.phase != .idle { endHistoryRowsPull(cancelled: cancelled) }
                     }
                 )
-                // 0510 N6: the hint takes the handle's band (the overpull stretches the shell under it), never a row.
-                .overlay {
-                    if isSettingsPullArmed { settingsPullHint }
-                }
             }
                 .frame(maxHeight: .infinity, alignment: .top)
                 .modifier(NotchHistoryRowsMorph(progress: historyFrozenProgress ?? historyProgress,
@@ -1857,10 +1842,6 @@ public struct BarView: View {
         return surface.drawer == nil && pullOpensSettings ? .general : nil
     }
 
-    /// Shown while a pull past open is armed: releasing opens Settings. It fits the handle's 18 pt band (0510 N6).
-    private var settingsPullHint: some View {
-        NotchSettingsPullHint(ink: notchPalette.primary.color)
-    }
 
     @ViewBuilder
     private var notchTeleprompterTimeline: some View {
@@ -2338,6 +2319,13 @@ public struct BarView: View {
     /// Visual shots only: mount with the History panel open, so its button renders selected.
     func presentingHistoryForShots() -> BarView {
         presentingHistoryForTesting()
+    }
+
+    /// Offscreen visual fixture; no drag events or commands are sent.
+    func presentingSettingsPullHintForShots() -> BarView {
+        var copy = presentingHistoryForTesting()
+        copy._isSettingsPullArmed = State(initialValue: true)
+        return copy
     }
 
     /// Spec §4: the History panel inside the notch's lower surface.

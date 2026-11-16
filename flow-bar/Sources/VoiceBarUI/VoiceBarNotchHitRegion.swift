@@ -3,6 +3,8 @@ import SwiftUI
 
 public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
     public let leadingControlCount: Int
+    /// Sparse recording slots while Pause is reserved but not yet mounted.
+    public let leadingControlSlotIndices: [Int]?
     public let trailingControlCountFromCore: Int
     public let trailingControlCountFromOuter: Int
     public let trailingOuterInset: CGFloat
@@ -28,9 +30,11 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
         leadingOutermostControlWidth: CGFloat? = nil,
         lowerTerminalControl: Bool = false,
         lowerControlBottomInset: CGFloat = 14,
-        leadingCoreInset: CGFloat = VoiceBarNotchContract.compactCoreContentInset
+        leadingCoreInset: CGFloat = VoiceBarNotchContract.compactCoreContentInset,
+        leadingControlSlotIndices: [Int]? = nil
     ) {
         self.leadingControlCount = max(0, leadingControlCount)
+        self.leadingControlSlotIndices = leadingControlSlotIndices
         self.trailingControlCountFromCore = max(0, trailingControlCountFromCore)
         self.trailingControlCountFromOuter = max(0, trailingControlCountFromOuter)
         self.trailingOuterInset = max(0, trailingOuterInset)
@@ -58,7 +62,7 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
             leadingControlCount: leadingControlCount, trailingControlCountFromCore: trailingControlCountFromCore,
             trailingControlCountFromOuter: trailingControlCountFromOuter, trailingOuterInset: trailingOuterInset,
             lowerControlCount: lowerControlCount, lowerSurfaceIsInteractive: true,
-            leadingCoreInset: leadingCoreInset
+            leadingCoreInset: leadingCoreInset, leadingControlSlotIndices: leadingControlSlotIndices
         )
     }
 
@@ -77,16 +81,18 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
                 trailingControlCountFromCore: 2
             )
         case .recording:
-            VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 2
-            )
+            VoiceBarNotchInteractionConfiguration(leadingControlCount: 2,
+                leadingCoreInset: presentation.visibleCoreOcclusionInset + VoiceBarNotchContract.fixedWingContentInset,
+                leadingControlSlotIndices: [0, 2])
         case .compactStatus:
             .none
         case .teleprompter:
             VoiceBarNotchInteractionConfiguration(lowerControlCount: 1)
         case .history:
             presentation.bandState == .recording
-                ? VoiceBarNotchInteractionConfiguration(leadingControlCount: 2).withInteractiveLowerSurface
+                ? VoiceBarNotchInteractionConfiguration(leadingControlCount: 2,
+                    leadingCoreInset: presentation.visibleCoreOcclusionInset + VoiceBarNotchContract.fixedWingContentInset,
+                    leadingControlSlotIndices: [0, 2]).withInteractiveLowerSurface
                 : presentation.bandState == .compactStatus
                 ? VoiceBarNotchInteractionConfiguration.none.withInteractiveLowerSurface
                 : .historyPanel
@@ -107,8 +113,9 @@ public struct VoiceBarNotchHitRegion: Equatable {
         let topY = geometry.lowerSurfaceHeight + ((geometry.topHeight - size) / 2)
         var rects: [CGRect] = []
 
-        for index in 0 ..< configuration.leadingControlCount {
-            let isOutermost = index == configuration.leadingControlCount - 1
+        let leadingSlots = configuration.leadingControlSlotIndices ?? Array(0 ..< configuration.leadingControlCount)
+        for index in leadingSlots {
+            let isOutermost = index == leadingSlots.last
             let width = isOutermost ? max(size, configuration.leadingOutermostControlWidth ?? size) : size
             rects.append(
                 CGRect(

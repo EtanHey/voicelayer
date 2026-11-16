@@ -2,7 +2,7 @@ import SwiftUI
 
 /// C6 L2 (S9, N17): one motion vocabulary for the drawer's content switches, so a threshold or tab change reads
 /// as the same surface changing, never as a one-frame cut ("tabbed History becomes blank", "Release History
-/// becomes General", the grip turning into "Release for Settings" between two frames).
+/// becomes General").
 ///
 /// - Purpose: state indication plus preventing a jarring change. The shell's own spring keeps moving the surface;
 ///   only the content inside it crossfades, with a small blur that bridges the two states into one.
@@ -25,12 +25,6 @@ enum NotchDrawerMotion {
     static let tabInDuration: Double = 0.16
     static let tabOutDuration: Double = 0.1
     static let tabBlur: CGFloat = 2
-
-    /// The grip ↔ "Release for Settings" handoff (N17).
-    static let hintInDuration: Double = 0.18
-    static let hintOutDuration: Double = 0.12
-    static let hintStartScale: CGFloat = 0.94
-    static let hintBlur: CGFloat = 2
 
     static func easeOut(_ duration: Double) -> Animation {
         .timingCurve(0.23, 1, 0.32, 1, duration: duration)
@@ -67,21 +61,7 @@ enum NotchDrawerMotion {
         )
     }
 
-    static func hintTransition(reduceMotion: Bool) -> AnyTransition {
-        func swap(_ phase: NotchDrawerSwapPhase) -> NotchDrawerSwap {
-            reduceMotion ? NotchDrawerSwap(opacity: 0, phase: phase)
-                : NotchDrawerSwap(opacity: 0, blur: hintBlur, scale: hintStartScale, phase: phase)
-        }
-        return .asymmetric(
-            insertion: .modifier(active: swap(.arriving), identity: .identity).animation(easeOut(hintInDuration)),
-            removal: .modifier(active: swap(.leaving), identity: .identity).animation(easeOut(hintOutDuration))
-        )
-    }
 
-    /// The grip's fade while the hint takes its band (same timings, so the two cross in one beat).
-    static func gripAnimation(showsGrip: Bool) -> Animation {
-        easeOut(showsGrip ? hintInDuration : hintOutDuration)
-    }
 }
 
 /// Shows `content(key)` and crossfades to the new content when `key` changes. The key is mirrored into local state
