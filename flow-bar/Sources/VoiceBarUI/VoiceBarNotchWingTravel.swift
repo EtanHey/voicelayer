@@ -96,6 +96,16 @@ final class VoiceBarNotchClosingTracker {
         return serial
     }
 
+    /// Review r2: a further geometry change while the band is still closing starts a replacement animation, which now
+    /// owns the band. Returns the token its completion must present (nil when no band is retained).
+    func claim() -> Int? {
+        guard let band else { return nil }
+        generation &+= 1
+        self.band = VoiceBarNotchClosingBand(serial: generation, geometry: band.geometry, bandState: band.bandState,
+                                             trailingLayoutState: band.trailingLayoutState)
+        return generation
+    }
+
     /// The band reopened: the close is over without waiting for its completion.
     func cancel() { band = nil }
 

@@ -169,6 +169,27 @@ final class NotchWingTravelTests: XCTestCase {
         XCTAssertNil(tracker.band)
     }
 
+    /// Review r2 (blocking): close A begins, then a further geometry change while still idle starts a replacement
+    /// animation. A's late completion must not remove the band mid-replacement; only the replacement's own completion
+    /// may. The view takes every replacement's token from `claim()`.
+    func testAReplacementWhileClosingOwnsTheRetainedBand() {
+        let tracker = VoiceBarNotchClosingTracker()
+        let launcher = VoiceBarNotchContract.geometry(for: .hoverLauncher)
+        XCTAssertNil(tracker.claim(), "no retained band, nothing to claim")
+        let a = tracker.begin(geometry: launcher, bandState: .hoverLauncher, trailingLayoutState: nil)
+        let replacement = tracker.claim()
+        XCTAssertNotNil(replacement)
+        XCTAssertNotEqual(replacement, a, "the replacement carries its own token")
+        tracker.complete(a)
+        XCTAssertNotNil(tracker.band, "A's late completion leaves the band to the replacement")
+        XCTAssertEqual(tracker.band?.geometry, launcher, "the replacement keeps the band it took over")
+        let second = tracker.claim()
+        tracker.complete(replacement!)
+        XCTAssertNotNil(tracker.band, "a superseded replacement's completion does not end it either")
+        tracker.complete(second!)
+        XCTAssertNil(tracker.band, "the newest owner's completion ends it")
+    }
+
     /// The slot offset is the gap between the drawn outer edge and the settled one, on each side; no live wings (any
     /// shell but the state shell) means no travel.
     func testTheSlotOffsetFollowsTheDrawnOuterEdge() {
