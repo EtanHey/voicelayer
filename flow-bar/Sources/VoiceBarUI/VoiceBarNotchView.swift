@@ -89,11 +89,14 @@ public struct VoiceBarNotchHistoryMorphInput: Equatable {
         guard p > 1 else { return geometry }
         // The release hint needs 8 pt above and below its 18 pt capsule. Keep the list fixed;
         // further pointer travel still arms Settings, while the visible footer stays compact.
+        // The room stops at the drawer's window: a drawer that already fills it (eight rows and a two-line note)
+        // gets no extra footer, so the window never cuts the shell's lower edge off.
+        let overshoot = min(16, (p - 1) * 16 / (NotchHistoryMorph.rubberBand(NotchHistoryMorph.settingsPullThreshold) - 1))
         return VoiceBarNotchGeometry(coreWidth: geometry.coreWidth, topHeight: geometry.topHeight,
             leadingWingWidth: geometry.leadingWingWidth, trailingWingWidth: geometry.trailingWingWidth,
             bodyLeadingExtent: geometry.bodyLeadingExtent, bodyTrailingExtent: geometry.bodyTrailingExtent,
-            lowerSurfaceHeight: openLowerSurfaceHeight + min(16,
-                (p - 1) * 16 / (NotchHistoryMorph.rubberBand(NotchHistoryMorph.settingsPullThreshold) - 1)))
+            lowerSurfaceHeight: max(openLowerSurfaceHeight,
+                min(openLowerSurfaceHeight + overshoot, NotchHistoryMorph.historyCanvasLowerSurfaceHeight)))
     }
 }
 
