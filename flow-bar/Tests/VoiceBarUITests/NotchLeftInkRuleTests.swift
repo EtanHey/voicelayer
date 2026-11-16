@@ -100,6 +100,48 @@ final class NotchLeftInkRuleTests: XCTestCase {
         print("LEFT_INK_RULE\n" + rows.joined(separator: "\n"))
     }
 
+    /// Review r1 (lead decision): reading aloud while an Ask answer is still transcribing with nothing queued puts the
+    /// spinner in Forward's slot. Its ink meets the rule too (it sat at 15.0 pt); the slot and every hit rect stay.
+    func testTheSpinnerInForwardsSlotSitsOnTheRule() throws {
+        let fixture = Fixture(name: "reading aloud, Ask answer transcribing", tooltip: "Pause speech", icon: "pause.fill") {
+            var speaking: [String: Any] = ["type": "state", "state": "speaking", "text": "A synthetic sentence to read.",
+                                           "request_id": "ink-read", "playback_id": "ink-player", "generation": 1]
+            speaking["utteranceId"] = "ink-read"
+            $0.handleEvent(speaking)
+            $0.handleEvent(["type": "read_processing", "utterance_id": "ink-read", "active": true])
+        }
+        let state = VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
+                               recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in },
+                               playbackAmplitudeClock: { 100 }, keepsExpandedInDevState: false)
+        state.sendCommand = { _ in }
+        state.isConnected = true
+        state.isCollapsed = false
+        fixture.configure(state)
+        XCTAssertTrue(VoiceBarPresentation.readingForwardControl(for: state).showsProcessingSpinner,
+                      "fixture: the spinner takes Forward's slot")
+        let host = mountBar(state, model: nil, opensHistory: false)
+        let coreMinX = 270 - VoiceBarNotchContract.coreWidth / 2
+        let left = leftControls(in: host, coreMinX: coreMinX)
+        let innermost = try XCTUnwrap(left.max { $0.frame.maxX < $1.frame.maxX })
+        XCTAssertEqual(innermost.tooltip, fixture.tooltip, "the spinner has no control of its own; Pause is next out")
+        let material = VoiceBarNotchContract.material
+        // Forward's slot, one pitch inside Pause.
+        let slotGap = coreMinX - (innermost.frame.maxX + material.compactControlSpacing + material.compactControlSize)
+        let bitmap = try NotchDesignPixels.render(
+            VoiceBarReadingForwardSpinner(appearance: .dark).environment(\.visualRenderTime, 1.25)
+                .frame(width: 20, height: 20).padding(10).background(.black), size: CGSize(width: 40, height: 40))
+        var inkMaxX: CGFloat?
+        for y in 20 ..< 60 { for x in 20 ..< 60 {
+            guard let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                  max(c.redComponent, c.greenComponent, c.blueComponent) > 0.12 else { continue }
+            inkMaxX = max(inkMaxX ?? 0, CGFloat(x + 1) / 2)
+        } }
+        let bearing = 30 - (try XCTUnwrap(inkMaxX, "the spinner drew no ink"))
+        let gap = slotGap + bearing
+        print(String(format: "LEFT_INK_RULE spinner: %.2f pt (slot %.2f + bearing %.2f)", gap, slotGap, bearing))
+        XCTAssertEqual(gap, Self.rule, accuracy: Self.tolerance, "the spinner's innermost ink sits \(gap) pt from the notch")
+    }
+
     // MARK: - Measuring
 
     struct Measured { let gap: CGFloat; let slotGap: CGFloat; let bearing: CGFloat }

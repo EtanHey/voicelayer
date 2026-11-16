@@ -111,6 +111,25 @@ public struct ProcessingSpinner: View {
     }
 }
 
+/// Owner r2 R1: the spinner that takes Forward's slot in the reading transport (an Ask answer still transcribing,
+/// nothing queued). Its ink sits `outwardShift` further out inside the 20 pt slot, so the innermost left ink meets the
+/// 16.5 pt left-side rule like Forward's does; the row, the slot and every hit rect stay where they are. The 15 pt ring's
+/// 2.6 pt stroke reaches 1.3 pt past its frame, so centred it left 1 pt of the slot empty (ink at 13.5 pt): 3 pt out.
+struct VoiceBarReadingForwardSpinner: View {
+    let appearance: VoiceBarNotchAppearance
+    static let outwardShift: CGFloat = 3
+
+    var body: some View {
+        ProcessingSpinner(transcribing: appearance)
+            .offset(x: -Self.outwardShift)
+            .frame(width: VoiceBarNotchContract.material.compactControlSize,
+                   height: VoiceBarNotchContract.material.compactControlSize)
+            .accessibilityElement()
+            .accessibilityLabel("Transcribing")
+            .accessibilityAddTraits(.updatesFrequently)
+    }
+}
+
 /// One frame of `ProcessingSpinner` at a fixed angle, so a test can render any point of the turn.
 struct ProcessingSpinnerFrame: View {
     let angle: Double
@@ -1438,7 +1457,7 @@ public struct BarView: View {
             playbackPauseButton(pause)
             if forward.showsProcessingSpinner {
                 // Q1 (open): with nothing queued, an Ask answer still transcribing shows its spinner in Forward's slot.
-                transcriptionSpinner
+                VoiceBarReadingForwardSpinner(appearance: notchAppearance)
             } else {
                 notchButton(
                     icon: "forward.end.fill",
