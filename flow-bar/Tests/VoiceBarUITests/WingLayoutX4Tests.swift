@@ -583,7 +583,7 @@ final class WingLayoutX4Tests: XCTestCase {
                     try XCTUnwrap(tooltipFrame($0, in: host), "\($0) is drawn").minX
                 }
                 let timeMinX = try XCTUnwrap(tooltipFrame(Self.microphone, in: host)).minX
-                let half = drawerOpen ? NotchHistoryMorph.bodyWidth / 2 : g.coreWidth / 2 + g.trailingWingWidth
+                let shell = Self.compositeShell(g, drawerOpen: drawerOpen)
                 let fill = Color(red: 22.0 / 255, green: 22.0 / 255, blue: 24.0 / 255)
                 let bandHeight = VoiceBarNotchContract.topHeight
                 let icons = ["stop.fill", "mic.fill", "xmark"]
@@ -591,8 +591,8 @@ final class WingLayoutX4Tests: XCTestCase {
                     Color(red: 0.55, green: 0.6, blue: 0.68)
                     UnevenRoundedRectangle(bottomLeadingRadius: 15, bottomTrailingRadius: 15)
                         .fill(fill)
-                        .frame(width: 2 * half, height: drawerOpen ? bandHeight + 70 : bandHeight)
-                        .offset(x: 270 - half)
+                        .frame(width: shell.width, height: drawerOpen ? bandHeight + 70 : bandHeight)
+                        .offset(x: shell.minX)
                     // The physical notch: the drawn core less the points the glass hides on each side.
                     UnevenRoundedRectangle(bottomLeadingRadius: 7, bottomTrailingRadius: 7)
                         .fill(Color.black)
@@ -620,6 +620,29 @@ final class WingLayoutX4Tests: XCTestCase {
                     to: URL(fileURLWithPath: directory)
                         .appendingPathComponent("band-\(drawerOpen ? "open" : "closed")-\(name).png"))
             }
+        }
+    }
+
+    /// The composite picture's shell, left edge and width on the 540 pt canvas (core centred at 270): the open drawer's
+    /// 420 pt panel, or the closed band from its left wing to its right wing.
+    static func compositeShell(_ g: VoiceBarNotchGeometry, drawerOpen: Bool) -> (minX: CGFloat, width: CGFloat) {
+        if drawerOpen { return (270 - NotchHistoryMorph.bodyWidth / 2, NotchHistoryMorph.bodyWidth) }
+        return (270 - g.coreWidth / 2 - g.leadingWingWidth, g.leadingWingWidth + g.coreWidth + g.trailingWingWidth)
+    }
+
+    /// CodeRabbit on #936: with unequal recording wings the closed composite shell was drawn from the right wing on
+    /// both sides, 13.5 pt too far left. It spans the band the BarView draws.
+    func testC7WClosedCompositeShellSpansBothWings() throws {
+        for inset: CGFloat in [0, 8.5] {
+            let g = presentation(.recordingPTT, inset: inset).geometry
+            XCTAssertNotEqual(g.leadingWingWidth, g.trailingWingWidth, "fixture: the recording wings are unequal")
+            let b = try band(.recordingPTT, inset: inset)
+            let closed = Self.compositeShell(g, drawerOpen: false)
+            XCTAssertEqual(closed.minX, b.left, accuracy: 0.01, "inset \(inset): the shell starts at the left wing")
+            XCTAssertEqual(closed.minX + closed.width, b.right, accuracy: 0.01, "inset \(inset): and ends at the right wing")
+            let open = Self.compositeShell(g, drawerOpen: true)
+            XCTAssertEqual(open.minX, 270 - NotchHistoryMorph.bodyWidth / 2)
+            XCTAssertEqual(open.width, NotchHistoryMorph.bodyWidth)
         }
     }
 
