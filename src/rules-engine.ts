@@ -1162,7 +1162,35 @@ export function isProseOne(words: string[], index: number): boolean {
     /^(?:|now|instead|please|too|as|that|which|with|for)$/u.test(after);
 }
 
+// Two-pair years are ambiguous with lists. Embedded prose needs a temporal
+// cue; a whole-line year needs none. Never consume part of a larger cardinal.
+function formatSpokenYears(text: string): string {
+  const tens = "(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)";
+  const unit = "(?:one|two|three|four|five|six|seven|eight|nine)";
+  const teen = "(?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)";
+  const year = new RegExp(`\\b(nineteen|twenty)[ \\t]+(${tens}(?:(?:[ \\t]+|-)${unit})?|${teen}|oh[ \\t]+${unit})\\b`, "gi");
+  const temporal = /\b(?:in|since|of|late|early|during|by|before|after|from|until|to|through|for|year|years|january|february|march|april|may|june|july|august|september|october|november|december)[ \t]+$/i;
+  const numeric = (word: string) => NUMBER_WORDS.has(word.toLowerCase()) || /^(?:oh|point|\d+)$/i.test(word);
+  let lastYearEnd = -1;
+  return text.replace(year, (match, century: string, pair: string, offset: number) => {
+    const before = text.slice(0, offset);
+    const after = text.slice(offset + match.length);
+    const previous = /([^ \t]+)[ \t]+$/.exec(before)?.[1] ?? "";
+    const next = /^[ \t]+([^ \t,.!?;:]+)/.exec(after)?.[1] ?? "";
+    if (numeric(previous) || numeric(next) || /[\w`-]$/.test(before) ||
+        /^(?:[\w-]|\.{2,}|…)/u.test(after)) return match;
+    const standalone = !before.trim() && /^[,.!?;:]?$/.test(after.trim());
+    const continuation = lastYearEnd >= 0 && /^[ \t,]*(?:not|and|or|with|versus)[ \t]+$/i.test(before.slice(lastYearEnd));
+    if (!standalone && !temporal.test(before) && !continuation) return match;
+    lastYearEnd = offset + match.length;
+    const words = pair.toLowerCase().split(/[ \t-]+/);
+    const suffix = words[0] === "oh" ? WORD_TO_NUMBER[words[1]] : parseNumberWords(words)!;
+    return String(WORD_TO_NUMBER[century.toLowerCase()] * 100 + suffix);
+  });
+}
+
 function formatNumbersInLine(text: string): string {
+  text = text.split(/(`[^`]*`)/g).map(part => part.startsWith("`") ? part : formatSpokenYears(part)).join("");
   const cardinal = [...NUMBER_WORDS].join("|");
   const digit = "zero|one|two|three|four|five|six|seven|eight|nine";
   const decimal = new RegExp(`\\b((?:${cardinal})(?:[ \\t]+(?:${cardinal}))*)[ \\t]+point[ \\t]+((?:${digit})(?:[ \\t]+(?:${digit}))*)\\b`, "gi");
