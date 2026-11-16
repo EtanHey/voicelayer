@@ -287,7 +287,8 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
             withTransaction(snap) { renderedGeometry = endpoints.start }
             pendingTabMorph = VoiceBarNotchPendingMorph(
                 serial: (pendingTabMorph?.serial ?? 0) &+ 1, presented: presentedGeometry,
-                start: endpoints.start, geometry: nextGeometry, delay: transition.delay
+                start: endpoints.start, geometry: nextGeometry, delay: transition.delay,
+                closingSerial: closingSerial
             )
         }
         .onChange(of: pendingTabMorph) { _, pending in
@@ -295,10 +296,14 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
             // (formal/notch-motion/TabMorph.tla, Unguarded fails NoSlabSweep).
             guard let pending, pending.presented == presentation.geometry, pending.start == renderedGeometry
             else { return }
-            withAnimation(shellAnimation.delay(pending.delay)) {
+            let tracker = closing
+            // Review r2: if this spring carries a retained band, its completion (and only its) may end it.
+            withAnimation(shellAnimation.delay(pending.delay), completionCriteria: .logicallyComplete) {
                 renderedGeometry = pending.geometry
                 renderedOuterCornerRadius = compactOuterCornerRadius
                 renderedShoulderCornerRadius = bodyShoulderCornerRadius
+            } completion: {
+                if let closingSerial = pending.closingSerial { tracker.complete(closingSerial) }
             }
         }
         .onChange(of: compactOuterCornerRadius) { _, nextRadius in
@@ -361,8 +366,11 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         guard presentation.visualState == .idle, let previous, previous != .idle, !accessibilityReduceMotion,
               historyMorph == nil, settled.leadingWingWidth + settled.trailingWingWidth > 0,
               settled.lowerSurfaceHeight == 0 || closing.band != nil else {
-            if closing.band != nil, presentation.visualState != .idle { closing.cancel() }
-            return closing.band?.serial
+            if closing.band != nil, presentation.visualState != .idle {
+                closing.cancel()
+                return nil
+            }
+            return closing.claim()
         }
         return closing.begin(geometry: settled, bandState: previous, trailingLayoutState: trailingWingLayoutState)
     }
@@ -680,6 +688,8 @@ struct VoiceBarNotchPendingMorph: Equatable {
     let start: VoiceBarNotchGeometry
     let geometry: VoiceBarNotchGeometry
     let delay: TimeInterval
+    /// Review r2: the retained band's token this spring owns, if any.
+    var closingSerial: Int? = nil
 }
 
 enum VoiceBarNotchCoreAnchoredRevealLayout {
