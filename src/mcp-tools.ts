@@ -104,17 +104,21 @@ export function getToolDefinitions() {
 
     {
       name: "voice_ask_results",
-      description: "Read retained Ask answers after an interrupted voice_ask: newest first (default 5, max 20), or one archive_id. Returns id, asked_at, question_preview (80 characters), raw answer and status answered/away/needs-retranscribe. Never speaks, records, opens the microphone or retranscribes. For explicit retranscription use voice_ask with retranscribe_archive_id.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      description: "Read retained Ask answers: newest first (default 5, max 20), or one archive_id. Returns raw answer and status. With delivery_ack alone, acknowledge the delivery_id and lease_id AFTER reading a caller-bound Ask result. Unacknowledged Ask results are recovered on this caller's next voice call before any new action; pending means the earlier Ask is still running. Recovery is at-least-once; deduplicate by delivery_id. A recovery result says the new action was NOT run. Never speaks, records or retranscribes. Automatic idle wake is not provided.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: { type: "object" as const, properties: {
         archive_id: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z-[a-f0-9]{8}$", description: "Exact retained Ask archive ID." },
         limit: { type: "integer", minimum: 1, maximum: 20, default: 5 },
+        delivery_ack: { type: "object", description: "Use alone, after reading a delivery envelope.", properties: {
+          delivery_id: { type: "string" }, lease_id: { type: "string" },
+        }, required: ["delivery_id", "lease_id"], additionalProperties: false },
       }, additionalProperties: false },
     },
     {
       name: "voice_ask",
       description:
         "Ask ONE short question aloud (≤600 chars — longer is refused).\n" +
+        "With the packaged bridge, Ask results carry delivery_id and lease_id: after reading, acknowledge using voice_ask_results delivery_ack. Unacknowledged older results take precedence over new voice actions.\n" +
         SPOKEN_STYLE + NO_ANSWER_RULE +
         "BLOCKING: the question is spoken before the microphone opens; the caller blocks for the entire playback plus the response.\n" +
         "HARD LIMIT: 600 characters maximum, independent of timeout_seconds. " +

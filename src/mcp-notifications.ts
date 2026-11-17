@@ -1,4 +1,5 @@
 import type { PlaybackOutcomeEvent } from "./socket-protocol";
+import type { AskDeliveryHooks } from "./ask-delivery";
 
 export type VoiceAskProgressStage = "recording" | "transcribing";
 
@@ -20,6 +21,7 @@ export type VoiceToolEvent =
   | PlaybackOutcomeToolEvent;
 
 export interface VoiceToolContext {
+  askDelivery?: AskDeliveryHooks;
   disconnectSignal?: AbortSignal;
   connection?: "stdio" | "daemon";
   emit(event: VoiceToolEvent): void;

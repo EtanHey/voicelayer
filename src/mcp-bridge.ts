@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
 import { createConnection, type Socket } from "node:net";
+import { randomBytes } from "node:crypto";
+import { CALLER_META } from "./ask-delivery";
 import { z } from "zod";
 import { getMcpSocketPath } from "./paths";
 import { MAX_NDJSON_LINE_BYTES } from "./ndjson-byte-framer";
@@ -47,6 +49,24 @@ function frameReader(onFrame: (frame: Frame) => void, onOversize: () => void) {
 }
 
 export function runBridge() {
+  // Process lifetime only: never persist or accept a caller-selected capability.
+  const callerCapability = randomBytes(32).toString("hex");
+  const bindCaller = (frame: Frame): Frame => {
+    let changed = false;
+    const messages = frame.messages.map(message => {
+      if (message.method !== "tools/call") return message;
+      const params = message.params;
+      if (!params || typeof params !== "object" || Array.isArray(params)) return message;
+      const value = params as Record<string, unknown>;
+      if (!["voice_ask", "voice_speak", "voice_ask_results"].includes(String(value.name))) return message;
+      const supplied = value._meta && typeof value._meta === "object" && !Array.isArray(value._meta)
+        ? value._meta as Record<string, unknown> : {};
+      changed = true;
+      return { ...message, params: { ...value, _meta: { ...supplied, [CALLER_META]: callerCapability } } };
+    });
+    if (!changed) return frame;
+    return { messages, wire: JSON.stringify(frame.wire.trimStart().startsWith("[") ? messages : messages[0]) + "\n" };
+  };
   let socket: Socket | undefined;
   let state: { kind: "offline" | "ready" } | { kind: "initialize" | "logging"; frame: Frame } = { kind: "offline" };
   let initialize: Frame | undefined;
@@ -170,7 +190,8 @@ export function runBridge() {
     current.on("close", () => { if (socket === current) disconnect(); });
     current.on("drain", () => { if (socket === current) flush(); });
   }
-  const input = frameReader(frame => {
+  const input = frameReader(incoming => {
+    const frame = bindCaller(incoming);
     if (state.kind !== "ready" && !frame.messages.length) {
       let id: string | number | null = null;
       let code = -32700;

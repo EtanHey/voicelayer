@@ -1009,6 +1009,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         } : {}),
         onArchiveCreated: (archivePath) => {
           captureArchivePath = archivePath;
+          context?.askDelivery?.archive(basename(archivePath));
           console.error(`[voicelayer] voice_ask archive_id=${basename(archivePath)}`);
         },
         onCaptureEnd: (transcribedDurationMs) => {
@@ -1051,6 +1052,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
       return { kind: "no-input", timeoutSeconds, pushToEnd, promptPlayback };
     }
 
+    context?.askDelivery?.answer(response);
     return { kind: "answered", transcript: response,
       archiveId: captureArchivePath ? basename(captureArchivePath) : null,
       promptPlayback: speech.playbackOutcome };
@@ -1087,6 +1089,8 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     await Promise.all(promptPlayers.map(handle => handle.playerExited));
     await settleSpeechArchivesForUpdate(archiveContext);
   };
+  // A bounded handler return is not the completion of retained background STT.
+  context?.askDelivery?.defer(flowPromise.then(formatVoiceAskTurnResult));
   holdVoiceAdmission(flowPromise.then(confirmedTeardown, confirmedTeardown));
   operationLifecycle?.deferReleaseUntil(Promise.race([flowPromise, abandonedBeforeCapture.promise]));
   try {
