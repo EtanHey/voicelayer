@@ -4718,7 +4718,16 @@
             19,
             20
           ],
-          "spread_pt": 1
+          "spread_pt": 1,
+          "counted": "frames whose glyph is clear of the wing edge",
+          "edge_touching_partial_glyphs": {
+            "frames": 1,
+            "range_pt": [
+              20,
+              20
+            ],
+            "note": "raster estimate on a glyph cut by the wing edge; not used for the range"
+          }
         },
         "chevron": {
           "resolved_close_frames": 1,
@@ -4726,7 +4735,16 @@
             46,
             46
           ],
-          "spread_pt": 0
+          "spread_pt": 0,
+          "counted": "frames whose glyph is clear of the wing edge",
+          "edge_touching_partial_glyphs": {
+            "frames": 1,
+            "range_pt": [
+              47,
+              47
+            ],
+            "note": "raster estimate on a glyph cut by the wing edge; not used for the range"
+          }
         },
         "history": {
           "resolved_close_frames": 1,
@@ -4734,7 +4752,16 @@
             43,
             43
           ],
-          "spread_pt": 0
+          "spread_pt": 0,
+          "counted": "frames whose glyph is clear of the wing edge",
+          "edge_touching_partial_glyphs": {
+            "frames": 1,
+            "range_pt": [
+              43,
+              43
+            ],
+            "note": "raster estimate on a glyph cut by the wing edge; not used for the range"
+          }
         },
         "gear": {
           "resolved_close_frames": 4,
@@ -4742,7 +4769,16 @@
             18,
             19
           ],
-          "spread_pt": 1
+          "spread_pt": 1,
+          "counted": "frames whose glyph is clear of the wing edge",
+          "edge_touching_partial_glyphs": {
+            "frames": 2,
+            "range_pt": [
+              19,
+              19
+            ],
+            "note": "raster estimate on a glyph cut by the wing edge; not used for the range"
+          }
         }
       },
       "frame_intervals_ms": [
@@ -11488,7 +11524,16 @@
             19,
             20
           ],
-          "spread_pt": 1
+          "spread_pt": 1,
+          "counted": "frames whose glyph is clear of the wing edge",
+          "edge_touching_partial_glyphs": {
+            "frames": 2,
+            "range_pt": [
+              19,
+              19
+            ],
+            "note": "raster estimate on a glyph cut by the wing edge; not used for the range"
+          }
         },
         "chevron": {
           "resolved_close_frames": 2,
@@ -11496,7 +11541,16 @@
             46,
             47
           ],
-          "spread_pt": 1
+          "spread_pt": 1,
+          "counted": "frames whose glyph is clear of the wing edge",
+          "edge_touching_partial_glyphs": {
+            "frames": 1,
+            "range_pt": [
+              47,
+              47
+            ],
+            "note": "raster estimate on a glyph cut by the wing edge; not used for the range"
+          }
         },
         "history": {
           "resolved_close_frames": 2,
@@ -11504,7 +11558,16 @@
             43,
             44
           ],
-          "spread_pt": 1
+          "spread_pt": 1,
+          "counted": "frames whose glyph is clear of the wing edge",
+          "edge_touching_partial_glyphs": {
+            "frames": 2,
+            "range_pt": [
+              43,
+              44
+            ],
+            "note": "raster estimate on a glyph cut by the wing edge; not used for the range"
+          }
         },
         "gear": {
           "resolved_close_frames": 5,
@@ -11512,7 +11575,16 @@
             18,
             18
           ],
-          "spread_pt": 0
+          "spread_pt": 0,
+          "counted": "frames whose glyph is clear of the wing edge",
+          "edge_touching_partial_glyphs": {
+            "frames": 2,
+            "range_pt": [
+              17,
+              18
+            ],
+            "note": "raster estimate on a glyph cut by the wing edge; not used for the range"
+          }
         }
       },
       "frame_intervals_ms": [
