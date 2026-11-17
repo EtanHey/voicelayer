@@ -34,8 +34,8 @@ final class NotchWingTravelTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        // The travel and the retained close are the full-motion path; under Reduce Motion the product keeps the
-        // instant hide and still icons on purpose. GitHub's hosted macOS runner has Reduce Motion ON (#860,
+        // The travel and the retained close are the full-motion path; under Reduce Motion the band only fades, in
+        // place (owner card 8). GitHub's hosted macOS runner has Reduce Motion ON (#860,
         // `ReduceMotionOverride`), and these tests failed there with exactly the Reduce Motion frames (CI r3,
         // run 43970804395), so each test pins the setting it proves instead of inheriting the machine's.
         restoreReduceMotion = ReduceMotionOverride.pin(false)
@@ -56,6 +56,9 @@ final class NotchWingTravelTests: XCTestCase {
         let leftInk: CGFloat?, rightInk: CGFloat?
         var leftDistance: CGFloat? { leftInk.flatMap { ink in leftEdge.map { ink - $0 } } }
         var rightDistance: CGFloat? { rightInk.flatMap { ink in rightEdge.map { $0 - ink } } }
+        /// The strongest green the band adds to the magenta backdrop on the edge row outside the core: the band's
+        /// opacity times its outline's (the core is black and adds none, so it never counts).
+        var lift: CGFloat = 0
     }
 
     func testIconsKeepTheirDistanceFromTheOuterEndWhileTheBandOpensAndCloses() throws {
@@ -108,11 +111,16 @@ final class NotchWingTravelTests: XCTestCase {
         print("WING_TRAVEL\n" + report.joined(separator: "\n"))
     }
 
-    /// Reduce Motion ON, as on GitHub's hosted runner (CI r3). The product's Reduce Motion path: the glass still
-    /// eases open, the icons stay at their settled places (no travel offset), and the close to hidden is the instant
-    /// hide (no retained band, no part-way frame). This is the frame sequence CI printed for the full-motion test
-    /// when it inherited the runner's setting; pinning it here proves that condition, and only it, produces them.
-    func testUnderReduceMotionTheIconsHoldStillAndTheCloseIsInstant() throws {
+    /// Owner card 8 (2026-11-17, `fade-only`). Reduce Motion ON, as on GitHub's hosted runner (CI r3): the band opens
+    /// and closes with a plain fade and no movement. Before, the glass eased open over 180 ms around still icons (the
+    /// growing glass uncovered them) and the close was an instant cut.
+    ///
+    /// On every sampled frame of the open and the close, each outer edge reads either at its settled place or (the
+    /// wing too faint for the edge reader, so the black core is the outermost paint) at the core's own edge, never in
+    /// between; the icons sit at their settled places; and the band's paint (`lift`, the strongest green the outline
+    /// adds over the magenta backdrop outside the core) rises through part-way values on the open and falls through
+    /// them on the close, never reversing.
+    func testUnderReduceMotionTheBandFadesInAndOutWithoutMoving() throws {
         restoreReduceMotion?()
         restoreReduceMotion = ReduceMotionOverride.pin(true)
         let rig = try mount()
@@ -123,31 +131,53 @@ final class NotchWingTravelTests: XCTestCase {
         let openRight = try XCTUnwrap(settled.rightEdge)
         let settledMic = try XCTUnwrap(settled.leftInk, "the microphone is laid out in the open band")
         let settledGear = try XCTUnwrap(settled.rightInk, "the gear is laid out in the open band")
+        let settledLift = settled.lift
+        XCTAssertGreaterThan(settledLift, 0.05, "fixture: the open band's outline lifts the backdrop")
         rig.hover(false)
         RunLoop.main.run(until: Date().addingTimeInterval(1.0))
         XCTAssertNil(try measure(rig.host, time: 0).leftEdge, "fixture: the band is hidden again")
 
         let coreMinX = Self.size.width / 2 - VoiceBarNotchContract.coreWidth / 2
         let coreMaxX = Self.size.width / 2 + VoiceBarNotchContract.coreWidth / 2
-        func partway(_ frames: [Frame]) -> [Frame] {
-            frames.filter { frame in
-                guard let l = frame.leftEdge, let r = frame.rightEdge else { return false }
-                return l > openLeft + 4 && l < coreMinX - 4 && r < openRight - 4 && r > coreMaxX + 4
+        var report = [String(format: "settled: edges %.2f / %.2f, lift %.3f", openLeft, openRight, settledLift)]
+        for (phase, hovering) in [("open", true), ("close", false)] {
+            rig.hover(hovering)
+            let frames = try sample(rig.host)
+            for frame in frames {
+                report.append(String(format: "%@ %3.0f ms: edges %@ / %@, mic %@, gear %@, lift %.3f", phase,
+                                     frame.time * 1000, Self.text(frame.leftEdge), Self.text(frame.rightEdge),
+                                     Self.text(frame.leftInk), Self.text(frame.rightInk), frame.lift))
+                let at = String(format: "%@ at %.0f ms", phase, frame.time * 1000)
+                if let left = frame.leftEdge {
+                    XCTAssertTrue(abs(left - openLeft) <= 0.5 || abs(left - coreMinX) <= 0.5,
+                                  "\(at): the left edge reads \(left), between the settled \(openLeft) and the core")
+                }
+                if let right = frame.rightEdge {
+                    XCTAssertTrue(abs(right - openRight) <= 0.5 || abs(right - coreMaxX) <= 0.5,
+                                  "\(at): the right edge reads \(right), between the settled \(openRight) and the core")
+                }
+                if let mic = frame.leftInk {
+                    XCTAssertEqual(mic, settledMic, accuracy: 0.5, "\(at): the microphone holds still")
+                }
+                if let gear = frame.rightInk {
+                    XCTAssertEqual(gear, settledGear, accuracy: 0.5, "\(at): the gear holds still")
+                }
             }
+            let lifts = frames.map(\.lift)
+            let partway = lifts.filter { $0 > settledLift * 0.05 && $0 < settledLift * 0.95 }
+            XCTAssertGreaterThanOrEqual(partway.count, 2, "\(phase): the band fades through part-way frames, not a cut")
+            for (earlier, later) in zip(lifts, lifts.dropFirst()) {
+                if hovering {
+                    XCTAssertGreaterThanOrEqual(later, earlier - 0.01, "open: the fade never dims")
+                } else {
+                    XCTAssertLessThanOrEqual(later, earlier + 0.01, "close: the fade never brightens")
+                }
+            }
+            XCTAssertEqual(lifts.last ?? -1, hovering ? settledLift : 0, accuracy: 0.01,
+                           "\(phase): the fade lands \(hovering ? "fully open" : "hidden")")
+            RunLoop.main.run(until: Date().addingTimeInterval(1.0))
         }
-        rig.hover(true)
-        let opening = partway(try sample(rig.host))
-        XCTAssertGreaterThanOrEqual(opening.count, 2, "open: the glass still eases open under Reduce Motion")
-        for frame in opening {
-            let at = String(format: "open at %.0f ms", frame.time * 1000)
-            XCTAssertEqual(try XCTUnwrap(frame.leftInk), settledMic, accuracy: 0.5, "\(at): the microphone holds still")
-            XCTAssertEqual(try XCTUnwrap(frame.rightInk), settledGear, accuracy: 0.5, "\(at): the gear holds still")
-        }
-        RunLoop.main.run(until: Date().addingTimeInterval(1.0))
-        rig.hover(false)
-        let closing = try sample(rig.host)
-        XCTAssertEqual(partway(closing).count, 0, "close: Reduce Motion keeps the instant hide")
-        XCTAssertNil(closing.first?.leftEdge, "close: the band is gone from the first sample")
+        print("REDUCE_MOTION_FADE\n" + report.joined(separator: "\n"))
     }
 
     /// Review r1 (blocking 1): while a closed band rides under the notch its controls are pictures, not controls. From
@@ -258,8 +288,9 @@ final class NotchWingTravelTests: XCTestCase {
     }
 
     /// Closing to hidden keeps the visible canvas while the glass closes (the window used to shrink to the core in the
-    /// first frame), releases it after the close, drops it when the band reopens, and never holds under Reduce Motion.
-    func testTheCloseToHiddenHoldsTheCanvasUntilItLandsAndNeverUnderReduceMotion() {
+    /// first frame), releases it after the close and drops it when the band reopens. Under Reduce Motion it holds the
+    /// same way, so the band fades out where it sits (owner card 8) instead of being cut by the window.
+    func testTheCloseToHiddenHoldsTheCanvasUntilItLandsUnderEitherMotionSetting() {
         let model = VoiceBarNotchPresentationModel()
         var releases: [(TimeInterval, () -> Void)] = []
         model.scheduleClosingCanvasRelease = { releases.append(($0, $1)) }
@@ -287,8 +318,14 @@ final class NotchWingTravelTests: XCTestCase {
 
         model.setReducedMotion(true)
         model.setHovered(false)
-        XCTAssertFalse(model.presentation.holdsClosingCanvas, "Reduce Motion keeps the instant hide")
-        XCTAssertTrue(releases.isEmpty)
+        XCTAssertTrue(model.presentation.holdsClosingCanvas, "Reduce Motion holds the canvas while the band fades out")
+        XCTAssertEqual(VoiceBarNotchMorphCanvasLayout.resolve(for: model.presentation).canvasGeometry, open,
+                       "the fade keeps the open canvas")
+        XCTAssertEqual(releases.count, 1)
+        XCTAssertGreaterThan(VoiceBarNotchPresentationModel.closingCanvasReleaseDelay,
+                             VoiceBarNotchReduceMotionFade.closeDuration, "the hold outlasts the fade")
+        releases.removeFirst().1()
+        XCTAssertFalse(model.presentation.holdsClosingCanvas)
     }
 
     /// Opt-in frame sequences for the report: `NOTCH_OWNER_R2_FRAMES=<directory>` writes, for the open and the close,
@@ -450,9 +487,14 @@ final class NotchWingTravelTests: XCTestCase {
         let edgeRow = Int(10 * s)
         let first = (0 ..< width).first { !isBackdrop($0, edgeRow) }
         let last = (0 ..< width).last { !isBackdrop($0, edgeRow) }
-        guard let first, let last else { return Frame(time: time, leftEdge: nil, rightEdge: nil, leftInk: nil, rightInk: nil) }
+        let coreMin = Int(((Self.size.width - VoiceBarNotchContract.coreWidth) / 2 * s).rounded(.down))
+        let coreMax = Int(((Self.size.width + VoiceBarNotchContract.coreWidth) / 2 * s).rounded(.up))
+        let lift = (0 ..< width).filter { $0 < coreMin || $0 >= coreMax }.map { rgb($0, edgeRow).1 }.max() ?? 0
+        guard let first, let last else {
+            return Frame(time: time, leftEdge: nil, rightEdge: nil, leftInk: nil, rightInk: nil, lift: lift)
+        }
         return Frame(time: time, leftEdge: CGFloat(first) / s, rightEdge: CGFloat(last + 1) / s,
-                     leftInk: controls.0, rightInk: controls.1)
+                     leftInk: controls.0, rightInk: controls.1, lift: lift)
     }
 
     static func text(_ value: CGFloat?) -> String { value.map { String(format: "%.2f", $0) } ?? "-" }

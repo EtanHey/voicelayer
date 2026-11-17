@@ -44,6 +44,7 @@
   after Settings closes, these events do no archive disk reads. Speech intentionally does not reload on these
   events: the old incidental "refresh Speech on the next dictation" behavior is removed. Speech still loads on
   mount, Load older, and unknown/pathless archive notifications. No dedicated Speech archive watcher was added.
+- Notch under macOS Reduce Motion (owner card 8, 2026-11-17, `fade-only`): opening from hidden and closing to hidden are a plain fade in place, opacity only (`VoiceBarNotchReduceMotionFade`: open 180 ms strong ease-out, close 150 ms ease-out); no edge, wing, radius or icon moves, and the close holds the canvas so the band fades where it sits. A band with a lower surface still hides at once; visible-to-visible changes keep their 180 ms ease. Full motion is unchanged. Guard: `NotchWingTravelTests.testUnderReduceMotionTheBandFadesInAndOutWithoutMoving`.
 
 ## VoiceBar right-click menu (Etan's approved spec §3)
 Settings… (⌘,) · Hide for 1 hour · — · Recent Transcriptions › ("2 min ago · first words") · Paste Last Transcript · Copy Last Transcript · — · Microphone › (the priority default as subtitle; inside, a read-only "Default: <mic>" row and "Change…") · — · Quit VoiceBar. There is no Transcription Tools, Anchor or Morph Prototype menu; a saved anchor or morph prototype resolves to the default.

@@ -158,6 +158,9 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     @State private var renderedVisualState: VoiceBarNotchVisualState?
     /// Owner r2: the band closing to hidden, kept in the wings while its glass closes (see `VoiceBarNotchClosingBand`).
     @State private var closing = VoiceBarNotchClosingTracker()
+    /// Owner card 8 (2026-11-17, `fade-only`): under Reduce Motion the surface's opacity IS the open and the close
+    /// (`VoiceBarNotchReduceMotionFade`); the shell never moves. Unused with full motion.
+    @State private var reduceMotionOpacity: Double
     @Namespace private var morphNamespace
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
@@ -189,6 +192,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         _surfaceRevealProgress = State(
             initialValue: presentation.visualState == .idle ? 0 : 1
         )
+        _reduceMotionOpacity = State(initialValue: presentation.visualState == .idle ? 0 : 1)
         self.onHoverChanged = onHoverChanged
         self.leadingContent = leadingContent()
         self.trailingContent = trailingContent()
@@ -204,7 +208,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                 // Opacity zero plus an empty idle mask still paints no glass.
                 // Owner r2: a band closing to hidden keeps its glass until the close settles.
                 morphingNotchSurface
-                    .opacity(presentation.visualState == .idle && closing.band == nil ? 0 : 1)
+                    .opacity(surfaceOpacity)
                     .allowsHitTesting(presentation.visualState != .idle)
                     .transition(.identity)
             }
@@ -230,6 +234,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
             renderedOuterCornerRadius = compactOuterCornerRadius
             renderedShoulderCornerRadius = bodyShoulderCornerRadius
             surfaceRevealProgress = presentation.visualState == .idle ? 0 : 1
+            reduceMotionOpacity = presentation.visualState == .idle ? 0 : 1
             renderedVisualState = presentation.visualState
         }
         .onChange(of: presentation.geometry) { _, presentedGeometry in
@@ -250,6 +255,11 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                     surfaceRevealProgress = 1
                 }
                 pendingTabMorph = nil
+                return
+            }
+            // Owner card 8: under Reduce Motion opening from hidden and closing to hidden are a fade in place.
+            if accessibilityReduceMotion, presentation.visualState == .idle || wasHistory == .idle {
+                fadeUnderReduceMotion(to: presentedGeometry, closingSerial: closingSerial)
                 return
             }
             let transition = VoiceBarNotchShellTransition.resolve(
@@ -313,6 +323,62 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                 renderedOuterCornerRadius = nextRadius
             }
         }
+        .onChange(of: accessibilityReduceMotion) { _, _ in
+            // The setting changed while settled: a Reduce Motion close leaves the hidden shell at the band it faded
+            // from, so line the shell and the fade up with what is presented. A retained band or the History morph
+            // finishes on its own.
+            guard closing.band == nil, historyMorph == nil else { return }
+            snapShell(to: presentation.geometry)
+            var snap = Transaction()
+            snap.disablesAnimations = true
+            withTransaction(snap) { reduceMotionOpacity = presentation.visualState == .idle ? 0 : 1 }
+        }
+    }
+
+    private var surfaceOpacity: Double {
+        if accessibilityReduceMotion { return reduceMotionOpacity }
+        return presentation.visualState == .idle && closing.band == nil ? 0 : 1
+    }
+
+    /// Owner card 8 (2026-11-17, `fade-only`), Reduce Motion only. Opening from hidden, the shell lands at its
+    /// settled size and position unanimated and only its opacity rises. Closing to hidden, the retained band keeps
+    /// its settled shell (`renderedGeometry` is left where it settled; its slots already use the band's geometry) and
+    /// only its opacity falls; the fade's completion ends the band. No edge, wing, radius or icon moves in either.
+    private func fadeUnderReduceMotion(to presented: VoiceBarNotchGeometry, closingSerial: Int?) {
+        pendingTabMorph = nil
+        if presentation.visualState == .idle {
+            guard let closingSerial else {
+                // Nothing retained to fade (a band with a lower surface): hidden at once, as before.
+                snapShell(to: presented)
+                var snap = Transaction()
+                snap.disablesAnimations = true
+                withTransaction(snap) { reduceMotionOpacity = 0 }
+                return
+            }
+            let tracker = closing
+            withAnimation(VoiceBarNotchReduceMotionFade.close, completionCriteria: .logicallyComplete) {
+                reduceMotionOpacity = 0
+            } completion: {
+                tracker.complete(closingSerial)
+            }
+            return
+        }
+        snapShell(to: presented)
+        withAnimation(VoiceBarNotchReduceMotionFade.open) {
+            reduceMotionOpacity = 1
+        }
+    }
+
+    /// The shell at `geometry` with the presented state's radii and reveal, in this update, unanimated.
+    private func snapShell(to geometry: VoiceBarNotchGeometry) {
+        var snap = Transaction()
+        snap.disablesAnimations = true
+        withTransaction(snap) {
+            renderedGeometry = geometry
+            renderedOuterCornerRadius = compactOuterCornerRadius
+            renderedShoulderCornerRadius = bodyShoulderCornerRadius
+            surfaceRevealProgress = presentation.visualState == .idle ? 0 : 1
+        }
     }
 
     // Keep the native wing hosts (and their tooltip tracking) mounted when pause
@@ -361,9 +427,9 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     }
 
     /// Starts (or ends) a close to hidden for this geometry change; returns the close's serial when one starts.
-    /// Reduce Motion keeps the old instant hide.
+    /// Under Reduce Motion the retained band fades out where it settled instead (`fadeUnderReduceMotion`).
     private func beginClosing(from previous: VoiceBarNotchVisualState?, settled: VoiceBarNotchGeometry) -> Int? {
-        guard presentation.visualState == .idle, let previous, previous != .idle, !accessibilityReduceMotion,
+        guard presentation.visualState == .idle, let previous, previous != .idle,
               historyMorph == nil, settled.leadingWingWidth + settled.trailingWingWidth > 0,
               settled.lowerSurfaceHeight == 0 || closing.band != nil else {
             if closing.band != nil, presentation.visualState != .idle {
@@ -681,6 +747,18 @@ struct VoiceBarNotchWingSlot: ViewModifier {
             slot.side == .leading ? .leading : .trailing
         }
     }
+}
+
+/// Owner card 8 (2026-11-17, `fade-only`): the band's open and close under Reduce Motion, opacity only.
+/// The open is 180 ms on a strong ease-out: it answers a hover, so it shows at once. 180 ms is also the Reduce
+/// Motion fade the lower content already uses, so a band and its body arrive together. The close is shorter
+/// (150 ms; an exit is faster than an entrance) on the gentler standard ease-out, so the visible part of the fade
+/// fills the whole close instead of dropping off in the first frames like a cut, the close he disliked.
+enum VoiceBarNotchReduceMotionFade {
+    static let openDuration: TimeInterval = 0.18
+    static let closeDuration: TimeInterval = 0.15
+    static let open = Animation.timingCurve(0.23, 1, 0.32, 1, duration: openDuration)
+    static let close = Animation.easeOut(duration: closeDuration)
 }
 
 struct VoiceBarNotchPendingMorph: Equatable {
