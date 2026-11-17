@@ -124,16 +124,16 @@ export function getToolDefinitions() {
       name: "voice_ask",
       description:
         "Ask ONE short question aloud (≤600 chars — longer is refused).\n" +
-        "With the packaged bridge, an Ask result ends with delivery_id and lease_id: pass them as delivery_ack on your next voice call. An unacknowledged earlier result is returned first instead of running the new action.\n" +
+        "Pass a result's delivery_id and lease_id as delivery_ack on your next voice call.\n" +
         SPOKEN_STYLE + NO_ANSWER_RULE +
         "BLOCKING: the question is spoken before the microphone opens; the caller blocks for the entire playback plus the response.\n" +
         "HARD LIMIT: 600 characters maximum, independent of timeout_seconds. " +
-        "Longer messages are refused, not truncated. " +
+        "Longer is refused, not truncated. " +
         "Roughly 45 seconds of speech; a question, not a briefing.\n" +
         "Longer content the user must understand or respond to needs two or more sequential voice_ask calls. " +
         "At each checkpoint the user confirms they absorbed one part before the next. " +
         "voice_speak is only for announcements or status updates that do not need a response.\n" +
-        "Auto-waits for any playing voice_speak audio to finish before speaking. " +
+        "Waits for playing voice_speak audio to finish first. " +
         "No detected speech for 120s by default closes the Ask and keeps the recording; first speech cancels this deadline.\n\n" +
         "Two recording modes:\n" +
         "- VAD mode (default): Silero VAD detects speech, auto-stops on silence\n" +
@@ -146,9 +146,9 @@ export function getToolDefinitions() {
         "Recover it with Re-transcribe in VoiceBar History; do not ask the user to repeat.\n" +
         "Retranscription is explicit only, never automatic: call voice_ask with only retranscribe_archive_id from the preceding successful Ask. " +
         "It uses that exact receipt's complete retained response audio for STT, does not speak, does not open the microphone, and returns only to this caller.\n" +
-        "Archive ID logged at retention, before transcription, and included in retained results. Recover interrupted answers with voice_ask_results. Returns: transcribed text on success, recoverable archive details when captured audio needs retranscription, " +
+        "Recover interrupted answers with voice_ask_results (archive ID logged before transcription). Returns: transcribed text on success, recoverable archive details when captured audio needs retranscription, " +
         "error if busy, if the prompt or the recorder never finished so the microphone never opened, or if the capture pipeline is stuck with zero recoverable audio.\n" +
-        "Prerequisites: sox (recording), whisper.cpp or Wispr Flow (STT), python3 + edge-tts (TTS).",
+        "Needs sox, whisper.cpp or Wispr Flow, and python3 + edge-tts.",
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
