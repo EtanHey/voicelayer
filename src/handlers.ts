@@ -809,6 +809,8 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     );
     const result: VoiceAskTurnOutcome = { kind: "hard-timeout", stage, timeoutMs, recovery: recovery ?? null };
     if (beforeCaptureExpired) abandonedBeforeCapture.resolve(result);
+    // The bounded response is not the flow's final result; Ask delivery finalizes from the flow.
+    context?.askDelivery?.timedOut();
     resolveTimeout(result);
   };
   const armTimeout = (
@@ -1090,7 +1092,11 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     await settleSpeechArchivesForUpdate(archiveContext);
   };
   // A bounded handler return is not the completion of retained background STT.
-  context?.askDelivery?.defer(flowPromise.then(formatVoiceAskTurnResult));
+  if (context?.askDelivery) {
+    const settled = flowPromise.then(formatVoiceAskTurnResult);
+    settled.catch(() => {}); // The handler's own catch reports this rejection.
+    context.askDelivery.defer(settled);
+  }
   holdVoiceAdmission(flowPromise.then(confirmedTeardown, confirmedTeardown));
   operationLifecycle?.deferReleaseUntil(Promise.race([flowPromise, abandonedBeforeCapture.promise]));
   try {

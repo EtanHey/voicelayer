@@ -49,23 +49,22 @@ function frameReader(onFrame: (frame: Frame) => void, onOversize: () => void) {
 }
 
 export function runBridge() {
-  // Process lifetime only: never persist or accept a caller-selected capability.
+  // Ask delivery identity: random, process lifetime only, kept across daemon reconnects, never persisted.
+  // Every tools/call gets it, overwriting any caller-supplied value; other members pass through untouched.
   const callerCapability = randomBytes(32).toString("hex");
+  const isObject = (value: unknown): value is Record<string, unknown> =>
+    !!value && typeof value === "object" && !Array.isArray(value);
   const bindCaller = (frame: Frame): Frame => {
-    let changed = false;
-    const messages = frame.messages.map(message => {
-      if (message.method !== "tools/call") return message;
-      const params = message.params;
-      if (!params || typeof params !== "object" || Array.isArray(params)) return message;
-      const value = params as Record<string, unknown>;
-      if (!["voice_ask", "voice_speak", "voice_ask_results"].includes(String(value.name))) return message;
-      const supplied = value._meta && typeof value._meta === "object" && !Array.isArray(value._meta)
-        ? value._meta as Record<string, unknown> : {};
-      changed = true;
-      return { ...message, params: { ...value, _meta: { ...supplied, [CALLER_META]: callerCapability } } };
-    });
-    if (!changed) return frame;
-    return { messages, wire: JSON.stringify(frame.wire.trimStart().startsWith("[") ? messages : messages[0]) + "\n" };
+    if (!frame.messages.some(message => message.method === "tools/call")) return frame;
+    let raw: unknown;
+    try { raw = JSON.parse(frame.wire); } catch { return frame; }
+    const bind = (item: unknown): unknown => {
+      if (!isObject(item) || item.method !== "tools/call" || !isObject(item.params)) return item;
+      const meta = isObject(item.params._meta) ? item.params._meta : {};
+      return { ...item, params: { ...item.params, _meta: { ...meta, [CALLER_META]: callerCapability } } };
+    };
+    const bound = Array.isArray(raw) ? raw.map(bind) : bind(raw);
+    return parse(JSON.stringify(bound) + "\n");
   };
   let socket: Socket | undefined;
   let state: { kind: "offline" | "ready" } | { kind: "initialize" | "logging"; frame: Frame } = { kind: "offline" };

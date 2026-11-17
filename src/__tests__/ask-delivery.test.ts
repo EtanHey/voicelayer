@@ -1,24 +1,58 @@
-import { afterEach, expect, test, spyOn } from "bun:test";
-import { randomBytes } from "node:crypto";
+/**
+ * Interrupted voice_ask reaches its caller on the next call (lane c7). Real daemon transport (NDJSON and
+ * Content-Length), latch-driven, preload-isolated, no microphone. Synthetic text only.
+ */
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+import { createHash, randomBytes } from "node:crypto";
+import { mkdtempSync } from "node:fs";
 import { join, relative } from "node:path";
 import { createConnection } from "node:net";
+import { tmpdir } from "node:os";
 import { createMcpDaemon } from "../mcp-daemon";
 import { parseMcpFrames, serializeMcpFrame } from "../mcp-framing";
 import type { VoiceToolContext } from "../mcp-notifications";
+import * as tts from "../tts";
+import * as input from "../input";
+import * as sessionBooking from "../session-booking";
+import * as socketClient from "../socket-client";
+import { handleVoiceAsk } from "../handlers";
 
 const cleanups: (() => void)[] = [];
+let logs: string[] = [];
+let waiters: { pattern: string; resolve: () => void }[] = [];
+beforeEach(() => {
+  logs = []; waiters = [];
+  const log = spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    const line = args.map(String).join(" ");
+    logs.push(line);
+    waiters = waiters.filter(waiter => { if (!line.includes(waiter.pattern)) return true; waiter.resolve(); return false; });
+  });
+  cleanups.push(() => log.mockRestore());
+});
 afterEach(() => { for (const cleanup of cleanups.splice(0).reverse()) cleanup(); });
-type Rpc = { id?: number; result?: { content: { text: string }[] }; error?: unknown };
+/** Latch on a structured delivery event; never sleeps. */
+function logged(pattern: string): Promise<void> {
+  if (logs.some(line => line.includes(pattern))) return Promise.resolve();
+  return new Promise(resolve => waiters.push({ pattern, resolve }));
+}
+type Rpc = { id?: number; result?: { content: { text: string }[]; isError?: boolean }; error?: unknown };
+type Executor = (name: string, args: Record<string, unknown>, context: VoiceToolContext) => Promise<unknown>;
 const caller = () => randomBytes(32).toString("hex");
-const meta = (scope: unknown) => ({ "voicelayer/caller": scope });
 const answer = "  fu… no, full truth.\nAgain again. שלום 👋  ";
 const archive = "2026-11-17T12-00-00-000Z-1234abcd";
+const text = (value: string) => ({ content: [{ type: "text", text: value }] });
 function isolatedSocket(name: string) {
   const root = process.env.VOICELAYER_TEST_RUN_ROOT;
   if (!root || process.env.VOICELAYER_TEST_ISOLATED !== "1") throw new Error("preload required");
   // Relative AF_UNIX names also fit deep official T3 worktrees; the parent is
   // still the preload's exclusive per-run directory, never a live socket.
   return relative(process.cwd(), join(root, name));
+}
+async function daemon(name: string, executeTool: Executor) {
+  const path = isolatedSocket(name);
+  const instance = await createMcpDaemon({ socketPath: path, toolExecutor: { executeTool: executeTool as never } });
+  cleanups.push(() => instance.stop());
+  return path;
 }
 async function client(path: string, framed: boolean) {
   const socket = createConnection(path);
@@ -40,135 +74,203 @@ async function client(path: string, framed: boolean) {
     return result;
   };
   return { socket, send, rpc,
-    call: (id: number, scope: unknown, name = "voice_ask", args = {}) => rpc(id, "tools/call", { name, arguments: args, _meta: meta(scope) }),
+    call: (id: number, scope: unknown, name = "voice_ask", args: Record<string, unknown> = { message: "Synthetic question?" }) =>
+      rpc(id, "tools/call", { name, arguments: args, _meta: { "voicelayer/caller": scope } }),
   };
 }
-function delivery(response: Rpc) { return JSON.parse(response.result!.content[0]!.text); }
+const items = (response: Rpc) => response.result!.content.map(item => item.text);
+const json = (value: string) => JSON.parse(value);
+/** Status line of a recovery result, or the receipt appended to an original result. */
+const head = (response: Rpc) => json(items(response)[0]!);
+const tail = (response: Rpc) => json(items(response).at(-1)!);
+const ack = (delivery: { delivery_id: string; lease_id: string }) =>
+  ({ delivery_ack: { delivery_id: delivery.delivery_id, lease_id: delivery.lease_id } });
 
 for (const framed of [false, true]) {
   const transport = framed ? "Content-Length" : "NDJSON";
-  test(`${transport}: pending retry, cancelled response recovery, lease and explicit ack`, async () => {
-    const logs: string[] = [];
-    const log = spyOn(console, "error").mockImplementation((...args) => { logs.push(args.join(" ")); });
-    cleanups.push(() => log.mockRestore());
-    const path = isolatedSocket(framed ? "f.sock" : "n.sock");
+  test(`${transport}: a cancelled Ask is pending, then recovered with exact bytes before any new action, until acked`, async () => {
     const started = Promise.withResolvers<void>(), finish = Promise.withResolvers<void>();
-    let executions = 0;
-    const daemon = await createMcpDaemon({ socketPath: path, toolExecutor: {
-      async executeTool(_name, _args, context) {
-        executions++;
-        if (executions > 1) return { content: [{ type: "text", text: JSON.stringify({ status: "new-side-effect-ran" }) }] };
-        started.resolve(); await finish.promise;
-        const hooks = context as VoiceToolContext & { askDelivery?: { archive(id: string): void; answer(text: string): void } };
-        hooks.askDelivery?.archive(archive); hooks.askDelivery?.answer(answer);
-        return { content: [{ type: "text", text: answer }] };
-      },
-    } });
-    cleanups.push(() => daemon.stop()); cleanups.push(() => finish.resolve());
+    const ran: { name: string; args: Record<string, unknown> }[] = [];
+    const path = await daemon(framed ? "f.sock" : "n.sock", async (name, args, context) => {
+      ran.push({ name, args });
+      if (ran.length > 1) return text("new side effect ran");
+      started.resolve(); await finish.promise;
+      context.askDelivery?.archive(archive); context.askDelivery?.answer(answer);
+      return text(answer);
+    });
+    cleanups.push(() => finish.resolve());
     const a = await client(path, framed), scope = caller();
-    void a.call(1, scope); await started.promise;
+    let originalAnswered = false;
+    void a.call(1, scope).then(() => { originalAnswered = true; });
+    await started.promise;
     a.send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 1, reason: "SYNTHETIC_PRIVATE_REASON" } });
-    const pending = delivery(await a.call(2, scope));
-    expect(pending).toMatchObject({ status: "pending", new_action_run: false });
-    expect(executions).toBe(1);
-    finish.resolve();
-    // Latch finalization via the original execution's completed promise below
-    // is supplied by a benign tools/list round trip after the executor settles.
-    await finish.promise; await a.rpc(90, "tools/list", {});
-    const held = delivery(await a.call(3, scope, "voice_speak"));
-    expect(held).toMatchObject({ status: "ready", new_action_run: false, answer, archive_id: archive });
-    expect(held.delivery_id).toBeString(); expect(held.operation_id).toBeString(); expect(held.lease_id).toBeString();
-    expect(executions).toBe(1);
-    // No automatic acknowledgement on a response write. Same caller must ack.
-    const again = delivery(await a.call(4, scope));
-    expect(again.delivery_id).toBe(held.delivery_id);
-    const ack = delivery(await a.call(5, scope, "voice_ask_results", { delivery_ack: { delivery_id: again.delivery_id, lease_id: again.lease_id } }));
-    expect(ack).toMatchObject({ status: "acknowledged", delivery_id: held.delivery_id });
-    expect(executions).toBe(1);
-    const trace = logs.join("\n");
-    expect(trace.includes(answer)).toBe(false); expect(trace.includes(scope)).toBe(false);
-    expect(trace.includes("SYNTHETIC_PRIVATE_REASON")).toBe(false);
-    for (const event of ["cancelled", "archive_associated", "finalized", "write_attempted", "delivery_acknowledged"]) expect(trace.includes(`ask_delivery.${event}`)).toBe(true);
+    await logged('"matched":true');
+    // The older Ask is still running: pending status, no second capture.
+    expect(head(await a.call(2, scope))).toMatchObject({ status: "pending", new_action_run: false });
+    expect(ran).toHaveLength(1);
+    finish.resolve(); await logged("ask_delivery.finalized");
+    const held = await a.call(3, scope, "voice_speak", { message: "Synthetic speech" });
+    expect(head(held)).toMatchObject({ status: "ready", new_action_run: false, archive_id: archive });
+    expect(head(held).answer).toBe(answer); // Exact bytes: fragment, retraction, repeat, whitespace, Unicode.
+    expect(items(held)[1]).toBe(answer); // The original response, unchanged.
+    expect(ran).toHaveLength(1);
+    // A response write is not delivery: without an ack the same delivery comes back.
+    const again = head(await a.call(4, scope));
+    expect(again.delivery_id).toBe(head(held).delivery_id); expect(again.lease_id).toBe(head(held).lease_id);
+    // A piggybacked ack is consumed and the new call then runs, without the ack in its arguments.
+    expect(items(await a.call(5, scope, "voice_speak", { message: "Synthetic speech", ...ack(again) }))).toEqual(["new side effect ran"]);
+    expect(ran).toHaveLength(2); expect(ran[1]).toEqual({ name: "voice_speak", args: { message: "Synthetic speech" } });
+    expect(originalAnswered).toBe(false); // The cancelled request never got a response.
+    const trace = logs.filter(line => line.includes("ask_delivery.")).join("\n");
+    for (const secret of [answer.trim(), "full truth", scope, "SYNTHETIC_PRIVATE_REASON", "Synthetic"]) expect(trace.includes(secret)).toBe(false);
+    for (const event of ["connection_open", "request", "cancelled", "archive_associated", "finalized", "recovered", "write_attempted", "delivery_acknowledged"]) {
+      expect(trace.includes(`ask_delivery.${event}`)).toBe(true);
+    }
+    expect(trace.includes('"progress_token_present":false')).toBe(true);
   }, 5000);
 
-  test(`${transport}: identical client info/request ids cannot recover another caller`, async () => {
-    const path = isolatedSocket(framed ? "i.sock" : "j.sock");
+  test(`${transport}: identical clientInfo, cwd and request ids never cross callers; malformed scope runs nothing`, async () => {
     let executions = 0;
-    const daemon = await createMcpDaemon({ socketPath: path, toolExecutor: {
-      async executeTool() { executions++; return { content: [{ type: "text", text: "synthetic result" }] }; },
-    } });
-    cleanups.push(() => daemon.stop());
+    const path = await daemon(framed ? "i.sock" : "j.sock", async (_name, _args, context) => {
+      executions++; context.askDelivery?.archive(archive); context.askDelivery?.answer(answer); return text(answer);
+    });
     const a = await client(path, framed), b = await client(path, framed);
-    const init = { clientInfo: { name: "same", version: "same" }, capabilities: {} };
+    const init = { clientInfo: { name: "same", version: "same" }, capabilities: {}, _meta: { cwd: "/same/seat" } };
     await a.rpc(0, "initialize", init); await b.rpc(0, "initialize", init);
     const scopeA = caller(), scopeB = caller();
-    const aFirst = delivery(await a.call(1, scopeA));
-    const bFirst = delivery(await b.call(1, scopeB));
-    expect(bFirst.delivery_id).not.toBe(aFirst.delivery_id); expect(executions).toBe(2);
-    const foreign = delivery(await b.call(2, scopeB, "voice_ask_results", { delivery_ack: { delivery_id: aFirst.delivery_id, lease_id: aFirst.lease_id } }));
-    expect(foreign.status).toBe("ack-refused");
-    const heldA = delivery(await a.call(2, scopeA, "voice_speak"));
-    expect(heldA.delivery_id).toBe(aFirst.delivery_id); expect(executions).toBe(2);
-    const malformed = await b.call(3, "../../not-a-capability", "voice_speak");
-    expect(malformed.result).toMatchObject({ isError: true }); expect(executions).toBe(2);
+    const aFirst = await a.call(1, scopeA), bFirst = await b.call(1, scopeB);
+    expect(items(aFirst)[0]).toBe(answer); expect(items(bFirst)[0]).toBe(answer);
+    expect(tail(bFirst).delivery_id).not.toBe(tail(aFirst).delivery_id); expect(executions).toBe(2);
+    expect(head(await b.call(2, scopeB, "voice_ask_results", ack(tail(aFirst))))).toMatchObject({ status: "ack-refused" });
+    const heldA = head(await a.call(2, scopeA, "voice_speak", { message: "x" }));
+    expect(heldA.delivery_id).toBe(tail(aFirst).delivery_id); expect(executions).toBe(2);
+    expect(head(await b.call(3, scopeB, "voice_ask_results", ack(tail(bFirst))))).toMatchObject({ status: "acknowledged" });
+    expect(items(await b.call(4, scopeB, "voice_speak", { message: "x" }))).toEqual([answer]); // B is free; A's item never reached B.
+    expect(executions).toBe(3);
+    expect(head(await b.call(5, scopeA, "voice_speak", { message: "x" }))).toMatchObject({ status: "scope-refused" });
+    const c = await client(path, framed);
+    for (const [n, bad] of [[1, "../../not-a-capability"], [2, 42], [3, "A".repeat(64)]] as const) {
+      expect((await c.call(n, bad, "voice_speak", { message: "x" })).result).toMatchObject({ isError: true });
+    }
+    expect(executions).toBe(3);
   }, 5000);
 
-  test(`${transport}: disconnect before ack retries the same delivery, new identity cannot adopt it`, async () => {
-    const path = isolatedSocket(framed ? "r.sock" : "s.sock");
+  test(`${transport}: disconnect before ack retries the same delivery; a restarted bridge cannot adopt it`, async () => {
     let executions = 0;
-    const daemon = await createMcpDaemon({ socketPath: path, toolExecutor: { async executeTool(_name, _args, context) {
-      executions++; context.askDelivery?.archive(archive); context.askDelivery?.answer(answer);
-      return { content: [{ type: "text", text: answer }] };
-    } } });
-    cleanups.push(() => daemon.stop());
-    const scope = caller(), a = await client(path, framed);
-    const first = delivery(await a.call(1, scope));
-    const closed = Promise.withResolvers<void>();
-    const log = spyOn(console, "error").mockImplementation((line: unknown) => {
-      if (typeof line === "string" && line.includes("ask_delivery.connection_close")) closed.resolve();
+    const path = await daemon(framed ? "r.sock" : "s.sock", async (_name, _args, context) => {
+      executions++; context.askDelivery?.archive(archive); context.askDelivery?.answer(answer); return text(answer);
     });
-    cleanups.push(() => log.mockRestore());
-    a.socket.destroy(); await closed.promise;
+    const scope = caller(), a = await client(path, framed);
+    const first = tail(await a.call(1, scope));
+    a.socket.destroy(); await logged("ask_delivery.connection_close");
+    // Bridge reconnect: same capability, new daemon connection.
     const reconnect = await client(path, framed);
-    const retry = delivery(await reconnect.call(1, scope, "voice_speak"));
-    expect(retry.delivery_id).toBe(first.delivery_id); expect(retry.answer).toBe(answer);
-    expect(retry.lease_id).not.toBe(first.lease_id); expect(executions).toBe(1);
-    const stale = delivery(await reconnect.call(2, scope, "voice_ask_results", { delivery_ack: { delivery_id: first.delivery_id, lease_id: first.lease_id } }));
-    expect(stale.status).toBe("ack-refused");
+    const retry = await reconnect.call(1, scope, "voice_speak", { message: "x" });
+    expect(head(retry).delivery_id).toBe(first.delivery_id); expect(items(retry)[1]).toBe(answer);
+    expect(head(retry).lease_id).not.toBe(first.lease_id); expect(executions).toBe(1);
+    expect(head(await reconnect.call(2, scope, "voice_ask_results", ack(first)))).toMatchObject({ status: "ack-refused" });
+    // Restarted bridge: a fresh capability has no verified binding and gets nothing old (no newest-archive adoption).
     const restarted = await client(path, framed);
-    const fresh = await restarted.call(1, caller(), "voice_speak");
-    expect(fresh.result!.content[0]!.text).toBe(answer); expect(executions).toBe(2);
-    // The new identity ran its own executor; it received no old envelope/id.
-    expect(fresh.result!.content[0]!.text.includes(first.delivery_id)).toBe(false);
+    const fresh = await restarted.call(1, caller(), "voice_speak", { message: "x" });
+    expect(items(fresh)).toEqual([answer]); expect(executions).toBe(2);
+    expect(JSON.stringify(fresh).includes(first.delivery_id)).toBe(false);
+    // The original item stays retained for its own caller.
+    expect(head(await reconnect.call(3, scope, "voice_speak", { message: "x" })).delivery_id).toBe(first.delivery_id);
   }, 5000);
 }
 
-test("late pipeline settlement remains pending after bounded handler return", async () => {
-  const path = isolatedSocket("l.sock"), done = Promise.withResolvers<{ content: { type: string; text: string }[] }>();
+test("a refusal with nothing captured leaves nothing to recover, so the next call runs", async () => {
+  let executions = 0;
+  const path = await daemon("v.sock", async () => { executions++; return { ...text("[converse] Another Ask owns capture admission"), isError: true }; });
+  const a = await client(path, false), scope = caller();
+  expect(items(await a.call(1, scope))).toEqual(["[converse] Another Ask owns capture admission"]);
+  expect(items(await a.call(2, scope))).toEqual(["[converse] Another Ask owns capture admission"]);
+  expect(executions).toBe(2);
+});
+
+test("late transcription: a bounded timeout response is pending, and the flow's later answer is recovered", async () => {
+  const done = Promise.withResolvers<{ content: { type: string; text: string }[] }>();
   let executions = 0;
   let hooks: VoiceToolContext["askDelivery"];
-  const daemon = await createMcpDaemon({ socketPath: path, toolExecutor: { async executeTool(_name, _args, context) {
-    executions++; hooks = context.askDelivery; hooks?.defer(done.promise);
-    return { content: [{ type: "text", text: "synthetic early timeout" }] };
-  } } });
-  cleanups.push(() => daemon.stop());
+  const path = await daemon("l.sock", async (_name, _args, context) => {
+    executions++; hooks = context.askDelivery; hooks?.archive(archive); hooks?.defer(done.promise); hooks?.timedOut();
+    return text("synthetic bounded timeout; recording kept");
+  });
   const a = await client(path, false), scope = caller();
-  expect(delivery(await a.call(1, scope)).status).toBe("pending");
-  expect(delivery(await a.call(2, scope)).status).toBe("pending"); expect(executions).toBe(1);
-  hooks!.archive(archive); hooks!.answer(answer); done.resolve({ content: [{ type: "text", text: answer }] });
-  await done.promise; await a.rpc(90, "tools/list", {});
-  expect(delivery(await a.call(3, scope))).toMatchObject({ status: "ready", answer, archive_id: archive, new_action_run: false });
+  const bounded = await a.call(1, scope);
+  expect(items(bounded)[0]).toBe("synthetic bounded timeout; recording kept");
+  expect(tail(bounded)).toMatchObject({ status: "pending" });
+  expect(head(await a.call(2, scope))).toMatchObject({ status: "pending", new_action_run: false }); expect(executions).toBe(1);
+  hooks!.answer(answer); done.resolve(text(answer)); await logged('"state":"ready"');
+  const held = await a.call(3, scope);
+  expect(head(held)).toMatchObject({ status: "ready", archive_id: archive, new_action_run: false }); expect(items(held)[1]).toBe(answer);
+  expect(executions).toBe(1);
 });
 
 test("a foreign cancellation with the same request id never cancels the owner", async () => {
-  const path = isolatedSocket("c.sock"), started = Promise.withResolvers<void>(), finish = Promise.withResolvers<void>();
-  const daemon = await createMcpDaemon({ socketPath: path, toolExecutor: { async executeTool() {
-    started.resolve(); await finish.promise; return { content: [{ type: "text", text: "synthetic" }] };
-  } } });
-  cleanups.push(() => daemon.stop()); cleanups.push(() => finish.resolve());
+  const started = Promise.withResolvers<void>(), finish = Promise.withResolvers<void>();
+  const path = await daemon("c.sock", async () => { started.resolve(); await finish.promise; return text("synthetic"); });
+  cleanups.push(() => finish.resolve());
   const a = await client(path, false), b = await client(path, false);
   const original = a.call(1, caller()); await started.promise;
   b.send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 1 } });
-  await b.rpc(90, "tools/list", {}); finish.resolve();
-  expect(delivery(await original)).toMatchObject({ status: "ready", new_action_run: true });
+  await logged('"matched":false'); finish.resolve();
+  expect(items(await original)).toEqual(["synthetic"]); // Nothing captured: a plain result, no receipt.
+});
+
+test("crash: a dead daemon's pending Ask with an archive becomes a ready pointer; without one it is voided", async () => {
+  const kept = caller(), empty = caller();
+  const script = `
+    import { createHash } from "node:crypto";
+    import { AskDeliveryStore } from ${JSON.stringify(join(process.cwd(), "src/ask-delivery.ts"))};
+    const store = new AskDeliveryStore(() => {}), h = (v) => createHash("sha256").update(v).digest("hex");
+    const row = store.begin(h(process.argv.at(-2))); store.archive(row.operation, ${JSON.stringify(archive)});
+    store.begin(h(process.argv.at(-1))); store.close();`;
+  const child = Bun.spawn([process.execPath, "--eval", script, kept, empty], { env: process.env, stdout: "pipe", stderr: "pipe" });
+  expect(await child.exited).toBe(0);
+  let executions = 0;
+  const path = await daemon("o.sock", async () => { executions++; return text("new side effect ran"); });
+  const a = await client(path, false);
+  const recovered = await a.call(1, kept, "voice_speak", { message: "x" });
+  expect(head(recovered)).toMatchObject({ status: "ready", archive_id: archive, new_action_run: false });
+  expect(items(recovered)[1]).toContain(`archive ${archive}`); expect(executions).toBe(0);
+  const b = await client(path, false);
+  expect(items(await b.call(1, empty, "voice_speak", { message: "x" }))).toEqual(["new side effect ran"]);
+  expect(logs.some(line => line.includes("ask_delivery.orphan_retained"))).toBe(true);
+});
+
+test("real handleVoiceAsk: a steered (cancelled) Ask is returned on the next call without speaking or recording again", async () => {
+  const stateRoot = mkdtempSync(join(tmpdir(), "voicelayer-ask-delivery-"));
+  const saved = process.env.QA_VOICE_RECORDING_STATE_PATH;
+  process.env.QA_VOICE_RECORDING_STATE_PATH = join(stateRoot, "recording-state.json");
+  cleanups.push(() => { if (saved === undefined) delete process.env.QA_VOICE_RECORDING_STATE_PATH; else process.env.QA_VOICE_RECORDING_STATE_PATH = saved; });
+  const spies = [
+    spyOn(socketClient, "broadcast").mockImplementation(() => {}),
+    spyOn(sessionBooking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true,
+      owner: { pid: process.pid, sessionId: "test", startedAt: new Date().toISOString() } }),
+    spyOn(tts, "awaitCurrentPlayback").mockResolvedValue(undefined),
+    spyOn(input, "clearInput").mockImplementation(() => {}),
+    spyOn(sessionBooking, "clearStopSignal").mockImplementation(() => {}),
+  ];
+  const speak = spyOn(tts, "speak").mockResolvedValue({ displayText: "q", engine: "edge-tts", voice: "en-US-JennyNeural",
+    audioArtifact: { bytes: new Uint8Array([0x49, 0x44, 0x33]), format: "mp3" as const } } as never);
+  const captured = Promise.withResolvers<void>(), decoded = Promise.withResolvers<string>();
+  const wait = spyOn(input, "waitForInput").mockImplementation(async (_t, _s, _p, options) => {
+    options?.onCaptureStart?.(); options?.onSpeechStart?.();
+    options?.onArchiveCreated?.(join(stateRoot, archive)); captured.resolve();
+    const value = await decoded.promise; options?.onCaptureEnd?.(); return value;
+  });
+  cleanups.push(() => { decoded.resolve(answer); for (const spy of [...spies, speak, wait]) spy.mockRestore(); });
+  const path = await daemon("h.sock", (name, args, context) => name === "voice_ask"
+    ? handleVoiceAsk(args, context) : Promise.resolve(text("new side effect ran")));
+  const a = await client(path, false), scope = caller();
+  void a.call(1, scope); await captured.promise;
+  a.send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 1 } });
+  await logged('"matched":true');
+  decoded.resolve(answer); await logged('"state":"ready"');
+  const held = await a.call(2, scope);
+  expect(head(held)).toMatchObject({ status: "ready", archive_id: archive, new_action_run: false });
+  expect(head(held).answer).toBe(answer); // Raw bytes; the boxed original response follows unchanged.
+  expect(items(held)[1]).toContain("Archive: " + archive);
+  expect(speak).toHaveBeenCalledTimes(1); expect(wait).toHaveBeenCalledTimes(1);
 });

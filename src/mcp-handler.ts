@@ -71,7 +71,8 @@ export async function handleMcpRequest(
 ): Promise<McpResponse | null> {
   if (requestContext?.delivery) {
     const { delivery, ...rest } = requestContext;
-    return delivery.run(request, hooks => handleMcpRequest(request, executor, { ...rest, askDelivery: hooks }, speechControl));
+    return delivery.run(request, (hooks, forward = request) =>
+      handleMcpRequest(forward, executor, { ...rest, askDelivery: hooks }, speechControl));
   }
   // Notifications (no id) don't get responses
   if (request.id === undefined || request.id === null) {

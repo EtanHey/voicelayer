@@ -16,6 +16,12 @@ const SPOKEN_STYLE =
   "Use sentences of about 15 words or fewer. No markdown, URLs, code or long identifiers aloud. " +
   'For questions, front-load the ask; one question per ask. Offer short numbered options ("One. … Two. …") answerable with a single word. End with the question itself.\n';
 
+const DELIVERY_ACK = {
+  type: "object", description: "Acknowledge a caller-bound Ask result after reading it (its delivery_id and lease_id). Consumed before the call runs.",
+  properties: { delivery_id: { type: "string" }, lease_id: { type: "string" } },
+  required: ["delivery_id", "lease_id"], additionalProperties: false,
+} as const;
+
 /** The two canonical VoiceLayer MCP tools. */
 export function getToolDefinitions() {
   return [
@@ -97,6 +103,7 @@ export function getToolDefinitions() {
             enum: ["all", "tts", "mic"],
             default: "all",
           },
+          delivery_ack: DELIVERY_ACK,
         },
         required: [],
       },
@@ -104,21 +111,19 @@ export function getToolDefinitions() {
 
     {
       name: "voice_ask_results",
-      description: "Read retained Ask answers: newest first (default 5, max 20), or one archive_id. Returns raw answer and status. With delivery_ack alone, acknowledge the delivery_id and lease_id AFTER reading a caller-bound Ask result. Unacknowledged Ask results are recovered on this caller's next voice call before any new action; pending means the earlier Ask is still running. Recovery is at-least-once; deduplicate by delivery_id. A recovery result says the new action was NOT run. Never speaks, records or retranscribes. Automatic idle wake is not provided.",
+      description: "Read retained Ask answers: newest first (default 5, max 20), or one archive_id. Returns raw answer and status. With delivery_ack alone, acknowledge a caller-bound Ask result's delivery_id and lease_id after reading it. Unacknowledged Ask results are recovered on this caller's next voice call before any new action (that call's own action is NOT run); pending means the earlier Ask is still recording or transcribing. Recovery is at-least-once; deduplicate by delivery_id. This is recovery on the next call, not automatic delivery. Never speaks, records or retranscribes.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: { type: "object" as const, properties: {
         archive_id: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z-[a-f0-9]{8}$", description: "Exact retained Ask archive ID." },
         limit: { type: "integer", minimum: 1, maximum: 20, default: 5 },
-        delivery_ack: { type: "object", description: "Use alone, after reading a delivery envelope.", properties: {
-          delivery_id: { type: "string" }, lease_id: { type: "string" },
-        }, required: ["delivery_id", "lease_id"], additionalProperties: false },
+        delivery_ack: DELIVERY_ACK,
       }, additionalProperties: false },
     },
     {
       name: "voice_ask",
       description:
         "Ask ONE short question aloud (≤600 chars — longer is refused).\n" +
-        "With the packaged bridge, Ask results carry delivery_id and lease_id: after reading, acknowledge using voice_ask_results delivery_ack. Unacknowledged older results take precedence over new voice actions.\n" +
+        "With the packaged bridge, an Ask result ends with delivery_id and lease_id: pass them as delivery_ack on your next voice call. An unacknowledged earlier result is returned first instead of running the new action.\n" +
         SPOKEN_STYLE + NO_ANSWER_RULE +
         "BLOCKING: the question is spoken before the microphone opens; the caller blocks for the entire playback plus the response.\n" +
         "HARD LIMIT: 600 characters maximum, independent of timeout_seconds. " +
@@ -193,6 +198,7 @@ export function getToolDefinitions() {
             pattern:
               "^\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z-[a-f0-9]{8}$",
           },
+          delivery_ack: DELIVERY_ACK,
         },
         required: [],
         oneOf: [
@@ -201,7 +207,7 @@ export function getToolDefinitions() {
             not: { required: ["retranscribe_archive_id"] },
           },
           {
-            properties: { retranscribe_archive_id: {} },
+            properties: { retranscribe_archive_id: {}, delivery_ack: {} },
             required: ["retranscribe_archive_id"],
             additionalProperties: false,
             not: {
