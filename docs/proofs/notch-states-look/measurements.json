@@ -654,5 +654,111 @@
         "ellipsis_delta_pt": 0.5
       }
     ]
-  }
+  },
+  "o_r8": [
+    {
+      "arm": "after",
+      "theme": "dark",
+      "frames": 146,
+      "source_movie_sha256": "62d4cb483aa0572bda555f4cd2fed9e286cbb3289d678cc307c938651c7ecf4e",
+      "open_core_screen_x_pt": [
+        671.0,
+        839.0
+      ],
+      "open_gap_pt": 168.0,
+      "last_open_plateau_frame": 91,
+      "close_frames": 55,
+      "resolved_close_frames": 14,
+      "max_close_core_edge_delta_pt": 0.0,
+      "max_close_gap_delta_pt": 0.0,
+      "core_and_gap_within_1pt": true,
+      "close_icon_ranges": {
+        "mic": {
+          "resolved_close_frames": 4,
+          "range_pt": [
+            19,
+            20
+          ],
+          "spread_pt": 1
+        },
+        "chevron": {
+          "resolved_close_frames": 1,
+          "range_pt": [
+            46,
+            46
+          ],
+          "spread_pt": 0
+        },
+        "history": {
+          "resolved_close_frames": 1,
+          "range_pt": [
+            43,
+            43
+          ],
+          "spread_pt": 0
+        },
+        "gear": {
+          "resolved_close_frames": 4,
+          "range_pt": [
+            18,
+            19
+          ],
+          "spread_pt": 1
+        }
+      },
+      "max_interval_ms": 1333.333
+    },
+    {
+      "arm": "after",
+      "theme": "light",
+      "frames": 140,
+      "source_movie_sha256": "fd63fcc8dd289520cc9017de6634a3a8b2402495b59e76383319b75d44897874",
+      "open_core_screen_x_pt": [
+        671.0,
+        839.0
+      ],
+      "open_gap_pt": 168.0,
+      "last_open_plateau_frame": 95,
+      "close_frames": 45,
+      "resolved_close_frames": 14,
+      "max_close_core_edge_delta_pt": 0.0,
+      "max_close_gap_delta_pt": 0.0,
+      "core_and_gap_within_1pt": true,
+      "close_icon_ranges": {
+        "mic": {
+          "resolved_close_frames": 5,
+          "range_pt": [
+            19,
+            20
+          ],
+          "spread_pt": 1
+        },
+        "chevron": {
+          "resolved_close_frames": 2,
+          "range_pt": [
+            46,
+            47
+          ],
+          "spread_pt": 1
+        },
+        "history": {
+          "resolved_close_frames": 2,
+          "range_pt": [
+            43,
+            44
+          ],
+          "spread_pt": 1
+        },
+        "gear": {
+          "resolved_close_frames": 5,
+          "range_pt": [
+            18,
+            18
+          ],
+          "spread_pt": 0
+        }
+      },
+      "max_interval_ms": 1283.334
+    }
+  ]
 }

@@ -1,16 +1,16 @@
-# Native M1 notch proof, R5
+# Native M1 notch proof, R5 with R8 close recapture
 
-Status: **PARTIAL** native synthetic-fixture capture packet. All requested item/theme captures were acquired; close-motion origin and simultaneous s comparison remain unverified. Read the observations and limitations below; capture completion is separate from acceptance of the motion.
+Status: **PARTIAL** native synthetic-fixture capture packet. R8 replaces only AFTER o. Sampled close alignment is verified; the timed physical-screen shutter caught the open hold. Simultaneous s comparison remains unverified. Read the observations and limitations below; capture completion is separate from acceptance of the motion.
 
 ## Capture specification
 
 - BEFORE main: `7faf0a0e43f5afa2c135950bb15daafe473b39c6`.
-- AFTER candidate: `912d899a31b1edc2fee01b1562e25b82635177e3`.
+- AFTER R5 surfaces: `912d899a31b1edc2fee01b1562e25b82635177e3`; R8 o only: `59f3c38380009945097e2b23b5748c784497f8ed` (position fix).
 - Physical hardware-notch M1, 1512 × 982 pt, native scale 2. Stills are exact QA-app captures, cropped without resampling. System-region s shows only the 32 pt band row, with the canvas rectangle extended 40 pt left.
 - Synthetic display fixtures; no microphone, speech, clipboard, real History or permission-dialog interaction. Supplied bundles retained unchanged.
-- 120 s HID-idle admission. Tagged tool pointer events; listen-only foreign-input monitor. No new window at or after 18:20 local; restoration reserve before 18:25.
+- 120 s HID-idle admission; tagged tool pointer events and listen-only foreign-input monitor. R5 windows ended before18:25; R8 used one46.655s window, restored at02:22:31.682UTC on17Nov, before its06:15 local deadline.
 - Recorder e runs at15fps and o at60fps; extracted with `-vsync 0`, no scaling, original presentation timestamps. **1x recorder frame, for position and visibility only, not for text**. GIF previews round timing to codec ticks.
-- Recorder contacts preserve original-size band strips (o32px, e top64px); individual PNGs remain authoritative. BEFORE captures from the frozen build are reused where appropriate. All AFTER images are newly captured for this candidate.
+- Recorder contacts preserve original-size band strips (o32px, e top64px); individual PNGs remain authoritative. BEFORE captures from the frozen build are reused where appropriate. AFTER o was recaptured for the position fix; other AFTER surfaces retain their R5 build attribution.
 
 ## Numbered before / after pairs
 
@@ -100,13 +100,37 @@ Native2x pixel ink edges divided by 2. AX selects ROIs; glass threshold >15 at y
 
 Dark spinner arc RGB [101, 176, 252] against band [35, 35, 35]: relative-luminance contrast 6.862:1. See [measurements.json](measurements.json) for ROIs, ink boxes and sampling details.
 
-## o: hover open and close
+## o: hover open and close, R8
 
-AFTER icons ride with the outer wing edges: fully resolved dark ranges mic19–20pt, chevron46–47pt, History43–44pt, gear18–19pt; light mic19–20pt, chevron46–47pt, History43–44pt, gear17–18pt. Every range spans1pt. Partial icon fragments ARE visible at the inner notch-facing wing edge during emergence/retraction (dark frame017 mic/gear; frame020 History; light frame020 mic/gear and frame024 chevron). No resolved fragment touches the outer wing edge. Thus no blanket unclipped-icon claim. AFTER closing also shifts the recorded band right before shrinking: dark frame060→061 changes notch-gap pixels75–243 to263–416 in the union crop; light frame060→061 changes75–243 to262–416. The raw movie contains the shift. Product versus recorder-compositing cause is NOT VERIFIED. The original endpoint crop cut the shifted right wing; offline union crops include all visible band pixels without scaling. BEFORE opens with icons exposed by the expanding edge, then closes in one sampled cut (frame096→097), so eight distinct moving closing geometries do not exist in that baseline sequence. At least eight source frames bracket each transition; AFTER contains more than eight changing geometries in each direction.
+The sampled close now plays over the notch: both themes retain core edges671/839pt, gap168pt, with0pt measured drift in14 resolvable closing frames each. Fully hidden edges remain UNKNOWN. The physical-screen strip places the open core at the same screen x, but does not show a part-way close; exact shutter PTS is UNKNOWN.
 
-### AFTER dark: 108 native1x frames
+Native1x y2 wing seams infer screen-space core edges by adding the union-crop origin. Open reference is the maximum-width plateau; close starts after its last sample. About1pt raster uncertainty. Ink fragments at inner edges remain visible; hidden/clipped icons are UNKNOWN. Fully resolved icons stay within1pt of their outer-edge reference. No unclipped, sub-frame or uniform60fps claim.
 
-PTS 0.000–5145.000 ms. [1x GIF preview](images/after-dark-o.gif).
+| Theme | Frames | Closing / resolved edges | Core x pt | Gap pt | Max edge / gap drift pt | Mic / chevron / History / gear close ranges pt |
+|---|---:|---:|---|---:|---|---|
+| dark | 146 | 55 / 14 | 671,839 |168|0 /0|[19, 20] / [46, 46] / [43, 43] / [18, 19]|
+| light | 140 | 45 / 14 | 671,839 |168|0 /0|[19, 20] / [46, 47] / [43, 44] / [18, 18]|
+
+### System band row, AFTER dark
+
+Request fired 2601.417ms after tagged pointer-off, 101.417ms after the source2.5s grace. The request meets the60–150ms-after-grace range. The system image shows fully open wings, matching the recorder open plateau, NOT a part-way close. Actual shutter instant and epoch-to-movie-PTS mapping UNKNOWN. This required shutter check did not pass; no substitute image is presented as mid-close.
+
+![Real-screen band row](images/after-dark-o-system.png)
+
+Recorder is configured60fps; output PTS is sparse on stable states. Gaps cannot distinguish unchanged-content suppression from dropped frames. Every gap over25ms is listed below. Moving close samples dark92–113 and light96–117 have intervals16.666–25.000ms (rounding applies), including25ms intervals in both themes. No continuity claim across a gap. BEFORE R5 close still has one sampled cut; BEFORE light o was not requested.
+
+### AFTER dark: 146 native1x frames
+
+[1x GIF preview](images/after-dark-o.gif). Original PTS 0.000–7691.667ms.
+
+- PTS 475.000→508.333ms: gap33.333ms.
+- PTS 1325.000→2641.667ms: gap1316.667ms.
+- PTS 2841.667→4175.000ms: gap1333.333ms.
+- PTS 4175.000→4858.333ms: gap683.333ms.
+- PTS 4858.333→5308.333ms: gap450.000ms.
+- PTS 5808.333→5916.667ms: gap108.334ms.
+- PTS 6158.333→6975.000ms: gap816.667ms.
+- PTS 6991.667→7533.333ms: gap541.666ms.
 
 ![Exact-size frame contact](images/after-dark-o-contact-01.png)
 
@@ -118,267 +142,168 @@ PTS 0.000–5145.000 ms. [1x GIF preview](images/after-dark-o.gif).
 
 ![Exact-size frame contact](images/after-dark-o-contact-05.png)
 
-| Frame | Original PTS ms | Band edges at y16px |
-|---|---:|---|
-| [001](images/after-dark-o-recorder-001.png) | 0.000 | None |
-| [002](images/after-dark-o-recorder-002.png) | 16.667 | None |
-| [003](images/after-dark-o-recorder-003.png) | 33.333 | None |
-| [004](images/after-dark-o-recorder-004.png) | 50.000 | None |
-| [005](images/after-dark-o-recorder-005.png) | 66.667 | None |
-| [006](images/after-dark-o-recorder-006.png) | 91.667 | None |
-| [007](images/after-dark-o-recorder-007.png) | 108.333 | None |
-| [008](images/after-dark-o-recorder-008.png) | 125.000 | None |
-| [009](images/after-dark-o-recorder-009.png) | 141.667 | None |
-| [010](images/after-dark-o-recorder-010.png) | 158.333 | None |
-| [011](images/after-dark-o-recorder-011.png) | 183.333 | None |
-| [012](images/after-dark-o-recorder-012.png) | 200.000 | None |
-| [013](images/after-dark-o-recorder-013.png) | 225.000 | [157, 162] |
-| [014](images/after-dark-o-recorder-014.png) | 241.667 | [157, 162] |
-| [015](images/after-dark-o-recorder-015.png) | 258.333 | [70, 248] |
-| [016](images/after-dark-o-recorder-016.png) | 275.000 | [62, 256] |
-| [017](images/after-dark-o-recorder-017.png) | 300.000 | [49, 270] |
-| [018](images/after-dark-o-recorder-018.png) | 316.667 | [41, 279] |
-| [019](images/after-dark-o-recorder-019.png) | 333.333 | [34, 286] |
-| [020](images/after-dark-o-recorder-020.png) | 350.000 | [29, 291] |
-| [021](images/after-dark-o-recorder-021.png) | 375.000 | [20, 300] |
-| [022](images/after-dark-o-recorder-022.png) | 391.667 | [17, 304] |
-| [023](images/after-dark-o-recorder-023.png) | 408.333 | [14, 307] |
-| [024](images/after-dark-o-recorder-024.png) | 425.000 | [12, 310] |
-| [025](images/after-dark-o-recorder-025.png) | 450.000 | [9, 312] |
-| [026](images/after-dark-o-recorder-026.png) | 466.667 | [8, 313] |
-| [027](images/after-dark-o-recorder-027.png) | 483.333 | [7, 314] |
-| [028](images/after-dark-o-recorder-028.png) | 500.000 | [7, 315] |
-| [029](images/after-dark-o-recorder-029.png) | 516.667 | [6, 315] |
-| [030](images/after-dark-o-recorder-030.png) | 533.333 | [6, 316] |
-| [031](images/after-dark-o-recorder-031.png) | 550.000 | [5, 316] |
-| [032](images/after-dark-o-recorder-032.png) | 566.667 | [5, 316] |
-| [033](images/after-dark-o-recorder-033.png) | 591.667 | [5, 317] |
-| [034](images/after-dark-o-recorder-034.png) | 608.333 | [5, 317] |
-| [035](images/after-dark-o-recorder-035.png) | 625.000 | [5, 317] |
-| [036](images/after-dark-o-recorder-036.png) | 641.667 | [5, 317] |
-| [037](images/after-dark-o-recorder-037.png) | 658.333 | [5, 317] |
-| [038](images/after-dark-o-recorder-038.png) | 683.333 | [5, 317] |
-| [039](images/after-dark-o-recorder-039.png) | 700.000 | [5, 317] |
-| [040](images/after-dark-o-recorder-040.png) | 716.667 | [5, 317] |
-| [041](images/after-dark-o-recorder-041.png) | 733.333 | [5, 317] |
-| [042](images/after-dark-o-recorder-042.png) | 750.000 | [5, 317] |
-| [043](images/after-dark-o-recorder-043.png) | 766.667 | [5, 317] |
-| [044](images/after-dark-o-recorder-044.png) | 791.667 | [5, 317] |
-| [045](images/after-dark-o-recorder-045.png) | 808.333 | [5, 317] |
-| [046](images/after-dark-o-recorder-046.png) | 825.000 | [5, 317] |
-| [047](images/after-dark-o-recorder-047.png) | 841.667 | [5, 317] |
-| [048](images/after-dark-o-recorder-048.png) | 1116.667 | [5, 317] |
-| [049](images/after-dark-o-recorder-049.png) | 2066.667 | [5, 317] |
-| [050](images/after-dark-o-recorder-050.png) | 2091.667 | [5, 317] |
-| [051](images/after-dark-o-recorder-051.png) | 2108.333 | [5, 317] |
-| [052](images/after-dark-o-recorder-052.png) | 2125.000 | [5, 317] |
-| [053](images/after-dark-o-recorder-053.png) | 2141.667 | [5, 317] |
-| [054](images/after-dark-o-recorder-054.png) | 2158.333 | [5, 317] |
-| [055](images/after-dark-o-recorder-055.png) | 2175.000 | [5, 317] |
-| [056](images/after-dark-o-recorder-056.png) | 2191.667 | [5, 317] |
-| [057](images/after-dark-o-recorder-057.png) | 2208.333 | [5, 317] |
-| [058](images/after-dark-o-recorder-058.png) | 2233.333 | [5, 317] |
-| [059](images/after-dark-o-recorder-059.png) | 2250.000 | [5, 317] |
-| [060](images/after-dark-o-recorder-060.png) | 2266.667 | [5, 317] |
-| [061](images/after-dark-o-recorder-061.png) | 2800.000 | [184, 497] |
-| [062](images/after-dark-o-recorder-062.png) | 2825.000 | [193, 487] |
-| [063](images/after-dark-o-recorder-063.png) | 2841.667 | [202, 478] |
-| [064](images/after-dark-o-recorder-064.png) | 2858.333 | [211, 469] |
-| [065](images/after-dark-o-recorder-065.png) | 2875.000 | [216, 463] |
-| [066](images/after-dark-o-recorder-066.png) | 2891.667 | [224, 456] |
-| [067](images/after-dark-o-recorder-067.png) | 2908.333 | [227, 452] |
-| [068](images/after-dark-o-recorder-068.png) | 2933.333 | [238, 441] |
-| [069](images/after-dark-o-recorder-069.png) | 2950.000 | [241, 437] |
-| [070](images/after-dark-o-recorder-070.png) | 2966.667 | [245, 434] |
-| [071](images/after-dark-o-recorder-071.png) | 2983.333 | [247, 432] |
-| [072](images/after-dark-o-recorder-072.png) | 3000.000 | [249, 430] |
-| [073](images/after-dark-o-recorder-073.png) | 3016.667 | [250, 428] |
-| [074](images/after-dark-o-recorder-074.png) | 3033.333 | [251, 427] |
-| [075](images/after-dark-o-recorder-075.png) | 3050.000 | [252, 426] |
-| [076](images/after-dark-o-recorder-076.png) | 3075.000 | [253, 425] |
-| [077](images/after-dark-o-recorder-077.png) | 3091.667 | [253, 425] |
-| [078](images/after-dark-o-recorder-078.png) | 3108.333 | [254, 424] |
-| [079](images/after-dark-o-recorder-079.png) | 3125.000 | [254, 424] |
-| [080](images/after-dark-o-recorder-080.png) | 3141.667 | [254, 424] |
-| [081](images/after-dark-o-recorder-081.png) | 3158.333 | None |
-| [082](images/after-dark-o-recorder-082.png) | 3175.000 | None |
-| [083](images/after-dark-o-recorder-083.png) | 3191.667 | None |
-| [084](images/after-dark-o-recorder-084.png) | 3216.667 | None |
-| [085](images/after-dark-o-recorder-085.png) | 3233.333 | None |
-| [086](images/after-dark-o-recorder-086.png) | 3250.000 | None |
-| [087](images/after-dark-o-recorder-087.png) | 3266.667 | None |
-| [088](images/after-dark-o-recorder-088.png) | 3283.333 | None |
-| [089](images/after-dark-o-recorder-089.png) | 3300.000 | None |
-| [090](images/after-dark-o-recorder-090.png) | 3308.333 | None |
-| [091](images/after-dark-o-recorder-091.png) | 3433.333 | None |
-| [092](images/after-dark-o-recorder-092.png) | 3445.000 | None |
-| [093](images/after-dark-o-recorder-093.png) | 3461.667 | None |
-| [094](images/after-dark-o-recorder-094.png) | 3478.333 | None |
-| [095](images/after-dark-o-recorder-095.png) | 3495.000 | None |
-| [096](images/after-dark-o-recorder-096.png) | 3520.000 | None |
-| [097](images/after-dark-o-recorder-097.png) | 3536.667 | None |
-| [098](images/after-dark-o-recorder-098.png) | 3553.333 | None |
-| [099](images/after-dark-o-recorder-099.png) | 3570.000 | None |
-| [100](images/after-dark-o-recorder-100.png) | 3586.667 | None |
-| [101](images/after-dark-o-recorder-101.png) | 3603.333 | None |
-| [102](images/after-dark-o-recorder-102.png) | 3620.000 | None |
-| [103](images/after-dark-o-recorder-103.png) | 3636.667 | None |
-| [104](images/after-dark-o-recorder-104.png) | 3653.333 | None |
-| [105](images/after-dark-o-recorder-105.png) | 3661.667 | None |
-| [106](images/after-dark-o-recorder-106.png) | 4128.333 | None |
-| [107](images/after-dark-o-recorder-107.png) | 5128.333 | None |
-| [108](images/after-dark-o-recorder-108.png) | 5145.000 | None |
+![Exact-size frame contact](images/after-dark-o-contact-06.png)
 
-### BEFORE dark: 128 native1x frames
+![Exact-size frame contact](images/after-dark-o-contact-07.png)
 
-PTS 0.000–5716.667 ms. [1x GIF preview](images/before-dark-o.gif).
+| Frame | Original PTS ms | Core edges screen pt | Gap pt |
+|---|---:|---|---:|
+| [001](images/after-dark-o-recorder-001.png) |0.000|UNKNOWN|UNKNOWN|
+| [002](images/after-dark-o-recorder-002.png) |16.667|UNKNOWN|UNKNOWN|
+| [003](images/after-dark-o-recorder-003.png) |33.333|UNKNOWN|UNKNOWN|
+| [004](images/after-dark-o-recorder-004.png) |58.333|UNKNOWN|UNKNOWN|
+| [005](images/after-dark-o-recorder-005.png) |75.000|UNKNOWN|UNKNOWN|
+| [006](images/after-dark-o-recorder-006.png) |91.667|UNKNOWN|UNKNOWN|
+| [007](images/after-dark-o-recorder-007.png) |108.333|UNKNOWN|UNKNOWN|
+| [008](images/after-dark-o-recorder-008.png) |125.000|UNKNOWN|UNKNOWN|
+| [009](images/after-dark-o-recorder-009.png) |141.667|UNKNOWN|UNKNOWN|
+| [010](images/after-dark-o-recorder-010.png) |158.333|UNKNOWN|UNKNOWN|
+| [011](images/after-dark-o-recorder-011.png) |175.000|UNKNOWN|UNKNOWN|
+| [012](images/after-dark-o-recorder-012.png) |191.667|UNKNOWN|UNKNOWN|
+| [013](images/after-dark-o-recorder-013.png) |208.333|UNKNOWN|UNKNOWN|
+| [014](images/after-dark-o-recorder-014.png) |233.333|UNKNOWN|UNKNOWN|
+| [015](images/after-dark-o-recorder-015.png) |250.000|UNKNOWN|UNKNOWN|
+| [016](images/after-dark-o-recorder-016.png) |266.667|UNKNOWN|UNKNOWN|
+| [017](images/after-dark-o-recorder-017.png) |283.333|UNKNOWN|UNKNOWN|
+| [018](images/after-dark-o-recorder-018.png) |300.000|UNKNOWN|UNKNOWN|
+| [019](images/after-dark-o-recorder-019.png) |316.667|UNKNOWN|UNKNOWN|
+| [020](images/after-dark-o-recorder-020.png) |333.333|UNKNOWN|UNKNOWN|
+| [021](images/after-dark-o-recorder-021.png) |350.000|UNKNOWN|UNKNOWN|
+| [022](images/after-dark-o-recorder-022.png) |366.667|UNKNOWN|UNKNOWN|
+| [023](images/after-dark-o-recorder-023.png) |383.333|UNKNOWN|UNKNOWN|
+| [024](images/after-dark-o-recorder-024.png) |400.000|UNKNOWN|UNKNOWN|
+| [025](images/after-dark-o-recorder-025.png) |416.667|UNKNOWN|UNKNOWN|
+| [026](images/after-dark-o-recorder-026.png) |433.333|UNKNOWN|UNKNOWN|
+| [027](images/after-dark-o-recorder-027.png) |458.333|UNKNOWN|UNKNOWN|
+| [028](images/after-dark-o-recorder-028.png) |475.000|UNKNOWN|UNKNOWN|
+| [029](images/after-dark-o-recorder-029.png) |508.333|UNKNOWN|UNKNOWN|
+| [030](images/after-dark-o-recorder-030.png) |525.000|UNKNOWN|UNKNOWN|
+| [031](images/after-dark-o-recorder-031.png) |541.667|UNKNOWN|UNKNOWN|
+| [032](images/after-dark-o-recorder-032.png) |558.333|UNKNOWN|UNKNOWN|
+| [033](images/after-dark-o-recorder-033.png) |575.000|UNKNOWN|UNKNOWN|
+| [034](images/after-dark-o-recorder-034.png) |600.000|UNKNOWN|UNKNOWN|
+| [035](images/after-dark-o-recorder-035.png) |616.667|UNKNOWN|UNKNOWN|
+| [036](images/after-dark-o-recorder-036.png) |633.333|UNKNOWN|UNKNOWN|
+| [037](images/after-dark-o-recorder-037.png) |650.000|UNKNOWN|UNKNOWN|
+| [038](images/after-dark-o-recorder-038.png) |666.667|UNKNOWN|UNKNOWN|
+| [039](images/after-dark-o-recorder-039.png) |683.333|UNKNOWN|UNKNOWN|
+| [040](images/after-dark-o-recorder-040.png) |700.000|UNKNOWN|UNKNOWN|
+| [041](images/after-dark-o-recorder-041.png) |725.000|UNKNOWN|UNKNOWN|
+| [042](images/after-dark-o-recorder-042.png) |741.667|UNKNOWN|UNKNOWN|
+| [043](images/after-dark-o-recorder-043.png) |758.333|UNKNOWN|UNKNOWN|
+| [044](images/after-dark-o-recorder-044.png) |775.000|UNKNOWN|UNKNOWN|
+| [045](images/after-dark-o-recorder-045.png) |800.000|UNKNOWN|UNKNOWN|
+| [046](images/after-dark-o-recorder-046.png) |816.667|UNKNOWN|UNKNOWN|
+| [047](images/after-dark-o-recorder-047.png) |833.333|[671, 839]|168|
+| [048](images/after-dark-o-recorder-048.png) |850.000|[671, 839]|168|
+| [049](images/after-dark-o-recorder-049.png) |866.667|[671, 839]|168|
+| [050](images/after-dark-o-recorder-050.png) |883.333|[671, 839]|168|
+| [051](images/after-dark-o-recorder-051.png) |908.333|[671, 839]|168|
+| [052](images/after-dark-o-recorder-052.png) |925.000|[671, 839]|168|
+| [053](images/after-dark-o-recorder-053.png) |941.667|[671, 839]|168|
+| [054](images/after-dark-o-recorder-054.png) |958.333|[671, 839]|168|
+| [055](images/after-dark-o-recorder-055.png) |975.000|[671, 839]|168|
+| [056](images/after-dark-o-recorder-056.png) |991.667|[671, 839]|168|
+| [057](images/after-dark-o-recorder-057.png) |1008.333|[671, 839]|168|
+| [058](images/after-dark-o-recorder-058.png) |1025.000|[671, 839]|168|
+| [059](images/after-dark-o-recorder-059.png) |1041.667|[671, 839]|168|
+| [060](images/after-dark-o-recorder-060.png) |1058.333|[671, 839]|168|
+| [061](images/after-dark-o-recorder-061.png) |1075.000|[671, 839]|168|
+| [062](images/after-dark-o-recorder-062.png) |1100.000|[671, 839]|168|
+| [063](images/after-dark-o-recorder-063.png) |1116.667|[671, 839]|168|
+| [064](images/after-dark-o-recorder-064.png) |1133.333|[671, 839]|168|
+| [065](images/after-dark-o-recorder-065.png) |1150.000|[671, 839]|168|
+| [066](images/after-dark-o-recorder-066.png) |1166.667|[671, 839]|168|
+| [067](images/after-dark-o-recorder-067.png) |1183.333|[671, 839]|168|
+| [068](images/after-dark-o-recorder-068.png) |1200.000|[671, 839]|168|
+| [069](images/after-dark-o-recorder-069.png) |1216.667|[671, 839]|168|
+| [070](images/after-dark-o-recorder-070.png) |1233.333|[671, 839]|168|
+| [071](images/after-dark-o-recorder-071.png) |1258.333|[671, 839]|168|
+| [072](images/after-dark-o-recorder-072.png) |1275.000|[671, 839]|168|
+| [073](images/after-dark-o-recorder-073.png) |1291.667|[671, 839]|168|
+| [074](images/after-dark-o-recorder-074.png) |1308.333|[671, 839]|168|
+| [075](images/after-dark-o-recorder-075.png) |1325.000|[671, 839]|168|
+| [076](images/after-dark-o-recorder-076.png) |2641.667|[671, 839]|168|
+| [077](images/after-dark-o-recorder-077.png) |2658.333|[671, 839]|168|
+| [078](images/after-dark-o-recorder-078.png) |2675.000|[671, 839]|168|
+| [079](images/after-dark-o-recorder-079.png) |2691.667|[671, 839]|168|
+| [080](images/after-dark-o-recorder-080.png) |2708.333|[671, 839]|168|
+| [081](images/after-dark-o-recorder-081.png) |2733.333|[671, 839]|168|
+| [082](images/after-dark-o-recorder-082.png) |2750.000|[671, 839]|168|
+| [083](images/after-dark-o-recorder-083.png) |2766.667|[671, 839]|168|
+| [084](images/after-dark-o-recorder-084.png) |2783.333|[671, 839]|168|
+| [085](images/after-dark-o-recorder-085.png) |2800.000|[671, 839]|168|
+| [086](images/after-dark-o-recorder-086.png) |2816.667|[671, 839]|168|
+| [087](images/after-dark-o-recorder-087.png) |2833.333|[671, 839]|168|
+| [088](images/after-dark-o-recorder-088.png) |2841.667|[671, 839]|168|
+| [089](images/after-dark-o-recorder-089.png) |4175.000|[671, 839]|168|
+| [090](images/after-dark-o-recorder-090.png) |4858.333|[671, 839]|168|
+| [091](images/after-dark-o-recorder-091.png) |5308.333|[671, 839]|168|
+| [092](images/after-dark-o-recorder-092.png) |5333.333|[671, 839]|168|
+| [093](images/after-dark-o-recorder-093.png) |5350.000|[671, 839]|168|
+| [094](images/after-dark-o-recorder-094.png) |5366.667|[671, 839]|168|
+| [095](images/after-dark-o-recorder-095.png) |5383.333|[671, 839]|168|
+| [096](images/after-dark-o-recorder-096.png) |5400.000|[671, 839]|168|
+| [097](images/after-dark-o-recorder-097.png) |5416.667|[671, 839]|168|
+| [098](images/after-dark-o-recorder-098.png) |5433.333|[671, 839]|168|
+| [099](images/after-dark-o-recorder-099.png) |5450.000|[671, 839]|168|
+| [100](images/after-dark-o-recorder-100.png) |5475.000|[671, 839]|168|
+| [101](images/after-dark-o-recorder-101.png) |5491.667|[671, 839]|168|
+| [102](images/after-dark-o-recorder-102.png) |5508.333|[671, 839]|168|
+| [103](images/after-dark-o-recorder-103.png) |5525.000|[671, 839]|168|
+| [104](images/after-dark-o-recorder-104.png) |5541.667|[671, 839]|168|
+| [105](images/after-dark-o-recorder-105.png) |5558.333|[671, 839]|168|
+| [106](images/after-dark-o-recorder-106.png) |5575.000|UNKNOWN|UNKNOWN|
+| [107](images/after-dark-o-recorder-107.png) |5591.667|UNKNOWN|UNKNOWN|
+| [108](images/after-dark-o-recorder-108.png) |5608.333|UNKNOWN|UNKNOWN|
+| [109](images/after-dark-o-recorder-109.png) |5625.000|UNKNOWN|UNKNOWN|
+| [110](images/after-dark-o-recorder-110.png) |5641.667|UNKNOWN|UNKNOWN|
+| [111](images/after-dark-o-recorder-111.png) |5658.333|UNKNOWN|UNKNOWN|
+| [112](images/after-dark-o-recorder-112.png) |5683.333|UNKNOWN|UNKNOWN|
+| [113](images/after-dark-o-recorder-113.png) |5700.000|UNKNOWN|UNKNOWN|
+| [114](images/after-dark-o-recorder-114.png) |5716.667|UNKNOWN|UNKNOWN|
+| [115](images/after-dark-o-recorder-115.png) |5733.333|UNKNOWN|UNKNOWN|
+| [116](images/after-dark-o-recorder-116.png) |5750.000|UNKNOWN|UNKNOWN|
+| [117](images/after-dark-o-recorder-117.png) |5766.667|UNKNOWN|UNKNOWN|
+| [118](images/after-dark-o-recorder-118.png) |5783.333|UNKNOWN|UNKNOWN|
+| [119](images/after-dark-o-recorder-119.png) |5808.333|UNKNOWN|UNKNOWN|
+| [120](images/after-dark-o-recorder-120.png) |5916.667|UNKNOWN|UNKNOWN|
+| [121](images/after-dark-o-recorder-121.png) |5941.667|UNKNOWN|UNKNOWN|
+| [122](images/after-dark-o-recorder-122.png) |5958.333|UNKNOWN|UNKNOWN|
+| [123](images/after-dark-o-recorder-123.png) |5975.000|UNKNOWN|UNKNOWN|
+| [124](images/after-dark-o-recorder-124.png) |6000.000|UNKNOWN|UNKNOWN|
+| [125](images/after-dark-o-recorder-125.png) |6016.667|UNKNOWN|UNKNOWN|
+| [126](images/after-dark-o-recorder-126.png) |6033.333|UNKNOWN|UNKNOWN|
+| [127](images/after-dark-o-recorder-127.png) |6050.000|UNKNOWN|UNKNOWN|
+| [128](images/after-dark-o-recorder-128.png) |6066.667|UNKNOWN|UNKNOWN|
+| [129](images/after-dark-o-recorder-129.png) |6083.333|UNKNOWN|UNKNOWN|
+| [130](images/after-dark-o-recorder-130.png) |6100.000|UNKNOWN|UNKNOWN|
+| [131](images/after-dark-o-recorder-131.png) |6116.667|UNKNOWN|UNKNOWN|
+| [132](images/after-dark-o-recorder-132.png) |6133.333|UNKNOWN|UNKNOWN|
+| [133](images/after-dark-o-recorder-133.png) |6150.000|UNKNOWN|UNKNOWN|
+| [134](images/after-dark-o-recorder-134.png) |6158.333|UNKNOWN|UNKNOWN|
+| [135](images/after-dark-o-recorder-135.png) |6975.000|UNKNOWN|UNKNOWN|
+| [136](images/after-dark-o-recorder-136.png) |6991.667|UNKNOWN|UNKNOWN|
+| [137](images/after-dark-o-recorder-137.png) |7533.333|UNKNOWN|UNKNOWN|
+| [138](images/after-dark-o-recorder-138.png) |7550.000|UNKNOWN|UNKNOWN|
+| [139](images/after-dark-o-recorder-139.png) |7566.667|UNKNOWN|UNKNOWN|
+| [140](images/after-dark-o-recorder-140.png) |7591.667|UNKNOWN|UNKNOWN|
+| [141](images/after-dark-o-recorder-141.png) |7608.333|UNKNOWN|UNKNOWN|
+| [142](images/after-dark-o-recorder-142.png) |7625.000|UNKNOWN|UNKNOWN|
+| [143](images/after-dark-o-recorder-143.png) |7641.667|UNKNOWN|UNKNOWN|
+| [144](images/after-dark-o-recorder-144.png) |7658.333|UNKNOWN|UNKNOWN|
+| [145](images/after-dark-o-recorder-145.png) |7675.000|UNKNOWN|UNKNOWN|
+| [146](images/after-dark-o-recorder-146.png) |7691.667|UNKNOWN|UNKNOWN|
 
-![Exact-size frame contact](images/before-dark-o-contact-01.png)
+### AFTER light: 140 native1x frames
 
-![Exact-size frame contact](images/before-dark-o-contact-02.png)
+[1x GIF preview](images/after-light-o.gif). Original PTS 0.000–4616.667ms.
 
-![Exact-size frame contact](images/before-dark-o-contact-03.png)
-
-![Exact-size frame contact](images/before-dark-o-contact-04.png)
-
-![Exact-size frame contact](images/before-dark-o-contact-05.png)
-
-![Exact-size frame contact](images/before-dark-o-contact-06.png)
-
-| Frame | Original PTS ms | Band edges at y16px |
-|---|---:|---|
-| [001](images/before-dark-o-recorder-001.png) | 0.000 | None |
-| [002](images/before-dark-o-recorder-002.png) | 16.667 | None |
-| [003](images/before-dark-o-recorder-003.png) | 33.333 | None |
-| [004](images/before-dark-o-recorder-004.png) | 50.000 | None |
-| [005](images/before-dark-o-recorder-005.png) | 66.667 | None |
-| [006](images/before-dark-o-recorder-006.png) | 83.333 | None |
-| [007](images/before-dark-o-recorder-007.png) | 100.000 | None |
-| [008](images/before-dark-o-recorder-008.png) | 116.667 | None |
-| [009](images/before-dark-o-recorder-009.png) | 141.667 | None |
-| [010](images/before-dark-o-recorder-010.png) | 158.333 | None |
-| [011](images/before-dark-o-recorder-011.png) | 175.000 | None |
-| [012](images/before-dark-o-recorder-012.png) | 191.667 | None |
-| [013](images/before-dark-o-recorder-013.png) | 208.333 | None |
-| [014](images/before-dark-o-recorder-014.png) | 225.000 | None |
-| [015](images/before-dark-o-recorder-015.png) | 241.667 | None |
-| [016](images/before-dark-o-recorder-016.png) | 258.333 | None |
-| [017](images/before-dark-o-recorder-017.png) | 275.000 | None |
-| [018](images/before-dark-o-recorder-018.png) | 291.667 | None |
-| [019](images/before-dark-o-recorder-019.png) | 316.667 | None |
-| [020](images/before-dark-o-recorder-020.png) | 333.333 | None |
-| [021](images/before-dark-o-recorder-021.png) | 350.000 | None |
-| [022](images/before-dark-o-recorder-022.png) | 366.667 | None |
-| [023](images/before-dark-o-recorder-023.png) | 383.333 | None |
-| [024](images/before-dark-o-recorder-024.png) | 400.000 | None |
-| [025](images/before-dark-o-recorder-025.png) | 416.667 | None |
-| [026](images/before-dark-o-recorder-026.png) | 433.333 | None |
-| [027](images/before-dark-o-recorder-027.png) | 450.000 | None |
-| [028](images/before-dark-o-recorder-028.png) | 466.667 | None |
-| [029](images/before-dark-o-recorder-029.png) | 483.333 | None |
-| [030](images/before-dark-o-recorder-030.png) | 508.333 | None |
-| [031](images/before-dark-o-recorder-031.png) | 525.000 | None |
-| [032](images/before-dark-o-recorder-032.png) | 541.667 | None |
-| [033](images/before-dark-o-recorder-033.png) | 558.333 | None |
-| [034](images/before-dark-o-recorder-034.png) | 575.000 | None |
-| [035](images/before-dark-o-recorder-035.png) | 591.667 | None |
-| [036](images/before-dark-o-recorder-036.png) | 608.333 | None |
-| [037](images/before-dark-o-recorder-037.png) | 633.333 | None |
-| [038](images/before-dark-o-recorder-038.png) | 650.000 | None |
-| [039](images/before-dark-o-recorder-039.png) | 666.667 | None |
-| [040](images/before-dark-o-recorder-040.png) | 683.333 | None |
-| [041](images/before-dark-o-recorder-041.png) | 700.000 | None |
-| [042](images/before-dark-o-recorder-042.png) | 716.667 | None |
-| [043](images/before-dark-o-recorder-043.png) | 733.333 | None |
-| [044](images/before-dark-o-recorder-044.png) | 750.000 | None |
-| [045](images/before-dark-o-recorder-045.png) | 766.667 | None |
-| [046](images/before-dark-o-recorder-046.png) | 783.333 | None |
-| [047](images/before-dark-o-recorder-047.png) | 800.000 | None |
-| [048](images/before-dark-o-recorder-048.png) | 825.000 | None |
-| [049](images/before-dark-o-recorder-049.png) | 841.667 | None |
-| [050](images/before-dark-o-recorder-050.png) | 1116.667 | [160, 165] |
-| [051](images/before-dark-o-recorder-051.png) | 1141.667 | [160, 165] |
-| [052](images/before-dark-o-recorder-052.png) | 1158.333 | [75, 249] |
-| [053](images/before-dark-o-recorder-053.png) | 1175.000 | [64, 260] |
-| [054](images/before-dark-o-recorder-054.png) | 1191.667 | [55, 269] |
-| [055](images/before-dark-o-recorder-055.png) | 1208.333 | [46, 278] |
-| [056](images/before-dark-o-recorder-056.png) | 1225.000 | [38, 287] |
-| [057](images/before-dark-o-recorder-057.png) | 1241.667 | [31, 291] |
-| [058](images/before-dark-o-recorder-058.png) | 1258.333 | [27, 295] |
-| [059](images/before-dark-o-recorder-059.png) | 1275.000 | [20, 304] |
-| [060](images/before-dark-o-recorder-060.png) | 1300.000 | [15, 309] |
-| [061](images/before-dark-o-recorder-061.png) | 1316.667 | [12, 312] |
-| [062](images/before-dark-o-recorder-062.png) | 1333.333 | [10, 314] |
-| [063](images/before-dark-o-recorder-063.png) | 1350.000 | [9, 315] |
-| [064](images/before-dark-o-recorder-064.png) | 1366.667 | [8, 316] |
-| [065](images/before-dark-o-recorder-065.png) | 1391.667 | [6, 318] |
-| [066](images/before-dark-o-recorder-066.png) | 1408.333 | [6, 318] |
-| [067](images/before-dark-o-recorder-067.png) | 1425.000 | [5, 319] |
-| [068](images/before-dark-o-recorder-068.png) | 1441.667 | [5, 319] |
-| [069](images/before-dark-o-recorder-069.png) | 1466.667 | [5, 319] |
-| [070](images/before-dark-o-recorder-070.png) | 1483.333 | [5, 319] |
-| [071](images/before-dark-o-recorder-071.png) | 1500.000 | [4, 320] |
-| [072](images/before-dark-o-recorder-072.png) | 1516.667 | [4, 320] |
-| [073](images/before-dark-o-recorder-073.png) | 1541.667 | [4, 320] |
-| [074](images/before-dark-o-recorder-074.png) | 1558.333 | [4, 320] |
-| [075](images/before-dark-o-recorder-075.png) | 1575.000 | [4, 320] |
-| [076](images/before-dark-o-recorder-076.png) | 1591.667 | [4, 320] |
-| [077](images/before-dark-o-recorder-077.png) | 1608.333 | [4, 320] |
-| [078](images/before-dark-o-recorder-078.png) | 1625.000 | [4, 320] |
-| [079](images/before-dark-o-recorder-079.png) | 1641.667 | [4, 320] |
-| [080](images/before-dark-o-recorder-080.png) | 1650.000 | [4, 320] |
-| [081](images/before-dark-o-recorder-081.png) | 1700.000 | [4, 320] |
-| [082](images/before-dark-o-recorder-082.png) | 2716.667 | [4, 320] |
-| [083](images/before-dark-o-recorder-083.png) | 2733.333 | [4, 320] |
-| [084](images/before-dark-o-recorder-084.png) | 2953.333 | [4, 320] |
-| [085](images/before-dark-o-recorder-085.png) | 2970.000 | [4, 320] |
-| [086](images/before-dark-o-recorder-086.png) | 2991.667 | [4, 320] |
-| [087](images/before-dark-o-recorder-087.png) | 3008.333 | [4, 320] |
-| [088](images/before-dark-o-recorder-088.png) | 3025.000 | [4, 320] |
-| [089](images/before-dark-o-recorder-089.png) | 3041.667 | [4, 320] |
-| [090](images/before-dark-o-recorder-090.png) | 3066.667 | [4, 320] |
-| [091](images/before-dark-o-recorder-091.png) | 3083.333 | [4, 320] |
-| [092](images/before-dark-o-recorder-092.png) | 3100.000 | [4, 320] |
-| [093](images/before-dark-o-recorder-093.png) | 3116.667 | [4, 320] |
-| [094](images/before-dark-o-recorder-094.png) | 3133.333 | [4, 320] |
-| [095](images/before-dark-o-recorder-095.png) | 3150.000 | [4, 320] |
-| [096](images/before-dark-o-recorder-096.png) | 3700.000 | [4, 320] |
-| [097](images/before-dark-o-recorder-097.png) | 3741.667 | None |
-| [098](images/before-dark-o-recorder-098.png) | 3758.333 | None |
-| [099](images/before-dark-o-recorder-099.png) | 3775.000 | None |
-| [100](images/before-dark-o-recorder-100.png) | 3791.667 | None |
-| [101](images/before-dark-o-recorder-101.png) | 3808.333 | None |
-| [102](images/before-dark-o-recorder-102.png) | 3825.000 | None |
-| [103](images/before-dark-o-recorder-103.png) | 3841.667 | None |
-| [104](images/before-dark-o-recorder-104.png) | 3858.333 | None |
-| [105](images/before-dark-o-recorder-105.png) | 3875.000 | None |
-| [106](images/before-dark-o-recorder-106.png) | 3891.667 | None |
-| [107](images/before-dark-o-recorder-107.png) | 3908.333 | None |
-| [108](images/before-dark-o-recorder-108.png) | 3925.000 | None |
-| [109](images/before-dark-o-recorder-109.png) | 3941.667 | None |
-| [110](images/before-dark-o-recorder-110.png) | 3966.667 | None |
-| [111](images/before-dark-o-recorder-111.png) | 3983.333 | None |
-| [112](images/before-dark-o-recorder-112.png) | 4000.000 | None |
-| [113](images/before-dark-o-recorder-113.png) | 4016.667 | None |
-| [114](images/before-dark-o-recorder-114.png) | 4033.333 | None |
-| [115](images/before-dark-o-recorder-115.png) | 4050.000 | None |
-| [116](images/before-dark-o-recorder-116.png) | 4066.667 | None |
-| [117](images/before-dark-o-recorder-117.png) | 4083.333 | None |
-| [118](images/before-dark-o-recorder-118.png) | 4100.000 | None |
-| [119](images/before-dark-o-recorder-119.png) | 4116.667 | None |
-| [120](images/before-dark-o-recorder-120.png) | 4141.667 | None |
-| [121](images/before-dark-o-recorder-121.png) | 4158.333 | None |
-| [122](images/before-dark-o-recorder-122.png) | 4175.000 | None |
-| [123](images/before-dark-o-recorder-123.png) | 4191.667 | None |
-| [124](images/before-dark-o-recorder-124.png) | 4208.333 | None |
-| [125](images/before-dark-o-recorder-125.png) | 4225.000 | None |
-| [126](images/before-dark-o-recorder-126.png) | 4233.333 | None |
-| [127](images/before-dark-o-recorder-127.png) | 4708.333 | None |
-| [128](images/before-dark-o-recorder-128.png) | 5716.667 | None |
-
-### AFTER light: 104 native1x frames
-
-PTS 0.000–5483.333 ms. [1x GIF preview](images/after-light-o.gif).
+- PTS 875.000→1133.333ms: gap258.333ms.
+- PTS 1666.667→1783.333ms: gap116.666ms.
+- PTS 1783.333→3066.667ms: gap1283.334ms.
+- PTS 3258.333→3758.333ms: gap500.000ms.
+- PTS 4258.333→4375.000ms: gap116.667ms.
 
 ![Exact-size frame contact](images/after-light-o-contact-01.png)
 
@@ -390,112 +315,150 @@ PTS 0.000–5483.333 ms. [1x GIF preview](images/after-light-o.gif).
 
 ![Exact-size frame contact](images/after-light-o-contact-05.png)
 
-| Frame | Original PTS ms | Band edges at y16px |
-|---|---:|---|
-| [001](images/after-light-o-recorder-001.png) | 0.000 | None |
-| [002](images/after-light-o-recorder-002.png) | 16.667 | None |
-| [003](images/after-light-o-recorder-003.png) | 33.333 | None |
-| [004](images/after-light-o-recorder-004.png) | 50.000 | None |
-| [005](images/after-light-o-recorder-005.png) | 66.667 | None |
-| [006](images/after-light-o-recorder-006.png) | 83.333 | None |
-| [007](images/after-light-o-recorder-007.png) | 108.333 | None |
-| [008](images/after-light-o-recorder-008.png) | 125.000 | None |
-| [009](images/after-light-o-recorder-009.png) | 141.667 | None |
-| [010](images/after-light-o-recorder-010.png) | 158.333 | None |
-| [011](images/after-light-o-recorder-011.png) | 175.000 | None |
-| [012](images/after-light-o-recorder-012.png) | 191.667 | None |
-| [013](images/after-light-o-recorder-013.png) | 200.000 | None |
-| [014](images/after-light-o-recorder-014.png) | 233.333 | None |
-| [015](images/after-light-o-recorder-015.png) | 250.000 | None |
-| [016](images/after-light-o-recorder-016.png) | 275.000 | [158, 161] |
-| [017](images/after-light-o-recorder-017.png) | 291.667 | [158, 161] |
-| [018](images/after-light-o-recorder-018.png) | 308.333 | [72, 246] |
-| [019](images/after-light-o-recorder-019.png) | 325.000 | [65, 253] |
-| [020](images/after-light-o-recorder-020.png) | 350.000 | [52, 267] |
-| [021](images/after-light-o-recorder-021.png) | 366.667 | [44, 276] |
-| [022](images/after-light-o-recorder-022.png) | 383.333 | [36, 284] |
-| [023](images/after-light-o-recorder-023.png) | 400.000 | [33, 287] |
-| [024](images/after-light-o-recorder-024.png) | 416.667 | [24, 296] |
-| [025](images/after-light-o-recorder-025.png) | 433.333 | [20, 301] |
-| [026](images/after-light-o-recorder-026.png) | 450.000 | [17, 304] |
-| [027](images/after-light-o-recorder-027.png) | 466.667 | [14, 307] |
-| [028](images/after-light-o-recorder-028.png) | 491.667 | [11, 310] |
-| [029](images/after-light-o-recorder-029.png) | 508.333 | [9, 312] |
-| [030](images/after-light-o-recorder-030.png) | 525.000 | [8, 313] |
-| [031](images/after-light-o-recorder-031.png) | 541.667 | [7, 314] |
-| [032](images/after-light-o-recorder-032.png) | 558.333 | [7, 315] |
-| [033](images/after-light-o-recorder-033.png) | 575.000 | [6, 315] |
-| [034](images/after-light-o-recorder-034.png) | 591.667 | [6, 315] |
-| [035](images/after-light-o-recorder-035.png) | 616.667 | [6, 316] |
-| [036](images/after-light-o-recorder-036.png) | 633.333 | [5, 316] |
-| [037](images/after-light-o-recorder-037.png) | 650.000 | [5, 316] |
-| [038](images/after-light-o-recorder-038.png) | 666.667 | [5, 316] |
-| [039](images/after-light-o-recorder-039.png) | 683.333 | [5, 316] |
-| [040](images/after-light-o-recorder-040.png) | 700.000 | [5, 316] |
-| [041](images/after-light-o-recorder-041.png) | 716.667 | [5, 316] |
-| [042](images/after-light-o-recorder-042.png) | 733.333 | [5, 316] |
-| [043](images/after-light-o-recorder-043.png) | 750.000 | [5, 316] |
-| [044](images/after-light-o-recorder-044.png) | 775.000 | [5, 317] |
-| [045](images/after-light-o-recorder-045.png) | 791.667 | [5, 317] |
-| [046](images/after-light-o-recorder-046.png) | 808.333 | [5, 317] |
-| [047](images/after-light-o-recorder-047.png) | 825.000 | [5, 317] |
-| [048](images/after-light-o-recorder-048.png) | 833.333 | [5, 317] |
-| [049](images/after-light-o-recorder-049.png) | 2075.000 | [5, 317] |
-| [050](images/after-light-o-recorder-050.png) | 2091.667 | [5, 317] |
-| [051](images/after-light-o-recorder-051.png) | 2108.333 | [5, 317] |
-| [052](images/after-light-o-recorder-052.png) | 2133.333 | [5, 317] |
-| [053](images/after-light-o-recorder-053.png) | 2150.000 | [5, 317] |
-| [054](images/after-light-o-recorder-054.png) | 2166.667 | [5, 317] |
-| [055](images/after-light-o-recorder-055.png) | 2183.333 | [5, 317] |
-| [056](images/after-light-o-recorder-056.png) | 2200.000 | [5, 317] |
-| [057](images/after-light-o-recorder-057.png) | 2216.667 | [5, 317] |
-| [058](images/after-light-o-recorder-058.png) | 2233.333 | [5, 317] |
-| [059](images/after-light-o-recorder-059.png) | 2250.000 | [5, 317] |
-| [060](images/after-light-o-recorder-060.png) | 2266.667 | [5, 317] |
-| [061](images/after-light-o-recorder-061.png) | 4633.333 | [185, 497] |
-| [062](images/after-light-o-recorder-062.png) | 4650.000 | [189, 492] |
-| [063](images/after-light-o-recorder-063.png) | 4666.667 | [201, 480] |
-| [064](images/after-light-o-recorder-064.png) | 4683.333 | [210, 470] |
-| [065](images/after-light-o-recorder-065.png) | 4700.000 | [218, 462] |
-| [066](images/after-light-o-recorder-066.png) | 4716.667 | [225, 454] |
-| [067](images/after-light-o-recorder-067.png) | 4733.333 | [228, 451] |
-| [068](images/after-light-o-recorder-068.png) | 4750.000 | [237, 442] |
-| [069](images/after-light-o-recorder-069.png) | 4766.667 | [241, 438] |
-| [070](images/after-light-o-recorder-070.png) | 4783.333 | [244, 435] |
-| [071](images/after-light-o-recorder-071.png) | 4808.333 | [248, 431] |
-| [072](images/after-light-o-recorder-072.png) | 4825.000 | [249, 429] |
-| [073](images/after-light-o-recorder-073.png) | 4841.667 | [251, 428] |
-| [074](images/after-light-o-recorder-074.png) | 4858.333 | [252, 427] |
-| [075](images/after-light-o-recorder-075.png) | 4875.000 | [253, 426] |
-| [076](images/after-light-o-recorder-076.png) | 4891.667 | [253, 425] |
-| [077](images/after-light-o-recorder-077.png) | 4908.333 | [254, 424] |
-| [078](images/after-light-o-recorder-078.png) | 4916.667 | [254, 424] |
-| [079](images/after-light-o-recorder-079.png) | 4941.667 | [254, 424] |
-| [080](images/after-light-o-recorder-080.png) | 4966.667 | [255, 424] |
-| [081](images/after-light-o-recorder-081.png) | 4983.333 | None |
-| [082](images/after-light-o-recorder-082.png) | 5000.000 | None |
-| [083](images/after-light-o-recorder-083.png) | 5016.667 | None |
-| [084](images/after-light-o-recorder-084.png) | 5033.333 | None |
-| [085](images/after-light-o-recorder-085.png) | 5058.333 | None |
-| [086](images/after-light-o-recorder-086.png) | 5075.000 | None |
-| [087](images/after-light-o-recorder-087.png) | 5091.667 | None |
-| [088](images/after-light-o-recorder-088.png) | 5108.333 | None |
-| [089](images/after-light-o-recorder-089.png) | 5125.000 | None |
-| [090](images/after-light-o-recorder-090.png) | 5241.667 | None |
-| [091](images/after-light-o-recorder-091.png) | 5266.667 | None |
-| [092](images/after-light-o-recorder-092.png) | 5283.333 | None |
-| [093](images/after-light-o-recorder-093.png) | 5300.000 | None |
-| [094](images/after-light-o-recorder-094.png) | 5316.667 | None |
-| [095](images/after-light-o-recorder-095.png) | 5333.333 | None |
-| [096](images/after-light-o-recorder-096.png) | 5350.000 | None |
-| [097](images/after-light-o-recorder-097.png) | 5366.667 | None |
-| [098](images/after-light-o-recorder-098.png) | 5383.333 | None |
-| [099](images/after-light-o-recorder-099.png) | 5400.000 | None |
-| [100](images/after-light-o-recorder-100.png) | 5425.000 | None |
-| [101](images/after-light-o-recorder-101.png) | 5441.667 | None |
-| [102](images/after-light-o-recorder-102.png) | 5458.333 | None |
-| [103](images/after-light-o-recorder-103.png) | 5475.000 | None |
-| [104](images/after-light-o-recorder-104.png) | 5483.333 | None |
+![Exact-size frame contact](images/after-light-o-contact-06.png)
+
+| Frame | Original PTS ms | Core edges screen pt | Gap pt |
+|---|---:|---|---:|
+| [001](images/after-light-o-recorder-001.png) |0.000|UNKNOWN|UNKNOWN|
+| [002](images/after-light-o-recorder-002.png) |8.333|UNKNOWN|UNKNOWN|
+| [003](images/after-light-o-recorder-003.png) |33.333|UNKNOWN|UNKNOWN|
+| [004](images/after-light-o-recorder-004.png) |50.000|UNKNOWN|UNKNOWN|
+| [005](images/after-light-o-recorder-005.png) |66.667|UNKNOWN|UNKNOWN|
+| [006](images/after-light-o-recorder-006.png) |83.333|UNKNOWN|UNKNOWN|
+| [007](images/after-light-o-recorder-007.png) |100.000|UNKNOWN|UNKNOWN|
+| [008](images/after-light-o-recorder-008.png) |116.667|UNKNOWN|UNKNOWN|
+| [009](images/after-light-o-recorder-009.png) |141.667|UNKNOWN|UNKNOWN|
+| [010](images/after-light-o-recorder-010.png) |158.333|UNKNOWN|UNKNOWN|
+| [011](images/after-light-o-recorder-011.png) |175.000|UNKNOWN|UNKNOWN|
+| [012](images/after-light-o-recorder-012.png) |191.667|UNKNOWN|UNKNOWN|
+| [013](images/after-light-o-recorder-013.png) |208.333|UNKNOWN|UNKNOWN|
+| [014](images/after-light-o-recorder-014.png) |225.000|UNKNOWN|UNKNOWN|
+| [015](images/after-light-o-recorder-015.png) |241.667|UNKNOWN|UNKNOWN|
+| [016](images/after-light-o-recorder-016.png) |258.333|UNKNOWN|UNKNOWN|
+| [017](images/after-light-o-recorder-017.png) |275.000|UNKNOWN|UNKNOWN|
+| [018](images/after-light-o-recorder-018.png) |291.667|UNKNOWN|UNKNOWN|
+| [019](images/after-light-o-recorder-019.png) |308.333|UNKNOWN|UNKNOWN|
+| [020](images/after-light-o-recorder-020.png) |333.333|UNKNOWN|UNKNOWN|
+| [021](images/after-light-o-recorder-021.png) |350.000|UNKNOWN|UNKNOWN|
+| [022](images/after-light-o-recorder-022.png) |366.667|UNKNOWN|UNKNOWN|
+| [023](images/after-light-o-recorder-023.png) |383.333|UNKNOWN|UNKNOWN|
+| [024](images/after-light-o-recorder-024.png) |400.000|UNKNOWN|UNKNOWN|
+| [025](images/after-light-o-recorder-025.png) |416.667|UNKNOWN|UNKNOWN|
+| [026](images/after-light-o-recorder-026.png) |433.333|UNKNOWN|UNKNOWN|
+| [027](images/after-light-o-recorder-027.png) |458.333|UNKNOWN|UNKNOWN|
+| [028](images/after-light-o-recorder-028.png) |475.000|UNKNOWN|UNKNOWN|
+| [029](images/after-light-o-recorder-029.png) |491.667|UNKNOWN|UNKNOWN|
+| [030](images/after-light-o-recorder-030.png) |508.333|UNKNOWN|UNKNOWN|
+| [031](images/after-light-o-recorder-031.png) |525.000|UNKNOWN|UNKNOWN|
+| [032](images/after-light-o-recorder-032.png) |541.667|UNKNOWN|UNKNOWN|
+| [033](images/after-light-o-recorder-033.png) |558.333|UNKNOWN|UNKNOWN|
+| [034](images/after-light-o-recorder-034.png) |575.000|UNKNOWN|UNKNOWN|
+| [035](images/after-light-o-recorder-035.png) |591.667|UNKNOWN|UNKNOWN|
+| [036](images/after-light-o-recorder-036.png) |608.333|UNKNOWN|UNKNOWN|
+| [037](images/after-light-o-recorder-037.png) |625.000|UNKNOWN|UNKNOWN|
+| [038](images/after-light-o-recorder-038.png) |650.000|UNKNOWN|UNKNOWN|
+| [039](images/after-light-o-recorder-039.png) |666.667|UNKNOWN|UNKNOWN|
+| [040](images/after-light-o-recorder-040.png) |683.333|UNKNOWN|UNKNOWN|
+| [041](images/after-light-o-recorder-041.png) |700.000|UNKNOWN|UNKNOWN|
+| [042](images/after-light-o-recorder-042.png) |716.667|UNKNOWN|UNKNOWN|
+| [043](images/after-light-o-recorder-043.png) |733.333|UNKNOWN|UNKNOWN|
+| [044](images/after-light-o-recorder-044.png) |750.000|UNKNOWN|UNKNOWN|
+| [045](images/after-light-o-recorder-045.png) |766.667|UNKNOWN|UNKNOWN|
+| [046](images/after-light-o-recorder-046.png) |791.667|UNKNOWN|UNKNOWN|
+| [047](images/after-light-o-recorder-047.png) |808.333|UNKNOWN|UNKNOWN|
+| [048](images/after-light-o-recorder-048.png) |825.000|UNKNOWN|UNKNOWN|
+| [049](images/after-light-o-recorder-049.png) |833.333|UNKNOWN|UNKNOWN|
+| [050](images/after-light-o-recorder-050.png) |850.000|UNKNOWN|UNKNOWN|
+| [051](images/after-light-o-recorder-051.png) |875.000|UNKNOWN|UNKNOWN|
+| [052](images/after-light-o-recorder-052.png) |1133.333|UNKNOWN|UNKNOWN|
+| [053](images/after-light-o-recorder-053.png) |1158.333|UNKNOWN|UNKNOWN|
+| [054](images/after-light-o-recorder-054.png) |1183.333|[671, 839]|168|
+| [055](images/after-light-o-recorder-055.png) |1200.000|[671, 839]|168|
+| [056](images/after-light-o-recorder-056.png) |1216.667|[671, 839]|168|
+| [057](images/after-light-o-recorder-057.png) |1233.333|[671, 839]|168|
+| [058](images/after-light-o-recorder-058.png) |1250.000|[671, 839]|168|
+| [059](images/after-light-o-recorder-059.png) |1266.667|[671, 839]|168|
+| [060](images/after-light-o-recorder-060.png) |1291.667|[671, 839]|168|
+| [061](images/after-light-o-recorder-061.png) |1308.333|[671, 839]|168|
+| [062](images/after-light-o-recorder-062.png) |1325.000|[671, 839]|168|
+| [063](images/after-light-o-recorder-063.png) |1341.667|[671, 839]|168|
+| [064](images/after-light-o-recorder-064.png) |1358.333|[671, 839]|168|
+| [065](images/after-light-o-recorder-065.png) |1375.000|[671, 839]|168|
+| [066](images/after-light-o-recorder-066.png) |1400.000|[671, 839]|168|
+| [067](images/after-light-o-recorder-067.png) |1416.667|[671, 839]|168|
+| [068](images/after-light-o-recorder-068.png) |1433.333|[671, 839]|168|
+| [069](images/after-light-o-recorder-069.png) |1450.000|[671, 839]|168|
+| [070](images/after-light-o-recorder-070.png) |1466.667|[671, 839]|168|
+| [071](images/after-light-o-recorder-071.png) |1483.333|[671, 839]|168|
+| [072](images/after-light-o-recorder-072.png) |1500.000|[671, 839]|168|
+| [073](images/after-light-o-recorder-073.png) |1516.667|[671, 839]|168|
+| [074](images/after-light-o-recorder-074.png) |1533.333|[671, 839]|168|
+| [075](images/after-light-o-recorder-075.png) |1550.000|[671, 839]|168|
+| [076](images/after-light-o-recorder-076.png) |1566.667|[671, 839]|168|
+| [077](images/after-light-o-recorder-077.png) |1591.667|[671, 839]|168|
+| [078](images/after-light-o-recorder-078.png) |1608.333|[671, 839]|168|
+| [079](images/after-light-o-recorder-079.png) |1625.000|[671, 839]|168|
+| [080](images/after-light-o-recorder-080.png) |1641.667|[671, 839]|168|
+| [081](images/after-light-o-recorder-081.png) |1658.333|[671, 839]|168|
+| [082](images/after-light-o-recorder-082.png) |1666.667|[671, 839]|168|
+| [083](images/after-light-o-recorder-083.png) |1783.333|[671, 839]|168|
+| [084](images/after-light-o-recorder-084.png) |3066.667|[671, 839]|168|
+| [085](images/after-light-o-recorder-085.png) |3091.667|[671, 839]|168|
+| [086](images/after-light-o-recorder-086.png) |3108.333|[671, 839]|168|
+| [087](images/after-light-o-recorder-087.png) |3125.000|[671, 839]|168|
+| [088](images/after-light-o-recorder-088.png) |3141.667|[671, 839]|168|
+| [089](images/after-light-o-recorder-089.png) |3158.333|[671, 839]|168|
+| [090](images/after-light-o-recorder-090.png) |3175.000|[671, 839]|168|
+| [091](images/after-light-o-recorder-091.png) |3191.667|[671, 839]|168|
+| [092](images/after-light-o-recorder-092.png) |3208.333|[671, 839]|168|
+| [093](images/after-light-o-recorder-093.png) |3225.000|[671, 839]|168|
+| [094](images/after-light-o-recorder-094.png) |3241.667|[671, 839]|168|
+| [095](images/after-light-o-recorder-095.png) |3258.333|[671, 839]|168|
+| [096](images/after-light-o-recorder-096.png) |3758.333|[671, 839]|168|
+| [097](images/after-light-o-recorder-097.png) |3783.333|[671, 839]|168|
+| [098](images/after-light-o-recorder-098.png) |3800.000|[671, 839]|168|
+| [099](images/after-light-o-recorder-099.png) |3816.667|[671, 839]|168|
+| [100](images/after-light-o-recorder-100.png) |3833.333|[671, 839]|168|
+| [101](images/after-light-o-recorder-101.png) |3850.000|[671, 839]|168|
+| [102](images/after-light-o-recorder-102.png) |3866.667|[671, 839]|168|
+| [103](images/after-light-o-recorder-103.png) |3883.333|[671, 839]|168|
+| [104](images/after-light-o-recorder-104.png) |3900.000|[671, 839]|168|
+| [105](images/after-light-o-recorder-105.png) |3916.667|[671, 839]|168|
+| [106](images/after-light-o-recorder-106.png) |3941.667|[671, 839]|168|
+| [107](images/after-light-o-recorder-107.png) |3958.333|[671, 839]|168|
+| [108](images/after-light-o-recorder-108.png) |3975.000|[671, 839]|168|
+| [109](images/after-light-o-recorder-109.png) |3991.667|[671, 839]|168|
+| [110](images/after-light-o-recorder-110.png) |4008.333|UNKNOWN|UNKNOWN|
+| [111](images/after-light-o-recorder-111.png) |4025.000|UNKNOWN|UNKNOWN|
+| [112](images/after-light-o-recorder-112.png) |4041.667|UNKNOWN|UNKNOWN|
+| [113](images/after-light-o-recorder-113.png) |4058.333|UNKNOWN|UNKNOWN|
+| [114](images/after-light-o-recorder-114.png) |4075.000|UNKNOWN|UNKNOWN|
+| [115](images/after-light-o-recorder-115.png) |4091.667|UNKNOWN|UNKNOWN|
+| [116](images/after-light-o-recorder-116.png) |4116.667|UNKNOWN|UNKNOWN|
+| [117](images/after-light-o-recorder-117.png) |4133.333|UNKNOWN|UNKNOWN|
+| [118](images/after-light-o-recorder-118.png) |4150.000|UNKNOWN|UNKNOWN|
+| [119](images/after-light-o-recorder-119.png) |4166.667|UNKNOWN|UNKNOWN|
+| [120](images/after-light-o-recorder-120.png) |4183.333|UNKNOWN|UNKNOWN|
+| [121](images/after-light-o-recorder-121.png) |4200.000|UNKNOWN|UNKNOWN|
+| [122](images/after-light-o-recorder-122.png) |4216.667|UNKNOWN|UNKNOWN|
+| [123](images/after-light-o-recorder-123.png) |4233.333|UNKNOWN|UNKNOWN|
+| [124](images/after-light-o-recorder-124.png) |4250.000|UNKNOWN|UNKNOWN|
+| [125](images/after-light-o-recorder-125.png) |4258.333|UNKNOWN|UNKNOWN|
+| [126](images/after-light-o-recorder-126.png) |4375.000|UNKNOWN|UNKNOWN|
+| [127](images/after-light-o-recorder-127.png) |4391.667|UNKNOWN|UNKNOWN|
+| [128](images/after-light-o-recorder-128.png) |4408.333|UNKNOWN|UNKNOWN|
+| [129](images/after-light-o-recorder-129.png) |4425.000|UNKNOWN|UNKNOWN|
+| [130](images/after-light-o-recorder-130.png) |4441.667|UNKNOWN|UNKNOWN|
+| [131](images/after-light-o-recorder-131.png) |4458.333|UNKNOWN|UNKNOWN|
+| [132](images/after-light-o-recorder-132.png) |4475.000|UNKNOWN|UNKNOWN|
+| [133](images/after-light-o-recorder-133.png) |4491.667|UNKNOWN|UNKNOWN|
+| [134](images/after-light-o-recorder-134.png) |4516.667|UNKNOWN|UNKNOWN|
+| [135](images/after-light-o-recorder-135.png) |4533.333|UNKNOWN|UNKNOWN|
+| [136](images/after-light-o-recorder-136.png) |4550.000|UNKNOWN|UNKNOWN|
+| [137](images/after-light-o-recorder-137.png) |4566.667|UNKNOWN|UNKNOWN|
+| [138](images/after-light-o-recorder-138.png) |4583.333|UNKNOWN|UNKNOWN|
+| [139](images/after-light-o-recorder-139.png) |4608.333|UNKNOWN|UNKNOWN|
+| [140](images/after-light-o-recorder-140.png) |4616.667|UNKNOWN|UNKNOWN|
 
 ## e: recording → transcribing
 
@@ -734,7 +697,7 @@ Capture request monotonic 26685168.527ms (not movie PTS).
 
 ## Not shown / not verified
 
-- Close-motion global shift: cause NOT VERIFIED; exact simultaneous system/tool stills NOT SHOWN. BEFORE close has one sampled cut, not eight distinct moving states.
+- R8 timed system shutter did NOT show part-way close (open hold instead); exact shutter-to-movie PTS UNKNOWN. Sampled close shift is gone at the recorded seam edges. BEFORE close retains one sampled cut, not eight distinct moving states.
 - Hidden/near-transparent icon positions are UNKNOWN where raster ink cannot resolve them; no sub-frame continuity or flicker-free claim.
 - BEFORE light o: NOT SHOWN (not requested). Recorder cannot establish 2x text quality.
 - f light: NOT SHOWN. h version footer and i queued-read interruption: NOT SHOWN.
