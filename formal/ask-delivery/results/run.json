@@ -1,0 +1,88 @@
+{
+  "complete": true,
+  "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
+  "hashes": {
+    "formal/ask-delivery/AskDelivery.tla": "2f539635d1ba9ae059a2f5bbf3ae2bb8254fee03379f639ac7e3059d5ab94254",
+    "formal/ask-delivery/checks.json": "7f70042570ba1802efc626d556bb8b3bf6fe1b5faba448eb61644bfc2d41813f",
+    "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
+    "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
+    "formal/ask-delivery/Recovery.cfg": "59f58ca636c56cb6df98416d4aa18decb6ea04001fb75521619b43040e1fc3a6",
+    "formal/ask-delivery/CrashDrops.cfg": "1439dc7defefd4fa9bcea585dc96d9a1224c0a00228c4574ef671fe9f0efdb77",
+    "formal/ask-delivery/ScopeLeak.cfg": "32fa0a56be5724b7a704129d2840dc032fb24ced4a11cae893d9cfe5f91b4198",
+    "formal/ask-delivery/DeleteOnWrite.cfg": "b32225da4a980c6687337f55826e61cd1c10794ee6dc22dd0d0ac32b4accb2ba",
+    "formal/ask-delivery/AdmitWhilePending.cfg": "b186109de5d8c00603214da3b2accffbceeab07b9405908f36bcbb3e651ce402",
+    "formal/ask-delivery/NewIdPerClaim.cfg": "ef6f9b5d6d12fd2a89bb7b61cf733e7e5f70d1995b8ee550bf5492e82b387098",
+    "formal/ask-delivery/check.sh": "56516962a7396f2a9ac916d8add02afcdfc8ef617cd4d0069097bd80ff6f6606",
+    "formal/ask-delivery/README.md": "9993bb775c706a046667ecdf1a948b7f8a3ceb9be12bfdeb798f3e70e39be59a",
+    "formal/tlc_support.py": "8c5dad35602a3a631acc61b07ed2246eeb40ef2b3a6b3a9c72c5b207c95386ec",
+    "formal/tlc.lock.json": "3e37914f1398c6073444c37c6c8df70eb3030c14d269e808791e1d1b25467d34",
+    "src/ask-delivery.ts": "864ca9082b64069a9991e2b297218d5542b1aefa8fc659f583944bdd9dae496e",
+    "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
+  },
+  "mutants": {
+    "NoCrossCallerDelivery": [
+      "ScopeLeak"
+    ],
+    "NoLossBeforeAck": [
+      "DeleteOnWrite",
+      "CrashDrops"
+    ],
+    "NoDoubleInboxInsertion": [
+      "NewIdPerClaim"
+    ],
+    "NoNewCaptureWhileRecovering": [
+      "AdmitWhilePending"
+    ]
+  },
+  "graphHashes": {},
+  "checks": {
+    "Recovery": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 1137761,
+      "distinct": 192872
+    },
+    "ScopeLeak": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoCrossCallerDelivery",
+      "status": "EXPECTED_FAIL",
+      "generated": 1488,
+      "distinct": 569
+    },
+    "DeleteOnWrite": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoLossBeforeAck",
+      "status": "EXPECTED_FAIL",
+      "generated": 113,
+      "distinct": 74
+    },
+    "CrashDrops": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoLossBeforeAck",
+      "status": "EXPECTED_FAIL",
+      "generated": 114,
+      "distinct": 75
+    },
+    "NewIdPerClaim": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoDoubleInboxInsertion",
+      "status": "EXPECTED_FAIL",
+      "generated": 6566,
+      "distinct": 2217
+    },
+    "AdmitWhilePending": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "NoNewCaptureWhileRecovering",
+      "status": "EXPECTED_FAIL",
+      "generated": 54,
+      "distinct": 40
+    }
+  }
+}
