@@ -379,8 +379,8 @@ final class VoiceBarPresentationTests: XCTestCase {
             )
         )
         // c9-P: the spinner on the left, the rippling recording meter on the right, in the recording band's wings.
-        XCTAssertEqual(baseline.geometry.leadingWingWidth, 102)
-        XCTAssertEqual(baseline.geometry.trailingWingWidth, 102)
+        XCTAssertEqual(baseline.geometry.leadingWingWidth, 70) // owner r2: the launcher's left wing (chevron on the rule)
+        XCTAssertEqual(baseline.geometry.trailingWingWidth, 73.5)
         XCTAssertEqual(baseline.geometry.topHeight, 32)
         XCTAssertEqual(warmup.geometry.leadingWingWidth, baseline.geometry.leadingWingWidth)
         XCTAssertEqual(warmup.geometry.trailingWingWidth, baseline.geometry.trailingWingWidth)
@@ -405,13 +405,14 @@ final class VoiceBarPresentationTests: XCTestCase {
         )
 
         // The launcher retains its fixed wings; recording's symmetric wings fit the time/meter row with its 8 pt gap
-        // and 14 pt outer inset (C7-W: 8 + 26 + 8 + 46 + 14), and c9-P processing keeps them (its meter ripples in
+        // Recording reserves three left slots; each wing uses its own content and insets.
         // place). The fitted F5 hint remains independent.
-        XCTAssertEqual(launcher.geometry.leadingWingWidth, 73.5)
+        // Owner r2: the launcher's and transcribing's left wing is 70 pt (the chevron's ink on the left-side rule).
+        XCTAssertEqual(launcher.geometry.leadingWingWidth, 70)
         XCTAssertEqual(launcher.geometry.trailingWingWidth, 73.5)
-        XCTAssertEqual(processing.geometry.leadingWingWidth, 102)
-        XCTAssertEqual(processing.geometry.trailingWingWidth, 102)
-        XCTAssertEqual(recording.geometry.leadingWingWidth, 102)
+        XCTAssertEqual(processing.geometry.leadingWingWidth, 70)
+        XCTAssertEqual(processing.geometry.trailingWingWidth, 73.5)
+        XCTAssertEqual(recording.geometry.leadingWingWidth, 88.5)
         XCTAssertEqual(recording.geometry.trailingWingWidth, 102)
         XCTAssertEqual(quickTap.geometry.leadingWingWidth, 47.5)
         XCTAssertEqual(
@@ -423,10 +424,10 @@ final class VoiceBarPresentationTests: XCTestCase {
                 VoiceBarNotchContract.morphCanvasWingCapacity
             )
         )
-        XCTAssertEqual(processing.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth)
+        XCTAssertEqual(processing.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth)
     }
 
-    func testRecordingWingFitsMountedControlsInsteadOfKeepingAGhostTail() {
+    func testRecordingWingReservesTheThirdSlotBeforeTheTakeTypeArrives() {
         let pushToTalk = VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(
                 mode: .recording,
@@ -440,12 +441,12 @@ final class VoiceBarPresentationTests: XCTestCase {
             )
         )
 
-        // C7-W: the time/meter wing (102 pt) is wider than Stop + Lock + Cancel (99.5 pt), so the hold control no
+        // Recording reserves three left slots; each wing uses its own content and insets.
         // longer changes the band's width.
-        XCTAssertEqual(pushToTalk.geometry.leadingWingWidth, 102)
+        XCTAssertEqual(pushToTalk.geometry.leadingWingWidth, 88.5)
         XCTAssertEqual(pushToTalk.geometry.trailingWingWidth, 102)
-        XCTAssertEqual(vad.geometry.leadingWingWidth, 102)
-        XCTAssertEqual(vad.geometry.trailingWingWidth, 102, "the wings stay symmetric with the hold control")
+        XCTAssertEqual(vad.geometry.leadingWingWidth, 88.5)
+        XCTAssertEqual(vad.geometry.trailingWingWidth, 102, "the right wing retains its own content-fit width")
     }
 
     func testTextBearingCompactStatusKeepsTrailingSafetyPaddingInsideStableCanvas() {

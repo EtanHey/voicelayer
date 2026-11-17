@@ -25,7 +25,8 @@ def main():
     helper = Path(home) / "Gits/golems/.worktrees/hooks-live/scripts/hooks/heavy-suite.py"
     if helper.is_file():
         os.environ["GOLEMS_HEAVY_PRE_PUSH"] = "1"
-        command = [sys.executable, str(helper), "--", *command]
+        # -B: the helper lives in an installed, integrity-checked release; never write bytecode there.
+        command = [sys.executable, "-B", str(helper), "--", *command]
     else:
         print("heavy-suite: pinned fleet helper missing; using VoiceLayer serial queue",
               file=sys.stderr, flush=True)

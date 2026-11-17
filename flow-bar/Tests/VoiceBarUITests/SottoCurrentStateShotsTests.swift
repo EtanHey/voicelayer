@@ -419,7 +419,6 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                         icon: icon,
                         optics: VoiceBarNotchControlOptics.resolve(for: icon),
                         foreground: isDark ? .white : .black,
-                        halo: .clear,
                         isSelected: false,
                         isDestructive: destructive,
                         accessibilityLabel: name,

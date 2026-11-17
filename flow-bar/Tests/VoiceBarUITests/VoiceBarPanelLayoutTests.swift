@@ -5,9 +5,9 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
     func testPrimaryStatesUseApprovedVisibleGeometryInsideShadowSafeWindows() {
         let cases: [(VoiceBarNotchVisualState, CGSize)] = [
             (.idle, CGSize(width: 185, height: 32)),
-            // 2.3 U2: fixed 73.5 pt wings (mic + chevron | History + Settings; Stop + Cancel | level bars).
-            (.hoverLauncher, CGSize(width: 332, height: 32)),
-            (.recording, CGSize(width: 332, height: 32)),
+            // Launcher wings stay fixed; recording reserves 88.5/102 pt for its controls and meter.
+            (.hoverLauncher, CGSize(width: 328.5, height: 32)), // owner r2: 185 + 70 + 73.5
+            (.recording, CGSize(width: 375.5, height: 32)),
             (.compactStatus, CGSize(width: 336.5, height: 32)),
             (.teleprompter, CGSize(width: 545, height: 195)),
         ]
@@ -20,6 +20,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             XCTAssertEqual(layout.visibleContentRect.minY, 17, "state=\(state)")
             XCTAssertEqual(layout.panelSize.width, expectedVisibleSize.width + 24, "state=\(state)")
             XCTAssertEqual(layout.panelSize.height, expectedVisibleSize.height + 17, "state=\(state)")
+            XCTAssertTrue(CGRect(origin: .zero, size: layout.panelSize).contains(layout.visibleContentRect), "state=\(state)")
         }
     }
 

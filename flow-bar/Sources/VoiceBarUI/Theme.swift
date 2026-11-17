@@ -23,6 +23,10 @@ public enum Theme {
     /// Pressed, but the recorder has not delivered a frame yet. Reuses the
     /// vetted idle gray so the waveform never shows red before capture exists.
     public static let captureBootingColor = idleColor
+    /// The pre-capture bed needs dark ink on light glass; active and paused meters keep their own colours.
+    public static func captureBootingColor(for appearance: VoiceBarNotchAppearance) -> Color {
+        appearance == .light ? Color(hex: 0x6A6A6F) : captureBootingColor
+    }
     /// Reported 2026-11-12 (c9-P): make the processing ripple visibly distinct and sufficiently contrasted.
     /// Its blue uses the processing hue (`speakingColor`, 211°),
     /// lifted to 206° / HSL lightness 0.82 so it holds ≥ 3:1 on the M4's grey glass, measured at (106, 115, 125)
@@ -39,6 +43,34 @@ public enum Theme {
     }
     /// The M4 glass behind the right wing as recorded on 2026-11-12 (the backdrop sets it; see the c9-P report).
     static let measuredM4GlassRGB: (red: Double, green: Double, blue: Double) = (106.3, 114.8, 125.0)
+
+    /// The transcribing ring: the processing hue (211°), saturated, no outline. Owner r1: the dark ring moved a step
+    /// lighter, `#3D9BFF` to `#66B2FF` (7.0:1 on the dark glass, rgb 35), still a working blue and short of the old
+    /// pale wash (rgb 160/211/251). The light ring stays `#0050B2` (3.28:1 on the light glass, rgb 171): any lighter
+    /// falls under 3:1 there. `TranscribingSpinnerBlueTests` pins both.
+    public static func transcribingSpinnerColor(for appearance: VoiceBarNotchAppearance) -> Color {
+        Color(hex: appearance == .light ? 0x0050B2 : 0x66B2FF)
+    }
+
+    /// An engaged recording control (Lock or Pause held) draws its glyph in red on its 30 % red plate. With no
+    /// outline (owner r1) `recordingColor` reads 1.4:1 on that plate over the light glass and 2.9:1 over the dark
+    /// band, so each appearance takes the nearest red of the same hue that clears 3:1 on its plate.
+    public static func recordingStateGlyphColor(for appearance: VoiceBarNotchAppearance) -> Color {
+        Color(hex: appearance == .light ? 0x971616 : 0xE86363)
+    }
+
+    /// The compact status icon outside idle and error, coloured by state for the notch's appearance. The legacy
+    /// `stateColor` tokens were made for the old dark pill; on the light glass they fall to 1.1-1.7:1 without the
+    /// outline, so the notch uses its own state tokens: the engaged-recording red, the spinner's processing blue
+    /// and, when disconnected, the palette's tertiary ink on light (dark keeps the vetted idle grey).
+    public static func notchStateGlyphColor(for mode: VoiceMode, appearance: VoiceBarNotchAppearance) -> Color {
+        switch mode {
+        case .recording, .error: recordingStateGlyphColor(for: appearance)
+        case .speaking, .transcribing: transcribingSpinnerColor(for: appearance)
+        case .idle, .disconnected:
+            appearance == .light ? VoiceBarNotchContrastPalette.resolve(for: .light).tertiary.color : stateColor(for: mode)
+        }
+    }
 
     // MARK: - Pill background
 

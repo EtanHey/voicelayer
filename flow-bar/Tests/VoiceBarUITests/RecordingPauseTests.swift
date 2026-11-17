@@ -39,7 +39,7 @@ final class RecordingPauseTests: XCTestCase {
         let held = VoiceBarPresentation.notchPresentation(from: .init(mode: .recording, showsRecordingHold: true))
         let plain = VoiceBarPresentation.notchPresentation(from: .init(mode: .recording))
         XCTAssertEqual(paused.geometry.leadingWingWidth, held.geometry.leadingWingWidth)
-        // C7-W: the time/meter wing (102 pt) is already wider than three controls (99.5 pt), so the third slot no
+        // Recording reserves three left slots; each wing uses its own content and insets.
         // longer widens the band; it still fits inside it.
         XCTAssertGreaterThanOrEqual(paused.geometry.leadingWingWidth, plain.geometry.leadingWingWidth)
         XCTAssertGreaterThanOrEqual(paused.geometry.leadingWingWidth, VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl)

@@ -115,8 +115,14 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertTrue(source.contains(".frame(width: Self.hitDiameter, height: Self.hitDiameter)"))
         XCTAssertTrue(source.contains(".contentShape(Circle())"))
         XCTAssertTrue(source.contains(".padding(-Self.hitOverhang)"))
-        XCTAssertTrue(source.contains("if isDestructive {"))
+        // Stop's square stays white on its red container (owner r1: no glyph has an outline any more).
+        XCTAssertTrue(source.contains(".foregroundStyle(isDestructive ? Color.white : foreground)"))
     }
+
+    /// Owner r2: the launcher's left wing is 70 pt (the chevron on the left-side ink rule), its right wing 73.5 pt; the
+    /// host's bounds round the 328.5 pt envelope up.
+    static let launcherEnvelopeWidth = (VoiceBarNotchContract.coreWidth + VoiceBarNotchContract.launcherLeadingWingWidth
+        + VoiceBarNotchContract.fixedWingWidth).rounded(.up)
 
     func testNativeNotchShellUsesApprovedBoundsForPrimaryStates() {
         let idle = VoiceState()
@@ -125,8 +131,8 @@ final class BarViewClickabilityTests: XCTestCase {
         idle.isCollapsed = false
         XCTAssertEqual(
             makeHost(state: idle, router: SpyCommandRouter()).bounds.size,
-            NSSize(width: 332, height: 32),
-            "visible idle must hold the launcher envelope through its collapse grace window (2.3 U2: 185 + 2 × 73.5)"
+            NSSize(width: Self.launcherEnvelopeWidth, height: 32),
+            "visible idle must hold the launcher envelope through its collapse grace window (owner r2: 185 + 70 + 73.5)"
         )
 
         idle.isCollapsed = true
@@ -142,7 +148,7 @@ final class BarViewClickabilityTests: XCTestCase {
         hover.isHovering = true
         XCTAssertEqual(
             makeHost(state: hover, router: SpyCommandRouter()).bounds.size,
-            NSSize(width: 332, height: 32)
+            NSSize(width: Self.launcherEnvelopeWidth, height: 32)
         )
 
         let recording = VoiceState()
@@ -152,8 +158,8 @@ final class BarViewClickabilityTests: XCTestCase {
         recording.isCollapsed = false
         XCTAssertEqual(
             makeHost(state: recording, router: SpyCommandRouter()).bounds.size,
-            // C7-W: the recording wing is 102 pt on both sides of the 185 pt core (8 + 26 + 8 + 46 + 14).
-            NSSize(width: 389, height: 32)
+            // Recording reserves three left slots; each wing uses its own content and insets.
+            NSSize(width: ceil(375.5), height: 32)
         )
 
         let teleprompter = VoiceState()
@@ -875,7 +881,7 @@ final class BarViewClickabilityTests: XCTestCase {
                 let configuration = state.mode == .recording
                     ? VoiceBarNotchInteractionConfiguration(
                         leadingControlCount: 3,
-                        // C7-W: the recording row sits out from the core, as the app configures it.
+                        // Recording reserves three left slots; each wing uses its own content and insets.
                         leadingCoreInset: VoiceBarPresentation.recordingLeadingCoreInset(
                             wingWidth: VoiceBarPresentation.recordingWingWidth(
                                 showsThirdControl: true, showsEarlierTakeProcessing: false,
@@ -965,7 +971,7 @@ final class BarViewClickabilityTests: XCTestCase {
         let (host, panel, layout, controlRects) = makeInteractivePanelHost(
             state: state,
             router: router,
-            configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
+            configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 3, leadingCoreInset: 2.5)
         )
 
         XCTAssertTrue(panel.styleMask.contains(.nonactivatingPanel))
@@ -1047,7 +1053,7 @@ final class BarViewClickabilityTests: XCTestCase {
         let (host, panel, layout, controlRects) = makeInteractivePanelHost(
             state: state,
             router: SpyCommandRouter(),
-            configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
+            configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 3, leadingCoreInset: 2.5)
         )
         let wingPoint = NSPoint(
             x: layout.visibleContentRect.minX + layout.presentation.geometry.coreOriginX
@@ -1158,9 +1164,10 @@ final class BarViewClickabilityTests: XCTestCase {
         panel.orderBack(nil)
         windows.append(panel)
         host.layoutSubtreeIfNeeded()
+        // Owner r2: the rects the panel layout gates on (it moves a default-inset left row onto the painted one).
         let region = VoiceBarNotchHitRegion(
             geometry: presentation.geometry,
-            configuration: configuration
+            configuration: configuration.followingLeadingRow(of: presentation)
         )
         let controlRects = region.rects.map {
             $0.offsetBy(dx: layout.visibleContentRect.minX, dy: layout.visibleContentRect.minY)
@@ -1169,11 +1176,8 @@ final class BarViewClickabilityTests: XCTestCase {
     }
 
     private func recordingCancelButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(
-            x: (host.bounds.width - VoiceBarNotchContract.coreWidth) / 2
-                - VoiceBarNotchContract.compactCoreContentInset - 10,
-            y: host.bounds.midY
-        )
+        let coreLeft = host.bounds.width - VoiceBarNotchContract.coreWidth - VoiceBarNotchContract.recordingTrailingWingWidth
+        return NSPoint(x: coreLeft - 2.5 - 10, y: host.bounds.midY)
     }
 
     private func recordingHoldButtonCenter(in host: NSView) -> NSPoint {
@@ -1181,8 +1185,8 @@ final class BarViewClickabilityTests: XCTestCase {
     }
 
     private func recordingStopButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: (host.bounds.width - VoiceBarNotchContract.coreWidth) / 2
-            - VoiceBarNotchContract.compactCoreContentInset - 10 - 26, y: host.bounds.midY)
+        let cancel = recordingCancelButtonCenter(in: host)
+        return NSPoint(x: cancel.x - 2 * 26, y: cancel.y) // Pause is reserved between Stop and Cancel.
     }
 
     /// T4/T7: Replay and the eye are one centred group; the terminal X sits one pitch (30 pt) to its right. The row

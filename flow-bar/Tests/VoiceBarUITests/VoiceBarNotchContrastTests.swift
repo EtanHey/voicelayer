@@ -147,39 +147,18 @@ final class VoiceBarNotchContrastTests: XCTestCase {
         )
     }
 
-    func testGlyphHaloUsesTheOppositePolaritySoControlsSurviveEitherBackdrop() {
-        let lightHalo = VoiceBarNotchGlyphContrastTreatment.resolve(for: .light)
-        let darkHalo = VoiceBarNotchGlyphContrastTreatment.resolve(for: .dark)
-
-        XCTAssertGreaterThan(lightHalo.red, 0.9)
-        XCTAssertGreaterThan(lightHalo.alpha, 0.9)
-        XCTAssertLessThan(darkHalo.red, 0.1)
-        XCTAssertGreaterThan(darkHalo.alpha, 0.9)
-        XCTAssertGreaterThanOrEqual(
-            VoiceBarContrast.ratio(
-                foreground: lightHalo.composited(over: VoiceBarRGB(red: 0, green: 0, blue: 0)),
-                background: VoiceBarRGB(red: 0, green: 0, blue: 0)
-            ),
-            VoiceBarContrast.minimumControlRatio
-        )
-        XCTAssertGreaterThanOrEqual(
-            VoiceBarContrast.ratio(
-                foreground: darkHalo.composited(over: VoiceBarRGB(red: 1, green: 1, blue: 1)),
-                background: VoiceBarRGB(red: 1, green: 1, blue: 1)
-            ),
-            VoiceBarContrast.minimumControlRatio
-        )
-    }
-
-    func testPrimaryWingGlyphsRenderTheAdaptiveOpposingHalo() throws {
-        let source = try barViewSource()
-
-        XCTAssertTrue(source.contains("notchGlyphContrastHaloColor"))
-        XCTAssertTrue(source.contains(".notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)"))
-        XCTAssertTrue(source.contains("radius: 0, x: -0.75, y: 0"))
-        XCTAssertTrue(source.contains("radius: 0, x: 0.75, y: 0"))
-        XCTAssertTrue(source.contains("radius: 0, x: 0, y: -0.75"))
-        XCTAssertTrue(source.contains("radius: 0, x: 0, y: 0.75"))
+    /// Owner r1: the opposite-tone edge (four hard 0.75 pt shadows) is gone from every notch glyph. Legibility is the
+    /// glyph's own colour (`VoiceBarNotchGlyphTokenTests`); `NotchGlyphNoEdgeTests` checks the rendered pixels.
+    func testNotchGlyphsWearNoOpposingEdge() throws {
+        let sourceRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/VoiceBarUI")
+        for file in ["BarView.swift", "NotchSettingsDrawer.swift", "VoiceBarNotchContrast.swift"] {
+            let source = try String(contentsOf: sourceRoot.appendingPathComponent(file), encoding: .utf8)
+            XCTAssertFalse(source.contains("notchAdaptiveGlyphEdge"), file)
+            XCTAssertFalse(source.contains("GlyphContrastTreatment"), file)
+            XCTAssertFalse(source.contains("radius: 0, x:"), "\(file) draws a hard-shadow outline")
+        }
     }
 
     func testDarkAppearanceMaterialKeepsLightTextReadableOverBrightMenuBarContent() {

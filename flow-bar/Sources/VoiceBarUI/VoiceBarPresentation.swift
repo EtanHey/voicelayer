@@ -337,7 +337,8 @@ public enum VoiceBarPresentation {
             compactStatusLeadingWingWidth: compactStatusLeadingWingWidth(input: input),
             compactStatusTrailingWingWidth: compactStatusTrailingWingWidth(input: input),
             recordingLeadingWingWidth: recordingWing,
-            recordingTrailingWingWidth: recordingWing,
+            recordingTrailingWingWidth: input.mode == .recording
+                ? VoiceBarNotchContract.recordingTrailingWingWidth(visibleCoreOcclusionInset: input.visibleCoreOcclusionInset) : nil,
             teleprompterLeadingWingWidth: input.mode == .speaking
                 ? readingLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
                 : nil,
@@ -363,12 +364,15 @@ public enum VoiceBarPresentation {
             readingLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
         case .idle:
             input.showsIdleMicrophoneControl
-                ? VoiceBarNotchContract.fixedWingWidth
+                ? VoiceBarNotchContract.launcherLeadingWingWidth
                 : playbackLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
         case .transcribing:
-            // c9-P: both wings keep the recording band's width (they are equal about the notch, as recording's).
-            transcribingWingWidth(visibleCoreOcclusionInset: input.visibleCoreOcclusionInset)
-        case .recording, .error, .disconnected:
+            // Transcribing uses its own two-control navigation envelope: the spinner and the chevron on the left.
+            transcribingLeadingWingWidth
+        case .error:
+            // CI r3: the error glyph's own lane, so its ink sits on the left-side rule (16.5 pt).
+            VoiceBarNotchContract.errorStatusLeadingWingWidth
+        case .recording, .disconnected:
             VoiceBarNotchContract.compactIndicatorLaneWidth
         }
     }
@@ -433,8 +437,9 @@ public enum VoiceBarPresentation {
         let material = VoiceBarNotchContract.material
         return 3 * material.compactControlSize + 3 * material.compactControlSpacing + readingSpeedChipWidth
     }
+    /// Owner r2: the row starts `readingLeadingContentInset` from the notch, so Forward's ink sits on the left-side rule.
     public static var readingTransportWingWidth: CGFloat {
-        VoiceBarNotchContract.compactCoreContentInset + readingTransportContentWidth +
+        VoiceBarNotchContract.readingLeadingContentInset + readingTransportContentWidth +
             VoiceBarNotchContract.fixedWingContentInset
     }
 
@@ -527,8 +532,7 @@ public enum VoiceBarPresentation {
             // T5/T7: reading is laid out like recording (time, meter, and Stop in the outer region while collapsed).
             return readingTrailingWingWidth(visibleCoreOcclusionInset: input.visibleCoreOcclusionInset)
         case .transcribing:
-            // c9-P (Etan, 2026-11-12): the recording meter stays in its slot and ripples while transcribing, so the
-            // band keeps the recording wings it had and the meter keeps its frame.
+            // History and Settings replace the recording meter in the transcribing band.
             return transcribingWingWidth(visibleCoreOcclusionInset: input.visibleCoreOcclusionInset)
         case .error:
             return insets + Theme.intrinsicPillStatusWidth(for: input.statusText) +
@@ -548,72 +552,47 @@ public enum VoiceBarPresentation {
         }
     }
 
-    /// c9-P: both transcribing wings, at least the plain recording band's (Stop · ✕ on the left, time and meter on
-    /// the right). A wider recording band (an earlier take's spinner) is held by the presentation model through the
-    /// hand-over (`holdsRecordingWings`, round 2 F1); the meter row is pinned to the outer edge as while recording.
-    /// v2.3.0 centred one spinner in the fixed control wing. Keep that core distance inside the wider band.
+    /// Flip this to put the microphone picker outside the decorative spinner.
+    public static let transcribingCaretNextToCore = true
+
     public static var transcribingSpinnerCoreInset: CGFloat {
-        let material = VoiceBarNotchContract.material
-        return VoiceBarNotchContract.compactCoreContentInset +
-            (VoiceBarNotchContract.fixedWingWidth - material.compactContentInset -
-             VoiceBarNotchContract.compactCoreContentInset - material.compactControlSize) / 2
+        compactTranscribingInset(isCaret: false)
     }
 
-    /// The microphone sits one recording-control pitch outside the spinner; its hit region follows its slot.
     public static var transcribingMicrophoneCoreInset: CGFloat {
-        transcribingSpinnerCoreInset + VoiceBarNotchContract.material.compactControlSize +
-            VoiceBarNotchContract.material.compactControlSpacing
+        compactTranscribingInset(isCaret: true)
     }
 
-    public static func transcribingWingWidth(visibleCoreOcclusionInset: CGFloat) -> CGFloat {
-        recordingWingWidth(showsThirdControl: false, showsEarlierTakeProcessing: false,
-                           visibleCoreOcclusionInset: visibleCoreOcclusionInset)
+    private static func compactTranscribingInset(isCaret: Bool) -> CGFloat {
+        VoiceBarNotchContract.launcherLeadingContentInset +
+            (isCaret == transcribingCaretNextToCore ? 0 :
+                VoiceBarNotchContract.material.compactControlSize + VoiceBarNotchContract.material.compactControlSpacing)
     }
 
-    /// c9-P: the padding that puts the recording time/meter row on its recording frame inside a compact-status
-    /// trailing wing. The two wings are the same width; only their content insets differ (recording pins the row
-    /// to the outer edge past the hidden notch points, a compact status centres it between 8 pt insets).
-    public static func transcribingMeterRowPadding(visibleCoreOcclusionInset: CGFloat)
-        -> (leading: CGFloat, trailing: CGFloat) {
-        let material = VoiceBarNotchContract.material
-        let recording = material.wingContentLayout(for: .trailing, state: .recording,
-                                                   visibleCoreOcclusionInset: visibleCoreOcclusionInset)
-        let compact = material.wingContentLayout(for: .trailing, state: .compactStatus,
-                                                 visibleCoreOcclusionInset: visibleCoreOcclusionInset)
-        return (recording.coreInset - compact.coreInset, recording.outerInset - compact.outerInset)
+    public static func transcribingWingWidth(visibleCoreOcclusionInset _: CGFloat) -> CGFloat {
+        VoiceBarNotchContract.fixedWingWidth
     }
 
-    /// Both recording wings (they are equal about the notch): the wider of the controls' wing and the time/meter's.
-    public static func recordingWingWidth(showsThirdControl: Bool, showsEarlierTakeProcessing: Bool,
+    /// Owner r2: the transcribing left wing is the launcher's (the chevron innermost, on the left-side rule); its right
+    /// wing stays `transcribingWingWidth`, History and Settings in the launcher's slots.
+    public static var transcribingLeadingWingWidth: CGFloat { VoiceBarNotchContract.launcherLeadingWingWidth }
+
+    /// Reserve Pause/Lock from the first recording frame; later mode metadata cannot move Stop.
+    /// An earlier take adds only an outer spinner slot.
+    public static func recordingWingWidth(showsThirdControl _: Bool, showsEarlierTakeProcessing: Bool,
                                           visibleCoreOcclusionInset: CGFloat) -> CGFloat {
-        max(recordingLeadingWingWidth(mode: .recording, showsRecordingHold: showsThirdControl,
-                                      showsEarlierTakeProcessing: showsEarlierTakeProcessing) ?? 0,
-            VoiceBarNotchContract.recordingTrailingWingWidth(visibleCoreOcclusionInset: visibleCoreOcclusionInset))
+        let material = VoiceBarNotchContract.material
+        let slots: CGFloat = 3 + (showsEarlierTakeProcessing ? 1 : 0)
+        return recordingLeadingCoreInset(wingWidth: 0, showsEarlierTakeProcessing: false,
+                                         visibleCoreOcclusionInset: visibleCoreOcclusionInset)
+            + slots * material.compactControlSize + (slots - 1) * material.compactControlSpacing
+            + material.compactContentInset
     }
 
-    /// C7-W (Etan, QA 2026-11-11): Stop sits `compactContentInset` from the band's left edge, the inset the meter
-    /// keeps from the right edge. The controls stay one row counted from the core, so this is the row's distance from
-    /// the core: whatever the wing has left past Stop, Cancel and the third slot (Mute or Lock; reserved before the
-    /// daemon names the take's mode, so Cancel never moves when it arrives) and the earlier take's spinner.
-    public static func recordingLeadingCoreInset(wingWidth: CGFloat, showsEarlierTakeProcessing: Bool) -> CGFloat {
-        let material = VoiceBarNotchContract.material
-        let slots: CGFloat = showsEarlierTakeProcessing ? 4 : 3
-        let row = slots * material.compactControlSize + (slots - 1) * material.compactControlSpacing
-        return max(VoiceBarNotchContract.compactCoreContentInset, wingWidth - material.compactContentInset - row)
-    }
-
-    private static func recordingLeadingWingWidth(
-        mode: VoiceMode,
-        showsRecordingHold: Bool,
-        showsEarlierTakeProcessing: Bool
-    ) -> CGFloat? {
-        guard mode == .recording else { return nil }
-        let material = VoiceBarNotchContract.material
-        // 2.3 N1: the earlier take's spinner is one more slot at the wing's outer edge.
-        return (showsRecordingHold
-            ? VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl
-            : VoiceBarNotchContract.recordingLeadingWingWidth) +
-            (showsEarlierTakeProcessing ? material.compactControlSpacing + material.compactControlSize : 0)
+    /// The recording glyph sits closer than the timer slot to balance their visible ink gaps.
+    public static func recordingLeadingCoreInset(wingWidth _: CGFloat, showsEarlierTakeProcessing _: Bool,
+                                                 visibleCoreOcclusionInset: CGFloat = 0) -> CGFloat {
+        max(0, visibleCoreOcclusionInset) + VoiceBarNotchContract.recordingLeadingContentInset
     }
 
     /// 2.3 N1 (Etan, queued-recording clip F1): while this take records, an earlier take is still queued,

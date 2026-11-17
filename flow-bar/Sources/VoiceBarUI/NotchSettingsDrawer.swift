@@ -83,20 +83,18 @@ public enum NotchSettingsDrawerPresentation {
     }
 }
 
-/// One notch glyph with the band's contrast edge (`notchAdaptiveGlyphEdge`). The edge is for legibility only. It
-/// never kept a glyph painted: the drawer's icons vanished (N3, N12) because the panel's backing-scale pass asked
-/// SwiftUI's symbol image layers to redraw, which empties them (`VoiceBarBackingScaleSynchronizer`, fixed there).
+/// One notch glyph in its own colour, with no outline (owner r1). The drawer's icons once vanished (N3, N12) because
+/// the panel's backing-scale pass asked SwiftUI's symbol image layers to redraw, which empties them; that is fixed
+/// in `VoiceBarBackingScaleSynchronizer` and guarded by `NotchGlyphRepaintN12Tests`, not by how the glyph is drawn.
 struct NotchGlyph: View {
     let systemName: String
     var pointSize: CGFloat = NotchSettingsDrawerPresentation.tabGlyphSize
     let color: Color
-    let appearance: VoiceBarNotchAppearance
 
     var body: some View {
         Image(systemName: systemName)
             .font(.system(size: pointSize, weight: .semibold))
             .foregroundStyle(color)
-            .notchAdaptiveGlyphEdge(VoiceBarNotchGlyphContrastTreatment.resolve(for: appearance).color)
     }
 }
 
@@ -170,7 +168,7 @@ struct NotchSettingsDrawer: View {
                 let ink = isSelected ? palette.primary.color : palette.secondary.color
                 Button { onSelectTab(tab) } label: {
                     VStack(spacing: 3) {
-                        NotchGlyph(systemName: tab.systemImage, color: ink, appearance: appearance)
+                        NotchGlyph(systemName: tab.systemImage, color: ink)
                         Text(tab.title)
                             .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
                             .foregroundStyle(ink)

@@ -104,21 +104,18 @@ final class RecordingWingLabelTests: XCTestCase {
         XCTAssertTrue(state.isRecordingCaptureOpen)
     }
 
-    /// QA 0449: the complete timer/meter row is centred in symmetric wings, with no empty outer region.
-    func testTheRecordingRowFitsEqualWingsWithAndWithoutTheHoldControl() {
-        let minimum = VoiceBarNotchContract.recordingTrailingWingWidth
+    /// Recording reserves three left slots even before type metadata; each wing hugs its own payload.
+    func testTheRecordingRowFitsReservedWingsWithAndWithoutTheHoldControl() {
         for hold in [false, true] {
             let geometry = resolve(.recording, hold: hold).geometry
-            XCTAssertEqual(geometry.leadingWingWidth, geometry.trailingWingWidth)
-            XCTAssertEqual(geometry.trailingWingWidth, max(minimum, hold
-                ? VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl
-                : VoiceBarNotchContract.recordingLeadingWingWidth))
+            XCTAssertEqual(geometry.leadingWingWidth, 88.5)
+            XCTAssertEqual(geometry.trailingWingWidth, 102)
+            XCTAssertLessThanOrEqual(geometry.leadingWingWidth, VoiceBarNotchContract.morphCanvasWingCapacity)
             XCTAssertLessThanOrEqual(geometry.trailingWingWidth, VoiceBarNotchContract.morphCanvasWingCapacity)
         }
-        // c9-P: transcribing keeps the recording row's wing (its meter ripples in place).
-        XCTAssertEqual(resolve(.transcribing).geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth)
+        XCTAssertEqual(resolve(.transcribing).geometry.trailingWingWidth, 73.5, "navigation hugs two controls")
         XCTAssertEqual(VoiceBarPresentation.readingTrailingWingWidth(visibleCoreOcclusionInset: 0),
-                       VoiceBarPresentation.readingTransportWingWidth, "X4: reading mirrors the transport wing")
+                       VoiceBarPresentation.readingTransportWingWidth, "reading keeps its transport wing")
     }
 
     func testBarViewLaysTheTimeBeforeTheMeterAndAnEmptyRegionAfterIt() throws {

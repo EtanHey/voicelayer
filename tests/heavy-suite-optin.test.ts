@@ -33,6 +33,7 @@ function runHook(availability: Availability, status: number, guardStatus = 0) {
       writeFileSync(helper, `import os, subprocess, sys
 assert sys.argv[1:] == ["--", "bash", "scripts/run_tests.sh"]
 assert os.environ.get("GOLEMS_HEAVY_PRE_PUSH") == "1"
+assert sys.dont_write_bytecode, "the fleet helper must run with -B: its folder is an installed release"
 with open(os.environ["HOOK_RECORD"], "a") as f: f.write("helper\\n")
 raise SystemExit(subprocess.call(sys.argv[2:]))
 `);

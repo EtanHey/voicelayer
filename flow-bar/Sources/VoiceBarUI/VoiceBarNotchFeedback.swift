@@ -237,6 +237,7 @@ public extension VoiceBarNotchInteractionConfiguration {
                     trailingControlCountFromCore: trailingControlCountFromCore,
                     trailingControlCountFromOuter: trailingControlCountFromOuter,
                     trailingOuterInset: trailingOuterInset, lowerControlCount: lowerControlCount,
-                    lowerSurfaceIsInteractive: true, leadingCoreInset: leadingCoreInset)
+                    lowerSurfaceIsInteractive: true, leadingCoreInset: leadingCoreInset,
+                    leadingControlSlotIndices: leadingControlSlotIndices)
     }
 }

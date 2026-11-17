@@ -34,7 +34,7 @@ final class LateWingControlTooltipTests: XCTestCase {
     static let conditionalControls: [String: Int] = [
         // Leading wing: launcher (switch case).
         #"notchLeadingContent|notchButton|"Start voice recording""#: 1,
-        "notchLeadingContent|microphonePickerButton|": 3,
+        "notchLeadingContent|microphonePickerButton|": 4,
         // Leading wing: recording (switch case, and the two late controls).
         #"notchLeadingContent|notchButton|"Stop recording""#: 1,
         "notchLeadingContent|notchButton|recordingPauseControl.accessibilityLabel": 1,
@@ -50,15 +50,15 @@ final class LateWingControlTooltipTests: XCTestCase {
         "playbackLeadingControls|playbackPauseButton|pause": 1,
         "playbackLeadingControls|notchButton|readQueueControl.accessibilityLabel": 1,
         #"readingTransportControls|notchButton|"Next read""#: 1,
-        // Trailing wing. c9-P: the recording/transcribing meter row comes first (it holds no control); the band's other
-        // trailing content moved into `notchTrailingStatusContent`, and a transcribing take no longer shows History
-        // or Settings in the compact status (they come back with the launcher).
+        // Recording owns the time/meter row. Transcribing owns the microphone plus History/Settings navigation.
         "notchTrailingContent|notchTrailingStatusContent|": 1,
         "notchTrailingStatusContent|historyButton|": 1,
         "notchTrailingStatusContent|settingsButton|": 1,
         "notchTrailingStatusContent|notchSpeakingTrailingContent|": 1,
         "notchTrailingStatusContent|notchCompactStatusContent|": 1,
         "notchCompactStatusContent|notchSpeakingTrailingContent|": 1,
+        "notchCompactStatusContent|historyButton|": 1,
+        "notchCompactStatusContent|settingsButton|": 1,
         #"notchCompactStatusContent|notchButton|"Dismiss error""#: 1,
         #"notchSpeakingTrailingContent|notchTeleprompterButton|"Show teleprompter""#: 1,
         // The reading row helper inserts Stop only while collapsed.

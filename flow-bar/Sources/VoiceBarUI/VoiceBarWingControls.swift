@@ -375,41 +375,36 @@ public struct VoiceBarRecordingTimeRegion: View {
     let isCaptureOpen: Bool
     let microphoneName: String?
     let color: Color
+    let armingColor: Color
 
-    public init(elapsedMilliseconds: @escaping () -> Int, isCaptureOpen: Bool, microphoneName: String?, color: Color) {
+    public init(elapsedMilliseconds: @escaping () -> Int, isCaptureOpen: Bool, microphoneName: String?, color: Color, armingColor: Color? = nil) {
         self.elapsedMilliseconds = elapsedMilliseconds
         self.isCaptureOpen = isCaptureOpen
         self.microphoneName = microphoneName
         self.color = color
+        self.armingColor = armingColor ?? color.opacity(0.72)
     }
 
     public var body: some View {
         TimelineView(.periodic(from: .now, by: 0.25)) { _ in
-            let time = VoiceBarReadingTimeLabel.text(elapsedMilliseconds: elapsedMilliseconds())
+            let time = isCaptureOpen
+                ? VoiceBarReadingTimeLabel.text(elapsedMilliseconds: elapsedMilliseconds())
+                : "0:00"
             ZStack(alignment: .trailing) {
                 Color.clear.frame(height: 1)
-                if isCaptureOpen {
                     Text(time)
                         .font(Font(VoiceBarRecordingWingLabel.timeFont))
-                        .foregroundStyle(color)
+                        .foregroundStyle(isCaptureOpen ? color : armingColor)
                         .lineLimit(1)
                         .accessibilityElement()
                         .accessibilityLabel("Recording time")
-                        .accessibilityValue(microphoneName.map { "\(time), \($0)" } ?? time)
-                }
+                        .accessibilityValue(isCaptureOpen
+                            ? microphoneName.map { "\(time), \($0)" } ?? time : "Starting microphone")
             }
             .frame(width: VoiceBarRecordingWingLabel.clockWidth(for: time), alignment: .trailing)
-            // c9-P round 2 (F4): the shown clock's text, so a transcribing take keeps its width class.
-            .preference(key: VoiceBarRecordingClockTextKey.self, value: time)
         }
         .background(PillControlTooltip(text: microphoneName))
     }
-}
-
-/// c9-P round 2 (F4): the text the recording clock last showed (nil where no clock is mounted).
-struct VoiceBarRecordingClockTextKey: PreferenceKey {
-    static let defaultValue: String? = nil
-    static func reduce(value: inout String?, nextValue: () -> String?) { value = nextValue() ?? value }
 }
 
 /// Reported 2026-11-09 (T5/T7): share recording time geometry, typography, and meter layout when reading.

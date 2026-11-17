@@ -491,6 +491,34 @@ final class NotchHistoryMorphTests: XCTestCase {
         XCTAssertEqual(morph.geometry(at: 0).lowerSurfaceHeight, closed.lowerSurfaceHeight)
     }
 
+    /// CodeRabbit on #936: an armed over-pull adds up to 16 pt below the rows for the release hint. With eight rows
+    /// and two lines of feedback the drawer already fills History's window, so the shell grew past it and the window
+    /// cut its lower 16 pt off. The overshoot now stops at the window, and the hint loses its offset there.
+    func testTheArmedOverPullNeverGrowsTheShellPastTheDrawerWindow() {
+        let model = VoiceBarNotchPresentationModel()
+        model.setHistoryPanelOpen(true)
+        let open = model.presentation.geometry
+        let cap = NotchHistoryMorph.historyCanvasLowerSurfaceHeight
+        // The tallest case BarView builds: eight rows plus feedback, clamped to the window (`historyMorphInput`).
+        let tallest = cap
+        XCTAssertGreaterThan(NotchHistoryMorph.lowerSurfaceHeight(rows: CGFloat(NotchHistoryMorph.maximumRows))
+                             + 2 * VoiceBarNotchFeedback.maximumTextHeight + 20, cap,
+                             "fixture: eight rows and two full feedback notes reach the drawer window")
+        let morph = VoiceBarNotchHistoryMorphInput(progress: 1, closed: VoiceBarNotchContract.geometry(for: .hoverLauncher),
+                                                   open: open, openLowerSurfaceHeight: tallest)
+        let armed = NotchHistoryMorph.rubberBand(NotchHistoryMorph.settingsPullThreshold)
+        for p in [1.0, 1.05, (1 + armed) / 2, armed, armed + 0.2] as [CGFloat] {
+            let shell = morph.geometry(at: p).lowerSurfaceHeight
+            XCTAssertLessThanOrEqual(shell, cap, "p=\(p): the shell (\(shell) pt) stays inside the \(cap) pt window")
+            XCTAssertEqual(max(0, shell - morph.openLowerSurfaceHeight) / 2, 0,
+                           "p=\(p): with no room left the release hint keeps no offset")
+        }
+        // Short of the window the hint still gets its room: six rows, no feedback.
+        let short = VoiceBarNotchHistoryMorphInput(progress: 1, closed: VoiceBarNotchContract.geometry(for: .hoverLauncher),
+                                                   open: open)
+        XCTAssertEqual(short.geometry(at: armed + 0.2).lowerSurfaceHeight, short.openLowerSurfaceHeight + 16, accuracy: 0.01)
+    }
+
     // MARK: V12 clipped rows, row click
 
     func testAClippedRowShowsItsWholeTextInATooltipAndAShortOneShowsNone() {

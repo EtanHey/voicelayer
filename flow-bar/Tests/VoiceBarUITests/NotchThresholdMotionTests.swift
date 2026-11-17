@@ -107,7 +107,7 @@ final class NotchThresholdMotionTests: XCTestCase {
         harness.host.layoutSubtreeIfNeeded()
     }
 
-    private func makeHarness() -> Harness {
+    private func makeHarness(settingsAvailable: Bool = true) -> Harness {
         let state = VoiceState(
             recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
             recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in },
@@ -124,9 +124,9 @@ final class NotchThresholdMotionTests: XCTestCase {
         let model = VoiceBarNotchPresentationModel()
         let surface = NotchSurfaceModel()
         surface.log = { _ in }
-        let context = NotchSettingsDrawerContext(updates: nil, pane: { tab, _ in
+        let context: NotchSettingsDrawerContext? = settingsAvailable ? NotchSettingsDrawerContext(updates: nil, pane: { tab, _ in
             AnyView(Text("\(tab.title) pane").accessibilityIdentifier("pane-\(tab.title.lowercased())"))
-        })
+        }) : nil
         let frames = FrameLog()
         let host = PillHostingView(rootView: AnyView(BarView(
             state: state, commandRouter: Router(), onOpenSettings: {}, onOpenHistory: {},
@@ -348,8 +348,33 @@ final class NotchThresholdMotionTests: XCTestCase {
         XCTAssertFalse(visible(harness).contains(firstRow))
     }
 
+    func testAHostWithoutSettingsNeverOffersTheSettingsReleaseHint() throws {
+        var phases: [CGFloat] = []
+        NotchPullHintProbe.observer = { _, phase in phases.append(phase) }
+        defer { NotchPullHintProbe.observer = nil }
+        let h = makeHarness(settingsAvailable: false)
+        openDrawer(h, .openHistory)
+        let start = bodyPoint(h, fromTop: 120)
+        try send(.leftMouseDown, at: start, to: h.panel)
+        for dy in stride(from: CGFloat(12), through: 240, by: 12) {
+            try send(.leftMouseDragged, at: NSPoint(x: start.x, y: start.y - dy), to: h.panel)
+            drain(0.02)
+        }
+        drain(0.4)
+        XCTAssertFalse(phases.isEmpty, "the production grip was observed")
+        XCTAssertTrue(phases.allSatisfy { $0 == 0 }, "no unavailable Settings destination may be advertised")
+        XCTAssertFalse(visible(h).contains(NotchHistoryPresentation.settingsPullHintIdentifier))
+        try send(.leftMouseUp, at: NSPoint(x: start.x, y: start.y - 240), to: h.panel)
+        drain(0.5)
+        if let drawer = h.surface.drawer, case .settings = drawer { XCTFail("the missing destination cannot open") }
+    }
+
     /// N17: the grip hands off to "Release for Settings" and back as one crossfade, never a one-frame swap.
     func testTheReleaseHintHandsOffFromTheGripAndBack() throws {
+        var identities: [UUID] = []
+        var phases: [CGFloat] = []
+        NotchPullHintProbe.observer = { id, p in identities.append(id); phases.append(p) }
+        defer { NotchPullHintProbe.observer = nil }
         let harness = makeHarness()
         openDrawer(harness, .openHistory)
         let hint = NotchHistoryPresentation.settingsPullHintIdentifier
@@ -367,25 +392,20 @@ final class NotchThresholdMotionTests: XCTestCase {
         }
         XCTAssertTrue(visible(harness).contains(hint), "pulling past open arms the Settings hint")
         drain(0.4)
-        XCTAssertGreaterThan(updates(harness, .resting, NotchDrawerMotion.easeOut(NotchDrawerMotion.hintInDuration)), 0,
-                             "the hint arrives under its fade-in")
-        let fadeIn = harness.frames.midway(.resting)
 
         // Back above the threshold: the hint fades out rather than vanishing in the next frame.
         harness.frames.reset()
         try send(.leftMouseDragged, at: NSPoint(x: start.x, y: start.y - 6), to: harness.panel)
         drain(0.6)
-        XCTAssertGreaterThan(updates(harness, .leaving, NotchDrawerMotion.easeOut(NotchDrawerMotion.hintOutDuration)), 0,
-                             "the hint leaves under its fade-out")
-        let fadeOut = harness.frames.midway(.leaving)
         XCTAssertFalse(visible(harness).contains(hint), "and then it is gone")
         try send(.leftMouseUp, at: NSPoint(x: start.x, y: start.y - 6), to: harness.panel)
         drain(0.5)
 
-        try requireDrawnAnimationFrames()
-        XCTAssertFalse(fadeIn.isEmpty, "the hint fades in over the grip")
-        XCTAssertFalse(fadeOut.isEmpty, "the hint fades out across frames")
+        XCTAssertTrue(phases.contains(1), "the actual armed drag reaches the full capsule")
+        XCTAssertEqual(Set(identities).count, 1, "the grip survives the threshold and reversal")
+        XCTAssertTrue(phases.contains { $0 > 0 && $0 < 1 }, "the actual drag grows the same shape")
     }
+
 }
 
 /// The capability probe's animated value: a known-good animation, reported on every frame SwiftUI draws.
