@@ -129,4 +129,24 @@ describe("spoken years round 2", () => {
     expect(applyRules(`in twenty twenty-six${gap}twenty twenty-seven${gap}twenty twenty-eight`))
       .toBe(`In 2026${gap}2027${gap}2028`);
   });
+
+  // CodeRabbit (PR #938): a hyphenated cardinal before a pair is a numeric neighbour, so the larger run stays split.
+  test("a hyphenated cardinal before the pair keeps it split", () => {
+    expect(applyRules("in twenty-six twenty twenty-seven to twenty twenty-eight")).toBe("In 26 20 27 to 2028");
+  });
+
+  // CodeRabbit (PR #938): text after a code span is not a new standalone line.
+  test("an uncued pair after a code span stays split", () => {
+    expect(applyRules("compare `label` twenty twenty-six")).toBe("Compare`label`20 26");
+    expect(applyRules("in `label` twenty twenty-six")).toContain("`label`");
+  });
+
+  // CodeRabbit (PR #938): an alias whose source reads as a year alone still matches the same words mid-sentence.
+  test("a year-shaped alias source matches both its year and its split form", () => {
+    const config = { aliases: { "twenty twenty six": "TwentyTwentySix" } };
+    // The hyphenated spoken form skips the raw first alias pass and meets the source only after number formatting.
+    expect(applyRules("ship twenty twenty-six now", config)).toBe("Ship TwentyTwentySix now");
+    expect(applyRules("ship twenty twenty six now", config)).toBe("Ship TwentyTwentySix now");
+    expect(applyRules("twenty twenty six", config)).toBe("TwentyTwentySix");
+  });
 });

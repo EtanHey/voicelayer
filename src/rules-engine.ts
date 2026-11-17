@@ -92,15 +92,19 @@ export function applyRules(text: string, config?: RulesConfig): string {
   if (!disabled?.has("numbers") && !disabled?.has("aliases") && config?.aliases) {
     const normalizedAliases: Record<string, string> = {};
     const originalSources = new Map<string, string>();
-    const normalizeVariant = (source: string) => applyNumberFormatting(source).replace(
+    const normalizeVariant = (source: string, years = true) => applyNumberFormatting(source, { years }).replace(
       /\b(\d+)[ \t]+point[ \t]+(\d+)\b/gi, "$1.$2");
+    // A source like "twenty twenty six" normalizes to a year when it stands alone, but the same words mid-sentence
+    // without a year cue stay split ("20 26"); keep both forms so the alias matches either way.
+    const variants = (source: string) => [...new Set([normalizeVariant(source), normalizeVariant(source, false)])];
     for (const [from, to] of Object.entries(config.aliases)) {
-      const normalized = normalizeVariant(from);
-      normalizedAliases[normalized] = to;
-      originalSources.set(normalized, from);
+      for (const normalized of variants(from)) {
+        normalizedAliases[normalized] = to;
+        originalSources.set(normalized, from);
+      }
     }
     const normalizeSources = (sources?: ReadonlySet<string>) => new Set(
-      [...(sources ?? [])].map(normalizeVariant));
+      [...(sources ?? [])].flatMap(variants));
     result = applyAliases(result, normalizedAliases,
       normalizeSources(config.hebrewLatinAliasSources),
       config.shouldApplyAlias ? (source, text) => config.shouldApplyAlias!(originalSources.get(source) ?? source, text) : undefined,
@@ -1129,10 +1133,10 @@ function parseNumberWords(words: string[]): number | null {
 // number ("one thousand\ntwo hundred" -> "1200"). Splitting on the newlines
 // first keeps them, and the horizontal-whitespace tokeniser below still merges
 // number words across spaces and tabs within a line.
-function applyNumberFormatting(text: string): string {
+function applyNumberFormatting(text: string, options: { years?: boolean } = {}): string {
   return text
     .split(/(\n)/)
-    .map((part) => (part === "\n" ? part : formatNumbersInLine(part)))
+    .map((part) => (part === "\n" ? part : formatNumbersInLine(part, options)))
     .join("");
 }
 
@@ -1170,7 +1174,9 @@ function formatSpokenYears(text: string): string {
   const teen = "(?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)";
   const year = new RegExp(`\\b(nineteen|twenty)[ \\t]+(${tens}(?:(?:[ \\t]+|-)${unit})?|${teen}|oh[ \\t]+${unit})\\b`, "gi");
   const temporal = /\b(?:in|since|of|late|early|during|by|before|after|from|until|to|through|for|year|years|the|mid|between|around|january|february|march|april|may|june|july|august|september|october|november|december)[ \t]+$/i;
-  const numeric = (word: string) => NUMBER_WORDS.has(word.toLowerCase()) || /^(?:oh|point|\d+)$/i.test(word);
+  // A complete hyphenated cardinal ("twenty-six") is a numeric neighbour too, as the number formatter reads it.
+  const numeric = (word: string) => NUMBER_WORDS.has(word.toLowerCase()) || /^(?:oh|point|\d+)$/i.test(word) ||
+    new RegExp(`^${tens}-${unit}$`, "i").test(word);
   const nonPlural = new Set("was is has as its his this thus plus versus yes us always perhaps unless whereas across besides".split(" "));
   // Singular/irregular units need an explicit guard; regular plurals are caught
   // by their final s. Prefer a missed year modifier over an invented quantity.
@@ -1213,8 +1219,17 @@ function formatSpokenYears(text: string): string {
   return result + text.slice(cursor);
 }
 
-function formatNumbersInLine(text: string): string {
-  text = text.split(/(`[^`]*`)/g).map(part => part.startsWith("`") ? part : formatSpokenYears(part)).join("");
+/** Code spans stay untouched but keep their place: each is masked as one opaque word, so text after a span is
+ * never read as a new standalone line. */
+function formatSpokenYearsAroundCode(text: string): string {
+  const spans: string[] = [];
+  const masked = text.replace(/`[^`]*`/g, span => `\uE010${String.fromCharCode(0xE200 + spans.push(span) - 1)}\uE011`);
+  if (spans.length > 0x0DFF) return text;
+  return formatSpokenYears(masked).replace(/\uE010([\uE200-\uEFFF])\uE011/g, (_, i: string) => spans[i.charCodeAt(0) - 0xE200]);
+}
+
+function formatNumbersInLine(text: string, options: { years?: boolean } = {}): string {
+  if (options.years !== false) text = formatSpokenYearsAroundCode(text);
   const cardinal = [...NUMBER_WORDS].join("|");
   const digit = "zero|one|two|three|four|five|six|seven|eight|nine";
   const decimal = new RegExp(`\\b((?:${cardinal})(?:[ \\t]+(?:${cardinal}))*)[ \\t]+point[ \\t]+((?:${digit})(?:[ \\t]+(?:${digit}))*)\\b`, "gi");
