@@ -27,6 +27,13 @@ final class NotchWingTravelTests: XCTestCase {
 
     static let scale: CGFloat = 4
     static let size = CGSize(width: 540, height: 300)
+    /// The rig's size for this test; a read's 545 pt body needs more than `size` to show both its edges.
+    private var rigSize = NotchWingTravelTests.size
+    /// The bitmap scale samples are captured at; the Reduce Motion fade test captures at 1x (see there).
+    private var captureScale = NotchWingTravelTests.scale
+    /// A pixel greener than this is band paint, not backdrop (the outline is white 14 %); the 1x fade test reads the
+    /// fainter 1x outline with a lower floor.
+    private var backdropGreenFloor: CGFloat = 0.05
     /// The backdrop: a colour no notch pixel has.
     static let backdrop = (r: 1.0, g: 0.0, b: 1.0)
     private var windows: [NSWindow] = []
@@ -59,6 +66,12 @@ final class NotchWingTravelTests: XCTestCase {
         /// The strongest green the band adds to the magenta backdrop on the edge row outside the core: the band's
         /// opacity times its outline's (the core is black and adds none, so it never counts).
         var lift: CGFloat = 0
+        /// The same reading on a row 12 pt below the top row, inside a lower panel when there is one: its outer edges
+        /// (nil when nothing there paints) and its strongest green.
+        var bodyLeft: CGFloat?, bodyRight: CGFloat?
+        var bodyLift: CGFloat = 0
+        /// How long this frame's offscreen capture took (the sampler's own cost, not the product's).
+        var captureMs: Double = 0
     }
 
     func testIconsKeepTheirDistanceFromTheOuterEndWhileTheBandOpensAndCloses() throws {
@@ -123,61 +136,98 @@ final class NotchWingTravelTests: XCTestCase {
     func testUnderReduceMotionTheBandFadesInAndOutWithoutMoving() throws {
         restoreReduceMotion?()
         restoreReduceMotion = ReduceMotionOverride.pin(true)
+        // A capture of a painted band costs 25-200 ms here (over a second for a read's first close frame, and more
+        // on a hosted runner), so a 180 ms fade fits one frame or none; the fades run 8x slower so their middle is
+        // sampled, and the canvas holds stretch with them (the product holds 0.6 s against a 0.15 s fade). The
+        // product's durations are the constants (`openDuration`, `closeDuration`); this proves the mechanism.
+        let slow = 8.0
+        VoiceBarNotchReduceMotionFade.testTimeScale = slow
+        defer { VoiceBarNotchReduceMotionFade.testTimeScale = 1 }
+        let window = VoiceBarNotchReduceMotionFade.openDuration * slow + 1.0
+        // Captured at 1x: a closing read's panel costs ~1.4 s a capture at 4x, which leaves no frame inside its fade.
+        // Every edge here is compared against one read at the same scale, within one capture pixel (`edgeTolerance`).
+        captureScale = 1
+        backdropGreenFloor = 0.015
+        rigSize = CGSize(width: 600, height: 300)
         let rig = try mount()
+        let stretched: (TimeInterval, @escaping () -> Void) -> Void = { delay, work in
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay * slow, execute: work)
+        }
+        rig.model.scheduleClosingCanvasRelease = stretched
+        rig.model.scheduleReadingCanvasRelease = stretched
+        let settle = { RunLoop.main.run(until: Date().addingTimeInterval(window)) }
         rig.hover(true)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+        settle()
         let settled = try measure(rig.host, time: 0)
-        let openLeft = try XCTUnwrap(settled.leftEdge, "the open band paints")
-        let openRight = try XCTUnwrap(settled.rightEdge)
-        let settledMic = try XCTUnwrap(settled.leftInk, "the microphone is laid out in the open band")
-        let settledGear = try XCTUnwrap(settled.rightInk, "the gear is laid out in the open band")
-        let settledLift = settled.lift
-        XCTAssertGreaterThan(settledLift, 0.05, "fixture: the open band's outline lifts the backdrop")
+        XCTAssertNotNil(settled.leftInk, "the microphone is laid out in the open band")
+        XCTAssertNotNil(settled.rightInk, "the gear is laid out in the open band")
         rig.hover(false)
-        RunLoop.main.run(until: Date().addingTimeInterval(1.0))
+        settle()
         XCTAssertNil(try measure(rig.host, time: 0).leftEdge, "fixture: the band is hidden again")
 
-        let coreMinX = Self.size.width / 2 - VoiceBarNotchContract.coreWidth / 2
-        let coreMaxX = Self.size.width / 2 + VoiceBarNotchContract.coreWidth / 2
-        var report = [String(format: "settled: edges %.2f / %.2f, lift %.3f", openLeft, openRight, settledLift)]
+        var report: [String] = []
         for (phase, hovering) in [("open", true), ("close", false)] {
             rig.hover(hovering)
-            let frames = try sample(rig.host)
-            for frame in frames {
-                report.append(String(format: "%@ %3.0f ms: edges %@ / %@, mic %@, gear %@, lift %.3f", phase,
-                                     frame.time * 1000, Self.text(frame.leftEdge), Self.text(frame.rightEdge),
-                                     Self.text(frame.leftInk), Self.text(frame.rightInk), frame.lift))
-                let at = String(format: "%@ at %.0f ms", phase, frame.time * 1000)
-                if let left = frame.leftEdge {
-                    XCTAssertTrue(abs(left - openLeft) <= 0.5 || abs(left - coreMinX) <= 0.5,
-                                  "\(at): the left edge reads \(left), between the settled \(openLeft) and the core")
-                }
-                if let right = frame.rightEdge {
-                    XCTAssertTrue(abs(right - openRight) <= 0.5 || abs(right - coreMaxX) <= 0.5,
-                                  "\(at): the right edge reads \(right), between the settled \(openRight) and the core")
-                }
-                if let mic = frame.leftInk {
-                    XCTAssertEqual(mic, settledMic, accuracy: 0.5, "\(at): the microphone holds still")
-                }
-                if let gear = frame.rightInk {
-                    XCTAssertEqual(gear, settledGear, accuracy: 0.5, "\(at): the gear holds still")
-                }
-            }
-            let lifts = frames.map(\.lift)
-            let partway = lifts.filter { $0 > settledLift * 0.05 && $0 < settledLift * 0.95 }
-            XCTAssertGreaterThanOrEqual(partway.count, 2, "\(phase): the band fades through part-way frames, not a cut")
-            for (earlier, later) in zip(lifts, lifts.dropFirst()) {
-                if hovering {
-                    XCTAssertGreaterThanOrEqual(later, earlier - 0.01, "open: the fade never dims")
-                } else {
-                    XCTAssertLessThanOrEqual(later, earlier + 0.01, "close: the fade never brightens")
-                }
-            }
-            XCTAssertEqual(lifts.last ?? -1, hovering ? settledLift : 0, accuracy: 0.01,
-                           "\(phase): the fade lands \(hovering ? "fully open" : "hidden")")
-            RunLoop.main.run(until: Date().addingTimeInterval(1.0))
+            try checkFade(try sample(rig.host, for: window), settled: settled, phase: phase, opening: hovering,
+                          report: &report)
+            settle()
         }
         print("REDUCE_MOTION_FADE\n" + report.joined(separator: "\n"))
+    }
+
+    /// Half a point, or one capture pixel when that is coarser: as a fading outline's anti-aliased edge pixel drops
+    /// under the green floor, the edge reader moves by one pixel without anything moving.
+    private var edgeTolerance: CGFloat { max(0.5, 1 / captureScale) }
+
+    static let readText = String(repeating: "The read keeps its words on the panel while it fades out. ", count: 8)
+
+    /// One Reduce Motion fade against its settled band: no edge in between the settled place and the core, icons at
+    /// their settled places, and the top row's paint moving one way through part-way values to where it lands.
+    private func checkFade(_ frames: [Frame], settled: Frame, phase: String, opening: Bool,
+                           report: inout [String]) throws {
+        let openLeft = try XCTUnwrap(settled.leftEdge, "\(phase): the settled band paints")
+        let openRight = try XCTUnwrap(settled.rightEdge)
+        let settledLift = settled.lift
+        XCTAssertGreaterThan(settledLift, 0.03, "\(phase): fixture: the settled outline lifts the backdrop")
+        let coreMinX = rigSize.width / 2 - VoiceBarNotchContract.coreWidth / 2
+        let coreMaxX = rigSize.width / 2 + VoiceBarNotchContract.coreWidth / 2
+        report.append(String(format: "%@ settled: edges %.2f / %.2f, lift %.3f, body %@ / %@, body lift %.3f", phase,
+                             openLeft, openRight, settledLift, Self.text(settled.bodyLeft),
+                             Self.text(settled.bodyRight), settled.bodyLift))
+        for frame in frames {
+            report.append(String(format: "%@ %3.0f ms: edges %@ / %@, mic %@, gear %@, lift %.3f, body %@ / %@ %.3f, "
+                                 + "capture %.0f ms", phase, frame.time * 1000, Self.text(frame.leftEdge),
+                                 Self.text(frame.rightEdge), Self.text(frame.leftInk), Self.text(frame.rightInk),
+                                 frame.lift, Self.text(frame.bodyLeft), Self.text(frame.bodyRight), frame.bodyLift,
+                                 frame.captureMs))
+            let at = String(format: "%@ at %.0f ms", phase, frame.time * 1000)
+            if let left = frame.leftEdge {
+                XCTAssertTrue(abs(left - openLeft) <= edgeTolerance || abs(left - coreMinX) <= edgeTolerance,
+                              "\(at): the left edge reads \(left), between the settled \(openLeft) and the core")
+            }
+            if let right = frame.rightEdge {
+                XCTAssertTrue(abs(right - openRight) <= edgeTolerance || abs(right - coreMaxX) <= edgeTolerance,
+                              "\(at): the right edge reads \(right), between the settled \(openRight) and the core")
+            }
+            if let ink = frame.leftInk, let settledInk = settled.leftInk {
+                XCTAssertEqual(ink, settledInk, accuracy: 0.5, "\(at): the leftmost icon holds still")
+            }
+            if let ink = frame.rightInk, let settledInk = settled.rightInk {
+                XCTAssertEqual(ink, settledInk, accuracy: 0.5, "\(at): the rightmost icon holds still")
+            }
+        }
+        let lifts = frames.map(\.lift)
+        let partway = lifts.filter { $0 > settledLift * 0.05 && $0 < settledLift * 0.95 }
+        XCTAssertGreaterThanOrEqual(partway.count, 2, "\(phase): the band fades through part-way frames, not a cut")
+        for (earlier, later) in zip(lifts, lifts.dropFirst()) {
+            if opening {
+                XCTAssertGreaterThanOrEqual(later, earlier - 0.01, "\(phase): the fade never dims")
+            } else {
+                XCTAssertLessThanOrEqual(later, earlier + 0.01, "\(phase): the fade never brightens")
+            }
+        }
+        XCTAssertEqual(lifts.last ?? -1, opening ? settledLift : 0, accuracy: 0.01,
+                       "\(phase): the fade lands \(opening ? "fully open" : "hidden")")
     }
 
     /// Review r1 (blocking 1): while a closed band rides under the notch its controls are pictures, not controls. From
@@ -324,7 +374,7 @@ final class NotchWingTravelTests: XCTestCase {
         XCTAssertEqual(releases.count, 1)
         XCTAssertGreaterThan(VoiceBarNotchPresentationModel.closingCanvasReleaseDelay,
                              VoiceBarNotchReduceMotionFade.closeDuration, "the hold outlasts the fade")
-        releases.removeFirst().1()
+        releases.popLast()?.1()
         XCTAssertFalse(model.presentation.holdsClosingCanvas)
     }
 
@@ -419,9 +469,9 @@ final class NotchWingTravelTests: XCTestCase {
             Color(red: Self.backdrop.r, green: Self.backdrop.g, blue: Self.backdrop.b)
             bar
         }
-        .frame(width: Self.size.width, height: Self.size.height, alignment: .top)
+        .frame(width: rigSize.width, height: rigSize.height, alignment: .top)
         .environment(\.colorScheme, .dark)))
-        host.frame = NSRect(origin: .zero, size: Self.size)
+        host.frame = NSRect(origin: .zero, size: rigSize)
         host.appearance = NSAppearance(named: .darkAqua)
         let window = ReferenceWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -435,16 +485,21 @@ final class NotchWingTravelTests: XCTestCase {
     }
 
     /// Captures first (cheap), measures afterwards, so measuring never slows the sampling down.
-    private func sample(_ host: NSView) throws -> [Frame] {
+    private func sample(_ host: NSView, for duration: TimeInterval = 0.55) throws -> [Frame] {
         let start = Date()
-        var captured: [(TimeInterval, NSBitmapImageRep, (CGFloat?, CGFloat?))] = []
-        while Date().timeIntervalSince(start) < 0.55 {
+        var captured: [(TimeInterval, NSBitmapImageRep, (CGFloat?, CGFloat?), Double)] = []
+        while Date().timeIntervalSince(start) < duration {
             RunLoop.main.run(until: Date().addingTimeInterval(1.0 / 120.0))
             let controls = outermostControls(host)
-            captured.append((Date().timeIntervalSince(start), try EtanQA0510Tests.fixedScaleBitmap(host, scale: Self.scale),
-                             controls))
+            let time = Date().timeIntervalSince(start)
+            let bitmap = try EtanQA0510Tests.fixedScaleBitmap(host, scale: captureScale)
+            captured.append((time, bitmap, controls, (Date().timeIntervalSince(start) - time) * 1000))
         }
-        return captured.map { measure($0.1, controls: $0.2, time: $0.0) }
+        return captured.map {
+            var frame = measure($0.1, controls: $0.2, time: $0.0)
+            frame.captureMs = $0.3
+            return frame
+        }
     }
 
     // MARK: - Pixels
@@ -452,7 +507,7 @@ final class NotchWingTravelTests: XCTestCase {
     /// One frame: the band's outer edges along a row 10 pt below the top (clear of the wings' rounded lower corners)
     /// and the outermost icon ink in each wing, in points.
     private func measure(_ host: NSView, time: TimeInterval) throws -> Frame {
-        measure(try EtanQA0510Tests.fixedScaleBitmap(host, scale: Self.scale), controls: outermostControls(host), time: time)
+        measure(try EtanQA0510Tests.fixedScaleBitmap(host, scale: captureScale), controls: outermostControls(host), time: time)
     }
 
     /// The left edge of the leftmost control and the right edge of the rightmost one in the band row (window points;
@@ -469,7 +524,7 @@ final class NotchWingTravelTests: XCTestCase {
     }
 
     private func measure(_ bitmap: NSBitmapImageRep, controls: (CGFloat?, CGFloat?), time: TimeInterval) -> Frame {
-        let s = Self.scale
+        let s = CGFloat(bitmap.pixelsWide) / rigSize.width
         // Raw bytes: the bitmap is 8-bit RGBA, device RGB (`fixedScaleBitmap`).
         let data = bitmap.bitmapData!, rowBytes = bitmap.bytesPerRow, step = bitmap.bitsPerPixel / 8
         func rgb(_ x: Int, _ y: Int) -> (CGFloat, CGFloat, CGFloat) {
@@ -481,20 +536,23 @@ final class NotchWingTravelTests: XCTestCase {
         // The backdrop is pure magenta; the outline (white 14 %) and anything else the band paints lifts green.
         func isBackdrop(_ x: Int, _ y: Int) -> Bool {
             let (r, g, b) = rgb(x, y)
-            return r > 0.9 && b > 0.9 && g < 0.05
+            return r > 0.9 && b > 0.9 && g < backdropGreenFloor
         }
         let width = bitmap.pixelsWide
         let edgeRow = Int(10 * s)
         let first = (0 ..< width).first { !isBackdrop($0, edgeRow) }
         let last = (0 ..< width).last { !isBackdrop($0, edgeRow) }
-        let coreMin = Int(((Self.size.width - VoiceBarNotchContract.coreWidth) / 2 * s).rounded(.down))
-        let coreMax = Int(((Self.size.width + VoiceBarNotchContract.coreWidth) / 2 * s).rounded(.up))
+        let coreMin = Int(((rigSize.width - VoiceBarNotchContract.coreWidth) / 2 * s).rounded(.down))
+        let coreMax = Int(((rigSize.width + VoiceBarNotchContract.coreWidth) / 2 * s).rounded(.up))
         let lift = (0 ..< width).filter { $0 < coreMin || $0 >= coreMax }.map { rgb($0, edgeRow).1 }.max() ?? 0
-        guard let first, let last else {
-            return Frame(time: time, leftEdge: nil, rightEdge: nil, leftInk: nil, rightInk: nil, lift: lift)
-        }
-        return Frame(time: time, leftEdge: CGFloat(first) / s, rightEdge: CGFloat(last + 1) / s,
-                     leftInk: controls.0, rightInk: controls.1, lift: lift)
+        let bodyRow = Int((VoiceBarNotchContract.topHeight + 12) * s)
+        let bodyFirst = (0 ..< width).first { !isBackdrop($0, bodyRow) }
+        let bodyLast = (0 ..< width).last { !isBackdrop($0, bodyRow) }
+        let bodyLift = (0 ..< width).map { rgb($0, bodyRow).1 }.max() ?? 0
+        return Frame(time: time, leftEdge: first.map { CGFloat($0) / s }, rightEdge: last.map { CGFloat($0 + 1) / s },
+                     leftInk: first == nil ? nil : controls.0, rightInk: first == nil ? nil : controls.1, lift: lift,
+                     bodyLeft: bodyFirst.map { CGFloat($0) / s }, bodyRight: bodyLast.map { CGFloat($0 + 1) / s },
+                     bodyLift: bodyLift)
     }
 
     static func text(_ value: CGFloat?) -> String { value.map { String(format: "%.2f", $0) } ?? "-" }

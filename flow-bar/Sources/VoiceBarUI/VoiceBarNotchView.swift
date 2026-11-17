@@ -757,8 +757,10 @@ struct VoiceBarNotchWingSlot: ViewModifier {
 enum VoiceBarNotchReduceMotionFade {
     static let openDuration: TimeInterval = 0.18
     static let closeDuration: TimeInterval = 0.15
-    static let open = Animation.timingCurve(0.23, 1, 0.32, 1, duration: openDuration)
-    static let close = Animation.easeOut(duration: closeDuration)
+    /// Tests only: stretches both fades so an offscreen capture (tens of ms a frame) can sample their middle.
+    static var testTimeScale: Double = 1
+    static var open: Animation { .timingCurve(0.23, 1, 0.32, 1, duration: openDuration * testTimeScale) }
+    static var close: Animation { .easeOut(duration: closeDuration * testTimeScale) }
 }
 
 struct VoiceBarNotchPendingMorph: Equatable {
