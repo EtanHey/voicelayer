@@ -13,7 +13,7 @@
     "formal/teleprompter-a-handle/Fixed.cfg": "345e0359af8c9fd7590f585ac5d34a10b4756e97913448c95d52afee7dbf2f2e",
     "flow-bar/Sources/VoiceBarUI/TeleprompterAView.swift": "14f42f204585e3e58c0fc50107fbbd6bdddf6fa355bc4d7d9b54de4f5f6cb865",
     "flow-bar/Sources/VoiceBarUI/BarView.swift": "b0cab24da90542a9bbee464f33ebded23e429d859d6b86eb0f20f36e641b11d0",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "755f93b34fb4d6abc567e617f410a9b621aa09902663e5ef8d25590bd8e3bd20",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "c6941476ed93bb9666c79ec558b2e299a9943af085eeba04b3faa3d28bd2434f",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchMorphPrototype.swift": "bd89c862237fabb4ae42d9ae460175d188f30737b50767f62ef4ff593ff73199",
     "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "f1105d07eb236835a1c4f09c4cb87de23670e2b9ad58bd4b84bc7f0aac2a504e",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
