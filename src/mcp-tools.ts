@@ -112,7 +112,8 @@ export function getToolDefinitions() {
     {
       name: "voice_ask_results",
       description: "Read retained Ask answers: newest first (default 5, max 20), or one archive_id. Returns raw answer and status. With delivery_ack alone, acknowledge a caller-bound Ask result's delivery_id and lease_id after reading it. Unacknowledged Ask results are recovered on this caller's next voice call before any new action (that call's own action is NOT run); pending means the earlier Ask is still recording or transcribing. Recovery is at-least-once; deduplicate by delivery_id. This is recovery on the next call, not automatic delivery. Never speaks, records or retranscribes.",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      // delivery_ack only marks VoiceLayer's own outbox row read; it never changes the user's environment.
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: { type: "object" as const, properties: {
         archive_id: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z-[a-f0-9]{8}$", description: "Exact retained Ask archive ID." },
         limit: { type: "integer", minimum: 1, maximum: 20, default: 5 },
