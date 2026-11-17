@@ -348,7 +348,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         pendingTabMorph = nil
         if presentation.visualState == .idle {
             guard let closingSerial else {
-                // Nothing retained to fade (a band with a lower surface): hidden at once, as before.
+                // Nothing retained to fade (no wings, or the History morph owns the shell): hidden at once.
                 snapShell(to: presented)
                 var snap = Transaction()
                 snap.disablesAnimations = true
@@ -424,14 +424,16 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         guard presentation.visualState != .idle, closing.band == nil else { return }
         closing.leading = AnyView(leadingContent)
         closing.trailing = AnyView(trailingContent)
+        closing.lower = AnyView(lowerContent)
     }
 
     /// Starts (or ends) a close to hidden for this geometry change; returns the close's serial when one starts.
-    /// Under Reduce Motion the retained band fades out where it settled instead (`fadeUnderReduceMotion`).
+    /// Under Reduce Motion the retained band fades out where it settled instead (`fadeUnderReduceMotion`), and a band
+    /// with a lower panel is retained too (lead ruling, 2026-11-17): its body fades with it instead of vanishing.
     private func beginClosing(from previous: VoiceBarNotchVisualState?, settled: VoiceBarNotchGeometry) -> Int? {
         guard presentation.visualState == .idle, let previous, previous != .idle,
               historyMorph == nil, settled.leadingWingWidth + settled.trailingWingWidth > 0,
-              settled.lowerSurfaceHeight == 0 || closing.band != nil else {
+              settled.lowerSurfaceHeight == 0 || closing.band != nil || accessibilityReduceMotion else {
             if closing.band != nil, presentation.visualState != .idle {
                 closing.cancel()
                 return nil
@@ -661,6 +663,14 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                 // opacity transition of their own.
                 lowerContent
                     .frame(width: layout.bodyRect.width, height: layout.bodyRect.height)
+                    .position(x: layout.bodyRect.midX, y: layout.bodyRect.midY)
+            } else if closing.band != nil, !layout.bodyRect.isEmpty {
+                // Reduce Motion only (a full-motion band is retained only without a body): the closing band's body,
+                // held where it settled while it fades.
+                (closing.lower ?? AnyView(EmptyView()))
+                    .modifier(VoiceBarNotchInertContent())
+                    .frame(width: layout.bodyRect.width, height: layout.bodyRect.height)
+                    .clipped()
                     .position(x: layout.bodyRect.midX, y: layout.bodyRect.midY)
             } else if !layout.bodyRect.isEmpty {
                 lowerContent

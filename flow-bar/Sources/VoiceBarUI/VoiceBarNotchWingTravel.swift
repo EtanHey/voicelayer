@@ -83,6 +83,8 @@ final class VoiceBarNotchClosingTracker {
     /// The last visible band's wing content. Recorded while the band shows; read only while it closes.
     @ObservationIgnored var leading: AnyView?
     @ObservationIgnored var trailing: AnyView?
+    /// The band's lower panel, read only by a Reduce Motion close (a full-motion close retains no band with a body).
+    @ObservationIgnored var lower: AnyView?
 
     /// Starts a close to hidden from `geometry` (or continues the one under way, keeping its band) and returns the
     /// generation its animation's completion must present to end it.

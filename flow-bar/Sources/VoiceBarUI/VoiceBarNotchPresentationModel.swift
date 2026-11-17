@@ -38,7 +38,8 @@ public final class VoiceBarNotchPresentationModel {
     }
     /// Owner r2: a visible band that just closed to hidden keeps the visible canvas this long, so its glass closes
     /// and its icons ride inward instead of the window shrinking to the core in the first frame. Under Reduce Motion
-    /// it holds the same way, so the band fades out where it sits (owner card 8, 2026-11-17).
+    /// it holds the same way, including for a band with a lower panel, so the band fades out where it sits (owner card
+    /// 8 and the lead's lower-panel ruling, 2026-11-17).
     private var holdsClosingCanvas = false
     @ObservationIgnored private var closingCanvasReleaseSerial = 0
     public static let closingCanvasReleaseDelay: TimeInterval = readingCanvasReleaseDelay
@@ -254,7 +255,7 @@ public final class VoiceBarNotchPresentationModel {
             transientNoteWidth: transientNoteWidth, feedback: feedback
         ).holdingReadingCanvas(holdsReadingCanvas)
         let closesToHidden = resolved.visualState == .idle && presentation.visualState != .idle
-            && presentation.geometry.lowerSurfaceHeight == 0
+            && (presentation.geometry.lowerSurfaceHeight == 0 || isReducedMotionEnabled)
         if resolved.visualState != .idle {
             closingCanvasReleaseSerial &+= 1
             holdsClosingCanvas = false

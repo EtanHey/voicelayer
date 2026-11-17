@@ -133,6 +133,10 @@ final class NotchWingTravelTests: XCTestCase {
     /// between; the icons sit at their settled places; and the band's paint (`lift`, the strongest green the outline
     /// adds over the magenta backdrop outside the core) rises through part-way values on the open and falls through
     /// them on the close, never reversing.
+    ///
+    /// Lead ruling (2026-11-17 23:16): a band with a lower panel fades out too. A read's teleprompter closing to
+    /// hidden used to vanish in one frame under Reduce Motion (nothing was retained for a band with a body); its top
+    /// row and its body (`bodyLift`, `bodyLeft`/`bodyRight` on a row inside the body) now fade where they sit.
     func testUnderReduceMotionTheBandFadesInAndOutWithoutMoving() throws {
         restoreReduceMotion?()
         restoreReduceMotion = ReduceMotionOverride.pin(true)
@@ -171,6 +175,38 @@ final class NotchWingTravelTests: XCTestCase {
             try checkFade(try sample(rig.host, for: window), settled: settled, phase: phase, opening: hovering,
                           report: &report)
             settle()
+        }
+
+        // The lower panel: a read's teleprompter, then the read ends and it closes to hidden.
+        rig.state.handleEvent(["type": "state", "state": "speaking", "text": Self.readText, "duration_ms": 40000,
+                               "request_id": "rm-read", "playback_id": "rm-player", "generation": 1])
+        rig.model.updateOperationalEnvelope(hasTeleprompter: true, isRecording: false, hasCompactStatus: false,
+                                            teleprompterLeadingWingWidth: VoiceBarPresentation.readingTransportWingWidth)
+        settle()
+        let read = try measure(rig.host, time: 0)
+        XCTAssertNotNil(read.bodyLeft, "fixture: the read's body paints")
+        XCTAssertGreaterThan(read.bodyLift, 0.03, "fixture: the read's body outline lifts the backdrop")
+        // The read ends (its stopped panel stays), then the teleprompter leaves and the band closes to hidden.
+        rig.state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        settle()
+        rig.model.updateOperationalEnvelope(hasTeleprompter: false, isRecording: false, hasCompactStatus: false)
+        let closing = try sample(rig.host, for: window)
+        try checkFade(closing, settled: read, phase: "read close", opening: false, report: &report)
+        let bodyLifts = closing.map(\.bodyLift)
+        XCTAssertGreaterThanOrEqual(bodyLifts.filter { $0 > read.bodyLift * 0.05 && $0 < read.bodyLift * 0.95 }.count,
+                                    2, "read close: the body fades through part-way frames, not a cut")
+        for (earlier, later) in zip(bodyLifts, bodyLifts.dropFirst()) {
+            XCTAssertLessThanOrEqual(later, earlier + 0.01, "read close: the body's fade never brightens")
+        }
+        XCTAssertEqual(bodyLifts.last ?? -1, 0, accuracy: 0.01, "read close: the body lands hidden")
+        for frame in closing {
+            let at = String(format: "read close at %.0f ms", frame.time * 1000)
+            if let left = frame.bodyLeft, let settledLeft = read.bodyLeft {
+                XCTAssertEqual(left, settledLeft, accuracy: edgeTolerance, "\(at): the body's left edge holds still")
+            }
+            if let right = frame.bodyRight, let settledRight = read.bodyRight {
+                XCTAssertEqual(right, settledRight, accuracy: edgeTolerance, "\(at): the body's right edge holds still")
+            }
         }
         print("REDUCE_MOTION_FADE\n" + report.joined(separator: "\n"))
     }
