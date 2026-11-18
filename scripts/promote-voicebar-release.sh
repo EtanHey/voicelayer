@@ -76,7 +76,10 @@ fi
 # Release lock: the app being promoted carries the commit it was built from (Info.plist
 # GitCommit, the same value the T3 proof is bound to). It must be on origin/main.
 # Before verification, upload and any tap write.
-PROVEN_SHA="$(plutil -extract GitCommit raw -o - "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)"
+# plutil is macOS-only; Python's plistlib reads the same key anywhere (the Linux CI job runs this path).
+PROVEN_SHA="$(plutil -extract GitCommit raw -o - "$APP_PATH/Contents/Info.plist" 2>/dev/null \
+  || python3 -c 'import plistlib, sys; print(plistlib.load(open(sys.argv[1], "rb")).get("GitCommit", ""))' \
+       "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)"
 [[ "$PROVEN_SHA" =~ ^[0-9a-f]{40}$ ]] || die "$APP_PATH has no full-SHA GitCommit in Info.plist, so its build commit cannot be shown to be on origin/main"
 source "$SCRIPT_DIR/lib/require-main-ancestor.sh"
 require_commit_on_origin_main promote-voicebar-release "$PACKAGE_ROOT" "$PROVEN_SHA" "proven build commit" || exit 1
