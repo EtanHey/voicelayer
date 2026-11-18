@@ -3,10 +3,20 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from "fs";
 import { testTmp } from "./setup/test-tmp";
 import { WhisperCppBackend, WhisperCliError } from "../stt";
 
+// The synthetic CLI hands the marker over by rename, so a complete file appears at once.
+// Tolerate a partial read anyway: retry the parse for a bounded time before failing.
+async function readInvocation(path: string): Promise<{ args: string[] }> {
+  let last: unknown;
+  for (let n = 0; n < 200; n++) {
+    try { return JSON.parse(readFileSync(path, "utf8")); } catch (error) { last = error; await Bun.sleep(5); }
+  }
+  throw last;
+}
+
 test("owned one-shot fallback abort waits for exit and retains raw partial provider output", async () => {
   const root = testTmp("parakeet-cli-stop"); mkdirSync(root, { recursive: true });
-  const cli = root + "/cli", marker = root + "/started.json";
-  writeFileSync(cli, `#!${process.execPath}\nimport { writeFileSync, writeSync } from 'fs';\nwriteSync(1,'raw partial provider text');\nwriteFileSync(${JSON.stringify(marker)},JSON.stringify({pid:process.pid,args:process.argv.slice(2)}));\nsetInterval(()=>{},1000);\n`, { mode: 0o700 });
+  const cli = root + "/cli", marker = root + "/started.json", handoff = marker + ".tmp";
+  writeFileSync(cli, `#!${process.execPath}\nimport { writeFileSync, writeSync, renameSync } from 'fs';\nwriteSync(1,'raw partial provider text');\nwriteFileSync(${JSON.stringify(handoff)},JSON.stringify({pid:process.pid,args:process.argv.slice(2)}));renameSync(${JSON.stringify(handoff)},${JSON.stringify(marker)});\nsetInterval(()=>{},1000);\n`, { mode: 0o700 });
   const savedModel = process.env.QA_VOICE_WHISPER_MODEL;
   const model = root + "/fake-model";
   writeFileSync(model, "isolated synthetic weights");
@@ -22,7 +32,7 @@ test("owned one-shot fallback abort waits for exit and retains raw partial provi
     for (let n = 0; n < 200 && !existsSync(marker); n++) await Bun.sleep(5);
     if (!existsSync(marker)) console.error("Synthetic CLI did not start:", earlyError);
     expect(existsSync(marker)).toBe(true);
-    const invocation = JSON.parse(readFileSync(marker, "utf8"));
+    const invocation = await readInvocation(marker);
     expect(invocation.args).not.toContain("--prompt");
     expect(invocation.args[invocation.args.indexOf("-l") + 1]).toBe("he");
     controller.abort();
