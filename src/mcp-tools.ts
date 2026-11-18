@@ -7,6 +7,7 @@
 
 import { voiceAskNoAnswerSeconds } from "./voice-ask-no-answer";
 import { STOP_FILE } from "./paths";
+import { MAX_WAIT_SECONDS } from "./mcp-protocol";
 
 const NO_ANSWER_RULE = "After an Ask gets no answer, you may make ONE follow-up voice_speak or voice_ask, then continue as if the user is away; do not keep asking.\n";
 
@@ -126,7 +127,7 @@ export function getToolDefinitions() {
         "Ask ONE short question aloud (≤600 chars — longer is refused).\n" +
         "Pass a result's delivery_id and lease_id as delivery_ack on your next voice call.\n" +
         SPOKEN_STYLE + NO_ANSWER_RULE +
-        "BLOCKING: the question is spoken before the microphone opens; the caller blocks for the entire playback plus the response.\n" +
+        "BLOCKING (unless MCP task; see wait_seconds): the question is spoken before the microphone opens; the caller blocks for the entire playback plus the response.\n" +
         "HARD LIMIT: 600 characters maximum, independent of timeout_seconds. " +
         "Longer is refused, not truncated. " +
         "Roughly 45 seconds of speech; a question, not a briefing.\n" +
@@ -199,6 +200,15 @@ export function getToolDefinitions() {
             pattern:
               "^\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z-[a-f0-9]{8}$",
           },
+          wait_seconds: {
+            type: "integer",
+            description:
+              "Only for clients that take MCP tasks: wait up to this many seconds (0-90, larger values are clamped) for the answer, " +
+              "returning the plain result if it is ready, else the task. Absent or 0: the task comes back at once. " +
+              "Ignored when the client does not take MCP tasks: the call then blocks until the answer.",
+            minimum: 0,
+            maximum: MAX_WAIT_SECONDS,
+          },
           delivery_ack: DELIVERY_ACK,
         },
         required: [],
@@ -208,7 +218,7 @@ export function getToolDefinitions() {
             not: { required: ["retranscribe_archive_id"] },
           },
           {
-            properties: { retranscribe_archive_id: {}, delivery_ack: {} },
+            properties: { retranscribe_archive_id: {}, delivery_ack: {}, wait_seconds: {} },
             required: ["retranscribe_archive_id"],
             additionalProperties: false,
             not: {

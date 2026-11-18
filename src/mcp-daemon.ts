@@ -150,7 +150,8 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
     socket: {
       open(socket) {
         socket.data = {
-          delivery: new AskDeliverySession(deliveryStore),
+          // The daemon speaks MCP 2026-07-28 too, so a task-capable voice_ask can become an MCP task here.
+          delivery: new AskDeliverySession(deliveryStore, undefined, { tasks: true }),
           lifetime: new AbortController(),
           protocol: "unknown", buffer: "", decoder: new TextDecoder(),
           unknownRaw: Buffer.alloc(0), unknownBytes: 0, ndjsonFramer: new NDJSONByteFramer(),
