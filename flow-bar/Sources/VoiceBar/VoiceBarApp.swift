@@ -1657,6 +1657,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     allowsTerminalGroup: TerminalPasteTargets.isTerminal(bundle))
             }
         }
+        DictationFocusRecovery.live.install(on: voiceState)
         voiceState.commandModeApplyHandler = { [commandModeAXHelper] text in
             commandModeAXHelper.applyReplacement(text)
         }

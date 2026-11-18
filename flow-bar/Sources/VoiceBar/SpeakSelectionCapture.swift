@@ -76,6 +76,35 @@ struct SelectionFocusAX {
         sleep: { Thread.sleep(forTimeInterval: $0) },
         bundleIdentifier: { NSRunningApplication(processIdentifier: $0.pid)?.bundleIdentifier })
 
+    /// A Chromium/Electron app whose AX tree is off answers the focus query with one of these.
+    static func isUnreadable(_ status: AXError) -> Bool { status == .noValue || status == .cannotComplete }
+
+    /// The result of one AXManualAccessibility recovery.
+    struct ManualAccessibilityRecovery {
+        var enableStatus: AXError
+        var retries = 0
+        /// The status of each re-query, as logged (a malformed successful answer logs its query status).
+        var retryStatuses: [String] = []
+        var status: AXError
+        var focus: Focus?
+    }
+
+    /// The one recovery for an unreadable focus, shared by Option+F5 selection and dictation paste:
+    /// set AXManualAccessibility on `app` once, then re-query the focus every `step` until it is readable
+    /// or `retryLimit` re-queries have run. Never reads values; the caller owns every admission rule.
+    func enableManualAccessibility(on app: AppIdentity, status: AXError, focus: Focus?,
+                                   retryLimit: Int, step: TimeInterval) -> ManualAccessibilityRecovery {
+        var result = ManualAccessibilityRecovery(enableStatus: setManualAccessibility(app), status: status, focus: focus)
+        guard result.enableStatus == .success else { return result }
+        while result.status != .success, result.retries < retryLimit {
+            self.sleep(step)
+            result.retries += 1
+            (result.status, result.focus) = queryFocus()
+            result.retryStatuses.append(String((result.focus?.queryStatus ?? result.status).rawValue))
+        }
+        return result
+    }
+
     /// Decodes the existing query without additional AX calls or logging attribute values.
     static func decodeFocus(_ value: CFTypeRef?, attribute: (String) -> (AXError, CFTypeRef?)) -> (AXError, Focus?) {
         guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else {
@@ -417,25 +446,23 @@ final class SpeakSelectionCapture {
         var (status, focus) = ax.queryFocus()
         fields["ax_status"] = String((focus?.queryStatus ?? status).rawValue)
         fields["final_ax_status"] = fields["ax_status"]
-        var retryStatuses: [String] = []
-        let unreadable = status == .noValue || status == .cannotComplete
+        let unreadable = SelectionFocusAX.isUnreadable(status)
         if recover, unreadable, let app = ax.frontmostApp() {
             fields["manual_ax_attempted"] = "true"
-            let enableStatus = ax.setManualAccessibility(app)
-            fields["manual_ax_status"] = String(enableStatus.rawValue)
-            guard enableStatus == .success else {
+            let recovery = ax.enableManualAccessibility(on: app, status: status, focus: focus,
+                                                        retryLimit: focusRetryLimit, step: focusRetryStep)
+            fields["manual_ax_status"] = String(recovery.enableStatus.rawValue)
+            guard recovery.enableStatus == .success else {
                 result.axEnable = .failed
                 result.blockReason = .captureFailed
                 return done("focus_query_failed")
             }
             result.axEnable = .attempted
-            while status != .success, result.retries < focusRetryLimit {
-                ax.sleep(focusRetryStep)
-                result.retries += 1
-                (status, focus) = ax.queryFocus()
-                retryStatuses.append(String((focus?.queryStatus ?? status).rawValue))
-                fields["retry_statuses"] = retryStatuses.joined(separator: ",")
-                fields["final_ax_status"] = retryStatuses.last
+            result.retries = recovery.retries
+            (status, focus) = (recovery.status, recovery.focus)
+            if let last = recovery.retryStatuses.last {
+                fields["retry_statuses"] = recovery.retryStatuses.joined(separator: ",")
+                fields["final_ax_status"] = last
             }
             if status == .success {
                 result.axEnable = .set
