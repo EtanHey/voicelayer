@@ -17,6 +17,14 @@ const ANSWER = "Synthetic answer fu… no, full.";
 const id = (n: number) => `2026-01-02T03-04-05-${String(n).padStart(3, "0")}Z-abcdef0${n}`;
 let root: string, saved: string | undefined, logs: string[];
 const spies: { mockRestore(): void }[] = [];
+const releases: (() => void)[] = [];
+const pendings: Promise<unknown>[] = [];
+/** Starts the real handler and tracks it so teardown can settle it. */
+function startAsk(args: unknown) {
+  const pending = handlers.handleVoiceAsk(args);
+  pendings.push(pending);
+  return pending;
+}
 
 beforeEach(() => {
   if (process.env.VOICELAYER_TEST_ISOLATED !== "1") throw new Error("isolated preload required");
@@ -34,7 +42,10 @@ beforeEach(() => {
     spyOn(socket, "broadcast").mockImplementation(() => {}),
   );
 });
-afterEach(() => {
+afterEach(async () => {
+  // A failed assertion must not leave its ask hung on a latch and poison the next test.
+  for (const release of releases.splice(0)) release();
+  await Promise.allSettled(pendings.splice(0));
   for (const spy of spies.splice(0).reverse()) spy.mockRestore();
   process.env.QA_VOICE_RECORDINGS_DIR = saved;
   rmSync(root, { recursive: true, force: true });
@@ -62,6 +73,7 @@ const latch = <T = void>() => Promise.withResolvers<T>();
 function latchedAsk(end: "answer" | "away" | "no-input" | "error" | "prompt-error", n = 1) {
   const spoken = latch(), speakDone = latch(), listening = latch(), allocate = latch(), allocated = latch();
   const transcribe = latch(), transcribing = latch(), finish = latch();
+  releases.push(() => { for (const gate of [speakDone, allocate, transcribe, finish]) gate.resolve(); });
   booked(true);
   spies.push(spyOn(tts, "speak").mockImplementation(async text => {
     spoken.resolve();
@@ -93,7 +105,7 @@ function booked(ownedByUs: boolean) {
 
 test("an open ask is visible while speaking, listening and transcribing, then gone once answered", async () => {
   const ask = latchedAsk("answer");
-  const pending = handlers.handleVoiceAsk({ message: QUESTION });
+  const pending = startAsk({ message: QUESTION });
   const preview = Array.from(QUESTION).slice(0, 80).join("");
 
   await ask.spoken.promise;
@@ -144,7 +156,7 @@ test("an open ask is visible while speaking, listening and transcribing, then go
 for (const end of ["away", "no-input", "error", "prompt-error"] as const) {
   test(`the open record goes away when the ask ends: ${end}`, async () => {
     const ask = latchedAsk(end);
-    const pending = handlers.handleVoiceAsk({ message: QUESTION });
+    const pending = startAsk({ message: QUESTION });
     await ask.spoken.promise;
     expect((await status()).open).toHaveLength(1);
     ask.speakDone.resolve();
@@ -196,7 +208,7 @@ test("refused asks never show as open", async () => {
 
 test("a retained answer replaces its open row; the tool stays read-only", async () => {
   const ask = latchedAsk("answer");
-  const pending = handlers.handleVoiceAsk({ message: QUESTION });
+  const pending = startAsk({ message: QUESTION });
   await ask.spoken.promise;
   ask.speakDone.resolve();
   await ask.listening.promise;
