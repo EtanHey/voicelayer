@@ -18,8 +18,17 @@ carry no identity and are not modelled.
 | `NoLossBeforeAck` | Only a delivery the owner read can be acked; a captured Ask is never dropped | `DeleteOnWrite`: a response write counts as delivery; `CrashDrops`: a crash voids a captured pending Ask |
 | `NoDoubleInboxInsertion` | Every at-least-once copy carries one delivery id | `NewIdPerClaim`: each recovery mints a new id |
 | `NoNewCaptureWhileRecovering` | No second capture while an earlier Ask is unacknowledged | `AdmitWhilePending`: a retried Ask opens a second capture |
+| `NoTaskResultToOtherCaller` | A `tasks/get` result reaches only the caller whose capability created the task | `TaskScopeLeak`: tasks keyed by the task id alone |
+| `CancelledNeverCompletes` | A cancelled task stays cancelled, even when its Ask finalizes later | `CancelThenComplete`: finalize overwrites a cancelled task |
+| `TaskCompletesAfterRow` | A task reports completed only once its Ask's row has a result | `CompleteOnAccept`: the task is completed when accepted |
 
-`Recovery` checks all four with two callers, two operations, three calls per caller, one crash and one
+MCP tasks (T4): a task-capable Ask is answered at once with a task handle (`TaskCall`, delivery row and
+task row in one transaction); `tasks/get` reads the owner's completed task, with the response possibly
+lost (`TaskGet`), and leases the same delivery as a next-call recovery would; `tasks/cancel` moves a
+working task to cancelled (`TaskCancel`). Finalize completes a working task in its own transaction; a
+crash completes the task of a captured row and fails one with nothing captured.
+
+`Recovery` checks all seven with two callers, two operations, three calls per caller, one crash and one
 reconnect. Liveness (an answered Ask eventually reaches a caller that keeps calling) is not checked:
 it needs fairness on a client that may never call again, which is exactly the automatic-wake gap.
 

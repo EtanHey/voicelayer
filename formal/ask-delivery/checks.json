@@ -13,12 +13,18 @@
     "DeleteOnWrite": { "role": "mutant", "target": "NoLossBeforeAck", "kind": "invariant" },
     "CrashDrops": { "role": "mutant", "target": "NoLossBeforeAck", "kind": "invariant" },
     "NewIdPerClaim": { "role": "mutant", "target": "NoDoubleInboxInsertion", "kind": "invariant" },
-    "AdmitWhilePending": { "role": "mutant", "target": "NoNewCaptureWhileRecovering", "kind": "invariant" }
+    "AdmitWhilePending": { "role": "mutant", "target": "NoNewCaptureWhileRecovering", "kind": "invariant" },
+    "TaskScopeLeak": { "role": "mutant", "target": "NoTaskResultToOtherCaller", "kind": "invariant" },
+    "CancelThenComplete": { "role": "mutant", "target": "CancelledNeverCompletes", "kind": "invariant" },
+    "CompleteOnAccept": { "role": "mutant", "target": "TaskCompletesAfterRow", "kind": "invariant" }
   },
   "acceptance": [
     "NoCrossCallerDelivery",
     "NoLossBeforeAck",
     "NoDoubleInboxInsertion",
-    "NoNewCaptureWhileRecovering"
+    "NoNewCaptureWhileRecovering",
+    "NoTaskResultToOtherCaller",
+    "CancelledNeverCompletes",
+    "TaskCompletesAfterRow"
   ]
 }
