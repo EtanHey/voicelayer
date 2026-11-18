@@ -311,11 +311,12 @@ describe("publish.yml wiring", () => {
 
   test("the gate is the first run step, after the checkouts and Bun, before any build or publish", () => {
     const steps = yml.split(/\n      - /).slice(1);
-    const firstRun = steps.findIndex((s) => /\n\s+run: /.test(`\n${s}`));
+    // The only step ahead of the gate that runs a command is the release lock (not on main).
+    const firstRun = steps.findIndex((s, i) => i > 1 && /\n\s+run: /.test(`\n${s}`));
     expect(steps[firstRun]).toContain("release-gate --tag \"$RELEASE_TAG\"");
     expect(steps[firstRun]).toContain("../workflow-tools/scripts/t3-optf5-proof.ts");
     expect(steps.slice(0, firstRun).map((s) => s.split("\n")[0])).toEqual([
-      "uses: actions/checkout@v4", "uses: actions/checkout@v4", "uses: oven-sh/setup-bun@v2",
+      "uses: actions/checkout@v4", "name: Refuse commits not on main", "uses: actions/checkout@v4", "uses: oven-sh/setup-bun@v2",
     ]);
     expect(yml).toContain("fetch-depth: 0");
   });
@@ -333,7 +334,19 @@ describe("publish.yml wiring", () => {
 // ---- the single tagging entry point (honest-mistake guard; the workflow cannot gate an ungated tree)
 
 const tagScript = join(repoRoot, "scripts", "tag-voicebar-release.sh");
-function runTag(version: string) {
+// The release lock needs HEAD on origin/main: publish HEAD to a local bare origin first
+// (never the real remote), unless the test is about a commit that is off main.
+function publishHeadAsMain() {
+  const origin = join(dir, ".origin.git");
+  if (!git("remote").split("\n").includes("origin")) {
+    Bun.spawnSync(["git", "init", "-q", "--bare", origin], { env: gitEnv });
+    git("remote", "add", "origin", origin);
+    writeFileSync(join(dir, ".git", "info", "exclude"), ".origin.git/\n");
+  }
+  git("push", "-q", "--force", "origin", "HEAD:refs/heads/main");
+}
+function runTag(version: string, opts: { pushMain?: boolean } = {}) {
+  if (opts.pushMain !== false) publishHeadAsMain();
   const r = Bun.spawnSync(["bash", tagScript, version], {
     cwd: dir, stdout: "pipe", stderr: "pipe",
     env: { ...gitEnv, BUN: process.execPath, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "tag.gpgSign", GIT_CONFIG_VALUE_0: "false" },
@@ -363,6 +376,18 @@ describe("scripts/tag-voicebar-release.sh", () => {
     expect(r.out).toContain("NOT pushed");
     expect(r.out).toContain("  git push origin v2.4.0");
     expect(git("ls-remote", "--tags", "origin")).toBe("");
+  });
+
+  test("release lock: refuses a HEAD that is not on origin/main, before any other check, and creates no tag", () => {
+    provenRepo();
+    runTag("2.4.0", { pushMain: true }); // publishes the proven commit as main, then tags it
+    git("tag", "-d", "v2.4.0");
+    writeFileSync(join(dir, "side.txt"), "side\n");
+    commitAll("side-branch commit");
+    const r = runTag("2.4.0", { pushMain: false });
+    expect(r.code).toBe(1);
+    expect(r.err).toContain(`[tag-voicebar-release] REFUSED: HEAD ${git("rev-parse", "HEAD")} is not on origin/main`);
+    expect(tags()).toBe("");
   });
 
   test("the script never runs git push (it only prints the command)", () => {
@@ -414,6 +439,7 @@ describe("scripts/tag-voicebar-release.sh", () => {
 
   test("Codex r2: a run that fails after creating the tag leaves no tag behind", () => {
     provenRepo();
+    publishHeadAsMain();
     // stdout is closed, so the first line the script prints after `git tag` fails under `set -e`.
     const r = Bun.spawnSync(["bash", "-c", 'bash "$0" "$1" >&-', tagScript, "2.4.0"], {
       cwd: dir, stdout: "pipe", stderr: "pipe",

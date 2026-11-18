@@ -40,7 +40,7 @@ tagged commit. The gate has no skip input or env, but that is all it can promise
 created **only** with `scripts/tag-voicebar-release.sh <version>`, which refuses unless the
 working tree is clean, HEAD carries the gate script and the gate step, `package.json` is that
 version, and the committed `release-proofs/v<version>.json` passes the same gate. It creates
-the annotated tag locally and prints the push command without running it. A hosted
+the annotated tag locally and prints the push command without running it. Every release step also refuses a commit that is not an ancestor of `origin/main`: the tag script (HEAD), `release-voicebar.sh` (the build HEAD), `promote-voicebar-release.sh` (the app's Info.plist `GitCommit`) and the first step of `publish.yml`. A hosted
 runner has no app, so it cannot recompute the bundle digest: that digest is checked against
 the real app by `record` and again by promotion, which must be given the committed file.
 

@@ -21,6 +21,9 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Release lock: npm's Trusted Publisher is bound to this environment, which only
+    # accepts v* tags and main (docs.local/2.4-lanes/c7/VOICEBAR-RELEASE-LOCK.md, Part 1).
+    environment: npm-release
     defaults:
       run:
         working-directory: source
@@ -37,6 +40,18 @@ jobs:
           path: source
           # The release gate walks from the proven build commit to the tag.
           fetch-depth: 0
+
+      # Release lock, the first step after checkout: refuse any commit that is not on main,
+      # before the gate, build, tests or publish. For workflow_dispatch the commit is the
+      # `ref` input's checkout, for a tag push the tagged commit.
+      - name: Refuse commits not on main
+        run: |
+          commit=$(git rev-parse HEAD)
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$commit" refs/remotes/origin/main; then
+            echo "REFUSED: release commit $commit is not on origin/main (side-branch commits are never published)" >&2
+            exit 1
+          fi
 
       # Older requested tags need the guard from this immutable workflow revision.
       # Keep tooling beside the package so it cannot enter the selected archive.

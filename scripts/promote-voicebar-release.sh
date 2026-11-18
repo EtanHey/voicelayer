@@ -73,6 +73,14 @@ fi
 [ -n "$T3_PROOF" ] || die "T3 Option+F5 proof is required before delivery (--t3-proof PROOF.json). There is no bypass."
 [[ "$FORMULA_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "--formula-sha256 must be the sha256 of the published voicelayer-mcp-$VERSION.tgz"
 
+# Release lock: the app being promoted carries the commit it was built from (Info.plist
+# GitCommit, the same value the T3 proof is bound to). It must be on origin/main.
+# Before verification, upload and any tap write.
+PROVEN_SHA="$(plutil -extract GitCommit raw -o - "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)"
+[[ "$PROVEN_SHA" =~ ^[0-9a-f]{40}$ ]] || die "$APP_PATH has no full-SHA GitCommit in Info.plist, so its build commit cannot be shown to be on origin/main"
+source "$SCRIPT_DIR/lib/require-main-ancestor.sh"
+require_commit_on_origin_main promote-voicebar-release "$PACKAGE_ROOT" "$PROVEN_SHA" "proven build commit" || exit 1
+
 FORMULA="$TAP_ROOT/Formula/voicelayer.rb"
 CASK="$TAP_ROOT/Casks/voicebar.rb"
 [ -f "$FORMULA" ] && [ -f "$CASK" ] || die "tap at $TAP_ROOT has no Formula/voicelayer.rb or Casks/voicebar.rb"
