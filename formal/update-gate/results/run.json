@@ -40,7 +40,7 @@
     "scripts/lib/update-gate.sh": "29acc6bd7390826ce8f92cd7189971a0baa5e3b5bf58f28e6bd83948f1c49c05",
     "scripts/voicelayer-dedupe-voicebar.sh": "d7bb0b6d00c1e41203a0fe91603359b71ed457af039100c7ac8107976a07d4d4",
     "scripts/install-voicebar-autostart.sh": "9cc045f380781fc18da57b6ca8e2e0dbda5f8b9aa1466272948be0b99fcbfcf8",
-    "scripts/promote-voicebar-release.sh": "0bbf4a2c3c357a6c743386422c02e968e3bed4d4331204cfeec1408c6836cd61",
+    "scripts/promote-voicebar-release.sh": "4adb53a75dbdb3a5d94ade76aefc2ce0375396648f5c4b73b91020ba68e41420",
     "src/update-gate-installer-participant.ts": "daad633ba3a8d0c5b3fbcc9749f1f1bac8caeb44e7b19a449d19793a0aaf22c8",
     "src/update-gate.ts": "942e63224305214373116d2e1b3f4929713f870bb38b186e75196372ecd59954",
     "src/update-gate-installer.ts": "1626adaff2724a667ff77752ec89ecc8a9c58ede9f4fee589c539d04e7fb547c",
