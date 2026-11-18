@@ -111,7 +111,7 @@
     "src/selection-read-queue.ts": "563b79c5ae488665501d93d10d0a04aebaa6b6c7148c67118ba1cef73abbc52d",
     "src/socket-handlers.ts": "ba966df991db38969594868381323d6b383c8eeabac71c5d9bf11130d39885fe",
     "src/socket-protocol.ts": "8329b558d26dd6f9f85b784552056698563193b9078a749a0597513d3e3681d2",
-    "src/tts.ts": "c81c90c38dbf92021a80488d339a64baf65fbae58aa2cb3469a4aec823e4a468",
+    "src/tts.ts": "867bc6703791664adeb63c2eb25f374a70ddc6d9acbe75201aeb6df051c26da0",
     "src/tts/long-read.ts": "884cabc066c307dc047ba9b79c83bf0ef22016b20b6822657c11cfe4f429d526",
     "src/tts/playback-timing.ts": "16aab4ec58c7610a1d28c6c06f12d8316a1de93141861a63bb0489b2b29fce3e",
     "src/tts/prosody.ts": "633de0bd15a88fa2bc5bc91ab04b58c269e5bbfc82651c16ef0a476763e96c94",
