@@ -72,6 +72,7 @@ describe("voicelayer transcribe", () => {
     expect(help.code).toBe(0);
     expect(help.stdout).toContain("voicelayer transcribe <file.wav>");
     expect(help.stdout).toContain(TRANSCRIPT_FORMAT);
+    expect(help.stdout).toContain("3 on an empty result");
   }, 30_000);
 
   test("a missing file exits nonzero and prints nothing on stdout", async () => {
@@ -117,11 +118,36 @@ describe("voicelayer transcribe", () => {
     expect(io.out).toEqual([`${expected}\n`]);
   }, 30_000);
 
-  speechTest("an empty result exits nonzero and still stops owned sidecars", async () => {
+  speechTest("an empty result exits 3, prints nothing on stdout and still stops owned sidecars", async () => {
     const io = capture();
-    expect(await runTranscribeCli([wav, "--json"], io.deps(fakeBackend("  ", {})))).toBe(1);
+    expect(await runTranscribeCli([wav, "--json"], io.deps(fakeBackend("  ", {})))).toBe(3);
     expect(io.out).toEqual([]);
     expect(io.err.join("")).toContain("empty result");
+    expect(io.shutdowns).toBe(1);
+  }, 30_000);
+
+  speechTest("a result the gates emptied is an empty result (3), not a failure", async () => {
+    const gated: STTBackend = {
+      name: "whisper.cpp",
+      isAvailable: async () => true,
+      transcribe: async () => ({ text: "", backend: "whisper.cpp+outro", durationMs: 1,
+        attemptEvidence: { status: "EMPTY_RESPONSE", gateRemoval: { gate: "closing-caption", removedSpans: 1, rawCharacters: 10 } } }),
+    };
+    const io = capture();
+    expect(await runTranscribeCli([wav, "--json"], io.deps(gated))).toBe(3);
+    expect(io.out).toEqual([]);
+  }, 30_000);
+
+  speechTest("a backend that throws is a real failure (1), distinct from empty", async () => {
+    const broken: STTBackend = {
+      name: "whisper.cpp",
+      isAvailable: async () => true,
+      transcribe: async () => { throw new Error("decoder crashed"); },
+    };
+    const io = capture();
+    expect(await runTranscribeCli([wav, "--json"], io.deps(broken))).toBe(1);
+    expect(io.out).toEqual([]);
+    expect(io.err.join("")).toContain("decoder crashed");
     expect(io.shutdowns).toBe(1);
   }, 30_000);
 

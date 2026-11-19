@@ -13,6 +13,8 @@ import { basename, resolve } from "path";
 import type { STTBackend } from "../stt";
 
 export const TRANSCRIPT_FORMAT = "voicelayer-transcript/1";
+/** No words came out: silence, or a decode the gates emptied. Not a failure. */
+export const EXIT_EMPTY = 3;
 
 const LANGUAGE_MODES = { auto: "auto", en: "english", he: "hebrew" } as const;
 type LanguageFlag = keyof typeof LANGUAGE_MODES;
@@ -23,7 +25,8 @@ Transcribes a 16 kHz mono 16-bit PCM WAV with the speech-to-text backend and
 text processing a dictation uses. Prints the text; with --json prints one line:
 {"format":"${TRANSCRIPT_FORMAT}","text":...,"backend":...,"model":...,"language":...}
 Without --language the dictation language setting applies (QA_VOICE_WHISPER_LANG, default auto).
-Exit 0 with text; 1 on a missing or unsupported file, an empty result or a backend failure; 2 on bad arguments.
+Exit 0 with text; 3 on an empty result (silence, or a result the gates emptied; nothing on stdout);
+1 on a real failure (missing or unsupported file, backend failure, unconfirmed sidecar shutdown); 2 on bad arguments.
 Convert other audio first: ffmpeg -i in.m4a -ac 1 -ar 16000 -c:a pcm_s16le out.wav
 `;
 
@@ -127,6 +130,7 @@ export async function runTranscribeCli(argv: string[], deps: TranscribeCliDeps =
     const text = finalized.text.trim() ? finalized.text : "";
     if (!text) {
       stderr(`voicelayer transcribe: empty result: no words recognised in ${parsed.file} (backend ${result.backend})\n`);
+      code = EXIT_EMPTY;
     } else {
       const mode = getLanguageModeFromEnv();
       const language = mode === "english" ? "en" : mode === "hebrew" ? "he" : "auto";
