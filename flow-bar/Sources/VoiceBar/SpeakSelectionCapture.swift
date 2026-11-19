@@ -199,17 +199,30 @@ final class SpeakSelectionCapture {
             let selectedText = preflight.unreadableFocusAllowsCopy ? nil : self.readAXSelection()
             let comparesWordBoundaries = sourceApp != nil && !prefersCopy
                 && selectedText.map { Self.longestWordRun($0) >= 24 } == true
-            if let text = selectedText, !text.isEmpty, !prefersCopy, !comparesWordBoundaries {
-                Self.onMain { complete(.completed(text).observed(axRead: .text, path: .ax)) }
+            // T27: outside T3 Code, AX text that lost its line breaks asks Copy for the structure first.
+            let flattened = !prefersCopy && selectedText.map(SelectionStructureRepair.looksFlattened) == true
+            let repairsStructure = flattened && sourceApp != nil
+            if let text = selectedText, !text.isEmpty, !prefersCopy, !comparesWordBoundaries, !repairsStructure {
+                // No frontmost app means no app to address a Copy to; only the split can repair it.
+                let repaired = flattened ? SelectionStructureRepair.split(text) : text
+                let decision: SelectionStructureRepair.Decision = !flattened ? .notFlattened
+                    : repaired == text ? SelectionStructureRepair.Decision.none : .split
+                Self.onMain {
+                    complete(.completed(repaired).observed(axRead: .text, path: .ax).withStructureRepair(decision))
+                }
             } else {
                 let axRead: SelectionCaptureResult.AXRead = preflight.unreadableFocusAllowsCopy ? .notAttempted
                     : selectedText == nil ? .unavailable : selectedText?.isEmpty == true ? .empty : .text
                 // Keep AppKit pasteboard/item access serialized with the app's other clipboard users.
                 Self.onMain {
                     self.captureUsingPasteboard(copyExemptApp: preflight.copyExemptApp,
-                                                intendedCopyApp: prefersCopy || comparesWordBoundaries ? sourceApp : nil) { result in
+                                                intendedCopyApp: prefersCopy || comparesWordBoundaries || repairsStructure
+                                                    ? sourceApp : nil) { result in
                         var observed = result.observed(axRead: axRead, path: .copy)
-                        if comparesWordBoundaries, let selectedText {
+                        if repairsStructure, let selectedText {
+                            observed = Self.resolveStructure(ax: selectedText, copy: observed,
+                                                             comparesWordBoundaries: comparesWordBoundaries)
+                        } else if comparesWordBoundaries, let selectedText {
                             switch result.outcome {
                             case .copyEmpty, .copyTimedOut:
                                 observed = observed.usingAXText(selectedText)
@@ -232,6 +245,31 @@ final class SpeakSelectionCapture {
 
     private static func prefersCopy(bundle: String) -> Bool {
         bundle == t3BundleIdentifier || ChromiumFamilyApps.prefersCopy(bundleIdentifier: bundle)
+    }
+
+    /// Copy wins when it carries the line breaks over the same letters (or, as before, when it restores
+    /// word boundaries). A Copy that failed or was refused before Cmd+C falls back to the AX text, split at its
+    /// inline markers: before T27 that AX text was the read. Clipboard races, a failed restore and a secure
+    /// field still end the read, exactly as on the word-boundary path.
+    static func resolveStructure(ax: String, copy result: SelectionCaptureResult,
+                                 comparesWordBoundaries: Bool) -> SelectionCaptureResult {
+        switch result.outcome {
+        case .completed:
+            if let copied = result.text {
+                if SelectionStructureRepair.copyKeepsStructure(ax: ax, copy: copied) {
+                    return result.withStructureRepair(.copy)
+                }
+                if comparesWordBoundaries, copyRestoresWordBoundaries(ax: ax, copy: copied) {
+                    return result.withStructureRepair(.none)
+                }
+            }
+        case .copyEmpty, .copyTimedOut, .copyFailed, .captureFailed:
+            break
+        default:
+            return result.withStructureRepair(.none)
+        }
+        let repaired = SelectionStructureRepair.split(ax)
+        return result.usingAXText(repaired).withStructureRepair(repaired == ax ? .none : .split)
     }
 
     private static func longestWordRun(_ text: String) -> Int {
