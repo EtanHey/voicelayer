@@ -625,6 +625,9 @@ setNarrationSource(createNarrationSource({
   edge: (text, voice, rate, outFile, signal, retries, prosody) =>
     synthesizeEdgeChunk(text, voice, rate, outFile, EDGE_WORDS_SCRIPT, signal, retries, prosody),
   clone: (text, voice, signal) => synthesizeCloned(text, voice, signal),
+  // T28: long cloned requests are split under the clone's reference-length wall and joined here.
+  assemble: (parts, outFile, signal) => assembleNarration(parts, outFile, signal),
+  dispose: file => { try { unlinkSync(file); } catch {} },
 }));
 
 /** An edge voice through the narration source, in the chunk shape the readers use. */

@@ -36,6 +36,8 @@ import { planProsody } from "../tts/prosody";
 import { projectSpeakableText } from "../speakable-text";
 import { PreparedReadStart } from "../tts/selection-read-preparation";
 import { playbackSessionViolations } from "../playback/ledger";
+import { narrationSource, setNarrationSource, type NarrationSource } from "../narration/source";
+import { createEngineNarrationSource, splitClonePieces, CLONE_PIECE_MAX_WORDS } from "../narration/engines";
 
 function deferred<T>() { let resolve!: (v: T) => void, reject!: (e: Error) => void; const promise = new Promise<T>((r, fail) => { resolve = r; reject = fail; }); return { promise, resolve, reject }; }
 const text = Array.from({ length: 80 }, (_, i) => `Sentence ${i} has enough words to fill the next chunk.`).join(" ");
@@ -69,8 +71,18 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   let clockMs: number;
   let releaseAlignments: (() => void)[];
 
+  let realNarration: NarrationSource | undefined;
+  let assemblies: string[][] = [];
   beforeEach(() => {
-    modelReplay = false;
+    // These fixtures prove the chunk lifecycle with one synthesizeCloned call per chunk. T28 splits a cloned chunk
+    // over 24 words into pieces inside the engine adapter; that split is proven in clone-piece-bound.test.ts and in
+    // "T28 a cloned read" below, which use the real source. Here clone requests go whole, as before T28.
+    const real = narrationSource();
+    const whole = createEngineNarrationSource({ edge: () => { throw new Error("unused"); },
+      clone: (text, voice, signal) => qwen.synthesizeCloned(text, voice, signal) });
+    realNarration = setNarrationSource({ id: real.id,
+      synthesize: request => request.engine === "clone" ? whole.synthesize(request) : real.synthesize(request) });
+    modelReplay = false; assemblies = [];
     synths = []; players = []; events = []; handles = []; historyInputs = []; spies = [];
     holdFirstSynth = false; holdSynth = false; autoPlay = false; holdPlayerExit = false; holdHistory = false; holdDecoder = false;
     failHistory = false; failPlayerSpawn = false; synthLatencyMs = 0;
@@ -104,6 +116,11 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         }
         return { pid: 71000 + synths.length, exited: exit.promise, kill: () => { item.killed = true; exit.resolve(143); } };
       }
+      // T28: a cloned chunk over 24 words is synthesized as pieces and joined by one assembly ffmpeg (a resolved path).
+      if (argv.includes("-filter_complex")) {
+        assemblies.push(argv); writeFileSync(argv.at(-1)!, "assembled clone audio");
+        return { pid: 74000, exited: Promise.resolve(0), kill() {} };
+      }
       if (argv[0] === "ffmpeg") {
         if (argv.includes("-af")) writeFileSync(argv.at(-1)!, "adjusted audio");
         if (argv.includes("-ss")) writeFileSync(argv.at(-1)!, "trimmed audio");
@@ -135,9 +152,35 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     await flushSpeechArchives();
     await settleRecordingJobs();
     for (const spy of spies) spy.mockRestore(); Bun.spawn = originalSpawn; Bun.spawnSync = originalSpawnSync;
+    if (realNarration) setNarrationSource(realNarration);
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
   });
   const start = (engine: "edge" | "clone" = "edge", readText = text, identity: Parameters<typeof speakLongRead>[3] = {}) => { const h = speakLongRead(readText, { engine, voice: "fixture", rate: "+0%" }, Date.now(), identity); handles.push(h); return h; };
+
+  it("T28 a cloned read reaches Qwen3 in pieces of at most 24 words; the cursor still sees every word in order", async () => {
+    if (realNarration) setNarrationSource(realNarration);
+    const pieces: string[] = [];
+    spies.push(spyOn(qwen, "synthesizeCloned").mockImplementation(async part => { pieces.push(part); return Buffer.from("clone piece"); }));
+    const timings: import("../socket-protocol").SpeechWordsEvent[] = [];
+    spies.push(spyOn(socket, "broadcast").mockImplementation(event => {
+      events.push(event); if (event.type === "speech_words") timings.push(event);
+    }));
+    autoPlay = true;
+    const h = start("clone");
+    await h.done;
+    const words = (value: string) => value.split(/\s+/).filter(Boolean);
+    const chunks = chunkTextForLongRead(text, "clone");
+    expect(chunks.some(chunk => words(chunk).length > CLONE_PIECE_MAX_WORDS)).toBe(true);
+    expect(pieces.length).toBeGreaterThan(chunks.length);
+    for (const piece of pieces) expect(words(piece).length).toBeLessThanOrEqual(CLONE_PIECE_MAX_WORDS);
+    expect(pieces.flatMap(words)).toEqual(words(text));
+    expect(pieces).toEqual(chunks.flatMap(chunk => splitClonePieces(chunk)));
+    expect(assemblies.length).toBe(chunks.filter(chunk => words(chunk).length > CLONE_PIECE_MAX_WORDS).length);
+    // The word-index cursor: each chunk's timings start where the previous chunk's words end, through the last word.
+    const byOffset = [...new Map(timings.filter(t => t.utteranceId === h.id).map(t => [t.wordOffset, t.words.length])).entries()];
+    expect(byOffset.map(([offset]) => offset)).toEqual(chunks.map((_, i) => chunks.slice(0, i).flatMap(words).length));
+    expect(byOffset.at(-1)![0] + byOffset.at(-1)![1]).toBe(words(text).length);
+  });
 
   it.each(["edge", "clone"] as const)("U5 %s publishes global word indices and seeks across synthesized chunks", async engine => {
     if (engine === "clone") spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("silent clone fixture")));
