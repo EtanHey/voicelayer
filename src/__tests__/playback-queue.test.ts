@@ -30,6 +30,9 @@ import { fixtureCheckpoint } from "./long-read-fixture-barriers";
 
 // Real subprocesses: standalone p95 <= 335 ms; 4x rounded up, with a 5 s scheduling floor.
 const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+// T17: a playing player's watchdog deadline (2x its remaining audio + 30 s), then the 250 ms confirmation turn.
+const playingDeadline = (remainingMs: number) => remainingMs * 2 + 30_000;
+const watchdogKillAt = (remainingMs: number) => playingDeadline(remainingMs) + 250;
 
 // --- Mock helpers ---
 
@@ -258,11 +261,12 @@ describe("playback queue — P0-1 sequential playback", () => {
           text: "Owned", voice: "T", durationMs: 1_000, isSeek: true,
           ...(source === "seek" ? { localOffsetMs: 750, utteranceDurationMs: 120_000 } : {}),
         });
+        let reaped = false; void owned.playerExited.then(() => { reaped = true; });
+        jest.advanceTimersByTime(watchdogKillAt(duration) - 1); await fixtureCheckpoint();
+        // Queued within its 30 s normal-priority TTL of the kill, so it is still live when the queue moves on.
         const foreign = tts.playAudioNonBlocking(`${TEST_TMP}/watchdog-foreign.mp3`, {
           text: "Preserved", voice: "T", durationMs: 10_000, isSeek: true,
         });
-        let reaped = false; void owned.playerExited.then(() => { reaped = true; });
-        jest.advanceTimersByTime(duration + 4_999); await fixtureCheckpoint();
         expect(playerMocks[0].signals).toEqual([]);
         jest.advanceTimersByTime(1); await fixtureCheckpoint();
         expect(playerMocks[0].signals).toEqual(["SIGKILL"]);
@@ -312,7 +316,7 @@ describe("playback queue — P0-1 sequential playback", () => {
     jest.useFakeTimers();
     const timers: Array<() => void> = [], timer = globalThis.setTimeout;
     const spy = spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void, ms: number) => {
-      if (ms === 6_000 || ms === 25_000) timers.push(callback);
+      if (ms === playingDeadline(1_000) || ms === playingDeadline(20_000)) timers.push(callback);
       return timer(callback, ms);
     }) as typeof setTimeout);
     try {
@@ -327,7 +331,7 @@ describe("playback queue — P0-1 sequential playback", () => {
       playerMocks[1].resolveExit(); await fixtureCheckpoint();
       expect(playerMocks).toHaveLength(3);
       timers[1](); expect(playerMocks[2].signals).toEqual([]);
-      jest.advanceTimersByTime(24_999); expect(playerMocks[2].signals).toEqual([]);
+      jest.advanceTimersByTime(watchdogKillAt(20_000) - 1); expect(playerMocks[2].signals).toEqual([]);
       jest.advanceTimersByTime(1); await fixtureCheckpoint();
       expect(playerMocks[2].signals).toEqual(["SIGKILL"]);
       expect((await next.exited).status).toBe("failed");
@@ -338,7 +342,7 @@ describe("playback queue — P0-1 sequential playback", () => {
   it("FX-3 arms the player watchdog only after the decoder has exited", async () => {
     const armed: number[] = [], timer = globalThis.setTimeout;
     const spy = spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void, ms: number) => {
-      if (ms === 6_000) armed.push(playerMocks.length);
+      if (ms === playingDeadline(1_000)) armed.push(playerMocks.length);
       return timer(callback, ms);
     }) as typeof setTimeout);
     holdDecoderExits = true;
@@ -356,7 +360,7 @@ describe("playback queue — P0-1 sequential playback", () => {
     jest.useFakeTimers();
     try {
       const owned = tts.playAudioNonBlocking(`${TEST_TMP}/watchdog-quiet.mp3`);
-      jest.advanceTimersByTime(6_000); await fixtureCheckpoint();
+      jest.advanceTimersByTime(watchdogKillAt(1_000)); await fixtureCheckpoint();
       expect((await owned.exited).status).toBe("failed");
       expect(broadcasts.some((event: any) => event.state === "idle")).toBe(false);
       playerMocks[0].resolveExit(); await owned.playerExited; await fixtureCheckpoint();
@@ -374,7 +378,7 @@ describe("playback queue — P0-1 sequential playback", () => {
         text: "Question", voice: "T", durationMs: 1_000, isSeek: true, nextState: "recording",
         onQueued: handle => { expect(admission.admit(handle)).toBe(true); },
       });
-      jest.advanceTimersByTime(6_000); await fixtureCheckpoint();
+      jest.advanceTimersByTime(watchdogKillAt(1_000)); await fixtureCheckpoint();
       expect((await owned.exited).status).toBe("failed");
       playerMocks[0].resolveExit(); await owned.playerExited; await fixtureCheckpoint();
       expect(broadcasts.some((event: any) => event.state === "idle" || event.next_state === "recording")).toBe(false);
@@ -387,9 +391,81 @@ describe("playback queue — P0-1 sequential playback", () => {
       const owned = tts.playAudioNonBlocking(`${TEST_TMP}/watchdog-long.mp3`, {
         text: "Long", voice: "T", durationMs: 3_000_000_000, isSeek: true,
       });
-      jest.advanceTimersByTime(6_000); await fixtureCheckpoint();
+      jest.advanceTimersByTime(watchdogKillAt(1_000)); await fixtureCheckpoint();
       expect(playerMocks[0].signals).toEqual([]);
       playerMocks[0].resolveExit(); expect((await owned.exited).status).toBe("completed");
+      await owned.playerExited;
+    } finally { jest.useRealTimers(); }
+  });
+
+  // T17 (M4 2026-11-18): under host starvation a healthy player outlived its audio by more than 5 s and was SIGKILLed.
+  it("T17 a slow but healthy player outliving its audio by more than 5 s is never killed", async () => {
+    jest.useFakeTimers();
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const owned = tts.playAudioNonBlocking(`${TEST_TMP}/watchdog-slow.mp3`, {
+        text: "Slow", voice: "T", durationMs: 4_266, isSeek: true,
+      });
+      // The M4 player was still running past 4266 ms + 5000 ms; give it 9 s more than that, then let it exit.
+      jest.advanceTimersByTime(4_266 + 5_000 + 9_000); await fixtureCheckpoint();
+      expect(playerMocks[0].signals).toEqual([]);
+      expect(broadcasts.some((event: any) => event.type === "error" && /watchdog/.test(event.message))).toBe(false);
+      playerMocks[0].resolveExit();
+      expect((await owned.exited).status).toBe("completed");
+      await owned.playerExited;
+      // The old bound survives as evidence for the next incident, never as a kill.
+      expect(warn.mock.calls.map(call => String(call[0]))).toContainEqual(
+        expect.stringContaining(`Playback overrun: ${owned.id}`));
+    } finally { warn.mockRestore(); jest.useRealTimers(); }
+  });
+
+  it("T17 a stuck player is still killed at twice its remaining audio plus 30 s", async () => {
+    jest.useFakeTimers();
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const owned = tts.playAudioNonBlocking(`${TEST_TMP}/watchdog-stuck.mp3`, {
+        text: "Stuck", voice: "T", durationMs: 4_266, isSeek: true,
+      });
+      jest.advanceTimersByTime(watchdogKillAt(4_266) - 1); await fixtureCheckpoint();
+      expect(playerMocks[0].signals).toEqual([]);
+      jest.advanceTimersByTime(1); await fixtureCheckpoint();
+      expect(playerMocks[0].signals).toEqual(["SIGKILL"]);
+      expect(await owned.exited).toMatchObject({ status: "failed", reason: "player-error" });
+      expect(broadcasts.filter((event: any) => event.type === "error" && /watchdog/.test(event.message))).toEqual([
+        expect.objectContaining({ message: expect.stringContaining(`watchdog: ${owned.id}`) })]);
+      playerMocks[0].resolveExit(); await owned.playerExited;
+    } finally { warn.mockRestore(); jest.useRealTimers(); }
+  });
+
+  it("T17 an exit still queued when the deadline expires wins over the kill", async () => {
+    jest.useFakeTimers();
+    try {
+      const owned = tts.playAudioNonBlocking(`${TEST_TMP}/watchdog-queued-exit.mp3`, {
+        text: "Queued", voice: "T", durationMs: 1_000, isSeek: true,
+      });
+      // The daemon was busy past the deadline; the player had exited but its exit event is delivered after the timer.
+      jest.advanceTimersByTime(playingDeadline(1_000));
+      playerMocks[0].resolveExit(); await fixtureCheckpoint();
+      jest.advanceTimersByTime(250); await fixtureCheckpoint();
+      expect(playerMocks[0].signals).toEqual([]);
+      expect((await owned.exited).status).toBe("completed");
+      await owned.playerExited;
+    } finally { jest.useRealTimers(); }
+  });
+
+  it("T17 a stopped long player escalates SIGTERM after 5 s, not after its old playing budget", async () => {
+    jest.useFakeTimers();
+    try {
+      const owned = tts.playAudioNonBlocking(`${TEST_TMP}/watchdog-term-long.mp3`, {
+        text: "Long chunk", voice: "T", durationMs: 60_000, isSeek: true,
+      });
+      jest.advanceTimersByTime(1_000);
+      expect(tts.cancelPlayback(owned)).toBe(true);
+      jest.advanceTimersByTime(5_249); await fixtureCheckpoint();
+      expect(playerMocks[0].signals).toEqual(["SIGTERM"]);
+      jest.advanceTimersByTime(1); await fixtureCheckpoint();
+      expect(playerMocks[0].signals).toEqual(["SIGTERM", "SIGKILL"]);
+      playerMocks[0].resolveExit(); expect((await owned.exited).status).toBe("interrupted");
       await owned.playerExited;
     } finally { jest.useRealTimers(); }
   });
@@ -403,7 +479,7 @@ describe("playback queue — P0-1 sequential playback", () => {
       });
       expect(tts.seekPlayback(500).outcome).toBe("accept"); await fixtureCheckpoint();
       expect(decoderMocks).toHaveLength(1);
-      jest.advanceTimersByTime(6_000); await fixtureCheckpoint();
+      jest.advanceTimersByTime(watchdogKillAt(1_000)); await fixtureCheckpoint();
       expect((await owned.exited).status).toBe("failed");
       expect(decoderMocks[0].killed).toBe(true);
       playerMocks[0].resolveExit(); await fixtureCheckpoint();
