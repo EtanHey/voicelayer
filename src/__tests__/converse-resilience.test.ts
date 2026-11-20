@@ -1054,7 +1054,7 @@ describe("handleConverse resilience — P0-2", () => {
           timeout_seconds: 5,
         },
         {
-          heartbeatIntervalMs: 10,
+          heartbeatIntervalMs: 1_000,
           emit: (event: unknown) => events.push(event),
         },
       );
@@ -1067,15 +1067,21 @@ describe("handleConverse resilience — P0-2", () => {
       const result = await pending;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("Hard timeout");
+      // The heartbeat now runs while the prompt is spoken, but only with pre-recording stages.
+      const framesAtTimeout = events.length;
+      expect(framesAtTimeout).toBeGreaterThan(0);
+      expect(
+        (events as Array<{ stage: string }>).every((e) => e.stage === "waiting" || e.stage === "speaking"),
+      ).toBe(true);
 
       finishPrompt(capturedPrompt());
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
-      jest.advanceTimersByTime(100);
+      jest.advanceTimersByTime(10_000);
 
       expect(waitSpy).not.toHaveBeenCalled();
-      expect(events).toEqual([]);
+      expect(events.length).toBe(framesAtTimeout);
       expect(jest.getTimerCount()).toBe(0);
     } finally {
       jest.useRealTimers();
