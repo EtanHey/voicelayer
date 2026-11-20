@@ -7,6 +7,15 @@ import { writeFileSync } from "fs";
 import type { WordBoundary } from "../socket-protocol";
 import type { NarrationAudio, NarrationProsody, NarrationRequest, NarrationSource } from "./source";
 
+/**
+ * The MP3 bitrate each narration family writes for one utterance. A one-piece ask keeps the engine's file as
+ * written; a multi-utterance ask re-encodes its joined file at the same bitrate, so both paths carry one encoding.
+ * - edge: edge-tts requests `audio-24khz-48kbitrate-mono-mp3` (edge_tts/communicate.py).
+ * - clone: the Qwen3 daemon writes MP3 through mlx-audio → ffmpeg with the default `-b:a 128k`
+ *   (mlx_audio/audio_io.py `_encode_ffmpeg`); measured 128000 bit/s on a 24 kHz mono write, 2026-11-18.
+ */
+export const NARRATION_MP3_BITRATE = { edge: "48k", clone: "128k" } as const;
+
 export interface EngineNarrationDeps {
   edge(text: string, voice: string, rate: string, outFile: string, signal?: AbortSignal, retries?: number,
     prosody?: NarrationProsody): Promise<{ audioFile: string; durationMs: number; wordBoundaries: WordBoundary[] }>;

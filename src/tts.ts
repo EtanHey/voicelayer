@@ -90,7 +90,8 @@ import { SpeechWordTimeline } from "./tts/speech-words";
 import { isPlaybackSpeed, resolvePauseCursorMs } from "./playback/session";
 import { narrationSource, setNarrationSource } from "./narration/source";
 import { createNarrationSource } from "./narration/adapter";
-import { planUtterances, synthesizeBounded, type AssembleNarration } from "./narration/utterances";
+import { planUtterances, synthesizeBounded } from "./narration/utterances";
+import { NARRATION_MP3_BITRATE } from "./narration/engines";
 import type { NarrationAudio } from "./narration/source";
 import { ledgerAskBegin, ledgerAskCouldNotPark, ledgerAskRestore, ledgerRecorderExit, ledgerEnded, ledgerPaused, ledgerPlayerExited, ledgerPlayerStarted,
   ledgerPreviousHold, ledgerPreviousReturn, ledgerReplayFromStart, ledgerResumed, ledgerSeek, ledgerStopAll, ledgerStopped, ledgerWord, currentPlaybackSpeed,
@@ -635,7 +636,8 @@ async function narrateEdge(text: string, voice: string, rate: string, outFile: s
 }
 
 /** Utterance audio and silences joined in order, resampled to one 24 kHz mono stream. */
-const assembleNarration: AssembleNarration = async (parts, outFile, signal) => {
+export async function assembleNarration(parts: Array<{ file: string } | { silenceMs: number }>, outFile: string,
+  signal: AbortSignal | undefined, mp3Bitrate: string): Promise<void> {
   const argv = ["ffmpeg", "-nostdin", "-y"];
   const chains: string[] = [];
   parts.forEach((part, index) => {
@@ -645,10 +647,10 @@ const assembleNarration: AssembleNarration = async (parts, outFile, signal) => {
   });
   const inputs = parts.map((_, index) => `[a${index}]`).join("");
   argv.push("-filter_complex", `${chains.join(";")};${inputs}concat=n=${parts.length}:v=0:a=1[out]`,
-    "-map", "[out]", "-ac", "1", "-ar", "24000", "-b:a", "48k", outFile);
+    "-map", "[out]", "-ac", "1", "-ar", "24000", "-b:a", mp3Bitrate, outFile);
   await runAudioCommand(argv, signal);
   if (!existsSync(outFile) || statSync(outFile).size === 0) throw new Error("assembled narration is empty");
-};
+}
 
 /**
  * Lane B: voice_ask narration as bounded utterances with pauses, through the one NarrationSource (lead,
@@ -659,7 +661,8 @@ async function narrateBounded(engine: "edge" | "clone", text: string, voice: str
   signal?: AbortSignal): Promise<NarrationAudio | null> {
   try {
     return await synthesizeBounded({ text, engine, voice, rate, outFile, signal }, {
-      source: narrationSource(), assemble: assembleNarration,
+      source: narrationSource(),
+      assemble: (parts, out, abort) => assembleNarration(parts, out, abort, NARRATION_MP3_BITRATE[engine]),
       probeMs: file => probeAudioDurationMs(file) ?? 0,
       dispose: file => { try { unlinkSync(file); } catch {} try { unlinkSync(file.replace(".mp3", ".meta.ndjson")); } catch {} },
     });
