@@ -153,8 +153,12 @@ final class VoiceBarNotchViewTests: XCTestCase {
 
         XCTAssertFalse(container.contains("if presentation.visualState != .idle"))
         XCTAssertTrue(container.contains("morphingNotchSurface"))
-        // Owner r2: a band closing to hidden keeps its glass until the close lands, then hides as before.
-        XCTAssertTrue(container.contains("presentation.visualState == .idle && closing.band == nil ? 0 : 1"))
+        // Owner r2: a band closing to hidden keeps its glass until the close lands, then hides as before. Owner card 8:
+        // under Reduce Motion the surface's opacity is the fade itself.
+        XCTAssertTrue(container.contains(".opacity(surfaceOpacity)"))
+        let opacity = try bracedScope(after: "private var surfaceOpacity", in: source)
+        XCTAssertTrue(opacity.contains("if accessibilityReduceMotion { return reduceMotionOpacity }"))
+        XCTAssertTrue(opacity.contains("presentation.visualState == .idle && closing.band == nil ? 0 : 1"))
         let picker = try bracedScope(after: "private var notchSurface", in: source)
         XCTAssertTrue(picker.contains("VoiceBarNotchContinuousShape"))
         XCTAssertTrue(picker.contains("VoiceBarNotchHistoryMorphShape"))
@@ -208,8 +212,14 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertFalse(source.contains("Task.yield()"))
         XCTAssertTrue(transaction.contains("renderedGeometry = nextGeometry"))
         XCTAssertTrue(transaction.contains("surfaceRevealProgress = transition.revealProgress"))
-        XCTAssertEqual(source.components(separatedBy: "surfaceRevealProgress =").count - 1, 4,
-                       "only init, onAppear, the geometry transaction and the unanimated History hand-off set the mask")
+        XCTAssertEqual(source.components(separatedBy: "surfaceRevealProgress =").count - 1, 5,
+                       "only init, onAppear, the geometry transaction, the unanimated History hand-off and the "
+                       + "unanimated Reduce Motion snap set the mask")
+        // Owner card 8: the Reduce Motion snap sets the mask in the same update as the geometry, unanimated.
+        let snap = try bracedScope(after: "private func snapShell(to geometry:", in: source)
+        XCTAssertTrue(snap.contains("snap.disablesAnimations = true"))
+        XCTAssertTrue(snap.contains("renderedGeometry = geometry"))
+        XCTAssertTrue(snap.contains("surfaceRevealProgress = presentation.visualState == .idle ? 0 : 1"))
         XCTAssertTrue(surface.contains("VoiceBarNotchCoreAnchoredRevealMask"))
         XCTAssertTrue(surface.contains(".mask"))
     }

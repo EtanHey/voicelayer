@@ -31,7 +31,7 @@
     "formal/notch-presentation/MutTextWing.cfg": "8a14cd224cda080ee1841ee8391e1e9703fc61efd85dce194f4072b721cfd307",
     "formal/notch-presentation/Fixed.cfg": "87d27589a3cf2adf8e4c1e7652b70d9826bebb861b8a406e59db80e09e559029",
     "formal/notch-presentation/OldQuitCause.cfg": "6c6fc8f33a06e3fd7babba4d98b5e7cb980fd966daf42659204397f0424a80b6",
-    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "755f93b34fb4d6abc567e617f410a9b621aa09902663e5ef8d25590bd8e3bd20",
+    "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "c6941476ed93bb9666c79ec558b2e299a9943af085eeba04b3faa3d28bd2434f",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchContract.swift": "51ae9580a894b83b59c3e4a4aa7eacf01b2c0cf2453687affa4ebeb23bce159e",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchFeedback.swift": "a96b0d9b6a58316a5c65c07d480368c3f09a2888ccf00722cc59a292d7068a11",
     "flow-bar/Sources/VoiceBarUI/VoiceBarPresentation.swift": "ff516998dc3ac778a79665542c6e8d86722ecbf41f90b10a7f5fa89377d8cf58",
@@ -274,8 +274,8 @@
       "kind": "temporal",
       "target": "NoteNeverStuck",
       "status": "EXPECTED_FAIL",
-      "generated": 152108,
-      "distinct": 27404
+      "generated": 150454,
+      "distinct": 27235
     },
     "MutTypedTab": {
       "role": "mutant",
