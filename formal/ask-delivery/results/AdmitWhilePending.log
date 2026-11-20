@@ -1,0 +1,14 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "NoNewCaptureWhileRecovering",
+  "status": "EXPECTED_FAIL",
+  "generated": 54,
+  "distinct": 40,
+  "trace": [
+    "/\\ wire = [a |-> {}, b |-> {}]\n/\\ rows = << [ state |-> \"none\",\n     owner |-> \"none\",\n     archive |-> FALSE,\n     did |-> 0,\n     lease |-> 0 ],\n   [ state |-> \"none\",\n     owner |-> \"none\",\n     archive |-> FALSE,\n     did |-> 0,\n     lease |-> 0 ] >>\n/\\ crashes = 0\n/\\ reconnects = 0\n/\\ acks = [a |-> {}, b |-> {}]\n/\\ nextLease = 1\n/\\ waiting = [a |-> FALSE, b |-> FALSE]\n/\\ crid = [a |-> 0, b |-> 0]\n/\\ inbox = [a |-> {}, b |-> {}]\n/\\ nextOp = 1\n/\\ dreq = [a |-> [op |-> 0, rid |-> 0], b |-> [op |-> 0, rid |-> 0]]",
+    "/\\ wire = [a |-> {}, b |-> {}]\n/\\ rows = << [ state |-> \"pending\",\n     owner |-> \"a\",\n     archive |-> FALSE,\n     did |-> 1,\n     lease |-> 0 ],\n   [ state |-> \"none\",\n     owner |-> \"none\",\n     archive |-> FALSE,\n     did |-> 0,\n     lease |-> 0 ] >>\n/\\ crashes = 0\n/\\ reconnects = 0\n/\\ acks = [a |-> {}, b |-> {}]\n/\\ nextLease = 1\n/\\ waiting = [a |-> TRUE, b |-> FALSE]\n/\\ crid = [a |-> 1, b |-> 0]\n/\\ inbox = [a |-> {}, b |-> {}]\n/\\ nextOp = 2\n/\\ dreq = [a |-> [op |-> 1, rid |-> 1], b |-> [op |-> 0, rid |-> 0]]",
+    "/\\ wire = [a |-> {}, b |-> {}]\n/\\ rows = << [ state |-> \"pending\",\n     owner |-> \"a\",\n     archive |-> FALSE,\n     did |-> 1,\n     lease |-> 0 ],\n   [ state |-> \"none\",\n     owner |-> \"none\",\n     archive |-> FALSE,\n     did |-> 0,\n     lease |-> 0 ] >>\n/\\ crashes = 0\n/\\ reconnects = 0\n/\\ acks = [a |-> {}, b |-> {}]\n/\\ nextLease = 1\n/\\ waiting = [a |-> FALSE, b |-> FALSE]\n/\\ crid = [a |-> 1, b |-> 0]\n/\\ inbox = [a |-> {}, b |-> {}]\n/\\ nextOp = 2\n/\\ dreq = [a |-> [op |-> 0, rid |-> 0], b |-> [op |-> 0, rid |-> 0]]",
+    "/\\ wire = [a |-> {}, b |-> {}]\n/\\ rows = << [ state |-> \"pending\",\n     owner |-> \"a\",\n     archive |-> FALSE,\n     did |-> 1,\n     lease |-> 0 ],\n   [ state |-> \"pending\",\n     owner |-> \"a\",\n     archive |-> FALSE,\n     did |-> 2,\n     lease |-> 0 ] >>\n/\\ crashes = 0\n/\\ reconnects = 0\n/\\ acks = [a |-> {}, b |-> {}]\n/\\ nextLease = 1\n/\\ waiting = [a |-> TRUE, b |-> FALSE]\n/\\ crid = [a |-> 2, b |-> 0]\n/\\ inbox = [a |-> {}, b |-> {}]\n/\\ nextOp = 3\n/\\ dreq = [a |-> [op |-> 2, rid |-> 2], b |-> [op |-> 0, rid |-> 0]]"
+  ]
+}

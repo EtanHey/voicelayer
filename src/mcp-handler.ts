@@ -6,6 +6,7 @@
  */
 
 import type { SpeechControl } from "./speech-control";
+import type { AskDeliveryHooks, AskDeliverySession } from "./ask-delivery";
 
 import { getToolDefinitions } from "./mcp-tools";
 import { formatError } from "./format-response";
@@ -34,13 +35,16 @@ export interface ToolExecutor {
 }
 
 export interface McpRequestContext {
+  connection?: VoiceToolContext["connection"];
+  delivery?: AskDeliverySession;
+  askDelivery?: AskDeliveryHooks;
   disconnectSignal?: AbortSignal;
   sendNotification(notification: McpNotification): void | Promise<void>;
   setLoggingLevel?(level: McpLoggingLevel): void;
 }
 
 /** MCP JSON-RPC request shape. */
-interface McpRequest {
+export interface McpRequest {
   jsonrpc: string;
   id?: number | string;
   method: string;
@@ -48,7 +52,7 @@ interface McpRequest {
 }
 
 /** MCP JSON-RPC response shape. */
-interface McpResponse {
+export interface McpResponse {
   jsonrpc: string;
   id: number | string;
   result?: Record<string, unknown>;
@@ -65,6 +69,11 @@ export async function handleMcpRequest(
   requestContext?: McpRequestContext,
   speechControl?: SpeechControl,
 ): Promise<McpResponse | null> {
+  if (requestContext?.delivery) {
+    const { delivery, ...rest } = requestContext;
+    return delivery.run(request, (hooks, forward = request) =>
+      handleMcpRequest(forward, executor, { ...rest, askDelivery: hooks }, speechControl));
+  }
   // Notifications (no id) don't get responses
   if (request.id === undefined || request.id === null) {
     return null;
@@ -186,8 +195,10 @@ export async function handleMcpRequest(
         const context = createVoiceToolContext(
           requestMeta._meta?.progressToken,
           requestContext?.sendNotification,
+          requestContext?.connection,
         );
         context.disconnectSignal = requestContext?.disconnectSignal;
+        context.askDelivery = requestContext?.askDelivery;
         const result = await executor.executeTool(
           params.name,
           params.arguments ?? {},

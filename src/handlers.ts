@@ -812,6 +812,8 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     );
     const result: VoiceAskTurnOutcome = { kind: "hard-timeout", stage, timeoutMs, recovery: recovery ?? null };
     if (beforeCaptureExpired) abandonedBeforeCapture.resolve(result);
+    // The bounded response is not the flow's final result; Ask delivery finalizes from the flow.
+    context?.askDelivery?.timedOut();
     resolveTimeout(result);
   };
   const armTimeout = (
@@ -1016,6 +1018,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         } : {}),
         onArchiveCreated: (archivePath) => {
           captureArchivePath = archivePath;
+          context?.askDelivery?.archive(basename(archivePath));
           console.error(`[voicelayer] voice_ask archive_id=${basename(archivePath)}`);
         },
         onCaptureEnd: (transcribedDurationMs) => {
@@ -1058,6 +1061,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
       return { kind: "no-input", timeoutSeconds, pushToEnd, promptPlayback };
     }
 
+    context?.askDelivery?.answer(response);
     return { kind: "answered", transcript: response,
       archiveId: captureArchivePath ? basename(captureArchivePath) : null,
       promptPlayback: speech.playbackOutcome };
@@ -1094,6 +1098,12 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     await Promise.all(promptPlayers.map(handle => handle.playerExited));
     await settleSpeechArchivesForUpdate(archiveContext);
   };
+  // A bounded handler return is not the completion of retained background STT.
+  if (context?.askDelivery) {
+    const settled = flowPromise.then(formatVoiceAskTurnResult);
+    settled.catch(() => {}); // The handler's own catch reports this rejection.
+    context.askDelivery.defer(settled);
+  }
   holdVoiceAdmission(flowPromise.then(confirmedTeardown, confirmedTeardown));
   operationLifecycle?.deferReleaseUntil(Promise.race([flowPromise, abandonedBeforeCapture.promise]));
   try {
