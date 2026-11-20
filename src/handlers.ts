@@ -780,6 +780,9 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
   const progressHeartbeat = context
     ? new VoiceAskProgressHeartbeat(context)
     : null;
+  // A disconnected client has nobody left to keep alive.
+  const stopHeartbeatOnDisconnect = (): void => progressHeartbeat?.stop();
+  context?.disconnectSignal?.addEventListener("abort", stopHeartbeatOnDisconnect, { once: true });
   let timer: ReturnType<typeof setTimeout> | undefined;
   let timeoutSettled = false;
   let captureActive = false;
@@ -890,6 +893,9 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     // exit (or its end) restores the read.
     readHold ??= holdReadForAsk();
     if (readHold.refused) return { kind: "capture-owned" };
+    // An MCP client's idle limit resets only on a response or progress frame: beat from the first moment,
+    // not only once the microphone opens (earlier playback and the spoken question may each take minutes).
+    progressHeartbeat?.start("waiting");
     await awaitCurrentPlayback({ forCaptureAdmission: true });
     if (timeoutSettled || inputAbortController.signal.aborted) {
       return { kind: "ended-before-capture" };
@@ -909,6 +915,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     armTimeout(promptBudgetRemaining, "prompt");
     const voiceName = validated.voice;
     promptAttempted = true;
+    progressHeartbeat?.setStage("speaking");
     let speech: Awaited<ReturnType<typeof speak>>;
     try {
       speech = await speak(validated.message, {
@@ -1123,6 +1130,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     return { kind: "failed", message };
   } finally {
     context?.disconnectSignal?.removeEventListener("abort", onDisconnect);
+    context?.disconnectSignal?.removeEventListener("abort", stopHeartbeatOnDisconnect);
     progressHeartbeat?.stop();
   }
 }
