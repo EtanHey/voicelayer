@@ -183,8 +183,10 @@ describe(`Ask and Preview real receipt ingress: ${caller} (canonical preload; sy
     } });
     expect(contexts[0].id).not.toBe(pairedId);
     expect(disk().request_id).toMatch(/^[a-f0-9-]{36}$/);
-    expect(notifications).toHaveLength(connection ? 3 : 0);
+    expect(notifications).toHaveLength(connection ? 5 : 0);
     expect(notifications.map(n => n.params.data)).toEqual(connection ? [
+      expect.objectContaining({ kind: "voice_ask_progress", stage: "waiting" }),
+      expect.objectContaining({ kind: "voice_ask_progress", stage: "speaking" }),
       { kind: "playback_outcome", ...playback },
       expect.objectContaining({ kind: "voice_ask_progress", stage: "recording" }),
       expect.objectContaining({ kind: "voice_ask_progress", stage: "transcribing" }),
