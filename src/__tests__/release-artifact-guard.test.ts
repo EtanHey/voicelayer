@@ -76,7 +76,7 @@ fi
     for (const [path, content] of markers) expect(readFileSync(path, "utf8")).toBe(content);
     return { ...result, operations: existsSync(trace) ? readFileSync(trace, "utf8") : "" };
   };
-  return { base, applications, safe, versionDir, keep, run };
+  return { base, applications, safe, versionDir, keep, run, pkg };
 }
 
 for (const output of ["/Applications/NOINDEX1B-synthetic", "/Applications/NOINDEX1B-synthetic.noindex"]) {
@@ -185,7 +185,7 @@ for (const mode of ["relative", "symlink-parent", "direct-noindex"]) {
     const destination = mode === "direct-noindex" ? f.safe : join(f.safe, "version");
     mkdirSync(destination, { recursive: true });
     let input = destination;
-    if (mode === "relative") input = relative(root, destination);
+    if (mode === "relative") input = relative(f.pkg.root, destination);
     if (mode === "symlink-parent") {
       input = join(f.base, "alias");
       symlinkSync(destination, input);
@@ -206,7 +206,7 @@ fi
     const result = Bun.spawnSync(["/bin/bash", "flow-bar/build-app.sh",
       "--install-path", join(input, "VoiceBar.app"), "--zip-path", join(input, "VoiceBar.zip"),
       "--no-stop", "--no-relaunch"], {
-      cwd: root, env: { ...process.env, ...stubInstallerTransport(f.base), BASH_ENV: hook }, stdout: "pipe", stderr: "pipe",
+      cwd: f.pkg.root, env: { ...process.env, ...stubInstallerTransport(f.base), BASH_ENV: hook }, stdout: "pipe", stderr: "pipe",
     });
     expect(result.stderr.toString()).toBe("");
     expect(result.exitCode).toBe(0);

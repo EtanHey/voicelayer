@@ -81,6 +81,39 @@ describe("scripts/release-voicebar.sh", () => {
   }, SUBPROCESS_TIMEOUT_MS);
 });
 
+describe("build-app signer admission", () => {
+  for (const staged of [false, true]) {
+    test(`direct release entry refuses side branch before compiler (staged=${staged})`, () => {
+      fx.sideCommit();
+      mkdirSync(join(parent, "artifacts.noindex"));
+      const hook = join(parent, "compiler-hook.sh");
+      const trace = join(parent, "compiler-trace");
+      writeFileSync(hook, 'swift() { echo compiler >> "$RELLOCK_TRACE"; exit 73; }\n');
+      const r = Bun.spawnSync(["/bin/bash", join(fx.root, "flow-bar/build-app.sh"),
+        "--install-path", join(parent, "artifacts.noindex/VoiceBar.app"), "--no-stop", "--no-relaunch"], {
+        cwd: fx.root, stdout: "pipe", stderr: "pipe", env: { ...process.env,
+          BASH_ENV: hook, RELLOCK_TRACE: trace, VOICEBAR_REQUIRE_NOTARIZATION: "1",
+          VOICEBAR_RELEASE_STAGED: staged ? "1" : "0" },
+      });
+      expect(r.exitCode).toBe(1);
+      expect(r.stderr.toString()).toContain("is not on origin/main");
+      expect(existsSync(trace)).toBe(false);
+    }, SUBPROCESS_TIMEOUT_MS);
+  }
+
+  test("main HEAD with modified tracked source refuses before wrapper build", () => {
+    writeFileSync(join(fx.root, "package.json"), readFileSync(join(fx.root, "package.json"), "utf8") + "\n");
+    const hook = join(parent, "build-hook.sh");
+    const trace = join(parent, "build-trace");
+    writeFileSync(hook, 'bash() { echo build >> "$RELLOCK_TRACE"; return 73; }\n');
+    const r = run("release-voicebar.sh", ["--skip-tap-check", "--output-dir", join(parent, "dirty.noindex")],
+      { BASH_ENV: hook, RELLOCK_TRACE: trace });
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("source checkout is dirty");
+    expect(existsSync(trace)).toBe(false);
+  }, SUBPROCESS_TIMEOUT_MS);
+});
+
 describe("scripts/promote-voicebar-release.sh", () => {
   function fakeApp(gitCommit: string | null) {
     const app = join(parent, "VoiceBar.app");

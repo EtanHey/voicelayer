@@ -21,3 +21,18 @@ require_commit_on_origin_main() {
         return 1
     fi
 }
+
+# A main SHA does not authenticate mutable build inputs. Refuse tracked edits and
+# nonignored additions as well, before compiling and again at the signer boundary.
+require_clean_main_build() {
+    local script="$1" repo="$2" commit="$3" status
+    require_commit_on_origin_main "$script" "$repo" "$commit" "build commit HEAD" || return 1
+    if ! status="$(git -C "$repo" status --porcelain --untracked-files=normal)" || [[ -n "$status" ]]; then
+        echo "[$script] REFUSED: source checkout is dirty; build only committed main source" >&2
+        return 1
+    fi
+    if [[ "$(git -C "$repo" rev-parse HEAD)" != "$commit" ]]; then
+        echo "[$script] REFUSED: build commit changed during build" >&2
+        return 1
+    fi
+}

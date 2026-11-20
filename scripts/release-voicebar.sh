@@ -135,7 +135,7 @@ require_release_artifact_path "$ZIP_PATH" "$ARTIFACT_DIR"
 # Argument and path validation above has no side effects; this runs before the artifact
 # cleanup, the build and the signing.
 source "$SCRIPT_DIR/lib/require-main-ancestor.sh"
-require_commit_on_origin_main release-voicebar "$PACKAGE_ROOT" "$(git -C "$PACKAGE_ROOT" rev-parse HEAD)" "build commit HEAD" || exit 1
+require_clean_main_build release-voicebar "$PACKAGE_ROOT" "$(git -C "$PACKAGE_ROOT" rev-parse HEAD)" || exit 1
 
 mkdir -p "$ARTIFACT_DIR"
 "$(release_artifact_python)" "$SCRIPT_DIR/lib/cleanup-release-artifacts.py" "$ARTIFACT_DIR" "$APP_PATH" "$ZIP_PATH"

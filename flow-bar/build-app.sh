@@ -654,7 +654,20 @@ allows_qa23_adhoc_signing() {
        && "$VOICEBAR_REQUIRE_NOTARIZATION" == 0 && -z "$VOICEBAR_RELEASE_ZIP" && ! -L "$APP_DIR" ]]
 }
 
+# All Developer ID paths, including direct and staged entries, share this gate.
+# Keep the original source SHA through compilation and check again before keychain access.
+BUILD_ADMITTED_COMMIT=""
+require_signer_source() {
+    if allows_uie2e_adhoc_signing || allows_qa23_adhoc_signing; then return 0; fi
+    source "$REPO_ROOT/scripts/lib/require-main-ancestor.sh"
+    if [[ -z "$BUILD_ADMITTED_COMMIT" ]]; then
+        BUILD_ADMITTED_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+    fi
+    require_clean_main_build build-app "$REPO_ROOT" "$BUILD_ADMITTED_COMMIT"
+}
+
 validate_signing_identity() {
+    require_signer_source || return 1
     if allows_uie2e_adhoc_signing || allows_qa23_adhoc_signing; then return 0; fi
     if is_resident_app_dir && [[ "$SIGN_IDENTITY" == Apple\ Development:* ]] && [ "${VOICEBAR_ALLOW_DANGEROUS_DEV_RESIDENT_INSTALL:-0}" != "1" ]; then
         echo "[build-app] ERROR: Refusing Apple Development signing for resident /Applications/VoiceBar.app." >&2
@@ -1018,6 +1031,7 @@ if [[ "${VOICEBAR_QA23_BUILD:-0}" == 1 ]]; then
 fi
 # Validate before process inspection, stop, install-path mutation or any compiler invocation.
 configure_qa_swift_flags
+require_signer_source || exit 1
 source "$REPO_ROOT/scripts/lib/noindex-path.sh"
 if [[ "${VOICEBAR_RELEASE_STAGED:-0}" == 1 ]]; then
     # Supervisor owns this private working directory; preserve relative writes.

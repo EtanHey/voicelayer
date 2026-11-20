@@ -127,6 +127,7 @@ test("release build refuses a version swap during swift without touching outside
   if (!runRoot) throw new Error("Requires isolated preload");
   const base = realpathSync(mkdtempSync(join(runRoot, "build-race-")));
   try {
+    const pkg = makeMainFixture(base);
     const selected = join(base, "artifacts.noindex/version");
     const outside = join(base, "outside");
     mkdirSync(selected, { recursive: true });
@@ -146,7 +147,7 @@ bash() { return 0; }
 mkdir() { if [[ "$*" == *Contents/MacOS* ]]; then exit 77; fi; command mkdir "$@"; }
 `);
     const result = Bun.spawnSync(["/bin/bash", "flow-bar/build-app.sh", "--install-path", join(selected, "VoiceBar.app"), "--no-stop", "--no-relaunch"], {
-      cwd: repo, env: { ...process.env, BASH_ENV: hook, TEST_BASE: base,
+      cwd: pkg.root, env: { ...process.env, BASH_ENV: hook, TEST_BASE: base,
         TEST_SELECTED: selected, TEST_OUTSIDE: outside,
         VOICEBAR_REQUIRE_NOTARIZATION: "1", VOICEBAR_RELEASE_ZIP: join(selected, "VoiceBar.zip") },
       stdout: "pipe", stderr: "pipe",
