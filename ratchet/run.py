@@ -418,6 +418,12 @@ def wire_row(run, row):
             # Real daemon serializer and socket.write meet a stalled kernel buffer.
             if pressure:
                 # Observe the full kernel queue while the sender cannot drain it.
+                # Wait (bounded) until the daemon has broadcast both pressure frames;
+                # the existing frame/handled assertions below still judge a miss.
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline and sum(
+                        line.startswith("[ratchet] frame_bytes=") for line in run.log("daemon").splitlines()) < 2:
+                    time.sleep(.05)
                 start = time.monotonic()
                 time.sleep(.5)
                 queued = array.array("i", [0])
