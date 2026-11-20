@@ -1420,8 +1420,9 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       jest.advanceTimersByTime(500); clockMs += 500;
       expect(handleSocketCommand({ cmd: "replay" }).outcome).toBe("accept"); await playerBarrier.at(1);
       expect(players[0].signals).toEqual(["SIGTERM"]);
-      jest.advanceTimersByTime(5500); clockMs += 5500; await fixtureCheckpoint();
-      expect(players[1].signals).toEqual([]); // Original player's 6000ms deadline has passed.
+      // The original player's deadline (2 x 1000 ms + 30 s + 250 ms confirmation from t=0) passes first.
+      jest.advanceTimersByTime(31_750); clockMs += 31_750; await fixtureCheckpoint();
+      expect(players[1].signals).toEqual([]);
       jest.advanceTimersByTime(499); clockMs += 499; await fixtureCheckpoint();
       expect(players[1].signals).toEqual([]);
       jest.advanceTimersByTime(1); clockMs += 1; await fixtureCheckpoint();
@@ -1429,6 +1430,50 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       expect(await h.completion).toMatchObject({ error: "Speech playback failed: player-error" });
       expect(events.filter(e => e.type === "error" && /watchdog/.test(e.message))).toHaveLength(1);
     } finally { jest.useRealTimers(); }
+  });
+
+  // T17 (M4 2026-11-18 07:17Z, VoiceBar 2.4.3): three Replays, word-click seeks, then the next chunk played on its own
+  // from zero while clone synthesis and waveform decode ran 30-50x slower than normal. That healthy player outlived its
+  // audio by more than the old fixed 5 s margin, was SIGKILLed, and the read died.
+  it("T17 FX-3 the owner's replay-then-seek sequence never kills the next chunk's slow but healthy player", async () => {
+    jest.useFakeTimers();
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const tick = async (ms: number) => { jest.advanceTimersByTime(ms); clockMs += ms; await fixtureCheckpoint(); };
+    const playing = () => events.filter(e => e.state === "speaking" && !e.long_read?.preparing).at(-1);
+    try {
+      const h = start(); await playerBarrier.at(0);
+      players[0].exit.resolve(0); await playerBarrier.at(1); await synthBarrier.at(2);
+      let next = 2;
+      for (let i = 0; i < 3; i++) {
+        await tick(700);
+        expect(handleSocketCommand({ cmd: "replay" }).outcome).toBe("accept");
+        await playerBarrier.at(next++);
+        expect(playing()).toMatchObject({ playback_offset_ms: 0, long_read: { id: h.id, chunk_index: 0 } });
+      }
+      // Forward into chunk 1, back into chunk 0, forward again: every seek is a new player with its own budget.
+      for (const offset of [1_250, 250, 1_500]) {
+        await tick(300);
+        expect(seekPlayback(offset)).toMatchObject({ outcome: "accept", offset_ms: offset });
+        await playerBarrier.at(next++);
+        expect(playing().playback_offset_ms).toBe(offset);
+      }
+      expect(players.slice(0, next - 1).every(player => !player.signals.includes("SIGKILL"))).toBe(true);
+      // The seeked chunk 1 player ends naturally; chunk 2 starts from its own zero.
+      players[next - 1].exit.resolve(0);
+      const slow = await playerBarrier.at(next++); await fixtureCheckpoint();
+      const edge = playing();
+      expect(edge.long_read.chunk_index).toBe(2);
+      const audioMs = edge.chunk_duration_ms;
+      expect(audioMs).toBeGreaterThan(0);
+      // Starved host: the player is still running 9 s past its audio plus the old 5 s margin, then exits on its own.
+      await tick(audioMs + 5_000 + 9_000);
+      expect(slow.signals).toEqual([]);
+      expect(events.some(e => e.type === "error" && /watchdog/.test(e.message))).toBe(false);
+      slow.exit.resolve(0); await playerBarrier.at(next);
+      expect(playing().long_read.chunk_index).toBe(3);
+      stopPlayback(); await h.done;
+      expect(await h.completion).not.toHaveProperty("error");
+    } finally { warn.mockRestore(); jest.useRealTimers(); }
   });
 
   it("REP1 explicitly rejects Replay before the prefix is synthesized", async () => {

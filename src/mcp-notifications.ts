@@ -1,6 +1,10 @@
 import type { PlaybackOutcomeEvent } from "./socket-protocol";
 
-export type VoiceAskProgressStage = "recording" | "transcribing";
+export type VoiceAskProgressStage =
+  | "waiting"
+  | "speaking"
+  | "recording"
+  | "transcribing";
 
 export interface VoiceAskProgressEvent {
   kind: "voice_ask_progress";
@@ -163,7 +167,10 @@ export class VoiceAskProgressHeartbeat {
   constructor(private readonly context: VoiceToolContext) {}
 
   start(stage: VoiceAskProgressStage): void {
-    if (this.timer) return;
+    if (this.timer) {
+      this.setStage(stage);
+      return;
+    }
     this.startedAt = Date.now();
     this.stage = stage;
     this.emit();
