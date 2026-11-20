@@ -26,7 +26,7 @@ text processing a dictation uses. Prints the text; with --json prints one line:
 {"format":"${TRANSCRIPT_FORMAT}","text":...,"backend":...,"model":...,"language":...}
 Without --language the dictation language setting applies (QA_VOICE_WHISPER_LANG, default auto).
 Exit 0 with text; 3 on an empty result (silence, or a result the gates emptied; nothing on stdout);
-1 on a real failure (missing or unsupported file, backend failure, unconfirmed sidecar shutdown); 2 on bad arguments.
+1 on a real failure (missing or unsupported file, backend failure, unconfirmed sidecar shutdown); 2 on bad arguments; 130/143 on SIGINT/SIGTERM after bounded cleanup.
 Convert other audio first: ffmpeg -i in.m4a -ac 1 -ar 16000 -c:a pcm_s16le out.wav
 `;
 
@@ -115,18 +115,46 @@ export async function runTranscribeCli(argv: string[], deps: TranscribeCliDeps =
   if (parsed.language) process.env.QA_VOICE_WHISPER_LANG = LANGUAGE_MODES[parsed.language];
 
   let code = 1;
+  let interrupted = false;
+  let cleanup: Promise<void> | undefined;
+  const shutdown = () => cleanup ??= Promise.resolve().then(deps.shutdown ?? stopOwnedSidecars);
+  const stop = (signal: "SIGINT" | "SIGTERM") => {
+    if (interrupted) return;
+    interrupted = true;
+    // This command owns its process. Cleanup may need to join a stuck decoder;
+    // cap that join, then process exit ends every abandoned local request.
+    const deadline = setTimeout(() => {
+      stderr("voicelayer transcribe: signal cleanup timed out; sidecar shutdown unconfirmed\n");
+      process.exit(signal === "SIGTERM" ? 143 : 130);
+    }, 5000);
+    void shutdown().catch(error => {
+      stderr(`voicelayer transcribe: sidecar shutdown unconfirmed: ${error instanceof Error ? error.message : String(error)}\n`);
+    }).finally(() => {
+      clearTimeout(deadline);
+      process.exit(signal === "SIGTERM" ? 143 : 130);
+    });
+  };
+  const onInt = () => stop("SIGINT"), onTerm = () => stop("SIGTERM");
+  // Install before imports: shared modules also register signal listeners, but
+  // cannot own the lifetime of this one-shot command.
+  process.on("SIGINT", onInt); process.on("SIGTERM", onTerm);
   try {
     const { getBackend } = await import("../stt");
     const { buildBoundaryContext, finalizeTranscriptionResultForSurface, shouldBuildBoundaryContext } = await import("../input");
     const { processingEnv } = await import("../processing-settings");
     const { getLanguageModeFromEnv } = await import("../language-config");
+    if (interrupted) return 1;
     const backend = await (deps.getBackend ?? getBackend)();
+    if (interrupted) return 1;
     const result = await backend.transcribe(file);
+    if (interrupted) return 1;
     const env = processingEnv();
     const boundary = shouldBuildBoundaryContext(result.text, env)
       ? await buildBoundaryContext(file, result.segments, result.segmentsAudioSha256, env)
       : undefined;
+    if (interrupted) return 1;
     const finalized = await finalizeTranscriptionResultForSurface(result.text, "dictation", env, boundary);
+    if (interrupted) return 1;
     const text = finalized.text.trim() ? finalized.text : "";
     if (!text) {
       stderr(`voicelayer transcribe: empty result: no words recognised in ${parsed.file} (backend ${result.backend})\n`);
@@ -134,19 +162,27 @@ export async function runTranscribeCli(argv: string[], deps: TranscribeCliDeps =
     } else {
       const mode = getLanguageModeFromEnv();
       const language = mode === "english" ? "en" : mode === "hebrew" ? "he" : "auto";
-      stdout(parsed.json
+      const output = parsed.json
         ? `${JSON.stringify({ format: TRANSCRIPT_FORMAT, text, backend: result.backend, model: await modelForBackend(result.backend), language })}\n`
-        : `${text}\n`);
+        : `${text}\n`;
+      if (interrupted) return 1;
+      stdout(output);
       code = 0;
     }
   } catch (error) {
-    stderr(`voicelayer transcribe: ${error instanceof Error ? error.message : String(error)}\n`);
+    if (!interrupted) stderr(`voicelayer transcribe: ${error instanceof Error ? error.message : String(error)}\n`);
     code = 1;
   } finally {
-    try { await (deps.shutdown ?? stopOwnedSidecars)(); }
+    try { await shutdown(); }
     catch (error) {
       stderr(`voicelayer transcribe: sidecar shutdown unconfirmed: ${error instanceof Error ? error.message : String(error)}\n`);
       code = 1;
+    }
+    // Only the signal handler exits on interruption, including when the request
+    // settles while cleanup is pending. Do not return a competing exit code.
+    if (interrupted) await new Promise<never>(() => {});
+    if (!interrupted) {
+      process.off("SIGINT", onInt); process.off("SIGTERM", onTerm);
     }
   }
   return code;

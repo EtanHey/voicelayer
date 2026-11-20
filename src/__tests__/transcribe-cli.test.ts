@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runTranscribeCli, TRANSCRIPT_FORMAT } from "../cli/transcribe";
 import { finalizeTranscriptionTextForSurface } from "../input";
@@ -167,3 +167,62 @@ describe("voicelayer transcribe", () => {
     }
   });
 });
+
+// Signal proof uses a synthetic PCM file and a slow injected decoder, no microphone.
+for (const [signal, exitCode] of [["SIGTERM", 143], ["SIGINT", 130]] as const) {
+  for (const outcome of ["pending", "late", "cleanup-timeout"]) {
+  if (signal === "SIGINT" && outcome === "cleanup-timeout") continue;
+  const settles = outcome === "late";
+  test(`${signal} (${outcome}) mid-decode awaits owned-sidecar cleanup and discards output`, async () => {
+    const root = join(dir, `${signal}-${outcome}`);
+    mkdirSync(root, { recursive: true });
+    const audio = join(root, "silence.wav");
+    const pcm = Buffer.alloc(364);
+    pcm.write("RIFF"); pcm.writeUInt32LE(356, 4); pcm.write("WAVEfmt ", 8);
+    pcm.writeUInt32LE(16, 16); pcm.writeUInt16LE(1, 20); pcm.writeUInt16LE(1, 22);
+    pcm.writeUInt32LE(16000, 24); pcm.writeUInt32LE(32000, 28);
+    pcm.writeUInt16LE(2, 32); pcm.writeUInt16LE(16, 34); pcm.write("data", 36); pcm.writeUInt32LE(320, 40);
+    writeFileSync(audio, pcm);
+    const ready = join(root, "ready"), cleaned = join(root, "cleaned");
+    const fixture = join(root, "signal-fixture.ts");
+    writeFileSync(fixture, `
+import { runTranscribeCli } from ${JSON.stringify(join(import.meta.dir, "../cli/transcribe.ts"))};
+import { writeFileSync } from "node:fs";
+const sidecar = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], { env: process.env, stdout: "ignore", stderr: "ignore" });
+process.exit(await runTranscribeCli([${JSON.stringify(audio)}], {
+  getBackend: async () => ({ name: "slow", isAvailable: async () => true,
+    transcribe: async () => new Promise(resolve => {
+      if (${settles}) process.once(${JSON.stringify(signal)}, () => resolve({ text: "late result", backend: "slow", durationMs: 1 }));
+      writeFileSync(${JSON.stringify(ready)}, String(sidecar.pid));
+    }) }),
+  shutdown: async () => {
+    sidecar.kill("SIGTERM"); await sidecar.exited;
+    await Bun.sleep(50); writeFileSync(${JSON.stringify(cleaned)}, "owned sidecar reaped");
+    if (${outcome === "cleanup-timeout"}) await new Promise(() => {});
+  },
+}));
+`);
+    const child = Bun.spawn([process.execPath, fixture], { env: process.env, stdout: "pipe", stderr: "pipe" });
+    let timedOut = false;
+    const deadline = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, 8000);
+    try {
+      const start = Date.now();
+      while (!existsSync(ready) && Date.now() - start < 4000) await Bun.sleep(10);
+      expect(existsSync(ready)).toBe(true);
+      child.kill(signal);
+      const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+      expect(timedOut).toBe(false);
+      expect(code).toBe(exitCode);
+      expect(stdout).toBe("");
+      if (outcome === "cleanup-timeout") expect(stderr).toContain("signal cleanup timed out; sidecar shutdown unconfirmed");
+      expect(readFileSync(cleaned, "utf8")).toBe("owned sidecar reaped");
+      const pid = Number(readFileSync(ready, "utf8"));
+      expect(() => process.kill(pid, 0)).toThrow();
+    } finally {
+      clearTimeout(deadline);
+      child.kill("SIGKILL"); await child.exited;
+      if (existsSync(ready)) { try { process.kill(Number(readFileSync(ready, "utf8")), "SIGKILL"); } catch {} }
+    }
+  }, 12000);
+}
+}
