@@ -12,13 +12,13 @@
     "formal/speech-word-seek/StaleMutant.cfg": "33d40021b2671ecdc71a75db08c391aa5afa9ac1f1319eb7c1196206976cdbff",
     "formal/speech-word-seek/OldReplayInvisibleMutant.cfg": "03631a98f22d3045049750e929ab93c4c63fe9f040fe1f1c97ad0dda641adbb2",
     "formal/speech-word-seek/Fixed.cfg": "5579cccbb15a1880ef97609ea24c189131079ced28c5ad4cca932a988078710e",
-    "src/tts.ts": "c81c90c38dbf92021a80488d339a64baf65fbae58aa2cb3469a4aec823e4a468",
+    "src/tts.ts": "16f611988ea465f5b51ac425f2741e6d1c22e56d79189ac16b30081177dd4237",
     "src/tts/speech-words.ts": "65aee12e0d17659ed044c418edef306ca3f679c913fda08a09339f7006bdddf5",
     "src/__tests__/speech-words.test.ts": "ae10c21b242fe47d3930bffa974c00032cbe4e5e373aa314eb52a6ea25cf0d78",
     "src/socket-protocol.ts": "8329b558d26dd6f9f85b784552056698563193b9078a749a0597513d3e3681d2",
     "src/socket-handlers.ts": "ba966df991db38969594868381323d6b383c8eeabac71c5d9bf11130d39885fe",
-    "src/__tests__/tts-long-read-runtime.test.ts": "5cc72db55a287ed312626bcc17e57b321bdb33c381799890ae7cd558befee368",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "70758ed9e2da858bb5f8848336fae416e1ede0cbcc3506e0e42a869b988529a2",
+    "src/__tests__/tts-long-read-runtime.test.ts": "fc544bad7d7f8ea48d9d4c492305a1235de9b5f397c66e5bcf1d8e5a822ad6d3",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "9e4bfc30e64627da8a74e43caf59c4620b54efb6074faa1a07b2b2b10c4a4ab5",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
