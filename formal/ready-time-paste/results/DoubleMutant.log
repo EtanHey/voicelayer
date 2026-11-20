@@ -3,6 +3,6 @@
   "kind": "invariant",
   "target": "DeliveredAtMostOnce",
   "status": "EXPECTED_FAIL",
-  "generated": 175,
-  "distinct": 69
+  "generated": 2781,
+  "distinct": 1160
 }

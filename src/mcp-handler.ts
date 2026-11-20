@@ -6,10 +6,12 @@
  */
 
 import type { SpeechControl } from "./speech-control";
+import type { AskDeliveryHooks, AskDeliverySession } from "./ask-delivery";
 
 import { getToolDefinitions } from "./mcp-tools";
 import { formatError } from "./format-response";
 import { PACKAGE_VERSION } from "./version";
+import { MODERN_PROTOCOL, PROTOCOL_META, TASKS_EXTENSION } from "./mcp-protocol";
 import {
   createVoiceToolContext,
   isMcpLoggingLevel,
@@ -34,13 +36,16 @@ export interface ToolExecutor {
 }
 
 export interface McpRequestContext {
+  connection?: VoiceToolContext["connection"];
+  delivery?: AskDeliverySession;
+  askDelivery?: AskDeliveryHooks;
   disconnectSignal?: AbortSignal;
   sendNotification(notification: McpNotification): void | Promise<void>;
   setLoggingLevel?(level: McpLoggingLevel): void;
 }
 
 /** MCP JSON-RPC request shape. */
-interface McpRequest {
+export interface McpRequest {
   jsonrpc: string;
   id?: number | string;
   method: string;
@@ -48,11 +53,11 @@ interface McpRequest {
 }
 
 /** MCP JSON-RPC response shape. */
-interface McpResponse {
+export interface McpResponse {
   jsonrpc: string;
   id: number | string;
   result?: Record<string, unknown>;
-  error?: { code: number; message: string };
+  error?: { code: number; message: string; data?: unknown };
 }
 
 /**
@@ -65,6 +70,11 @@ export async function handleMcpRequest(
   requestContext?: McpRequestContext,
   speechControl?: SpeechControl,
 ): Promise<McpResponse | null> {
+  if (requestContext?.delivery) {
+    const { delivery, ...rest } = requestContext;
+    return delivery.run(request, (hooks, forward = request) =>
+      handleMcpRequest(forward, executor, { ...rest, askDelivery: hooks }, speechControl));
+  }
   // Notifications (no id) don't get responses
   if (request.id === undefined || request.id === null) {
     return null;
@@ -79,6 +89,29 @@ export async function handleMcpRequest(
   }
 
   switch (request.method) {
+    case "server/discover": {
+      const meta = request.params?._meta;
+      const requested = meta && typeof meta === "object" ? (meta as Record<string, unknown>)[PROTOCOL_META] : undefined;
+      // Without a modern version this is not a modern probe: keep today's unknown-method answer.
+      if (requested === undefined) {
+        return { jsonrpc: "2.0", id: request.id, error: { code: -32601, message: `Method not found: ${request.method}` } };
+      }
+      if (requested !== MODERN_PROTOCOL) {
+        return { jsonrpc: "2.0", id: request.id, error: { code: -32022, message: "Unsupported protocol version",
+          data: { supported: [MODERN_PROTOCOL], requested } } };
+      }
+      return {
+        jsonrpc: "2.0",
+        id: request.id,
+        result: {
+          resultType: "complete",
+          supportedVersions: [MODERN_PROTOCOL],
+          capabilities: { tools: {}, logging: {}, extensions: { [TASKS_EXTENSION]: {} } },
+          _meta: { "io.modelcontextprotocol/serverInfo": { name: "voicelayer", version: PACKAGE_VERSION } },
+        },
+      };
+    }
+
     case "initialize":
       return {
         jsonrpc: "2.0",
@@ -183,11 +216,18 @@ export async function handleMcpRequest(
         const requestMeta = params as {
           _meta?: { progressToken?: string | number };
         };
+        const hooks = requestContext?.askDelivery;
+        const send = requestContext?.sendNotification;
         const context = createVoiceToolContext(
           requestMeta._meta?.progressToken,
-          requestContext?.sendNotification,
+          // A call answered with a task has no live request: its progress token must not be used again.
+          send && hooks?.notificationOpen ? notification => hooks.notificationOpen!(notification) ? send(notification) : undefined : send,
+          requestContext?.connection,
         );
-        context.disconnectSignal = requestContext?.disconnectSignal;
+        const signals = [requestContext?.disconnectSignal, hooks?.signal].filter((signal): signal is AbortSignal => !!signal);
+        // tasks/cancel ends the Ask through the same abort path a client disconnect uses.
+        context.disconnectSignal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
+        context.askDelivery = hooks;
         const result = await executor.executeTool(
           params.name,
           params.arguments ?? {},

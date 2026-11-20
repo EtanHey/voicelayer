@@ -83,6 +83,50 @@ test("restart replays handshake, fails in-flight once, and queues calls without 
   await until(() => bridge.messages.length === 4);
   expect(bridge.messages[3]).toMatchObject({ id: 10, result: { version: "third" } });
 });
+test("Ask delivery capability: overwrites a forged identity, survives daemon restart, differs per bridge", async () => {
+  const path = testSocket("bc.sock"); const first = await daemon(path); const bridge = launch(path);
+  const forged = "f".repeat(64);
+  const call = (id: string) => ({ jsonrpc: "2.0", id, method: "tools/call",
+    params: { name: "voice_ask", arguments: {}, _meta: { "voicelayer/caller": forged, progressToken: 7 } } });
+  const meta = (messages: z.infer<typeof rpc>[], id: string) =>
+    z.object({ params: z.object({ _meta: z.record(z.string(), z.unknown()) }) }).parse(messages.find(m => m.id === id))
+      .params._meta;
+  bridge.send(init); await until(() => bridge.messages.length === 1); bridge.send(initialized);
+  bridge.send(call("a")); await until(() => first.messages.some(m => m.id === "a"));
+  const capability = meta(first.messages, "a")["voicelayer/caller"];
+  expect(capability).toMatch(/^[a-f0-9]{64}$/); expect(capability).not.toBe(forged);
+  expect(meta(first.messages, "a").progressToken).toBe(7);
+  await first.stop(); const next = await daemon(path, "new");
+  bridge.send(call("b")); await until(() => next.messages.some(m => m.id === "b"));
+  expect(meta(next.messages, "b")["voicelayer/caller"]).toBe(capability);
+  const other = launch(path);
+  other.send(init); await until(() => other.messages.length === 1); other.send(initialized);
+  other.send(call("c")); await until(() => next.messages.some(m => m.id === "c"));
+  expect(meta(next.messages, "c")["voicelayer/caller"]).toMatch(/^[a-f0-9]{64}$/);
+  expect(meta(next.messages, "c")["voicelayer/caller"]).not.toBe(capability);
+});
+test("MCP tasks: tasks/get and tasks/cancel carry the same caller capability as the voice call, with no initialize", async () => {
+  const path = testSocket("bt.sock"); const fixture = await daemon(path); const bridge = launch(path);
+  const forged = "e".repeat(64);
+  const modern = { "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+    "io.modelcontextprotocol/clientCapabilities": { extensions: { "io.modelcontextprotocol/tasks": {} } } };
+  const meta = (id: string) =>
+    z.object({ params: z.object({ _meta: z.record(z.string(), z.unknown()) }) }).parse(fixture.messages.find(m => m.id === id))
+      .params._meta;
+  bridge.send({ jsonrpc: "2.0", id: "d", method: "server/discover", params: { _meta: modern } });
+  bridge.send({ jsonrpc: "2.0", id: "a", method: "tools/call",
+    params: { name: "voice_ask", arguments: { message: "q" }, _meta: { ...modern, "voicelayer/caller": forged } } });
+  bridge.send({ jsonrpc: "2.0", id: "g", method: "tasks/get", params: { taskId: "t", _meta: { ...modern, "voicelayer/caller": forged } } });
+  bridge.send({ jsonrpc: "2.0", id: "c", method: "tasks/cancel", params: { taskId: "t" } });
+  await until(() => ["d", "a", "g", "c"].every(id => fixture.messages.some(m => m.id === id)));
+  const capability = meta("a")["voicelayer/caller"];
+  expect(capability).toMatch(/^[a-f0-9]{64}$/); expect(capability).not.toBe(forged);
+  expect(meta("g")["voicelayer/caller"]).toBe(capability);
+  expect(meta("c")["voicelayer/caller"]).toBe(capability);
+  expect(meta("g")["io.modelcontextprotocol/clientCapabilities"]).toEqual(modern["io.modelcontextprotocol/clientCapabilities"]);
+  expect(meta("d")["voicelayer/caller"]).toBeUndefined(); // Discovery is not caller-bound.
+  expect(fixture.messages.some(m => m.method === "initialize")).toBe(false);
+});
 test("offline queue is bounded and every excess request gets its own error", async () => {
   const path = testSocket("bq.sock"); const bridge = launch(path);
   for (let id = 1; id <= 140; id++) bridge.send({ jsonrpc: "2.0", id, method: "tools/call" });

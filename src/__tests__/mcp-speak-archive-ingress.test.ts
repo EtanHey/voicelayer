@@ -192,7 +192,7 @@ describe("MCP raw speak ingress (canonical preload, synthetic adapters only)", (
     expect(disk().connection).toBe(connection ?? null); expect(disk().format).toBeNull();
     expect(JSON.stringify(disk())).not.toContain("synthetic-secret");
     // Entry modules are read as source, never imported (they own the resident daemon lifecycle).
-    expect(fs.readFileSync(new URL("../mcp-server.ts", import.meta.url), "utf8")).toContain('}, "stdio");');
+    expect(fs.readFileSync(new URL("../mcp-server.ts", import.meta.url), "utf8")).toContain('connection: "stdio"');
     expect(fs.readFileSync(new URL("../mcp-server-daemon.ts", import.meta.url), "utf8")).toContain('connection: "daemon"');
   });
 

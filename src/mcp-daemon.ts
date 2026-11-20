@@ -37,6 +37,7 @@ import { MAX_NDJSON_LINE_BYTES, NDJSONByteFramer } from "./ndjson-byte-framer";
 import { SocketOutboundQueue } from "./socket-outbound-queue";
 
 import type { SpeechControl } from "./speech-control";
+import { AskDeliverySession, AskDeliveryStore } from "./ask-delivery";
 
 /** Diagnostic callback for non-MCP NDJSON traffic received by the daemon. */
 export function logUnhandledNdjsonMessage(msg: Record<string, unknown>): void {
@@ -55,6 +56,7 @@ export interface McpDaemonOptions {
 }
 
 interface ClientState {
+  delivery: AskDeliverySession;
   lifetime: AbortController;
   protocol: "mcp" | "ndjson" | "unknown";
   buffer: string;
@@ -130,6 +132,8 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
   stop: () => void;
 }> {
   const { socketPath, toolExecutor, onNdjsonMessage } = options;
+  let outbox: AskDeliveryStore | undefined;
+  const deliveryStore = () => outbox ??= new AskDeliveryStore();
 
   // Clean up orphan socket (probe before removing)
   await cleanOrphanSocket(socketPath);
@@ -146,6 +150,8 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
     socket: {
       open(socket) {
         socket.data = {
+          // The daemon speaks MCP 2026-07-28 too, so a task-capable voice_ask can become an MCP task here.
+          delivery: new AskDeliverySession(deliveryStore, undefined, { tasks: true }),
           lifetime: new AbortController(),
           protocol: "unknown", buffer: "", decoder: new TextDecoder(),
           unknownRaw: Buffer.alloc(0), unknownBytes: 0, ndjsonFramer: new NDJSONByteFramer(),
@@ -154,6 +160,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
           writer: new SocketOutboundQueue(socket, "mcp-daemon", undefined, () => {
             if (!socket.data.disconnected) {
               socket.data.lifetime.abort();
+              socket.data.delivery.disconnect(true);
               socket.data.disconnected = true;
               onDisconnect();
             }
@@ -222,6 +229,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
       },
 
       close(socket) {
+        socket.data.delivery.disconnect();
         socket.data.lifetime.abort();
         socket.data.writer.close();
         if (!socket.data.disconnected) {
@@ -230,6 +238,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
         }
       },
       error(socket) {
+        socket.data.delivery.disconnect(true);
         socket.data.lifetime.abort();
         socket.data.writer.close();
         if (!socket.data.disconnected) {
@@ -291,6 +300,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
         },
         toolExecutor,
         {
+          delivery: socket.data.delivery,
           disconnectSignal: socket.data.lifetime.signal,
           sendNotification(notification: McpNotification) {
             if (
@@ -315,6 +325,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
       )
         .then((response) => {
           if (response) {
+            socket.data.delivery.writeAttempt(response.id);
             const frame = serializeMcpFrame(
               response as unknown as Record<string, unknown>,
             );
@@ -383,6 +394,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
             },
             toolExecutor,
             {
+              delivery: socket.data.delivery,
               disconnectSignal: socket.data.lifetime.signal,
               sendNotification(notification: McpNotification) {
                 if (
@@ -405,6 +417,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
           )
             .then((response) => {
               if (response) {
+                socket.data.delivery.writeAttempt(response.id);
                 try {
                   socket.data.writer.enqueue(JSON.stringify(response) + "\n");
                 } catch {}
