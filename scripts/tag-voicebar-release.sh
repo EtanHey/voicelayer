@@ -22,6 +22,10 @@ bun="${BUN:-bun}"
 root="$(git rev-parse --show-toplevel 2>/dev/null)" || refuse "not inside a git checkout"
 cd "$root"
 
+# shellcheck source=lib/require-main-ancestor.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/require-main-ancestor.sh"
+require_commit_on_origin_main tag-voicebar-release "$root" "$(git rev-parse HEAD)" "HEAD" || exit 1
+
 [ -z "$(git status --porcelain --untracked-files=all)" ] \
   || refuse "the working tree is not clean; commit or remove every change first"
 

@@ -1,4 +1,5 @@
 import { bundleFixtureRoot } from "./setup/bundle-fixtures";
+import { makeMainFixture } from "./setup/release-main-fixture";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "fs";
 import { join } from "path";
@@ -20,7 +21,10 @@ const releaseScript = join(repoRoot, "scripts", "release-voicebar.sh");
 const promoteScript = join(repoRoot, "scripts", "promote-voicebar-release.sh");
 const version: string = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")).version;
 
-const COMMIT = "05bcc0a235712245dfc0bd08f8e657dd9277e7cd";
+// Release lock: promote refuses a build commit that is not on origin/main, so the fixture
+// "built" commit is the one commit on a throwaway package root's local origin/main.
+const mainFixture = makeMainFixture(bundleFixtureRoot());
+const COMMIT = mainFixture.mainSha;
 const OTHER_COMMIT = "1111111111111111111111111111111111111111";
 const BUILD_TIME = "2026-10-18T01:10:14Z";
 const AFTER_BUILD = "2026-10-18T01:30:00.000Z";
@@ -433,7 +437,7 @@ exit 2
   function runPromote(args: string[]) {
     const r = Bun.spawnSync(
       [
-        "bash", promoteScript,
+        "bash", join(mainFixture.root, "scripts", "promote-voicebar-release.sh"),
         "--version", version,
         "--app", join(dir, "VoiceBar.app"),
         "--zip", join(dir, "VoiceBar.zip"),

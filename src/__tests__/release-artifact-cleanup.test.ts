@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { makeMainFixture } from "./setup/release-main-fixture";
 
 const repo = resolve(import.meta.dir, "../..");
 const version: string = JSON.parse(readFileSync(join(repo, "package.json"), "utf8")).version;
@@ -36,8 +37,10 @@ rm() {
 }
 bash() { printf 'build\\n' >> "$NOINDEX1B_TRACE"; return 73; }
 `);
-    const result = Bun.spawnSync(["/bin/bash", "scripts/release-voicebar.sh", "--output-dir", root, "--skip-tap-check"], {
-      cwd: repo,
+    // The release lock needs the build commit on origin/main; the fixture package root has one.
+    const pkg = makeMainFixture(base);
+    const result = Bun.spawnSync(["/bin/bash", join(pkg.root, "scripts", "release-voicebar.sh"), "--output-dir", root, "--skip-tap-check"], {
+      cwd: pkg.root,
       env: { ...process.env, BASH_ENV: shellEnv, NOINDEX1B_TEST_BEFORE_DELETE: hook,
         NOINDEX1B_SELECTED: selected, NOINDEX1B_OUTSIDE: outside, NOINDEX1B_INJECTED: injected, NOINDEX1B_TRACE: trace },
       stdout: "pipe", stderr: "pipe",
