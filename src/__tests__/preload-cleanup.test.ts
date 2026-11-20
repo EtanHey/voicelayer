@@ -135,7 +135,8 @@ test("PID reuse between the final liveness check and deletion cannot erase the n
     await import(${JSON.stringify(preload)});
     const root = process.env.VOICELAYER_TEST_RUN_ROOT;
     fs.writeFileSync(root + "/active-evidence", "active run");
-    fs.writeFileSync(process.cwd() + "/replacement.json", JSON.stringify(root));
+    fs.writeFileSync(process.cwd() + "/replacement.json.tmp", JSON.stringify(root));
+    fs.renameSync(process.cwd() + "/replacement.json.tmp", process.cwd() + "/replacement.json");
     setInterval(() => {}, 1000);
   `;
   const sweeper = `
@@ -153,8 +154,10 @@ test("PID reuse between the final liveness check and deletion cannot erase the n
         });
         const marker = process.cwd() + "/replacement.json";
         const deadline = Date.now() + 2000;
-        while (!fs.existsSync(marker) && Date.now() < deadline) Bun.sleepSync(5);
-        adopted = JSON.parse(fs.readFileSync(marker, "utf8"));
+        for (;;) {
+          try { adopted = JSON.parse(fs.readFileSync(marker, "utf8")); break; }
+          catch (error) { if (Date.now() >= deadline) throw error; Bun.sleepSync(5); }
+        }
         // Verify B is still running when A resumes deletion.
         process.kill(replacementProcess.pid, 0);
       }
