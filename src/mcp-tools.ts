@@ -111,7 +111,7 @@ export function getToolDefinitions() {
 
     {
       name: "voice_ask_results",
-      description: "Read retained Ask answers: newest first (default 5, max 20), or one archive_id. Returns raw answer and status. With delivery_ack alone, acknowledge a caller-bound Ask result's delivery_id and lease_id after reading it. Unacknowledged Ask results are recovered on this caller's next voice call before any new action (that call's own action is NOT run); pending means the earlier Ask is still recording or transcribing. Recovery is at-least-once; deduplicate by delivery_id. This is recovery on the next call, not automatic delivery. Never speaks, records or retranscribes.",
+      description: "Read retained Ask answers: newest first (default 5, max 20), or one archive_id. Returns raw answer and status. An Ask still in progress in this VoiceLayer process is listed under open (phase speaking, listening or transcribing; archive_id once allocated): its answer is not ready, so do not ask the user again; read it later. With delivery_ack alone, acknowledge a caller-bound Ask result's delivery_id and lease_id after reading it. Unacknowledged Ask results are recovered on this caller's next voice call before any new action (that call's own action is NOT run); pending means the earlier Ask is still recording or transcribing. Recovery is at-least-once; deduplicate by delivery_id. This is recovery on the next call, not automatic delivery. Never speaks, records or retranscribes.",
       // delivery_ack only marks VoiceLayer's own outbox row read; it never changes the user's environment.
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: { type: "object" as const, properties: {
