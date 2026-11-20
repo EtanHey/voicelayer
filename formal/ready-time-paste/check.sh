@@ -24,4 +24,9 @@ check Fixed 0 all
 check Old 12 DeliversToReadyTimeFocus
 check DoubleMutant 12 DeliveredAtMostOnce
 check SecureMutant 12 NeverIntoSecureField
+check NoRecovery 12 RelaunchedTargetRecovered
+check KickOnlyMutant 12 RelaunchedTargetRecovered
+check CacheMutant 12 RelaunchedTargetRecovered
+check SilentMutant 12 DeliveredOrVisiblyDeclined
+check AnyAppMutant 12 NativeNeverTouched
 printf 'logs: %s\n' "$run"

@@ -3,6 +3,6 @@
   "kind": "invariant",
   "target": "NeverIntoSecureField",
   "status": "EXPECTED_FAIL",
-  "generated": 140,
-  "distinct": 55
+  "generated": 1890,
+  "distinct": 871
 }

@@ -122,8 +122,11 @@ final class CommandModeAXHelper {
             logNativePaste("paste_native_focus", ["reason": "ax_untrusted"])
             return nil
         }
-        guard let element = focusedElement() else {
-            logNativePaste("paste_native_focus", ["reason": "focused_element_unavailable"])
+        let query = focusedElementQuery()
+        guard let element = query.element else {
+            // The status tells a Chromium tree that is off (-25212/-25204) from every other failure.
+            logNativePaste("paste_native_focus", ["reason": "focused_element_unavailable",
+                                                  "axStatus": String(query.status.rawValue)])
             return nil
         }
         var pid = pid_t()
@@ -200,7 +203,9 @@ final class CommandModeAXHelper {
         )
     }
 
-    private static func focusedElement() -> AXUIElement? {
+    private static func focusedElement() -> AXUIElement? { focusedElementQuery().element }
+
+    private static func focusedElementQuery() -> (status: AXError, element: AXUIElement?) {
         let systemWide = AXUIElementCreateSystemWide()
         var focused: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(
@@ -208,8 +213,8 @@ final class CommandModeAXHelper {
             kAXFocusedUIElementAttribute as CFString,
             &focused
         )
-        guard status == .success, let focused else { return nil }
-        return (focused as! AXUIElement)
+        guard status == .success, let focused else { return (status, nil) }
+        return (status, (focused as! AXUIElement))
     }
 
     private static func readFocusedSelectionSnapshot() -> CommandModeSelectionSnapshot? {
@@ -404,7 +409,7 @@ final class CommandModeAXHelper {
         return false
     }
 
-    private static func logNativePaste(_ event: String, _ details: [String: String]) {
+    static func logNativePaste(_ event: String, _ details: [String: String]) {
         let fields = details.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
         NSLog("[VoiceBar][diag] %@ %@", event, fields)
     }

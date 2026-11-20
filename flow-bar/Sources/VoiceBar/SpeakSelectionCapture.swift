@@ -76,6 +76,35 @@ struct SelectionFocusAX {
         sleep: { Thread.sleep(forTimeInterval: $0) },
         bundleIdentifier: { NSRunningApplication(processIdentifier: $0.pid)?.bundleIdentifier })
 
+    /// A Chromium/Electron app whose AX tree is off answers the focus query with one of these.
+    static func isUnreadable(_ status: AXError) -> Bool { status == .noValue || status == .cannotComplete }
+
+    /// The result of one AXManualAccessibility recovery.
+    struct ManualAccessibilityRecovery {
+        var enableStatus: AXError
+        var retries = 0
+        /// The status of each re-query, as logged (a malformed successful answer logs its query status).
+        var retryStatuses: [String] = []
+        var status: AXError
+        var focus: Focus?
+    }
+
+    /// The one recovery for an unreadable focus, shared by Option+F5 selection and dictation paste:
+    /// set AXManualAccessibility on `app` once, then re-query the focus every `step` until it is readable
+    /// or `retryLimit` re-queries have run. Never reads values; the caller owns every admission rule.
+    func enableManualAccessibility(on app: AppIdentity, status: AXError, focus: Focus?,
+                                   retryLimit: Int, step: TimeInterval) -> ManualAccessibilityRecovery {
+        var result = ManualAccessibilityRecovery(enableStatus: setManualAccessibility(app), status: status, focus: focus)
+        guard result.enableStatus == .success else { return result }
+        while result.status != .success, result.retries < retryLimit {
+            self.sleep(step)
+            result.retries += 1
+            (result.status, result.focus) = queryFocus()
+            result.retryStatuses.append(String((result.focus?.queryStatus ?? result.status).rawValue))
+        }
+        return result
+    }
+
     /// Decodes the existing query without additional AX calls or logging attribute values.
     static func decodeFocus(_ value: CFTypeRef?, attribute: (String) -> (AXError, CFTypeRef?)) -> (AXError, Focus?) {
         guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else {
@@ -199,17 +228,30 @@ final class SpeakSelectionCapture {
             let selectedText = preflight.unreadableFocusAllowsCopy ? nil : self.readAXSelection()
             let comparesWordBoundaries = sourceApp != nil && !prefersCopy
                 && selectedText.map { Self.longestWordRun($0) >= 24 } == true
-            if let text = selectedText, !text.isEmpty, !prefersCopy, !comparesWordBoundaries {
-                Self.onMain { complete(.completed(text).observed(axRead: .text, path: .ax)) }
+            // T27: outside T3 Code, AX text that lost its line breaks asks Copy for the structure first.
+            let flattened = !prefersCopy && selectedText.map(SelectionStructureRepair.looksFlattened) == true
+            let repairsStructure = flattened && sourceApp != nil
+            if let text = selectedText, !text.isEmpty, !prefersCopy, !comparesWordBoundaries, !repairsStructure {
+                // No frontmost app means no app to address a Copy to; only the split can repair it.
+                let repaired = flattened ? SelectionStructureRepair.split(text) : text
+                let decision: SelectionStructureRepair.Decision = !flattened ? .notFlattened
+                    : repaired == text ? SelectionStructureRepair.Decision.none : .split
+                Self.onMain {
+                    complete(.completed(repaired).observed(axRead: .text, path: .ax).withStructureRepair(decision))
+                }
             } else {
                 let axRead: SelectionCaptureResult.AXRead = preflight.unreadableFocusAllowsCopy ? .notAttempted
                     : selectedText == nil ? .unavailable : selectedText?.isEmpty == true ? .empty : .text
                 // Keep AppKit pasteboard/item access serialized with the app's other clipboard users.
                 Self.onMain {
                     self.captureUsingPasteboard(copyExemptApp: preflight.copyExemptApp,
-                                                intendedCopyApp: prefersCopy || comparesWordBoundaries ? sourceApp : nil) { result in
+                                                intendedCopyApp: prefersCopy || comparesWordBoundaries || repairsStructure
+                                                    ? sourceApp : nil) { result in
                         var observed = result.observed(axRead: axRead, path: .copy)
-                        if comparesWordBoundaries, let selectedText {
+                        if repairsStructure, let selectedText {
+                            observed = Self.resolveStructure(ax: selectedText, copy: observed,
+                                                             comparesWordBoundaries: comparesWordBoundaries)
+                        } else if comparesWordBoundaries, let selectedText {
                             switch result.outcome {
                             case .copyEmpty, .copyTimedOut:
                                 observed = observed.usingAXText(selectedText)
@@ -232,6 +274,31 @@ final class SpeakSelectionCapture {
 
     private static func prefersCopy(bundle: String) -> Bool {
         bundle == t3BundleIdentifier || ChromiumFamilyApps.prefersCopy(bundleIdentifier: bundle)
+    }
+
+    /// Copy wins when it carries the line breaks over the same letters (or, as before, when it restores
+    /// word boundaries). A Copy that failed or was refused before Cmd+C falls back to the AX text, split at its
+    /// inline markers: before T27 that AX text was the read. Clipboard races, a failed restore and a secure
+    /// field still end the read, exactly as on the word-boundary path.
+    static func resolveStructure(ax: String, copy result: SelectionCaptureResult,
+                                 comparesWordBoundaries: Bool) -> SelectionCaptureResult {
+        switch result.outcome {
+        case .completed:
+            if let copied = result.text {
+                if SelectionStructureRepair.copyKeepsStructure(ax: ax, copy: copied) {
+                    return result.withStructureRepair(.copy)
+                }
+                if comparesWordBoundaries, copyRestoresWordBoundaries(ax: ax, copy: copied) {
+                    return result.withStructureRepair(.none)
+                }
+            }
+        case .copyEmpty, .copyTimedOut, .copyFailed, .captureFailed:
+            break
+        default:
+            return result.withStructureRepair(.none)
+        }
+        let repaired = SelectionStructureRepair.split(ax)
+        return result.usingAXText(repaired).withStructureRepair(repaired == ax ? .none : .split)
     }
 
     private static func longestWordRun(_ text: String) -> Int {
@@ -417,25 +484,23 @@ final class SpeakSelectionCapture {
         var (status, focus) = ax.queryFocus()
         fields["ax_status"] = String((focus?.queryStatus ?? status).rawValue)
         fields["final_ax_status"] = fields["ax_status"]
-        var retryStatuses: [String] = []
-        let unreadable = status == .noValue || status == .cannotComplete
+        let unreadable = SelectionFocusAX.isUnreadable(status)
         if recover, unreadable, let app = ax.frontmostApp() {
             fields["manual_ax_attempted"] = "true"
-            let enableStatus = ax.setManualAccessibility(app)
-            fields["manual_ax_status"] = String(enableStatus.rawValue)
-            guard enableStatus == .success else {
+            let recovery = ax.enableManualAccessibility(on: app, status: status, focus: focus,
+                                                        retryLimit: focusRetryLimit, step: focusRetryStep)
+            fields["manual_ax_status"] = String(recovery.enableStatus.rawValue)
+            guard recovery.enableStatus == .success else {
                 result.axEnable = .failed
                 result.blockReason = .captureFailed
                 return done("focus_query_failed")
             }
             result.axEnable = .attempted
-            while status != .success, result.retries < focusRetryLimit {
-                ax.sleep(focusRetryStep)
-                result.retries += 1
-                (status, focus) = ax.queryFocus()
-                retryStatuses.append(String((focus?.queryStatus ?? status).rawValue))
-                fields["retry_statuses"] = retryStatuses.joined(separator: ",")
-                fields["final_ax_status"] = retryStatuses.last
+            result.retries = recovery.retries
+            (status, focus) = (recovery.status, recovery.focus)
+            if let last = recovery.retryStatuses.last {
+                fields["retry_statuses"] = recovery.retryStatuses.joined(separator: ",")
+                fields["final_ax_status"] = last
             }
             if status == .success {
                 result.axEnable = .set

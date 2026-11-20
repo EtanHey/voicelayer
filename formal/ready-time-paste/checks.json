@@ -2,15 +2,23 @@
   "module": "ReadyTimePaste",
   "sources": [
     "formal/legacy_receipts.py",
+    "formal/ready-time-paste/AnyAppMutant.cfg",
+    "formal/ready-time-paste/CacheMutant.cfg",
     "formal/ready-time-paste/DoubleMutant.cfg",
     "formal/ready-time-paste/Fixed.cfg",
+    "formal/ready-time-paste/KickOnlyMutant.cfg",
+    "formal/ready-time-paste/NoRecovery.cfg",
     "formal/ready-time-paste/Old.cfg",
     "formal/ready-time-paste/ReadyTimePaste.tla",
     "formal/ready-time-paste/SecureMutant.cfg",
+    "formal/ready-time-paste/SilentMutant.cfg",
     "formal/ready-time-paste/check.sh",
     "formal/setup-tlc.py",
     "formal/tlc.lock.json",
-    "formal/tlc_support.py"
+    "formal/tlc_support.py",
+    "flow-bar/Sources/VoiceBar/DictationFocusRecovery.swift",
+    "flow-bar/Tests/VoiceBarTests/DictationPasteAfterRelaunchTests.swift",
+    "flow-bar/Tests/VoiceBarTests/DictationFocusRecoveryTests.swift"
   ],
   "receiptRunner": true,
   "checks": {
@@ -33,11 +41,39 @@
       "role": "mutant",
       "target": "NeverIntoSecureField",
       "kind": "invariant"
+    },
+    "NoRecovery": {
+      "role": "mutant",
+      "target": "RelaunchedTargetRecovered",
+      "kind": "invariant"
+    },
+    "KickOnlyMutant": {
+      "role": "mutant",
+      "target": "RelaunchedTargetRecovered",
+      "kind": "invariant"
+    },
+    "CacheMutant": {
+      "role": "mutant",
+      "target": "RelaunchedTargetRecovered",
+      "kind": "invariant"
+    },
+    "SilentMutant": {
+      "role": "mutant",
+      "target": "DeliveredOrVisiblyDeclined",
+      "kind": "invariant"
+    },
+    "AnyAppMutant": {
+      "role": "mutant",
+      "target": "NativeNeverTouched",
+      "kind": "invariant"
     }
   },
   "acceptance": [
     "DeliveredAtMostOnce",
+    "DeliveredOrVisiblyDeclined",
     "DeliversToReadyTimeFocus",
-    "NeverIntoSecureField"
+    "NativeNeverTouched",
+    "NeverIntoSecureField",
+    "RelaunchedTargetRecovered"
   ]
 }
