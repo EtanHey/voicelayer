@@ -3,6 +3,6 @@
   "kind": "pass",
   "target": null,
   "status": "PASS",
-  "generated": 935,
-  "distinct": 305
+  "generated": 31865,
+  "distinct": 10000
 }
