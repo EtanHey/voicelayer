@@ -203,7 +203,7 @@ describe("P10 queue pause/resume", () => {
     expect(resumedEvent).toMatchObject({ state: "resumed", playback_id: handle.id, offset_ms: 4000, word_index: 4 });
     expect(resumedEvent.generation).toBeGreaterThan(pausedEvent.generation);
     // Watchdog rebased on the remaining 6 s, never the pre-pause budget or paused wall time.
-    expect(timers).toContain(10_000 - 4000 + 5000);
+    expect(timers).toContain((10_000 - 4000) * 2 + 30_000);
     expect(tts.isPlaybackPaused()).toBe(false);
 
     at(100_000); resumed.exit.resolve(0);

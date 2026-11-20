@@ -1150,6 +1150,9 @@ interface ActivePlayback {
   rate: number;
   watchdog?: ReturnType<typeof setTimeout>;
   watchdogTimedOut?: boolean;
+  /** T17: wall time this player's audio needs at its rate, and when it was spawned (overrun diagnostics). */
+  audioWallMs?: number;
+  spawnedAt?: number;
   timing?: ReturnType<typeof startCloneTiming>;
 }
 
@@ -1200,7 +1203,18 @@ const LOW_PRIORITY_TTL_MS = 10_000;
 const POSITION_HEARTBEAT_MS = 250;
 const NORMAL_PRIORITY_TTL_MS = 30_000;
 // Allow player startup/teardown without mistaking synthesis or decoder time for playback.
-const PLAYER_WATCHDOG_MARGIN_MS = 5_000;
+// T17 (M4, 2026-11-18): under host starvation (clone synthesis 30x and waveform decode 50x slower than normal,
+// mem_pressure=warning) a healthy afplay outlived its 4266 ms of audio by more than a fixed 5 s and was SIGKILLed,
+// ending the read. Its startup and the daemon noticing its exit both stretch with load, so the bound is generous:
+// twice the remaining audio plus 30 s. A truly stuck player is still killed; a slow one never is.
+const PLAYER_WATCHDOG_MARGIN_MS = 30_000;
+const PLAYER_WATCHDOG_AUDIO_FACTOR = 2;
+// The old 5 s bound survives only as a diagnostic: a player exiting later than this past its audio is logged.
+const PLAYER_OVERRUN_WARN_MS = 5_000;
+// A player told to stop has no audio left to play; one ignoring SIGTERM this long is escalated to SIGKILL.
+const PLAYER_TERM_ESCALATION_MS = 5_000;
+// An expired deadline waits this long before the kill, so an exit the loop has not processed yet wins.
+const PLAYER_WATCHDOG_CONFIRM_MS = 250;
 let playbackIdCounter = 0;
 
 function nextPlaybackId(): string {
@@ -2362,6 +2376,11 @@ class PlaybackQueueManager {
     if (this.current?.proc !== proc || this.current.job !== job) return;
     this.current.timing?.cancel();
     clearTimeout(this.current.watchdog);
+    const { audioWallMs, spawnedAt } = this.current;
+    const overrunMs = audioWallMs !== undefined && spawnedAt !== undefined ? Date.now() - spawnedAt - audioWallMs : 0;
+    if (overrunMs > PLAYER_OVERRUN_WARN_MS) {
+      console.warn(`[voicelayer] Playback overrun: ${job.id} generation ${job.lifecycle.generation} exited ${Math.round(overrunMs)}ms after its ${Math.round(audioWallMs!)}ms of audio (host load?)`);
+    }
     if (this.seekPreparation?.job === job) this.cancelSeekPreparation();
     const elapsedMs = playerClockMs(this.current);
     this.stopProgressTimer();
@@ -2584,45 +2603,67 @@ class PlaybackQueueManager {
     return Math.max(0, Math.min(1, elapsedMs / durationMs));
   }
 
+  /** Each player is armed once at its own spawn, for its own offset and rate: a seek, Replay, Resume or speed change
+   * spawns a new player with a fresh budget, and terminating one re-arms it for SIGTERM escalation. */
   private armPlayerWatchdog(active: ActivePlayback, durationMs: number | null): void {
     if (!durationMs || !Number.isFinite(durationMs) || durationMs <= 0) return;
     // Wall time to the end is the remaining audio divided by the speed (0.75× takes longer).
     const remainingMs = Math.max(0, durationMs - (active.job.metadata?.localOffsetMs ?? 0)) / active.rate;
-    const budgetMs = remainingMs + PLAYER_WATCHDOG_MARGIN_MS;
+    active.audioWallMs = remainingMs;
+    active.spawnedAt = Date.now();
+    const budgetMs = remainingMs * PLAYER_WATCHDOG_AUDIO_FACTOR + PLAYER_WATCHDOG_MARGIN_MS;
+    this.armWatchdog(active, budgetMs, `outlived its ${Math.round(remainingMs)}ms of audio by ${Math.round(budgetMs - remainingMs)}ms`);
+  }
+
+  private armWatchdog(active: ActivePlayback, budgetMs: number, reason: string): void {
+    clearTimeout(active.watchdog);
+    active.watchdog = undefined;
     // Node/Bun overflow very long timers to 1 ms; never turn that into an early kill.
     if (!Number.isFinite(budgetMs) || budgetMs > 2_147_483_647) return;
-    const generation = active.job.lifecycle.generation;
+    const owns = () => !active.watchdogTimedOut && (this.current === active || this.terminating.get(active.proc.pid) === active);
     active.watchdog = setTimeout(() => {
-      if (active.watchdogTimedOut || (this.current !== active && this.terminating.get(active.proc.pid) !== active)) return;
-      active.watchdogTimedOut = true;
-      if (this.current === active) {
-        if (this.seekPreparation?.job === active.job) this.cancelSeekPreparation();
-        this.current = null;
-        this.stopProgressTimer();
-        this.terminate(active, "SIGKILL");
-        completeJob(active.job, buildPlaybackOutcome(active.job, "failed", "player-error", playerClockMs(active)));
-      } else {
-        // A cancelled/replayed player can ignore SIGTERM. Keep its reap fence held.
-        try { active.proc.kill("SIGKILL"); } catch {}
-      }
-      // A seek decoder can outlive the player; only the terminal work barrier
-      // proves quiet. A continuing Replay retains its normal completion edge.
-      if (active.job.completed) void active.job.lifecycle.playerExited.then(
-        () => broadcastPlaybackIdleIfSpeakerClear(), () => {},
-      );
-      const message = `Playback watchdog: ${active.job.id} generation ${generation} exceeded ${remainingMs}ms + ${PLAYER_WATCHDOG_MARGIN_MS}ms margin; forcing SIGKILL`;
-      console.warn(`[voicelayer] ${message}`);
-      broadcast({ type: "error", source: "playback", message, recoverable: true });
-      this.emitQueueSnapshot();
-      this.resolveIfIdle();
-      this.processNext();
+      if (!owns()) return;
+      // A player that exited while the daemon was busy has an exit event still queued behind this timer.
+      // Give the loop one more turn to deliver it (finish/finishTermination clear this timer) before killing.
+      active.watchdog = setTimeout(() => this.watchdogExpired(active, reason, owns), PLAYER_WATCHDOG_CONFIRM_MS);
     }, budgetMs);
+  }
+
+  private watchdogExpired(active: ActivePlayback, reason: string, owns: () => boolean): void {
+    if (!owns()) return;
+    const generation = active.job.lifecycle.generation;
+    active.watchdogTimedOut = true;
+    if (this.current === active) {
+      if (this.seekPreparation?.job === active.job) this.cancelSeekPreparation();
+      this.current = null;
+      this.stopProgressTimer();
+      this.terminate(active, "SIGKILL");
+      completeJob(active.job, buildPlaybackOutcome(active.job, "failed", "player-error", playerClockMs(active)));
+    } else {
+      // A cancelled/replayed player can ignore SIGTERM. Keep its reap fence held.
+      try { active.proc.kill("SIGKILL"); } catch {}
+    }
+    // A seek decoder can outlive the player; only the terminal work barrier
+    // proves quiet. A continuing Replay retains its normal completion edge.
+    if (active.job.completed) void active.job.lifecycle.playerExited.then(
+      () => broadcastPlaybackIdleIfSpeakerClear(), () => {},
+    );
+    const message = `Playback watchdog: ${active.job.id} generation ${generation} ${reason}; forcing SIGKILL`;
+    console.warn(`[voicelayer] ${message}`);
+    broadcast({ type: "error", source: "playback", message, recoverable: true });
+    this.emitQueueSnapshot();
+    this.resolveIfIdle();
+    this.processNext();
   }
 
   private terminate(active: ActivePlayback, signal: "SIGTERM" | "SIGKILL" = "SIGTERM"): void {
     active.timing?.cancel();
     const pid = active.proc.pid;
     this.terminating.set(pid, active);
+    // A stopped player has no audio left: its old playing budget no longer applies, only SIGTERM escalation.
+    if (signal === "SIGTERM" && !active.watchdogTimedOut) {
+      this.armWatchdog(active, PLAYER_TERM_ESCALATION_MS, `ignored SIGTERM for ${PLAYER_TERM_ESCALATION_MS}ms`);
+    }
     try {
       active.proc.kill(signal);
     } catch {}
