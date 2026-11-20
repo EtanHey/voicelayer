@@ -5446,13 +5446,24 @@ public final class VoiceState {
     private func pasteIntoReadyFocus(_ text: String, operationID: UUID?, recoversFocus: Bool = true) {
         let app = frontmostAppProvider()
         let eligibility = focusedTargetEligibilityProvider()
-        if eligibility == nil, recoversFocus, app != nil, !secureInputEnabledProvider(),
+        if eligibility == nil, recoversFocus, let app, !secureInputEnabledProvider(),
            let readyFocusRecovery {
-            // A relaunched Chromium/Electron target can hide its focus until asked. Recover, then capture
-            // again under every rule below; any answer ends in delivery or the visible refusal, never silence.
+            // Recovery may finish after a focus switch, timeout, or process relaunch. Pin values now:
+            // NSRunningApplication itself can outlive its process, and PID alone can be reused.
+            let readyPID = app.processIdentifier
+            let readyBundle = app.bundleIdentifier
+            let readyLaunch = app.launchDate
             readyFocusRecovery { [weak self] in
                 guard let self else { return }
                 if let operationID, self.ownedPasteOperations[operationID] == nil { return }
+                guard let current = self.frontmostAppProvider(),
+                      current.processIdentifier == readyPID,
+                      current.bundleIdentifier == readyBundle,
+                      current.launchDate == readyLaunch else {
+                    self.finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID,
+                        refusalNote: "Not pasted: target app changed; kept in History")
+                    return
+                }
                 self.pasteIntoReadyFocus(text, operationID: operationID, recoversFocus: false)
             }
             return

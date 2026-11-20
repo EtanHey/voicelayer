@@ -21,7 +21,7 @@
     "formal/tlc.lock.json": "3e37914f1398c6073444c37c6c8df70eb3030c14d269e808791e1d1b25467d34",
     "formal/tlc_support.py": "8c5dad35602a3a631acc61b07ed2246eeb40ef2b3a6b3a9c72c5b207c95386ec",
     "flow-bar/Sources/VoiceBar/DictationFocusRecovery.swift": "e7f74f7ed4e61d81a69c4cedf7aa9bdc015d43935835af193a85656eed70cb96",
-    "flow-bar/Tests/VoiceBarTests/DictationPasteAfterRelaunchTests.swift": "4878cd1f8f43c9680638e25f3626f5e461a4dd91d94504ab435ff7abdf5c9f7d",
+    "flow-bar/Tests/VoiceBarTests/DictationPasteAfterRelaunchTests.swift": "582559d14bbd51049c5567d896225632e858cac96ba83f4b1572dc3664424d1b",
     "flow-bar/Tests/VoiceBarTests/DictationFocusRecoveryTests.swift": "853149fd588d23526856997d7e5c21725556a79d3aba213650e1f8629f818a51",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },

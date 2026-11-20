@@ -15,7 +15,13 @@ final class DictationPasteAfterRelaunchTests: XCTestCase {
     final class App: NSRunningApplication, @unchecked Sendable {
         let name: String?
         let pid: pid_t
-        init(_ name: String?, _ pid: pid_t) { self.name = name; self.pid = pid; super.init() }
+        let launched: Date
+        init(_ name: String?, _ pid: pid_t, launched: Date? = nil) {
+            self.name = name; self.pid = pid
+            self.launched = launched ?? Date(timeIntervalSince1970: Double(pid))
+            super.init()
+        }
+        override var launchDate: Date? { launched }
         override var bundleIdentifier: String? { name }
         override var processIdentifier: pid_t { pid }
     }
@@ -195,6 +201,69 @@ final class DictationPasteAfterRelaunchTests: XCTestCase {
         kit.final(id)
         let pid = try XCTUnwrap(kit.world.front?.app.processIdentifier)
         XCTAssertEqual(kit.typed, ["com.t3tools.t3code#\(pid):whole fu… שלום"])
+    }
+
+    // Force the callback boundary without sleeps. This is also the callback invoked when
+    // recovery fails or times out: it must never select a different writable destination.
+    func testDeferredRecoveryRefusesFocusSwitchToWritableApp() throws {
+        try assertDeferredRecoveryRefusesChangedTarget { world in
+            world.launch("com.example.editor", chromium: false, axOn: true)
+        }
+    }
+
+    func testFailedRecoveryCallbackRefusesFocusSwitch() throws {
+        try assertDeferredRecoveryRefusesChangedTarget(outcome: .enableFailed) { world in
+            world.launch("com.example.editor", chromium: false, axOn: true)
+        }
+    }
+
+    func testTimedOutRecoveryCallbackRefusesFocusSwitch() throws {
+        try assertDeferredRecoveryRefusesChangedTarget(outcome: .stillUnreadable) { world in
+            world.launch("com.example.editor", chromium: false, axOn: true)
+        }
+    }
+
+    func testDeferredRecoveryRefusesRelaunchedProcessWithSamePID() throws {
+        try assertDeferredRecoveryRefusesChangedTarget { world in
+            let old = world.front!.app
+            world.front?.app = App(old.name, old.pid, launched: old.launched.addingTimeInterval(1))
+            world.front?.axOn = true
+        }
+    }
+
+    func testDeferredRecoveryRefusesChangedBundleWithSamePID() throws {
+        try assertDeferredRecoveryRefusesChangedTarget { world in
+            let old = world.front!.app
+            world.front?.app = App("com.example.other", old.pid, launched: old.launched)
+            world.front?.axOn = true
+        }
+    }
+
+    private func assertDeferredRecoveryRefusesChangedTarget(
+        outcome: DictationFocusRecovery.Outcome = .recovered, _ change: (World) -> Void
+    ) throws {
+        let kit = Kit()
+        kit.world.launch("com.t3tools.t3code", chromium: true, axOn: true)
+        let id = try kit.start()
+        kit.world.front?.axOn = false
+        if outcome == .enableFailed { kit.world.front?.acceptsManualAX = false }
+        if outcome == .stillUnreadable { kit.world.front?.queriesUntilTreeIsOn = 100 }
+        var completion: (() -> Void)?
+        var observedOutcome: String?
+        let recovery = DictationFocusRecovery(ax: kit.world.ax, run: { $0() },
+            deliver: { completion = $0 }, log: { _, fields in observedOutcome = fields["outcome"] })
+        recovery.install(on: kit.state)
+        kit.final(id)
+        XCTAssertEqual(observedOutcome, outcome.rawValue)
+        let resume = try XCTUnwrap(completion)
+        XCTAssertEqual(kit.typed, [])
+        change(kit.world)
+        resume()
+        XCTAssertEqual(kit.typed, [])
+        XCTAssertEqual(kit.writes, [])
+        XCTAssertEqual(kit.state.latestReusableTranscript, "whole fu… שלום")
+        XCTAssertEqual(kit.state.latestDictationInsertionStatus, .notInserted)
+        XCTAssertEqual(kit.state.confirmationText, "Not pasted: target app changed; kept in History")
     }
 
     // MARK: rules that must not move
