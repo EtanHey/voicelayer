@@ -56,6 +56,9 @@ function fixture(script: string, fault = "", managed = true, qa = false) {
       *) exit 0;;
     esac`);
   if (fault === "build-success") {
+    // The complete build reaches signer admission; retain the real source guard
+    // alongside the fixture-owned git, security and codesign executables.
+    relocate("scripts/lib/require-main-ancestor.sh");
     mkdirSync(join(root, "flow-bar/bundle"), { recursive: true });
     mkdirSync(join(root, "src"));
     for (const file of ["package.json", "bun.lock", "flow-bar/bundle/Info.plist", "flow-bar/bundle/VoiceBar.entitlements",

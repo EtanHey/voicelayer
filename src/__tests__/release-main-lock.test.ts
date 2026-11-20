@@ -82,6 +82,22 @@ describe("scripts/release-voicebar.sh", () => {
 });
 
 describe("build-app signer admission", () => {
+  test("non-release QA build from a side branch reaches compiler without release admission", () => {
+    fx.sideCommit();
+    const hook = join(parent, "qa-compiler-hook.sh");
+    const trace = join(parent, "qa-compiler-trace");
+    writeFileSync(hook, 'swift() { echo compiler >> "$RELLOCK_TRACE"; exit 73; }\nsecurity() { echo keychain >> "$RELLOCK_TRACE"; exit 99; }\ncodesign() { echo signing >> "$RELLOCK_TRACE"; exit 99; }\n');
+    const r = Bun.spawnSync(["/bin/bash", join(fx.root, "flow-bar/build-app.sh"),
+      "--install-path", join(parent, "qa.noindex/VoiceBarQA.app"), "--no-stop", "--no-relaunch"], {
+      cwd: fx.root, stdout: "pipe", stderr: "pipe", env: { ...process.env,
+        BASH_ENV: hook, RELLOCK_TRACE: trace, VOICEBAR_QA_BUILD: "1",
+        VOICEBAR_REQUIRE_NOTARIZATION: "0", VOICEBAR_RELEASE_ZIP: "", VOICEBAR_RELEASE_STAGED: "0" },
+    });
+    expect(r.exitCode).toBe(73);
+    expect(r.stderr.toString()).not.toContain("is not on origin/main");
+    expect(readFileSync(trace, "utf8")).toBe("compiler\n");
+  }, SUBPROCESS_TIMEOUT_MS);
+
   for (const staged of [false, true]) {
     test(`direct release entry refuses side branch before compiler (staged=${staged})`, () => {
       fx.sideCommit();

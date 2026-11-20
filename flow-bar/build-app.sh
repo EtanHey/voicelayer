@@ -1029,9 +1029,11 @@ parse_build_app_args "$@"
 if [[ "${VOICEBAR_QA23_BUILD:-0}" == 1 ]]; then
     allows_qa23_adhoc_signing || { echo '[build-app] REFUSED: unsafe QA23 lifecycle' >&2; exit 1; }
 fi
-# Validate before process inspection, stop, install-path mutation or any compiler invocation.
+# Validate release entries before process inspection, stop, mutation or compilation.
+# Ordinary dev/QA builds retain their existing path/lifecycle gates; Developer ID
+# signing still requires clean main source in validate_signing_identity below.
 configure_qa_swift_flags
-require_signer_source || exit 1
+BUILD_ADMITTED_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || true)"
 source "$REPO_ROOT/scripts/lib/noindex-path.sh"
 if [[ "${VOICEBAR_RELEASE_STAGED:-0}" == 1 ]]; then
     # Supervisor owns this private working directory; preserve relative writes.
@@ -1040,6 +1042,7 @@ if [[ "${VOICEBAR_RELEASE_STAGED:-0}" == 1 ]]; then
     if [[ -n "$VOICEBAR_RELEASE_ZIP" ]]; then VOICEBAR_RELEASE_ZIP="./VoiceBar.zip"; fi
     STOP_RUNNING=0
     RELAUNCH_APP=0
+    require_signer_source || exit 1
 elif [[ "$VOICEBAR_REQUIRE_NOTARIZATION" == 1 || -n "$VOICEBAR_RELEASE_ZIP" ]]; then
     require_release_artifact_path "$APP_DIR"
     if [[ -n "$VOICEBAR_RELEASE_ZIP" ]]; then require_release_artifact_path "$VOICEBAR_RELEASE_ZIP"; fi
@@ -1047,6 +1050,7 @@ elif [[ "$VOICEBAR_REQUIRE_NOTARIZATION" == 1 || -n "$VOICEBAR_RELEASE_ZIP" ]]; 
     if [[ -n "$VOICEBAR_RELEASE_ZIP" ]]; then
         VOICEBAR_RELEASE_ZIP="$(resolve_release_artifact_destination "$VOICEBAR_RELEASE_ZIP")"
     fi
+    require_signer_source || exit 1
     exec "$(release_artifact_python)" "$REPO_ROOT/scripts/lib/build-release-artifacts.py" \
         "$APP_DIR" "$VOICEBAR_RELEASE_ZIP" "$SCRIPT_DIR/build-app.sh"
 else
