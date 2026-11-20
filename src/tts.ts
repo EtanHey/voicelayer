@@ -626,7 +626,7 @@ setNarrationSource(createNarrationSource({
     synthesizeEdgeChunk(text, voice, rate, outFile, EDGE_WORDS_SCRIPT, signal, retries, prosody),
   clone: (text, voice, signal) => synthesizeCloned(text, voice, signal),
   // T28: long cloned requests are split under the clone's reference-length wall and joined here.
-  assemble: (parts, outFile, signal) => assembleNarration(parts, outFile, signal),
+  assemble: (parts, outFile, signal) => assembleNarration(parts, outFile, signal, NARRATION_MP3_BITRATE.clone),
   dispose: file => { try { unlinkSync(file); } catch {} },
 }));
 

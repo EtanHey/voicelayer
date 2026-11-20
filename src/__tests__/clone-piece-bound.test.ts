@@ -132,6 +132,17 @@ describe("T28: the daemon's real narration source", () => {
   });
   afterEach(() => { for (const undo of restore) undo(); });
 
+  it("preserves the clone's 128k bitrate when joining a request over 24 words", async () => {
+    expect(words(FORTY).length).toBeGreaterThan(BOUND);
+    const outFile = `${TEST_TMP}/t28-daemon-bitrate.mp3`;
+    const audio = await narrationSource().synthesize({ text: FORTY, engine: "clone", voice: "fixture", rate: "+0%", outFile });
+    expect(qwen.synthesizeCloned).toHaveBeenCalledTimes(2);
+    expect(audio?.audioFile).toBe(outFile);
+    const assembly = spawned.filter(argv => argv.includes("-filter_complex"));
+    expect(assembly).toHaveLength(1);
+    expect(assembly[0][assembly[0].indexOf("-b:a") + 1]).toBe("128k");
+  });
+
   it("sends a 40-word cloned request to Qwen3 as bounded pieces and assembles them into the requested file", async () => {
     const outFile = `${TEST_TMP}/t28-daemon.mp3`;
     const audio = await narrationSource().synthesize({ text: FORTY, engine: "clone", voice: "fixture", rate: "+0%", outFile });
