@@ -208,6 +208,10 @@ export class AskDeliverySession {
     const id = deliveryRequestId(request.id), metadata = object(params._meta), rawScope = metadata[CALLER_META];
     const reply = (content: Content[], isError = false): McpResponse =>
       ({ jsonrpc: "2.0", id: request.id!, result: { content, ...(isError ? { isError: true } : {}) } });
+    const recover = (row: Row): McpResponse => {
+      const result = this.recovery(row);
+      return reply(result.content, result.isError);
+    };
     const refuse = () => { this.event("scope_refused", { request_id: id });
       return reply([jsonText({ status: "scope-refused", new_action_run: false })], true); };
     if (rawScope !== undefined && (typeof rawScope !== "string" || !CAPABILITY.test(rawScope))) return refuse();
@@ -240,10 +244,10 @@ export class AskDeliverySession {
       // Recovery precedes every new voice side effect, including reads and speech.
       const held = store.claim(scope, this.id);
       if (held) { this.event("recovered", { request_id: id, delivery_id: held.delivery, state: held.state });
-        return reply(this.recovery(held)); }
+        return recover(held); }
       if (tool !== "voice_ask") return await invoke(undefined, forward);
       const row = store.begin(scope);
-      if (!row) { const again = store.claim(scope, this.id)!; return reply(this.recovery(again)); }
+      if (!row) { const again = store.claim(scope, this.id)!; return recover(again); }
       return await this.ask(store, scope, row, active, request, forward, invoke, reply);
     } catch {
       // Provider/FS errors may contain private text. Retain any pending receipt and refuse new side effects.
@@ -295,17 +299,18 @@ export class AskDeliverySession {
     return jsonText({ delivery_id: row.delivery, lease_id: row.lease,
       acknowledge: "After reading, pass delivery_ack {delivery_id, lease_id} on your next voice call (or alone to voice_ask_results)." });
   }
-  private recovery(row: Row): Content[] {
+  private recovery(row: Row): Result {
     const status = { status: row.state === "ready" ? "ready" : "pending", operation_id: row.operation,
       delivery_id: row.delivery, archive_id: row.archive, new_action_run: false,
       message: row.state === "ready"
         ? "The newly requested action was NOT run. This is your earlier Ask's held result; acknowledge it, then retry."
         : "The newly requested action was NOT run. Your earlier Ask is still recording or transcribing; no second capture was opened." };
-    if (row.state !== "ready") return [jsonText(status)];
-    const original = row.result ? (JSON.parse(row.result) as Result).content : [];
+    if (row.state !== "ready") return { content: [jsonText(status)] };
+    const original: Result = row.result ? JSON.parse(row.result) as Result : { content: [] };
     // `answer` is the raw transcript, byte for byte; the original response (boxed for display) follows unchanged.
-    return [jsonText({ ...status, ...(row.answer !== null ? { answer: row.answer } : {}), lease_id: row.lease,
-      acknowledge: { delivery_ack: { delivery_id: row.delivery, lease_id: row.lease } } }), ...original];
+    return { content: [jsonText({ ...status, ...(row.answer !== null ? { answer: row.answer } : {}), lease_id: row.lease,
+      acknowledge: { delivery_ack: { delivery_id: row.delivery, lease_id: row.lease } } }), ...original.content],
+      isError: original.isError };
   }
 }
 

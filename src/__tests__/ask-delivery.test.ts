@@ -88,6 +88,21 @@ const ack = (delivery: { delivery_id: string; lease_id: string }) =>
 
 for (const framed of [false, true]) {
   const transport = framed ? "Content-Length" : "NDJSON";
+  test(`${transport}: ready recovery preserves a retained STT error without running the requested action`, async () => {
+    let executions = 0;
+    const path = await daemon(framed ? "ef.sock" : "en.sock", async (_name, _args, context) => {
+      executions++; context.askDelivery?.archive(archive);
+      return { ...text("Synthetic STT failure; recording kept"), isError: true };
+    });
+    const a = await client(path, framed), scope = caller();
+    expect((await a.call(1, scope)).result?.isError).toBe(true);
+    const held = await a.call(2, scope, "voice_speak", { message: "Synthetic speech" });
+    expect(head(held)).toMatchObject({ status: "ready", new_action_run: false, archive_id: archive });
+    expect(items(held)[1]).toBe("Synthetic STT failure; recording kept");
+    expect(executions).toBe(1);
+    expect(held.result?.isError).toBe(true);
+  });
+
   test(`${transport}: a cancelled Ask is pending, then recovered with exact bytes before any new action, until acked`, async () => {
     const started = Promise.withResolvers<void>(), finish = Promise.withResolvers<void>();
     const ran: { name: string; args: Record<string, unknown> }[] = [];
@@ -233,6 +248,7 @@ test("crash: a dead daemon's pending Ask with an archive becomes a ready pointer
   const a = await client(path, false);
   const recovered = await a.call(1, kept, "voice_speak", { message: "x" });
   expect(head(recovered)).toMatchObject({ status: "ready", archive_id: archive, new_action_run: false });
+  expect(recovered.result?.isError).toBe(true);
   expect(items(recovered)[1]).toContain(`archive ${archive}`); expect(executions).toBe(0);
   const b = await client(path, false);
   expect(items(await b.call(1, empty, "voice_speak", { message: "x" }))).toEqual(["new side effect ran"]);
