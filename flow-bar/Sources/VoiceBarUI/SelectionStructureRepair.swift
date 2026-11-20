@@ -13,7 +13,7 @@ public enum SelectionStructureRepair {
     public enum Decision: String {
         /// The AX text had line breaks, was short, or showed no lost-structure signal.
         case notFlattened = "not_flattened"
-        /// The Copy text carried the line breaks and the same letters; it was used.
+        /// The Copy text carried the line breaks and the same content; it was used.
         case copy
         /// Copy failed or lacked the structure; line breaks were rebuilt before inline markers.
         case split
@@ -43,11 +43,28 @@ public enum SelectionStructureRepair {
         return !splitPoints(Array(text)).isEmpty || text.contains(objectReplacement)
     }
 
-    /// Copy is used only when it has line breaks and exactly the AX text's letters, in order. Markers, digits,
-    /// punctuation, whitespace and U+FFFC may differ (Copy writes "-" or "1." where AX had "•" or U+FFFC);
-    /// a Copy of anything else than the same selection never replaces the AX text.
+    /// Copy must preserve content, including numbers and punctuation. Only recognised list prefixes,
+    /// whitespace and AX's standalone embedded-object placeholders may differ.
     public static func copyKeepsStructure(ax: String, copy: String) -> Bool {
-        hasLineBreak(copy) && ax.filter(\.isLetter) == copy.filter(\.isLetter)
+        hasLineBreak(copy) && comparableContent(ax) == comparableContent(copy)
+    }
+
+    private static func comparableContent(_ text: String) -> String {
+        // A flattened AX list first gets the same conservative marker boundaries as the fallback.
+        let lines = split(text).components(separatedBy: .newlines)
+        return lines.map { line in
+            var chars = Array(line.trimmingCharacters(in: .whitespaces))
+            if marker(in: chars, at: 0) != nil {
+                var end = 0
+                while end < chars.count, chars[end].isASCII, chars[end].isNumber { end += 1 }
+                // A bullet/dash is one character; a numbered prefix includes its '.' or ')'.
+                chars.removeFirst(end + 1)
+            }
+            // U+FFFC is AX markup only when it is a standalone token. Keep it when embedded
+            // in payload, just as we keep every other non-whitespace content character.
+            return String(chars).split(whereSeparator: \.isWhitespace)
+                .filter { $0 != String(objectReplacement) }.joined(separator: " ")
+        }.filter { !$0.isEmpty }.joined(separator: " ")
     }
 
     /// Replaces the single space before each inline list marker with a line break. Every other character,
@@ -68,7 +85,8 @@ public enum SelectionStructureRepair {
     /// - `-` `*` `+` `–` between spaces counts only right after a sentence end (`.` `!` `?` `:`, optionally
     ///   closed by a quote or bracket). A hyphenated word has no spaces; `5 - 3` follows a digit.
     /// - `N.` / `N)` (1–3 digits) followed by a space counts only after a sentence end, and only when all the
-    ///   numbered markers in the text count up by one (`1. 2. 3.`, at least two); anything else drops them all.
+    ///   numbered markers in the text count up by one (`1. 2. 3.`, at least two). The sequence must start
+    ///   at the text's opening or after a colon: consecutive chapter/page references are not list evidence.
     /// - At least two markers in total (one may open the text), so one stray marker never splits anything.
     private static func splitPoints(_ chars: [Character]) -> [Int] {
         var inline: [(space: Int, marker: Marker)] = []
@@ -85,7 +103,20 @@ public enum SelectionStructureRepair {
             if case let .number(value) = marker { return value }
             return nil
         }
-        let numbersCount = numbers.count >= 2 && zip(numbers, numbers.dropFirst()).allSatisfy { $1 == $0 + 1 }
+        let startsNumberedList: Bool
+        if case .number = opening {
+            startsNumberedList = true
+        } else if let first = inline.first(where: { if case .number = $0.marker { return true }; return false }) {
+            // A period can belong to a numeric reference ("chapter 3. 4. is optional").
+            // A colon introducing the first item is stronger evidence of a flattened list.
+            var before = first.space - 1
+            while before >= 0, closers.contains(chars[before]) { before -= 1 }
+            startsNumberedList = before >= 0 && chars[before] == ":"
+        } else {
+            startsNumberedList = false
+        }
+        let numbersCount = startsNumberedList && numbers.count >= 2
+            && zip(numbers, numbers.dropFirst()).allSatisfy { $1 == $0 + 1 }
         if !numbersCount {
             inline.removeAll { if case .number = $0.marker { return true }; return false }
             if case .number = opening { opening = nil }

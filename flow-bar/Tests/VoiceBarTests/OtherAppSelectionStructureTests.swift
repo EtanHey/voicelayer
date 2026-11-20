@@ -55,6 +55,24 @@ final class OtherAppSelectionStructureTests: XCTestCase {
         XCTAssertEqual(contents(board), original)
     }
 
+    func testCopyWithChangedQuantitiesUsesOriginalAXContentInstead() {
+        let host = Host()
+        let board = makeBoard()
+        defer { board.releaseGlobally() }
+        let original = contents(board)
+        let ax = "Here is the plan for the garden weekend. • Buy 10 pots before noon. • Reserve 20 bags of soil for tomorrow."
+        let changed = "Here is the plan for the garden weekend.\n- Buy 100 pots before noon.\n- Reserve 200 bags of soil for tomorrow."
+        let result = run(makeCapture(host, board: board, ax: ax, postCopy: {
+            board.clearContents()
+            board.setString(changed, forType: .string)
+            return true
+        }))
+        XCTAssertEqual(result.text, SelectionStructureRepair.split(ax))
+        XCTAssertEqual(result.path, .ax)
+        XCTAssertEqual(result.diagnosticDetails["structure_repair"], "split")
+        XCTAssertEqual(contents(board), original)
+    }
+
     func testCopyFailureOrUnstructuredCopyRebuildsLineBreaksFromInlineMarkers() {
         for scenario in ["timeout", "failed", "empty", "flat-copy", "other-letters"] {
             let host = Host()
