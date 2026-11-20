@@ -19,7 +19,7 @@
     "formal/ask-delivery/README.md": "f9d03e2de29cb116a67dfb1c3292d5b2c0baf7e944414e5320e8d8883babaa08",
     "formal/tlc_support.py": "8c5dad35602a3a631acc61b07ed2246eeb40ef2b3a6b3a9c72c5b207c95386ec",
     "formal/tlc.lock.json": "3e37914f1398c6073444c37c6c8df70eb3030c14d269e808791e1d1b25467d34",
-    "src/ask-delivery.ts": "79d937f92efb8cc8f2b670412e459d5bfc0cc06f2cc97cbd7258825a3d398b3a",
+    "src/ask-delivery.ts": "41f8800b8e811f07ba8c8f7b4c27d80f705c3ac6588d95005ffc8b5396c64c02",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
