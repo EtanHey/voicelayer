@@ -68,6 +68,8 @@ function alive(pid: number): boolean {
 /** One SQLite transaction serializes all claims/acks, including overlapping connections and processes. */
 export class AskDeliveryStore {
   private readonly db: Database;
+  /** All daemon connections share this store and the controllers for its executing tasks. */
+  private readonly running = new Map<string, AbortController>();
   constructor(private readonly log: (line: string) => void = console.error) {
     const directory = join(getStateDir(), "ask-delivery");
     mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -148,12 +150,17 @@ export class AskDeliveryStore {
   }
   /** tasks/cancel: working -> cancelled; a terminal task is left as it is. False for another caller's or unknown id. */
   cancelTask(scope: string, task: string): boolean {
-    return this.db.transaction(() => {
+    const accepted = this.db.transaction(() => {
       const row = this.task(scope, task);
       if (row) this.settleTask(row.operation, "cancelled");
       return !!row;
     }).immediate();
+    // Authenticate and commit the terminal state before firing the executing connection's abort path.
+    if (accepted) this.running.get(task)?.abort(new Error("MCP task cancelled"));
+    return accepted;
   }
+  startTaskExecution(task: string, abort: AbortController): void { this.running.set(task, abort); }
+  endTaskExecution(task: string): void { this.running.delete(task); }
   /** The Ask ran but its result could not be stored: the task fails instead of staying working forever. */
   failTask(operation: string): void { this.settleTask(operation, "failed"); }
   archive(operation: string, archive: string): void {
@@ -240,8 +247,6 @@ export class AskDeliverySession {
   readonly id = randomUUID();
   private scope: string | undefined;
   private readonly active = new Map<string, Active>();
-  /** Task id -> abort for an Ask this process is still running (tasks/cancel). */
-  private readonly running = new Map<string, AbortController>();
   private closed = false;
   private tasks = false;
   private logging = false;
@@ -397,14 +402,14 @@ export class AskDeliverySession {
     const ids = { operation_id: row.operation, delivery_id: row.delivery, task_id: task.id };
     const abort = new AbortController();
     let answered = false, rejected = false;
-    this.running.set(task.id, abort);
+    store.startTaskExecution(task.id, abort);
     const flow = this.launch(store, row, forward, invoke, {
       signal: abort.signal,
       notificationOpen: notification => !answered || notification.method !== "notifications/progress",
     });
     const handled = flow.handler.then(() => {}, () => { rejected = true; });
     void flow.finalized.then(() => {
-      this.running.delete(task.id);
+      store.endTaskExecution(task.id);
       if (!flow.finalizeFailed()) return;
       try { store.failTask(row.operation); } catch { this.event("store_refused", ids); }
     });
@@ -442,8 +447,6 @@ export class AskDeliverySession {
       const store = this.store();
       if (request.method === "tasks/cancel") {
         if (!store.cancelTask(scope, taskId)) return unknown();
-        // The same abort path a client disconnect uses: the Ask ends, anything recorded is kept and held for recovery.
-        this.running.get(taskId)?.abort(new Error("MCP task cancelled"));
         this.event(method, { request_id: requestId, matched: true, task_id: taskId, task_state: store.task(scope, taskId)?.task_state });
         return { jsonrpc: "2.0", id: request.id, result: {} };
       }

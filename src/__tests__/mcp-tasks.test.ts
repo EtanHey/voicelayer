@@ -18,6 +18,11 @@ import { createConnection } from "node:net";
 import { createMcpDaemon } from "../mcp-daemon";
 import { parseMcpFrames, serializeMcpFrame } from "../mcp-framing";
 import type { VoiceToolContext } from "../mcp-notifications";
+import { handleVoiceAsk } from "../handlers";
+import * as tts from "../tts";
+import * as input from "../input";
+import * as sessionBooking from "../session-booking";
+import * as socketClient from "../socket-client";
 
 const cleanups: (() => void)[] = [];
 let logs: string[] = [];
@@ -153,6 +158,60 @@ function latchedAsk() {
 
 for (const framed of [false, true]) {
   const transport = framed ? "Content-Length" : "NDJSON";
+
+  for (const stage of ["speaking", "recording"] as const) {
+    test(`${transport}: another authorized connection cancels the executing Ask during ${stage}`, async () => {
+      const entered = Promise.withResolvers<void>(), stopped = Promise.withResolvers<void>();
+      let context: VoiceToolContext | undefined, stageSignal: AbortSignal | undefined;
+      const speech = { displayText: "q", engine: "edge-tts", voice: "en-US-JennyNeural",
+        audioArtifact: { bytes: new Uint8Array([0x49, 0x44, 0x33]), format: "mp3" as const } };
+      const latch = async (signal: AbortSignal | undefined) => {
+        stageSignal = signal;
+        signal?.addEventListener("abort", () => stopped.resolve(), { once: true });
+        entered.resolve();
+        await stopped.promise;
+      };
+      const spies = [
+        spyOn(socketClient, "broadcast").mockImplementation(() => {}),
+        spyOn(sessionBooking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true,
+          owner: { pid: process.pid, sessionId: "test", startedAt: new Date().toISOString() } }),
+        spyOn(tts, "awaitCurrentPlayback").mockResolvedValue(undefined),
+        spyOn(input, "clearInput").mockImplementation(() => {}),
+        spyOn(sessionBooking, "clearStopSignal").mockImplementation(() => {}),
+      ];
+      const speak = spyOn(tts, "speak").mockImplementation(async (_message, options) => {
+        if (stage === "speaking") await latch(options?.textOnlyOnSynthesisFailure);
+        return speech as never;
+      });
+      const capture = spyOn(input, "waitForInput").mockImplementation(async (_t, _s, _p, options) => {
+        options?.onCaptureStart?.();
+        await latch(options?.signal);
+        options?.onCaptureEnd?.();
+        return null;
+      });
+      cleanups.push(() => { stopped.resolve(); for (const spy of [...spies, speak, capture]) spy.mockRestore(); });
+      const path = await daemon(`${framed ? "f" : "n"}-${stage}.sock`, (_name, args, current) => {
+        context = current;
+        return handleVoiceAsk(args, current);
+      });
+      const a = await client(path, framed), b = await client(path, framed), scope = caller();
+      const taskId = expectTask(await a.call(1, scope, { message: "Synthetic question?" }, { tasks: true }), "working");
+      await entered.promise;
+      expectPoll(await b.get(1, scope, taskId), taskId, "working");
+      const foreign = await client(path, framed);
+      expect((await foreign.cancel(1, caller(), taskId)).error).toMatchObject({ code: -32602 });
+      expect(context?.disconnectSignal?.aborted).toBe(false);
+      expect(stageSignal?.aborted).toBe(false);
+      expect((await b.cancel(2, scope, taskId)).error).toBeUndefined();
+      expect(context?.disconnectSignal?.aborted).toBe(true);
+      expect(stageSignal?.aborted).toBe(true);
+      await stopped.promise;
+      await logged("ask_delivery.finalized");
+      expectPoll(await a.get(2, scope, taskId), taskId, "cancelled");
+      expect(speak).toHaveBeenCalledTimes(1);
+      expect(capture).toHaveBeenCalledTimes(stage === "recording" ? 1 : 0);
+    }, 5000);
+  }
 
   test(`${transport}: server/discover on 2026-07-28 advertises tasks; initialize keeps 2024-11-05 byte-for-byte`, async () => {
     const path = await daemon(framed ? "da.sock" : "db.sock", async () => text("unused"));
