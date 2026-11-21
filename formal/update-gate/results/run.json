@@ -51,7 +51,7 @@
     "src/update-gate-bootstrap.ts": "8c618f8ad96535597c6c9085b66f56fb0988b6a47b1d2680d2fccb2db1747457",
     "src/voice-bar-launcher.ts": "4d4ddf3cae1860f1cc747633ad70474931b09a4afef2477803159476b2917796",
     "src/cli/voicelayer.sh": "7d01d8562ebe628071a293147e0be9815a334b6f323913de82586890b0b91b03",
-    "flow-bar/build-app.sh": "ef5d930fd81a2b28346d1868d39e57f264b6ddd84fca876932b8cfc461a688c5",
+    "flow-bar/build-app.sh": "a904c77b0f1304d48bc5665486717948f3054542366fc73f8742dc76f6c78b69",
     "scripts/lib/qa-candidate-lifecycle.py": "2e4c8a850094e6fa397c13e42f5dff09a4646627b1d7481fe21cc862008d41eb",
     "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "f1105d07eb236835a1c4f09c4cb87de23670e2b9ad58bd4b84bc7f0aac2a504e",
     "src/update-gate-owner.ts": "94a6efef3240dc751a8600e15630127fcbd67009cca314ca65eb8d60f29ee8ea",
