@@ -1968,17 +1968,22 @@ public struct BarView: View {
         }
         .frame(maxWidth: .infinity)
         .overlay(alignment: .leading) {
-            // T8: the scrubber's notice sits at the row's leading edge, clear of the centred group, so it adds no
-            // height between the scrubber and this row. R883: paused, it is the pause reason ("Paused. Press Play to
-            // seek"), drawn because the frozen slider is disabled and `.help` never shows in this panel; otherwise
-            // "Word timing unavailable". Its native tooltip repeats it in full should the line ever truncate.
             if state.showsTeleprompterScrubber, let notice = TeleprompterPlaybackScrubBar(state: state).notice {
-                Text(notice)
-                    .font(.system(size: 10))
-                    .foregroundStyle(notchPalette.tertiary.color)
-                    .lineLimit(1)
-                    .background(PillControlTooltip(text: notice))
-                    .allowsHitTesting(false)
+                GeometryReader { geometry in
+                    let count = VoiceBarPresentation.teleprompterLowerGroupCount(canReplay: state.canReplay) + 1
+                    let controlsStart = geometry.size.width / 2
+                        + VoiceBarPresentation.teleprompterLowerControlOffset(index: 0, count: count)
+                        - VoiceBarNotchContract.material.compactControlSize / 2
+                    Text(notice)
+                        .font(.system(size: 10))
+                        .foregroundStyle(notchPalette.tertiary.color)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(width: max(0, controlsStart - 8), height: geometry.size.height, alignment: .leading)
+                        .clipped()
+                        .background(PillControlTooltip(text: notice))
+                        .allowsHitTesting(false)
+                }
             }
         }
         .frame(height: TeleprompterA.controlsHeight)

@@ -47,7 +47,7 @@ struct TeleprompterPlaybackScrubBar: View {
         )
     }
 
-    static let pausedReason = "Paused. Click a word to move; Play resumes there"
+    static let pausedReason = "Paused. Click a word to jump"
 
     /// Hunt C5 teleprompter #3: X1-34 keeps the scrubber on screen while paused. A paused read accepts word clicks; the slider stays disabled.
     /// Its notice describes how to move the paused cursor.

@@ -68,7 +68,7 @@ final class TeleprompterAWiringTests: XCTestCase {
                            "offset_ms": 600, "chunk_offset_ms": 600, "duration_ms": 4000])
         XCTAssertTrue(state.isPlaybackPaused)
         XCTAssertEqual(state.playbackElapsedMilliseconds(), 600)
-        XCTAssertEqual(TeleprompterPlaybackScrubBar(state: state).notice, "Paused. Click a word to move; Play resumes there")
+        XCTAssertEqual(TeleprompterPlaybackScrubBar(state: state).notice, "Paused. Click a word to jump")
         state.togglePlaybackPause()
         XCTAssertEqual(sent.last?["cmd"] as? String, "resume")
         // The cross-chunk resume commits before retiring its old chunk, preserving the read on screen.
