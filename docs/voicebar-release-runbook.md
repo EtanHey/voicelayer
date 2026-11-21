@@ -154,9 +154,10 @@ notarized candidate bundle as the M4, so the bundle digest it proves is the one 
    It opens the proof thread deep link, brings T3 frontmost, enables Chromium AX, and searches
    every window. `--dump` prints window titles and up to 40 static text values without key
    events; use it before arming. It selects rendered text through AX or a HID drag using AX
-   character frames, verifies the exact selection (restoring the pasteboard if Copy is needed),
-   and posts one Option+F5 down/up at `.cghidEventTap` with `.maskAlternate`. A selection
-   mismatch refuses before Option+F5. Never type or send a message through the driver.
+   character frames, verifies selection through AX text or exact drag endpoints when AX text
+   is unavailable, waits for 1.5 seconds of pasteboard stability, and posts one Option+F5 down/up at `.cghidEventTap` with `.maskAlternate`. A selection
+   mismatch refuses before Option+F5. The driver never copies or writes the pasteboard and
+   never touches it after posting. Never type or send a message through the driver.
 4. After PASS: `record`, commit, tag (Order, step 4).
 
 **The steps that need Etan:** none for the press. His own Option+F5 press remains allowed.

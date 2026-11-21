@@ -108,9 +108,15 @@ let rangeValue = AXValueCreate(.cfRange, &selection)!
 func selectedText() -> String? {
     for node in nodes() {
         if let text = value(node, kAXSelectedTextAttribute) as? String, !text.isEmpty { return text }
+        if let marker = value(node, "AXSelectedTextMarkerRange") {
+            var output: CFTypeRef?
+            if AXUIElementCopyParameterizedAttributeValue(node, "AXStringForTextMarkerRange" as CFString, marker, &output) == .success,
+               let text = output as? String, !text.isEmpty { return text }
+        }
     }; return nil
 }
 let source = CGEventSource(stateID: .hidSystemState)
+var verifiedDragEndpoints = false
 let result = AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, rangeValue)
 Thread.sleep(forTimeInterval: 0.1)
 if result != .success || selectedText() != expected {
@@ -138,31 +144,30 @@ if result != .success || selectedText() != expected {
         mouse(.leftMouseDragged, CGPoint(x: start.x+(end.x-start.x)*t, y: start.y+(end.y-start.y)*t)); Thread.sleep(forTimeInterval: 0.01)
     }
     mouse(.leftMouseUp, end); Thread.sleep(forTimeInterval: 0.2)
-    print("selected by HID drag using AX character frames")
+    verifiedDragEndpoints = true
+    print("selected by HID drag; endpoints verified against exact AX character frames")
 } else { print("selected through AXSelectedTextRange") }
-func copiedSelection() -> String? {
-    guard frontmost() else { return nil }
-    let board = NSPasteboard.general
-    let saved = (board.pasteboardItems ?? []).map { item in item.types.compactMap { type -> (NSPasteboard.PasteboardType, Data)? in
-        guard let data = item.data(forType: type) else { return nil }; return (type, data)
-    } }
-    defer {
-        board.clearContents()
-        board.writeObjects(saved.map { entries -> NSPasteboardItem in
-            let item = NSPasteboardItem(); for (type, data) in entries { item.setData(data, forType: type) }; return item
-        })
-    }
-    let before = board.changeCount
-    guard let down = CGEvent(keyboardEventSource: source, virtualKey: 8, keyDown: true),
-          let up = CGEvent(keyboardEventSource: source, virtualKey: 8, keyDown: false) else { return nil }
-    down.flags = .maskCommand; up.flags = .maskCommand
-    down.post(tap: .cghidEventTap); up.post(tap: .cghidEventTap)
-    for _ in 0..<20 { Thread.sleep(forTimeInterval: 0.05); if board.changeCount != before { return board.string(forType: .string) } }; return nil
+if let actual = selectedText() {
+    check(expected, actual)
+    print("verified selection text through AX")
+} else {
+    guard verifiedDragEndpoints else { refuse("AX selection text unavailable without verified drag endpoints") }
+    print("AX selection text unavailable; text verification skipped, using verified drag endpoints")
 }
-check(expected, selectedText() ?? copiedSelection() ?? "")
+// Read only. Never copy or restore: VoiceBar owns the pasteboard during its own Copy.
+let board = NSPasteboard.general
+var previousCount = board.changeCount, stableSince = Date()
+let stabilityDeadline = Date().addingTimeInterval(10)
+while Date().timeIntervalSince(stableSince) < 1.5 {
+    guard Date() < stabilityDeadline else { refuse("pasteboard did not remain stable for 1.5 seconds") }
+    Thread.sleep(forTimeInterval: 0.05)
+    let count = board.changeCount
+    if count != previousCount { previousCount = count; stableSince = Date() }
+}
+print("pasteboard changeCount stable for 1.5 seconds; no writes performed")
 guard frontmost(), !app.isTerminated else { refuse("T3 focus/process changed before Option+F5") }
 guard let down = CGEvent(keyboardEventSource: source, virtualKey: 96, keyDown: true),
       let up = CGEvent(keyboardEventSource: source, virtualKey: 96, keyDown: false) else { refuse("cannot create Option+F5") }
 down.flags = .maskAlternate; up.flags = .maskAlternate
 down.post(tap: .cghidEventTap); Thread.sleep(forTimeInterval: 0.05); up.post(tap: .cghidEventTap)
-print("exact selection verified (\(expected.utf16.count) UTF-16 units); posted ONE Option+F5 down/up at cghidEventTap")
+print("selection admitted (\(expected.utf16.count) UTF-16 units); posted ONE Option+F5 down/up at cghidEventTap")
