@@ -10,11 +10,11 @@ import XCTest
 /// places from the first frame and the growing glass uncovered them (his recording: the microphone cut in half, the
 /// chevron sitting where the wing ended), and the close dropped the glass and the icons in one frame.
 ///
-/// The production BarView (with the resident presentation model) is sampled in real time at a fixed 4x while it
-/// opens and closes. Each sample reads both outer edges of the band from the bitmap (the first and last pixel that is
-/// not the backdrop: the shell's outline, which this Mac's offscreen capture paints even where it leaves the native
-/// glass and its content blank) and, at the same instant, the outermost controls' slots from their own views (the
-/// microphone's left edge, the gear's right edge). Each distance is read off one sample, so timing cannot fake it.
+/// The production BarView (with the resident presentation model) is sampled while it opens and closes.
+/// On native glass, read the actual CAShapeLayer mask applied to the glass and the outermost controls' slots
+/// from their own views in the same frame. This avoids cacheDisplay's host-dependent native-glass pixels and
+/// backing-scale conversion. Older macOS material uses the bitmap outline instead. No expected animation
+/// geometry or travel offset is used to derive the measured edges.
 @MainActor
 final class NotchWingTravelTests: XCTestCase {
     private final class Router: BarCommandRouting {
@@ -70,6 +70,9 @@ final class NotchWingTravelTests: XCTestCase {
         }
         let openLeft = try XCTUnwrap(settled.leftEdge, "the open band paints")
         let openRight = try XCTUnwrap(settled.rightEdge)
+        let geometry = VoiceBarNotchContract.geometry(for: .hoverLauncher)
+        XCTAssertEqual(openLeft, Self.size.width / 2 - geometry.coreWidth / 2 - geometry.leadingWingWidth, accuracy: 0.5)
+        XCTAssertEqual(openRight, Self.size.width / 2 + geometry.coreWidth / 2 + geometry.trailingWingWidth, accuracy: 0.5)
         let left = try XCTUnwrap(settled.leftDistance, "the microphone paints in the open band")
         let right = try XCTUnwrap(settled.rightDistance, "the gear paints in the open band")
         rig.hover(false)
@@ -397,25 +400,41 @@ final class NotchWingTravelTests: XCTestCase {
         return Rig(state: state, model: model, host: host)
     }
 
-    /// Captures first (cheap), measures afterwards, so measuring never slows the sampling down.
     private func sample(_ host: NSView) throws -> [Frame] {
         let start = Date()
-        var captured: [(TimeInterval, NSBitmapImageRep, (CGFloat?, CGFloat?))] = []
+        var frames: [Frame] = []
         while Date().timeIntervalSince(start) < 0.55 {
             RunLoop.main.run(until: Date().addingTimeInterval(1.0 / 120.0))
-            let controls = outermostControls(host)
-            captured.append((Date().timeIntervalSince(start), try EtanQA0510Tests.fixedScaleBitmap(host, scale: Self.scale),
-                             controls))
+            frames.append(try measure(host, time: Date().timeIntervalSince(start)))
         }
-        return captured.map { measure($0.1, controls: $0.2, time: $0.0) }
+        return frames
     }
 
-    // MARK: - Pixels
+    // MARK: - Frame measurement
 
-    /// One frame: the band's outer edges along a row 10 pt below the top (clear of the wings' rounded lower corners)
-    /// and the outermost icon ink in each wing, in points.
     private func measure(_ host: NSView, time: TimeInterval) throws -> Frame {
-        measure(try EtanQA0510Tests.fixedScaleBitmap(host, scale: Self.scale), controls: outermostControls(host), time: time)
+        // Flush the same offscreen drawing pass on every host before reading the mask and control frames.
+        let bitmap = try EtanQA0510Tests.fixedScaleBitmap(host, scale: Self.scale)
+        let controls = outermostControls(host)
+        let painted = measure(bitmap, controls: controls, time: time)
+        // SwiftUI can retain a native glass view and its mask while the shell has zero opacity (Reduce Motion).
+        // Pixels establish visibility only; their colour/compositing must not define the native glass's geometry.
+        guard painted.leftEdge != nil else { return painted }
+        if #available(macOS 26.0, *) {
+            func all(_ view: NSView) -> [NSView] { view.subviews + view.subviews.flatMap(all) }
+            let glass = all(host).filter { $0 is NSGlassEffectView && !$0.isHiddenOrHasHiddenAncestor }
+            let edges = try glass.compactMap { view -> CGRect? in
+                let mask = try XCTUnwrap(view.layer?.mask as? CAShapeLayer, "native glass has its production shape mask")
+                let path = try XCTUnwrap(mask.path, "native glass has applied its shape")
+                guard !path.isEmpty else { return nil }
+                let bounds = path.boundingBoxOfPath
+                guard !bounds.isNull, !bounds.isEmpty else { return nil }
+                return view.convert(bounds, to: nil)
+            }
+            return Frame(time: time, leftEdge: edges.map(\.minX).min(), rightEdge: edges.map(\.maxX).max(),
+                         leftInk: controls.0, rightInk: controls.1)
+        }
+        return painted
     }
 
     /// The left edge of the leftmost control and the right edge of the rightmost one in the band row (window points;
