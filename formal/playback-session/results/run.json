@@ -29,7 +29,7 @@
     "src/playback/session.ts": "e32428e4744410576ee10e788c5ee8ca827f5973bd3e287574a1ca7bce58b35b",
     "src/playback/ledger.ts": "d57b969ab6147f269362dae68faad29ff7675338003366e6b473c57a6e3ea166",
     "src/__tests__/playback-session.test.ts": "90041ca61405d17cd7a406371e4b9f3c51c771e0e710791d51702a54af40da22",
-    "src/tts.ts": "e7b245ade1a7d4870d3ec1ff1b359b35b29320e1f9e4cf9357676b7307eff059",
+    "src/tts.ts": "5715c62606ed07accb11f96885e8716a205664ba6009e784a5be0a22a9607957",
     "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "f54b92d1b197cb65956819f0212f4760ad8d73258ea6dea5d56b37ce230b5935",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
@@ -201,8 +201,8 @@
       "kind": "temporal",
       "target": "ParkedEventuallyReleased",
       "status": "EXPECTED_FAIL",
-      "generated": 138692,
-      "distinct": 47085
+      "generated": 78582,
+      "distinct": 27560
     },
     "AskCancelsReadMutant": {
       "role": "mutant",

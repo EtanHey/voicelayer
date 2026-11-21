@@ -12,7 +12,7 @@
     "formal/speech-word-seek/StaleMutant.cfg": "33d40021b2671ecdc71a75db08c391aa5afa9ac1f1319eb7c1196206976cdbff",
     "formal/speech-word-seek/OldReplayInvisibleMutant.cfg": "03631a98f22d3045049750e929ab93c4c63fe9f040fe1f1c97ad0dda641adbb2",
     "formal/speech-word-seek/Fixed.cfg": "5579cccbb15a1880ef97609ea24c189131079ced28c5ad4cca932a988078710e",
-    "src/tts.ts": "e7b245ade1a7d4870d3ec1ff1b359b35b29320e1f9e4cf9357676b7307eff059",
+    "src/tts.ts": "5715c62606ed07accb11f96885e8716a205664ba6009e784a5be0a22a9607957",
     "src/tts/speech-words.ts": "65aee12e0d17659ed044c418edef306ca3f679c913fda08a09339f7006bdddf5",
     "src/__tests__/speech-words.test.ts": "ae10c21b242fe47d3930bffa974c00032cbe4e5e373aa314eb52a6ea25cf0d78",
     "src/socket-protocol.ts": "8329b558d26dd6f9f85b784552056698563193b9078a749a0597513d3e3681d2",
