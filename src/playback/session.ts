@@ -239,10 +239,18 @@ export class PlaybackSessionEngine {
     return ok({ word: session.cursor });
   }
 
-  /** Seek to a word from a playing read. */
+  /** A playing seek replaces its player; a paused seek only moves the stored resume word. */
   seek(id: string, to: number): EngineResult {
     const session = this.sessions.get(id);
-    if (!session || session.state !== "playing") return no(session ? `session is ${session.state}` : "unknown session");
+    if (!session || (session.state !== "playing" && session.state !== "paused")) return no(session ? `session is ${session.state}` : "unknown session");
+    if (session.state === "paused") {
+      session.cursor = clampWord(to, Math.max(0, session.wordCount - 1));
+      session.pausedAt = session.cursor;
+      session.resumedAt = undefined;
+      this.tele = session.cursor;
+      this.record("paused-seek", session, "paused");
+      return ok({ word: session.cursor, state: "paused" });
+    }
     session.seekTo = clampWord(to, Math.max(0, session.wordCount - 1));
     this.move(session, "seeking", "seek");
     return ok({ word: session.seekTo });

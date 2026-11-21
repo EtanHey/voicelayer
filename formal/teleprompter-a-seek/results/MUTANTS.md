@@ -1,7 +1,7 @@
 | Property | Exact-property failing mutant configs |
 | --- | --- |
-| NoPausedSeek | PausedSeekMutant |
 | NoPausedSliderSend | OldPausedSliderMutant |
+| PausedSeekStaysPaused | PausedSeekMutant |
 | SettledShowsClock | StaleSlideMutant |
 | TableIsCurrent | StaleTableMutant |
 | TruthfulTimingNotice | OldTimingNoticeMutant |

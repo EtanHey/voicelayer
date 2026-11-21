@@ -23,6 +23,15 @@ function healthy(engine: PlaybackSessionEngine) {
   expect(engine.violations()).toEqual([]);
 }
 
+it("T32 paused seek stores the clicked word and resume lands there without a player on click", () => {
+  const engine = new PlaybackSessionEngine();
+  playing(engine, "r1"); engine.word("r1", 4); engine.pause("r1", 4); engine.playerExited("r1");
+  expect(engine.seek("r1", 7)).toMatchObject({ ok: true, word: 7, state: "paused" });
+  expect(engine.get("r1")).toMatchObject({ cursor: 7, pausedAt: 7, state: "paused" });
+  expect(engine.tele).toBe(7); expect(engine.players.size).toBe(0);
+  expect(engine.resume("r1")).toMatchObject({ ok: true, word: 7 }); healthy(engine);
+});
+
 describe("ResumeExact: reported pause rewind", () => {
   it("resume lands on the paused word, and a second pause after it on the word heard then", () => {
     const engine = new PlaybackSessionEngine();
