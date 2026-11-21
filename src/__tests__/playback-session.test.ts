@@ -4,6 +4,8 @@
  * walk calls every operation in arbitrary order and asserts no invariant ever breaks.
  */
 import { describe, expect, it } from "bun:test";
+import { SpeechWordTimeline } from "../tts/speech-words";
+import { ledgerPausedSeek, playbackSessionEngine, resetPlaybackSessionLedger } from "../playback/ledger";
 import {
   ASK_PROMPT_ID,
   PLAYBACK_SPEEDS,
@@ -30,6 +32,25 @@ it("T32 paused seek stores the clicked word and resume lands there without a pla
   expect(engine.get("r1")).toMatchObject({ cursor: 7, pausedAt: 7, state: "paused" });
   expect(engine.tele).toBe(7); expect(engine.players.size).toBe(0);
   expect(engine.resume("r1")).toMatchObject({ ok: true, word: 7 }); healthy(engine);
+});
+
+it("T32 a paused click reaches a word timed after the player started", () => {
+  resetPlaybackSessionLedger();
+  try {
+    const engine = playbackSessionEngine();
+    const table = new SpeechWordTimeline("growing-read");
+    table.update(0, "One two three", 300, []);
+    playing(engine, "growing-read", 3);
+    engine.pause("growing-read", 1); engine.playerExited("growing-read");
+    table.update(1, "four five six seven eight", 500, []);
+    expect(table.seek(7, offset => {
+      ledgerPausedSeek("growing-read", 7, offset);
+      return { outcome: "accept", offset_ms: offset };
+    })).toMatchObject({ outcome: "accept" });
+    expect(engine.get("growing-read")).toMatchObject({ cursor: 7, pausedAt: 7, state: "paused" });
+    expect(engine.tele).toBe(7); expect(engine.players.size).toBe(0);
+    expect(engine.resume("growing-read")).toMatchObject({ ok: true, word: 7 }); healthy(engine);
+  } finally { resetPlaybackSessionLedger(); }
 });
 
 describe("ResumeExact: reported pause rewind", () => {

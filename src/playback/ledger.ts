@@ -162,6 +162,8 @@ export function ledgerPaused(id: string, word: number, owner: PauseOwner, offset
 }
 
 export function ledgerPausedSeek(id: string, word: number, offsetMs: number): void {
+  // The word table validated this target; later timing can outgrow the player's original prefix.
+  engine.extend(id, word + 1);
   pausedOffsets.set(id, offsetMs);
   ledgerSeek(id, word);
 }

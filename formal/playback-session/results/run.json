@@ -27,8 +27,8 @@
     "formal/playback-session/SecondAskMutant.cfg": "6b8de4ed42ed17842ffe827feca177a79c48c95bcc8c68b6974a278c53a9b147",
     "formal/playback-session/Fixed.cfg": "5ee7e3a9f9039f8a25019fa17b39923273d3916f9b6a04a333fdbf43efc5caaa",
     "src/playback/session.ts": "7cdd7497525f5b9371d39617ca9e0f0714d4e40c481db9f9a7a57212f1f7b449",
-    "src/playback/ledger.ts": "f3f78e703ae469989fdbe04ecdea1f051e6ed09b4a82d234c1d54f67e10603ac",
-    "src/__tests__/playback-session.test.ts": "a7e83a757aa2b01cda46402b92999ee0e5ebc5146f2fd9b0d1ab35b023d17021",
+    "src/playback/ledger.ts": "1882ab3872f3bb2a1c076a4cd1446112f128d63f06b2dc5bfa16d38f57aad165",
+    "src/__tests__/playback-session.test.ts": "17b75406021a2e56ccc54496432f13166e005a6315c4d2b968023aa573d5193c",
     "src/tts.ts": "e0fbb149c82a38c5dcd0ca4147d5a320ba94d333545925c0ee9ea1aed7cfca6c",
     "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "7abe28bdce68bfa7b3b6bdf20713c580b2b252827ad64fa325659816842cdee5",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
@@ -201,8 +201,8 @@
       "kind": "temporal",
       "target": "ParkedEventuallyReleased",
       "status": "EXPECTED_FAIL",
-      "generated": 131647,
-      "distinct": 43093
+      "generated": 168706,
+      "distinct": 54342
     },
     "AskCancelsReadMutant": {
       "role": "mutant",
