@@ -6,8 +6,8 @@
 // halves of the gate:
 //
 //   start  — snapshot the installed app, T3 build, log offset and time BEFORE the keypress.
-//   finish — after the operator (one real press; no synthesized key) selects the synthetic paragraph in a rendered
-//            T3 assistant message and presses Option+F5, read only what the resident wrote
+//   finish — after a person or scripts/t3-optf5-drive.swift selects the synthetic paragraph in a rendered
+//            T3 assistant message and posts one HID Option+F5 on a listed proof host, read what the resident wrote
 //            since `start` and write the proof JSON. This script never sends input itself.
 //   check  — called by scripts/verify-voicebar-release.sh before the cask bump. Refuses a
 //            missing, mismatched or stale proof. There is no bypass.
@@ -39,7 +39,7 @@ import { dirname, join, resolve } from "path";
 export const PROOF_SCHEMA = "voicelayer.t3-optf5-proof.v2";
 const T3_BUNDLE_ID = "com.t3tools.t3code";
 const STATE_SCHEMA = "voicelayer.t3-optf5-proof-state.v1";
-// The operator selects, presses and finishes in one sitting; a longer window cannot be
+// The person or HID driver selects, presses and finishes in one sitting; a longer window cannot be
 // attributed to one keypress.
 const MAX_WINDOW_MS = 10 * 60 * 1000;
 // speak_text is accepted, synthesized and added to history within seconds of the capture.
@@ -759,8 +759,8 @@ function record(args: Map<string, string>) {
   console.log(`[t3-optf5-proof] recorded ${out}: commit only this file, then tag v${version} on that commit`);
 }
 
-// start, then wait (no keys sent) for the one Option+F5 the operator presses, then finish.
-// One background command for the lead; the operator only selects and presses.
+// start, then wait (no keys sent) for one Option+F5 from a person or HID driver, then finish.
+// One background command for the lead; a person or HID driver selects and presses once.
 function run(args: Map<string, string>) {
   start(args);
   const state = JSON.parse(readFileSync(need(args, "--state"), "utf8")) as ProofState;
