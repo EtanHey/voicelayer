@@ -103,8 +103,6 @@ guard let element = tree.first(where: {
     ((value($0, kAXValueAttribute) as? String) ?? "").contains(expected)
 }) else { refuse("sentence not found in rendered static text/group values across T3 windows") }
 let range = ((value(element, kAXValueAttribute) as! String) as NSString).range(of: expected)
-var selection = CFRange(location: range.location, length: range.length)
-let rangeValue = AXValueCreate(.cfRange, &selection)!
 func selectedText() -> String? {
     for node in nodes() {
         if let text = value(node, kAXSelectedTextAttribute) as? String, !text.isEmpty { return text }
@@ -116,10 +114,8 @@ func selectedText() -> String? {
     }; return nil
 }
 let source = CGEventSource(stateID: .hidSystemState)
-var verifiedDragEndpoints = false
-let result = AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, rangeValue)
-Thread.sleep(forTimeInterval: 0.1)
-if result != .success || selectedText() != expected {
+// Chromium AX-set ranges need not become DOM selections: always use a real HID drag.
+do {
     func bounds(_ offset: Int) -> CGRect? {
         var character = CFRange(location: offset, length: 1)
         var output: CFTypeRef?
@@ -144,15 +140,13 @@ if result != .success || selectedText() != expected {
         mouse(.leftMouseDragged, CGPoint(x: start.x+(end.x-start.x)*t, y: start.y+(end.y-start.y)*t)); Thread.sleep(forTimeInterval: 0.01)
     }
     mouse(.leftMouseUp, end); Thread.sleep(forTimeInterval: 0.2)
-    verifiedDragEndpoints = true
-    print("selected by HID drag; endpoints verified against exact AX character frames")
-} else { print("selected through AXSelectedTextRange") }
+    print("selected by primary HID drag using exact AX character frames")
+}
 if let actual = selectedText() {
     check(expected, actual)
     print("verified selection text through AX")
 } else {
-    guard verifiedDragEndpoints else { refuse("AX selection text unavailable without verified drag endpoints") }
-    print("AX selection text unavailable; text verification skipped, using verified drag endpoints")
+    refuse("AX cannot report the exact HID-selected text")
 }
 // Read only. Never copy or restore: VoiceBar owns the pasteboard during its own Copy.
 let board = NSPasteboard.general
