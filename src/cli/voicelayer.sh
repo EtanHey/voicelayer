@@ -59,6 +59,10 @@ case "${1:-}" in
         shift
         exec bun "$SCRIPT_DIR/speak.ts" "$@"
         ;;
+    transcribe)
+        shift
+        exec bun "$SCRIPT_DIR/transcribe.ts" "$@"
+        ;;
     extract)
         shift
         exec python3 "$SCRIPT_DIR/extract.py" "$@"
@@ -167,6 +171,7 @@ case "${1:-}" in
         echo ""
         echo "Commands:"
         echo "  speak      Speak text, stdin or a file through the running daemon"
+        echo "  transcribe Transcribe a 16 kHz mono WAV the way a dictation would"
         echo "  serve      Start standalone voice daemon (without MCP/Claude Code)"
         echo "  extract    Extract voice samples from YouTube for voice cloning"
         echo "  clone      Create a voice profile from extracted samples"

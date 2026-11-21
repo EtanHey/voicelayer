@@ -1,0 +1,30 @@
+{
+  "module": "AskDelivery",
+  "sources": [
+    "formal/ask-delivery/check.sh",
+    "formal/ask-delivery/README.md",
+    "formal/tlc_support.py",
+    "formal/tlc.lock.json",
+    "src/ask-delivery.ts"
+  ],
+  "checks": {
+    "Recovery": { "role": "positive", "target": null, "kind": "pass" },
+    "ScopeLeak": { "role": "mutant", "target": "NoCrossCallerDelivery", "kind": "invariant" },
+    "DeleteOnWrite": { "role": "mutant", "target": "NoLossBeforeAck", "kind": "invariant" },
+    "CrashDrops": { "role": "mutant", "target": "NoLossBeforeAck", "kind": "invariant" },
+    "NewIdPerClaim": { "role": "mutant", "target": "NoDoubleInboxInsertion", "kind": "invariant" },
+    "AdmitWhilePending": { "role": "mutant", "target": "NoNewCaptureWhileRecovering", "kind": "invariant" },
+    "TaskScopeLeak": { "role": "mutant", "target": "NoTaskResultToOtherCaller", "kind": "invariant" },
+    "CancelThenComplete": { "role": "mutant", "target": "CancelledNeverCompletes", "kind": "invariant" },
+    "CompleteOnAccept": { "role": "mutant", "target": "TaskCompletesAfterRow", "kind": "invariant" }
+  },
+  "acceptance": [
+    "NoCrossCallerDelivery",
+    "NoLossBeforeAck",
+    "NoDoubleInboxInsertion",
+    "NoNewCaptureWhileRecovering",
+    "NoTaskResultToOtherCaller",
+    "CancelledNeverCompletes",
+    "TaskCompletesAfterRow"
+  ]
+}

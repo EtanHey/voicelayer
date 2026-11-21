@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
 import { createConnection, type Socket } from "node:net";
+import { randomBytes } from "node:crypto";
+import { CALLER_META, DELIVERY_TOOLS } from "./ask-delivery";
 import { z } from "zod";
 import { getMcpSocketPath } from "./paths";
 import { MAX_NDJSON_LINE_BYTES } from "./ndjson-byte-framer";
@@ -47,6 +49,41 @@ function frameReader(onFrame: (frame: Frame) => void, onOversize: () => void) {
 }
 
 export function runBridge() {
+  // Ask delivery identity: random, process lifetime only, kept across daemon reconnects, never persisted.
+  // Voice tool calls and MCP task reads/cancels get it, overwriting any caller-supplied value; other calls lose a
+  // supplied reserved key.
+  // Frames needing neither change pass through byte-identical, as do malformed batch members.
+  const callerCapability = randomBytes(32).toString("hex");
+  const isObject = (value: unknown): value is Record<string, unknown> =>
+    !!value && typeof value === "object" && !Array.isArray(value);
+  // MCP tasks are read and cancelled under the same capability that created them.
+  const callerBound = (method: unknown) => method === "tools/call" || method === "tasks/get" || method === "tasks/cancel";
+  const bindCaller = (frame: Frame): Frame => {
+    if (!frame.messages.some(message => callerBound(message.method))) return frame;
+    let raw: unknown;
+    try { raw = JSON.parse(frame.wire); } catch { return frame; }
+    let changed = false;
+    const bind = (item: unknown): unknown => {
+      if (!isObject(item) || !callerBound(item.method)) return item;
+      const params = isObject(item.params) ? item.params : item.method === "tools/call" ? undefined : {};
+      if (!params) return item;
+      const meta = isObject(params._meta) ? params._meta : {};
+      if (item.method !== "tools/call") {
+        changed = true;
+        return { ...item, params: { ...params, _meta: { ...meta, [CALLER_META]: callerCapability } } };
+      }
+      if (typeof params.name === "string" && DELIVERY_TOOLS.has(params.name)) {
+        changed = true;
+        return { ...item, params: { ...params, _meta: { ...meta, [CALLER_META]: callerCapability } } };
+      }
+      if (!(CALLER_META in meta)) return item;
+      changed = true;
+      const { [CALLER_META]: _forged, ...rest } = meta;
+      return { ...item, params: { ...params, _meta: rest } };
+    };
+    const bound = Array.isArray(raw) ? raw.map(bind) : bind(raw);
+    return changed ? parse(JSON.stringify(bound) + "\n") : frame;
+  };
   let socket: Socket | undefined;
   let state: { kind: "offline" | "ready" } | { kind: "initialize" | "logging"; frame: Frame } = { kind: "offline" };
   let initialize: Frame | undefined;
@@ -170,7 +207,8 @@ export function runBridge() {
     current.on("close", () => { if (socket === current) disconnect(); });
     current.on("drain", () => { if (socket === current) flush(); });
   }
-  const input = frameReader(frame => {
+  const input = frameReader(incoming => {
+    const frame = bindCaller(incoming);
     if (state.kind !== "ready" && !frame.messages.length) {
       let id: string | number | null = null;
       let code = -32700;

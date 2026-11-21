@@ -7,6 +7,7 @@
 
 import { voiceAskNoAnswerSeconds } from "./voice-ask-no-answer";
 import { STOP_FILE } from "./paths";
+import { MAX_WAIT_SECONDS } from "./mcp-protocol";
 
 const NO_ANSWER_RULE = "After an Ask gets no answer, you may make ONE follow-up voice_speak or voice_ask, then continue as if the user is away; do not keep asking.\n";
 
@@ -15,6 +16,12 @@ const SPOKEN_STYLE =
   "Deliver results via voice_ask or voice_speak immediately followed by voice_ask so the user can reply. " +
   "Use sentences of about 15 words or fewer. No markdown, URLs, code or long identifiers aloud. " +
   'For questions, front-load the ask; one question per ask. Offer short numbered options ("One. … Two. …") answerable with a single word. End with the question itself.\n';
+
+const DELIVERY_ACK = {
+  type: "object", description: "Acknowledge a caller-bound Ask result after reading it (its delivery_id and lease_id). Consumed before the call runs.",
+  properties: { delivery_id: { type: "string" }, lease_id: { type: "string" } },
+  required: ["delivery_id", "lease_id"], additionalProperties: false,
+} as const;
 
 /** The two canonical VoiceLayer MCP tools. */
 export function getToolDefinitions() {
@@ -97,6 +104,7 @@ export function getToolDefinitions() {
             enum: ["all", "tts", "mic"],
             default: "all",
           },
+          delivery_ack: DELIVERY_ACK,
         },
         required: [],
       },
@@ -104,26 +112,29 @@ export function getToolDefinitions() {
 
     {
       name: "voice_ask_results",
-      description: "Read retained Ask answers after an interrupted voice_ask: newest first (default 5, max 20), or one archive_id. Returns id, asked_at, question_preview (80 characters), raw answer and status answered/away/needs-retranscribe. Never speaks, records, opens the microphone or retranscribes. For explicit retranscription use voice_ask with retranscribe_archive_id.",
+      description: "Read retained Ask answers: newest first (default 5, max 20), or one archive_id. Returns raw answer and status. An Ask still in progress in this VoiceLayer process is listed under open (phase speaking, listening or transcribing; archive_id once allocated): its answer is not ready, so do not ask the user again; read it later. With delivery_ack alone, acknowledge a caller-bound Ask result's delivery_id and lease_id after reading it. Unacknowledged Ask results are recovered on this caller's next voice call before any new action (that call's own action is NOT run); pending means the earlier Ask is still recording or transcribing. Recovery is at-least-once; deduplicate by delivery_id. This is recovery on the next call, not automatic delivery. Never speaks, records or retranscribes.",
+      // delivery_ack only marks VoiceLayer's own outbox row read; it never changes the user's environment.
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: { type: "object" as const, properties: {
         archive_id: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z-[a-f0-9]{8}$", description: "Exact retained Ask archive ID." },
         limit: { type: "integer", minimum: 1, maximum: 20, default: 5 },
+        delivery_ack: DELIVERY_ACK,
       }, additionalProperties: false },
     },
     {
       name: "voice_ask",
       description:
         "Ask ONE short question aloud (≤600 chars — longer is refused).\n" +
+        "Pass a result's delivery_id and lease_id as delivery_ack on your next voice call.\n" +
         SPOKEN_STYLE + NO_ANSWER_RULE +
-        "BLOCKING: the question is spoken before the microphone opens; the caller blocks for the entire playback plus the response.\n" +
+        "BLOCKING (unless MCP task; see wait_seconds): the question is spoken before the microphone opens; the caller blocks for the entire playback plus the response.\n" +
         "HARD LIMIT: 600 characters maximum, independent of timeout_seconds. " +
-        "Longer messages are refused, not truncated. " +
+        "Longer is refused, not truncated. " +
         "Roughly 45 seconds of speech; a question, not a briefing.\n" +
         "Longer content the user must understand or respond to needs two or more sequential voice_ask calls. " +
         "At each checkpoint the user confirms they absorbed one part before the next. " +
         "voice_speak is only for announcements or status updates that do not need a response.\n" +
-        "Auto-waits for any playing voice_speak audio to finish before speaking. " +
+        "Waits for playing voice_speak audio to finish first. " +
         "No detected speech for 120s by default closes the Ask and keeps the recording; first speech cancels this deadline.\n\n" +
         "Two recording modes:\n" +
         "- VAD mode (default): Silero VAD detects speech, auto-stops on silence\n" +
@@ -136,9 +147,9 @@ export function getToolDefinitions() {
         "Recover it with Re-transcribe in VoiceBar History; do not ask the user to repeat.\n" +
         "Retranscription is explicit only, never automatic: call voice_ask with only retranscribe_archive_id from the preceding successful Ask. " +
         "It uses that exact receipt's complete retained response audio for STT, does not speak, does not open the microphone, and returns only to this caller.\n" +
-        "Archive ID logged at retention, before transcription, and included in retained results. Recover interrupted answers with voice_ask_results. Returns: transcribed text on success, recoverable archive details when captured audio needs retranscription, " +
+        "Recover interrupted answers with voice_ask_results (archive ID logged before transcription). Returns: transcribed text on success, recoverable archive details when captured audio needs retranscription, " +
         "error if busy, if the prompt or the recorder never finished so the microphone never opened, or if the capture pipeline is stuck with zero recoverable audio.\n" +
-        "Prerequisites: sox (recording), whisper.cpp or Wispr Flow (STT), python3 + edge-tts (TTS).",
+        "Needs sox, whisper.cpp or Wispr Flow, and python3 + edge-tts.",
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -189,6 +200,16 @@ export function getToolDefinitions() {
             pattern:
               "^\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z-[a-f0-9]{8}$",
           },
+          wait_seconds: {
+            type: "integer",
+            description:
+              "Only for clients that take MCP tasks: wait up to this many seconds (0-90, larger values are clamped) for the answer, " +
+              "returning the plain result if it is ready, else the task. Absent or 0: the task comes back at once. " +
+              "Ignored when the client does not take MCP tasks: the call then blocks until the answer.",
+            minimum: 0,
+            maximum: MAX_WAIT_SECONDS,
+          },
+          delivery_ack: DELIVERY_ACK,
         },
         required: [],
         oneOf: [
@@ -197,7 +218,7 @@ export function getToolDefinitions() {
             not: { required: ["retranscribe_archive_id"] },
           },
           {
-            properties: { retranscribe_archive_id: {} },
+            properties: { retranscribe_archive_id: {}, delivery_ack: {}, wait_seconds: {} },
             required: ["retranscribe_archive_id"],
             additionalProperties: false,
             not: {

@@ -3,6 +3,6 @@
   "kind": "invariant",
   "target": "DeliversToReadyTimeFocus",
   "status": "EXPECTED_FAIL",
-  "generated": 166,
-  "distinct": 61
+  "generated": 2574,
+  "distinct": 1092
 }

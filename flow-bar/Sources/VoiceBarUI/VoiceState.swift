@@ -1371,6 +1371,13 @@ public final class VoiceState {
 
     public var focusedTargetEligibilityProvider: () -> DictationFocusedTargetEligibility? = { nil }
 
+    /// Asks a Chromium-family target whose accessibility tree is off (a relaunched Electron app) to turn
+    /// it on. Called once at record start and must return at once: the take never waits for it.
+    public var dictationFocusRecoveryKick: (() -> Void)?
+    /// Called only when the ready-time capture found no target. It recovers off the main thread, then
+    /// calls back once on main; the capture then runs once more with every rule.
+    public var readyFocusRecovery: ((@escaping () -> Void) -> Void)?
+
     /// Clipboard operations share the board injected at initialization.
     public var pasteboardWriter: (String) -> Void
     public var pasteboardStringProvider: () -> String?
@@ -3463,6 +3470,7 @@ public final class VoiceState {
         if front?.bundleIdentifier != Bundle.main.bundleIdentifier {
             frontmostAppOnRecordStart = front
             recordStartInsertionHandler = captureDictationInsertionHandler()
+            dictationFocusRecoveryKick?()
         } else {
             frontmostAppOnRecordStart = nil
             recordStartInsertionHandler = nil
@@ -5435,9 +5443,31 @@ public final class VoiceState {
         return true
     }
 
-    private func pasteIntoReadyFocus(_ text: String, operationID: UUID?) {
+    private func pasteIntoReadyFocus(_ text: String, operationID: UUID?, recoversFocus: Bool = true) {
         let app = frontmostAppProvider()
         let eligibility = focusedTargetEligibilityProvider()
+        if eligibility == nil, recoversFocus, let app, !secureInputEnabledProvider(),
+           let readyFocusRecovery {
+            // Recovery may finish after a focus switch, timeout, or process relaunch. Pin values now:
+            // NSRunningApplication itself can outlive its process, and PID alone can be reused.
+            let readyPID = app.processIdentifier
+            let readyBundle = app.bundleIdentifier
+            let readyLaunch = app.launchDate
+            readyFocusRecovery { [weak self] in
+                guard let self else { return }
+                if let operationID, self.ownedPasteOperations[operationID] == nil { return }
+                guard let current = self.frontmostAppProvider(),
+                      current.processIdentifier == readyPID,
+                      current.bundleIdentifier == readyBundle,
+                      current.launchDate == readyLaunch else {
+                    self.finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID,
+                        refusalNote: "Not pasted: target app changed; kept in History")
+                    return
+                }
+                self.pasteIntoReadyFocus(text, operationID: operationID, recoversFocus: false)
+            }
+            return
+        }
         guard !secureInputEnabledProvider(), eligibility?.isSecure != true else {
             finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID,
                 refusalNote: "Not pasted: secure input; kept in History")
