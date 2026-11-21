@@ -151,7 +151,9 @@ notarized candidate bundle as the M4, so the bundle digest it proves is the one 
    ```bash
    swift scripts/t3-optf5-drive.swift --expected-text-file docs.local/<release>/synthetic.txt
    ```
-   It brings T3 frontmost, selects rendered static text through AX or a HID drag using AX
+   It opens the proof thread deep link, brings T3 frontmost, enables Chromium AX, and searches
+   every window. `--dump` prints window titles and up to 40 static text values without key
+   events; use it before arming. It selects rendered text through AX or a HID drag using AX
    character frames, verifies the exact selection (restoring the pasteboard if Copy is needed),
    and posts one Option+F5 down/up at `.cghidEventTap` with `.maskAlternate`. A selection
    mismatch refuses before Option+F5. Never type or send a message through the driver.

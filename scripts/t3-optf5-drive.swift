@@ -8,9 +8,11 @@ func refuse(_ reason: String) -> Never {
 func check(_ expected: String, _ actual: String) {
     guard !expected.isEmpty, expected == actual else { refuse("selection does not exactly match expected text") }
 }
-let args = Array(CommandLine.arguments.dropFirst())
+var args = Array(CommandLine.arguments.dropFirst())
+let dump = args.contains("--dump")
+args.removeAll { $0 == "--dump" }
 if args == ["--help"] {
-    print("Usage: swift scripts/t3-optf5-drive.swift --expected-text-file PATH\n       ... --check-selection EXPECTED ACTUAL (no screen/input)"); exit(0)
+    print("Usage: swift scripts/t3-optf5-drive.swift --expected-text-file PATH [--dump]\n       ... --check-selection EXPECTED ACTUAL (no screen/input)"); exit(0)
 }
 if args.first == "--check-selection", args.count == 3 {
     check(args[1], args[2]); print("selection matches; check only, no input posted"); exit(0)
@@ -20,6 +22,10 @@ guard let contents = try? String(contentsOfFile: args[1], encoding: .utf8) else 
 let expected = contents.hasSuffix("\n") ? String(contents.dropLast()) : contents
 guard !expected.isEmpty, AXIsProcessTrusted() else { refuse("empty text or Accessibility permission unavailable") }
 guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.t3tools.t3code").first else { refuse("T3 Code is not running") }
+let threadURL = URL(string: "t3-thread://v2/ccab97e3-1c39-4471-b2f1-ae0e076cec03/5de712f0-a1fa-4985-87ca-bdcd7dc23db7")!
+let opened = NSWorkspace.shared.open(threadURL)
+print("lead thread deep link handled=\(opened)")
+Thread.sleep(forTimeInterval: 2)
 app.activate(options: [.activateIgnoringOtherApps]); Thread.sleep(forTimeInterval: 0.5)
 func frontmost() -> Bool { NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier }
 guard frontmost() else { refuse("T3 Code did not become frontmost") }
@@ -28,8 +34,12 @@ func value(_ node: AXUIElement, _ name: String) -> CFTypeRef? {
     var result: CFTypeRef?
     guard AXUIElementCopyAttributeValue(node, name as CFString, &result) == .success else { return nil }; return result
 }
+let manual = AXUIElementSetAttributeValue(root, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+let enhanced = manual == .success ? nil : AXUIElementSetAttributeValue(root, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+print("AXManualAccessibility=\(manual.rawValue); AXEnhancedUserInterface=\(enhanced.map { String($0.rawValue) } ?? "not needed")")
+Thread.sleep(forTimeInterval: 1.5)
 func nodes() -> [AXUIElement] {
-    var result: [AXUIElement] = [], pending = [root]
+    var result: [AXUIElement] = [], pending = (value(root, kAXWindowsAttribute) as? [AXUIElement] ?? [])
     while let node = pending.popLast() {
         result.append(node)
         guard result.count < 50_000 else { refuse("AX traversal bound exceeded") }
@@ -38,12 +48,21 @@ func nodes() -> [AXUIElement] {
     return result
 }
 let tree = nodes()
+for window in value(root, kAXWindowsAttribute) as? [AXUIElement] ?? [] {
+    print("window title: \(value(window, kAXTitleAttribute) as? String ?? "<unavailable>")")
+}
+if dump {
+    let texts = tree.filter { (value($0, kAXRoleAttribute) as? String) == kAXStaticTextRole }.prefix(40)
+    for (index, node) in texts.enumerated() { print("AXStaticText[\(index)]: \(value(node, kAXValueAttribute) as? String ?? "<no value>")") }
+    print("dump only; no key events posted; traversed \(tree.count) elements")
+    exit(0)
+}
 guard tree.count > 1 else { refuse("T3 accessibility tree unreadable; do not relaunch") }
-// Static text only: never select text in the editable composer.
+// Search rendered text/group values in every window, including AXWebArea descendants.
 guard let element = tree.first(where: {
-    (value($0, kAXRoleAttribute) as? String) == kAXStaticTextRole &&
+    [kAXStaticTextRole, kAXGroupRole].contains(value($0, kAXRoleAttribute) as? String ?? "") &&
     ((value($0, kAXValueAttribute) as? String) ?? "").contains(expected)
-}) else { refuse("sentence not found in rendered static text") }
+}) else { refuse("sentence not found in rendered static text/group values across T3 windows") }
 let range = ((value(element, kAXValueAttribute) as! String) as NSString).range(of: expected)
 var selection = CFRange(location: range.location, length: range.length)
 let rangeValue = AXValueCreate(.cfRange, &selection)!
