@@ -47,13 +47,52 @@ func nodes() -> [AXUIElement] {
     }
     return result
 }
-let tree = nodes()
+var tree = nodes()
+func sentencePresent(_ tree: [AXUIElement]) -> Bool {
+    tree.contains { (value($0, kAXRoleAttribute) as? String) == kAXStaticTextRole && ((value($0, kAXValueAttribute) as? String) ?? "").contains(expected) }
+}
+if !sentencePresent(tree) {
+    let rows = tree.filter {
+        guard (value($0, kAXRoleAttribute) as? String) == kAXStaticTextRole,
+              let title = value($0, kAXValueAttribute) as? String else { return false }
+        return title.lowercased().contains("dictation") && title.lowercased().contains("lead")
+    }
+    guard rows.count == 1, let titleNode = rows.first else { refuse("dictation lead sidebar title missing or ambiguous") }
+    var target = titleNode, pressed = false
+    for _ in 0..<5 {
+        let role = value(target, kAXRoleAttribute) as? String ?? ""
+        var actions: CFArray?
+        if [kAXButtonRole, kAXRowRole, kAXStaticTextRole].contains(role),
+           AXUIElementCopyActionNames(target, &actions) == .success,
+           (actions as? [String] ?? []).contains(kAXPressAction) {
+            guard frontmost() else { refuse("focus changed before sidebar AXPress") }
+            guard AXUIElementPerformAction(target, kAXPressAction as CFString) == .success else { refuse("sidebar AXPress failed") }
+            pressed = true; print("opened dictation lead sidebar row by AXPress"); break
+        }
+        guard let parent = value(target, kAXParentAttribute), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
+        target = parent as! AXUIElement
+    }
+    if !pressed {
+        guard let position = value(titleNode, kAXPositionAttribute), let size = value(titleNode, kAXSizeAttribute),
+              CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID() else { refuse("sidebar title frame unavailable") }
+        var point = CGPoint.zero, dimensions = CGSize.zero
+        guard AXValueGetValue(position as! AXValue, .cgPoint, &point), AXValueGetValue(size as! AXValue, .cgSize, &dimensions),
+              dimensions.width > 0, dimensions.height > 0, frontmost() else { refuse("invalid sidebar frame or focus") }
+        point.x += dimensions.width/2; point.y += dimensions.height/2
+        guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
+              let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) else { refuse("cannot create sidebar click") }
+        down.post(tap: .cghidEventTap); up.post(tap: .cghidEventTap)
+        print("opened dictation lead sidebar row by ONE HID left click")
+    }
+    Thread.sleep(forTimeInterval: 2); tree = nodes()
+}
 for window in value(root, kAXWindowsAttribute) as? [AXUIElement] ?? [] {
     print("window title: \(value(window, kAXTitleAttribute) as? String ?? "<unavailable>")")
 }
 if dump {
     let texts = tree.filter { (value($0, kAXRoleAttribute) as? String) == kAXStaticTextRole }.prefix(40)
     for (index, node) in texts.enumerated() { print("AXStaticText[\(index)]: \(value(node, kAXValueAttribute) as? String ?? "<no value>")") }
+    print("expected sentence present in AXStaticText=\(sentencePresent(tree))")
     print("dump only; no key events posted; traversed \(tree.count) elements")
     exit(0)
 }
