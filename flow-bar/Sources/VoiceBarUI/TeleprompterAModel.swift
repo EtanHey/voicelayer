@@ -388,10 +388,11 @@ struct TeleprompterAModel {
 
     enum SeekTarget: Equatable { case word(utteranceID: String, index: Int), offset(Int) }
 
-    func seekTarget(for word: Int, table: SpeechWordTable?) -> SeekTarget? {
+    func seekTarget(for word: Int, table: SpeechWordTable?, isPaused: Bool = false) -> SeekTarget? {
         if let table, let token = wordTokens[word], let index = table.seekIndex(token: token, text: tokens[token]) {
             return .word(utteranceID: table.utteranceID, index: index)
         }
+        guard !isPaused else { return nil }
         return TeleprompterSeekPolicy.offset(for: words[word], isReadback: false).map(SeekTarget.offset)
     }
 }

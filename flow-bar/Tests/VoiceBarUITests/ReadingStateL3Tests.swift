@@ -89,6 +89,10 @@ final class ReadingStateL3Tests: XCTestCase {
         let eye = try drawnView(in: host, tooltip: "Hide teleprompter")
         XCTAssertEqual(notice.convert(notice.bounds, to: nil).midY, eye.convert(eye.bounds, to: nil).midY, accuracy: 2,
                        "drawn in the eye row, where the timing notice sits")
+        let replay = try drawnView(in: host, tooltip: "Replay")
+        XCTAssertLessThan(notice.convert(notice.bounds, to: nil).maxX,
+                          replay.convert(replay.bounds, to: nil).minX,
+                          "the hint must end before the reset control")
         // Playing again, the pause reason leaves.
         state.handleEvent(["type": "state", "state": "speaking", "text": "One two three four five six",
                            "duration_ms": 6000, "playback_id": "l3-read", "generation": 3, "playback_offset_ms": 2500])
