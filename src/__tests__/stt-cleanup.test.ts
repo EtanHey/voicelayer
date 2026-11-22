@@ -1033,3 +1033,38 @@ describe("stt-cleanup", () => {
     expect(cleanupTranscriptionText("then it does,..")).toBe("Then it does.");
   });
 });
+
+describe("conservative English hesitations", () => {
+  for (const [input, expected] of [
+    ["We went to the, ER, and waited.", "We went to the, ER, and waited."],
+    ["Um I think so.", "I think so."],
+    ["Uh I don't know.", "I don't know."],
+    ["It works. Um I think so.", "It works. I think so."],
+    ["Um So what now?", "So what now?"],
+    ["We drank Um Bongo.", "We drank Um Bongo."],
+    ["We shipped it. Uh The parser broke.", "We shipped it. The parser broke."],
+    ["and then Um I said", "And then I said"],
+    ["the '90s were um great and uh fun", "The '90s were great and fun"],
+    ["'cause um I said so and uh left", "'cause I said so and left"],
+    ["He said \"hello um and uh we left", "He said \"hello and we left"],
+    ["so, er, yeah", "So, yeah"],
+    ["Take it to the ER, er, now.", "Take it to the ER, now."],
+    ["I er wanted", "I wanted"],
+    ["er I mean", "I mean"],
+    ["um um we go.", "We go."],
+    ['He said “um, er” and left.', 'He said “um, er” and left.'],
+    ["Uh… we go.", "Uh… we go."],
+    ["er— we go.", "Er— we go."],
+    ["Uh. We go.", "We go."],
+    ["Er ist hier.", "Er ist hier."],
+    ['He said "er" and left.', 'He said "er" and left.'],
+    // At the start of a transcript a name and a filler look alike; main's removal stands there (mid-sentence names stay).
+    ["Um Bongo tastes good.", "Bongo tastes good."],
+    ["Um Okay let's go.", "Okay let's go."],
+    ["Uh Let me check.", "Let me check."],
+    ["Um Can you check?", "Can you check?"],
+    ["הוא אמר er ואז הלך.", "הוא אמר ואז הלך."],
+    ["Um, so the parser works.", "So the parser works."],
+    ["I think, er, we should.", "I think, we should."],
+  ]) it(input!, () => expect(cleanupTranscriptionText(input!, { VOICELAYER_STT_AGGRESSIVE_FILLERS: "0" })).toBe(expected!));
+});
