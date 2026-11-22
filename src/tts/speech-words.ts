@@ -91,6 +91,21 @@ export class SpeechWordTimeline {
     return count;
   }
 
+  /** The retained chunk and local audio position of a timed word. */
+  positionOf(wordIndex: number): { chunkIndex: number; chunkStartMs: number; localOffsetMs: number } | undefined {
+    let chunkStartMs = 0, remaining = wordIndex;
+    for (let i = 0; i < this.chunks.size; i++) {
+      const chunk = this.chunks.get(i);
+      if (!chunk) return undefined;
+      if (remaining < chunk.words.length) {
+        const word = chunk.words[remaining];
+        return word ? { chunkIndex: i, chunkStartMs, localOffsetMs: word.startMs } : undefined;
+      }
+      chunkStartMs += chunk.duration; remaining -= chunk.words.length;
+    }
+    return undefined;
+  }
+
   seek(wordIndex: number, perform: (offsetMs: number) => SeekResult, commandId?: string): SeekResult {
     const receipt = commandId ? this.receipts.get(commandId) : undefined;
     if (receipt) return receipt.wordIndex === wordIndex ? receipt.result : { outcome: "reject", reason: "seek id reused" };

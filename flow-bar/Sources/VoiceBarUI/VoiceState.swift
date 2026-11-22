@@ -2758,7 +2758,7 @@ public final class VoiceState {
 
     /// Playback-only: a word click names the utterance it was drawn from, never the latest one.
     public func seekSpeechWord(utteranceID: String, wordIndex: Int) {
-        guard mode == .speaking, !isPlaybackPaused, speechWords?.utteranceID == utteranceID, wordIndex >= 0 else { return }
+        guard mode == .speaking, speechWords?.utteranceID == utteranceID, wordIndex >= 0 else { return }
         // C7 L3 V09: a long read is timed chunk by chunk as it synthesizes, and the daemon refuses a word it has not
         // timed yet. A click on such a word of the read on screen (C4 F3: also before the first chunk) waits for its
         // timing. C4 F1: it waits only `pendingSpeechSeekWindow`; a timing that arrives later never moves the voice.
@@ -2824,7 +2824,7 @@ public final class VoiceState {
     /// Anything else drops it.
     private func firePendingSpeechSeekIfTimed() {
         guard let pending = pendingSpeechSeek else { return }
-        guard pending.readEpoch == logicalReadEpoch, mode == .speaking, !isPlaybackPaused,
+        guard pending.readEpoch == logicalReadEpoch, mode == .speaking,
               playbackAmplitudeClock() - pending.clickedAt <= Self.pendingSpeechSeekWindow,
               let table = speechWords, table.utteranceID == pending.utteranceID else {
             pendingSpeechSeek = nil

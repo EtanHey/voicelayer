@@ -2,7 +2,7 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/playback-session/PlaybackSession.tla": "3a093de1c92fd1a35d754824bd7310876d9f379a2a8871a57be4210d5666ef3f",
+    "formal/playback-session/PlaybackSession.tla": "9a7f240bdc400f392b61bfcc608ee905ffbe80f8703f1975c47f2c2e87e2d766",
     "formal/playback-session/checks.json": "c7c8e6478b93b728c49094a1e0f3db97dd1e8d1ed382b67bcf8ed5b68e33c9cd",
     "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
@@ -26,11 +26,11 @@
     "formal/playback-session/OldReplayShownMutant.cfg": "b494b390cd434b5f6a9d37d452232470d55f37b194c6f8a91a4333fd11e72eb6",
     "formal/playback-session/SecondAskMutant.cfg": "6b8de4ed42ed17842ffe827feca177a79c48c95bcc8c68b6974a278c53a9b147",
     "formal/playback-session/Fixed.cfg": "5ee7e3a9f9039f8a25019fa17b39923273d3916f9b6a04a333fdbf43efc5caaa",
-    "src/playback/session.ts": "e32428e4744410576ee10e788c5ee8ca827f5973bd3e287574a1ca7bce58b35b",
-    "src/playback/ledger.ts": "d57b969ab6147f269362dae68faad29ff7675338003366e6b473c57a6e3ea166",
-    "src/__tests__/playback-session.test.ts": "90041ca61405d17cd7a406371e4b9f3c51c771e0e710791d51702a54af40da22",
-    "src/tts.ts": "5715c62606ed07accb11f96885e8716a205664ba6009e784a5be0a22a9607957",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "f54b92d1b197cb65956819f0212f4760ad8d73258ea6dea5d56b37ce230b5935",
+    "src/playback/session.ts": "7cdd7497525f5b9371d39617ca9e0f0714d4e40c481db9f9a7a57212f1f7b449",
+    "src/playback/ledger.ts": "1882ab3872f3bb2a1c076a4cd1446112f128d63f06b2dc5bfa16d38f57aad165",
+    "src/__tests__/playback-session.test.ts": "17b75406021a2e56ccc54496432f13166e005a6315c4d2b968023aa573d5193c",
+    "src/tts.ts": "83e934ffeb0bb89f1ea8b7046e4d92bd578a7ca93ec8107744a7a7c96622c4ed",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "7abe28bdce68bfa7b3b6bdf20713c580b2b252827ad64fa325659816842cdee5",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
@@ -81,7 +81,7 @@
     ]
   },
   "graphHashes": {
-    "Fixed": "6d422b01055a6b4db172c74fa20e8fbbc6c6b9335c7222c4afa14b68c8885864"
+    "Fixed": "a1bd08a9c9569025f8e4a903e750f88f58acf847d5e9b2e63e200db5abd1e24d"
   },
   "checks": {
     "Fixed": {
@@ -89,48 +89,48 @@
       "kind": "pass",
       "target": null,
       "status": "PASS",
-      "generated": 3008269,
-      "distinct": 837722
+      "generated": 3518625,
+      "distinct": 951516
     },
     "ClientFixed": {
       "role": "positive",
       "kind": "pass",
       "target": null,
       "status": "PASS",
-      "generated": 2575494,
-      "distinct": 748634
+      "generated": 3078756,
+      "distinct": 857732
     },
     "JumpBackMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "ResumeExact",
       "status": "EXPECTED_FAIL",
-      "generated": 165,
-      "distinct": 104
+      "generated": 106,
+      "distinct": 69
     },
     "SecondAskMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "ResumeExact",
       "status": "EXPECTED_FAIL",
-      "generated": 1805,
-      "distinct": 934
+      "generated": 2075,
+      "distinct": 1022
     },
     "OverlapMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "OneAudible",
       "status": "EXPECTED_FAIL",
-      "generated": 70,
-      "distinct": 51
+      "generated": 74,
+      "distinct": 53
     },
     "StrandMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "AskParksOne",
       "status": "EXPECTED_FAIL",
-      "generated": 444,
-      "distinct": 260
+      "generated": 529,
+      "distinct": 291
     },
     "CancelPreparingMutant": {
       "role": "mutant",
@@ -145,32 +145,32 @@
       "kind": "invariant",
       "target": "MicExclusive",
       "status": "EXPECTED_FAIL",
-      "generated": 150,
-      "distinct": 95
+      "generated": 170,
+      "distinct": 103
     },
     "RecorderWaitMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "MicExclusive",
       "status": "EXPECTED_FAIL",
-      "generated": 14922,
-      "distinct": 6096
+      "generated": 19013,
+      "distinct": 7531
     },
     "ClockResetMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "TeleTracksAudio",
       "status": "EXPECTED_FAIL",
-      "generated": 1266,
-      "distinct": 687
+      "generated": 1523,
+      "distinct": 790
     },
     "PrevOverlapMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "OneLiveSession",
       "status": "EXPECTED_FAIL",
-      "generated": 130,
-      "distinct": 83
+      "generated": 150,
+      "distinct": 91
     },
     "ZombieMutant": {
       "role": "mutant",
@@ -193,16 +193,16 @@
       "kind": "pass",
       "target": null,
       "status": "PASS",
-      "generated": 3008269,
-      "distinct": 837722
+      "generated": 3518625,
+      "distinct": 951516
     },
     "NoRestoreMutant": {
       "role": "mutant",
       "kind": "temporal",
       "target": "ParkedEventuallyReleased",
       "status": "EXPECTED_FAIL",
-      "generated": 78582,
-      "distinct": 27560
+      "generated": 196922,
+      "distinct": 62917
     },
     "AskCancelsReadMutant": {
       "role": "mutant",
@@ -217,32 +217,32 @@
       "kind": "invariant",
       "target": "QueueSurvivesAsk",
       "status": "EXPECTED_FAIL",
-      "generated": 279,
-      "distinct": 171
+      "generated": 315,
+      "distinct": 182
     },
     "EarlySuccessorMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "SuccessorWaitsForRelease",
       "status": "EXPECTED_FAIL",
-      "generated": 154,
-      "distinct": 96
+      "generated": 174,
+      "distinct": 104
     },
     "OldPrevReturnMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "RestoreReceiptApplied",
       "status": "EXPECTED_FAIL",
-      "generated": 1178,
-      "distinct": 649
+      "generated": 1416,
+      "distinct": 740
     },
     "OldReplayShownMutant": {
       "role": "mutant",
       "kind": "invariant",
       "target": "EndedReplayNotShownRunning",
       "status": "EXPECTED_FAIL",
-      "generated": 1178,
-      "distinct": 649
+      "generated": 1416,
+      "distinct": 740
     }
   }
 }

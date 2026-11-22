@@ -29,9 +29,9 @@ Tick == /\ ~paused /\ clockLine < 2 /\ clockLine' = clockLine + 1 /\ sliding' = 
         /\ UNCHANGED <<utt, table, paused, shown, pending, sends, pausedSend, timed, legacy, pausedOffsetSend>>
 SlideEnd == /\ sliding /\ sliding' = FALSE /\ shown' = IF StaleSlide THEN slideTo ELSE clockLine
             /\ UNCHANGED <<utt, table, paused, clockLine, slideTo, pending, sends, pausedSend, timed, legacy, pausedOffsetSend>>
-\* A word button names the table it was drawn from; a paused column has no seek target.
-Click(l) == /\ sends < 3 /\ (~paused \/ SkipPauseGate)
-            /\ pending' = [u |-> table, line |-> l] /\ sends' = sends + 1 /\ pausedSend' = (pausedSend \/ paused)
+\* A word button names the table it was drawn from; T32 also allows paused clicks, which keep the read paused.
+Click(l) == /\ sends < 3
+            /\ pending' = [u |-> table, line |-> l] /\ sends' = sends + 1 /\ UNCHANGED pausedSend
             /\ UNCHANGED <<utt, table, paused, clockLine, shown, sliding, slideTo, timed, legacy, pausedOffsetSend>>
 \* The scrubber slider: an offset seek (speech_seek scope "current") of whatever plays. It is enabled only while
 \* the scrubber allows seeking; a paused read is rejected by the daemon (seekPlayback "paused"), so it must not send.
@@ -39,13 +39,15 @@ Slide(l) == /\ sends < 3 /\ (~paused \/ SliderIgnoresPause)
             /\ pending' = [u |-> utt, line |-> l] /\ sends' = sends + 1
             /\ pausedOffsetSend' = (pausedOffsetSend \/ paused)
             /\ UNCHANGED <<utt, table, paused, clockLine, shown, sliding, slideTo, pausedSend, timed, legacy>>
-\* The daemon accepts only its current, unpaused utterance; the player restarts at the word.
+\* The daemon accepts only its current utterance; a paused seek changes its cursor silently.
 SeekLand == /\ pending.u # 0 /\ pending' = [u |-> 0, line |-> 0]
-            /\ IF pending.u = utt /\ ~paused
+            /\ IF pending.u = utt
                THEN /\ clockLine' = pending.line /\ sliding' = TRUE
                     /\ slideTo' = IF StaleSlide THEN slideTo ELSE pending.line
                ELSE UNCHANGED <<clockLine, sliding, slideTo>>
-            /\ UNCHANGED <<utt, table, paused, shown, sends, pausedSend, timed, legacy, pausedOffsetSend>>
+            /\ paused' = IF pending.u = utt /\ SkipPauseGate THEN FALSE ELSE paused
+            /\ pausedSend' = (pausedSend \/ (pending.u = utt /\ paused /\ SkipPauseGate))
+            /\ UNCHANGED <<utt, table, shown, sends, timed, legacy, pausedOffsetSend>>
 Pause == /\ ~paused /\ paused' = TRUE
          /\ UNCHANGED <<utt, table, clockLine, shown, sliding, slideTo, pending, sends, pausedSend, timed, legacy, pausedOffsetSend>>
 Resume == /\ paused /\ paused' = FALSE
@@ -58,7 +60,7 @@ HighlightTimed == timed \/ legacy
 NoticeShown == IF LegacyNotice THEN ~legacy ELSE ~HighlightTimed
 \* The words on screen (and every click target) belong to the utterance playing.
 TableIsCurrent == table = utt
-NoPausedSeek == ~pausedSend
+PausedSeekStaysPaused == ~pausedSend
 \* Once a slide settles, the column shows the line the clock names: a seek mid-slide retargets it.
 SettledShowsClock == ~sliding => shown = clockLine
 \* V3-7: a paused read never sends an offset seek from the slider (the daemon rejects it "paused").

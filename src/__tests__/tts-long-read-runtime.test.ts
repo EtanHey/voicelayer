@@ -1681,6 +1681,44 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     }
   });
 
+  it.each([false, true])("T32 paused word click crosses chunks and Play resumes there (immediate=%s)", async immediate => {
+    const h = start(); await playerBarrier.at(0);
+    players[0].exit.resolve(0); await playerBarrier.at(1); await synthBarrier.at(2);
+    expect(pausePlayback().outcome).toBe("accept");
+    await fixtureCheckpoint();
+    expect(tts.seekSpeechWord(h.id, 0, "paused-cross-chunk")).toMatchObject({ outcome: "accept", offset_ms: 0 });
+    expect(tts.isPlaybackPaused()).toBe(true);
+    expect(events.filter(e => e.type === "playback_state").at(-1)).toMatchObject({ state: "paused", offset_ms: 0, word_index: 0 });
+    expect(players).toHaveLength(2);
+    if (!immediate) await fixtureCheckpoint();
+    expect(tts.resumePlayback()).toMatchObject({ outcome: "accept", offset_ms: 0 });
+    await playerBarrier.at(2);
+    expect(events.filter(e => e.state === "speaking" && !e.long_read?.preparing).at(-1))
+      .toMatchObject({ playback_offset_ms: 0, long_read: { chunk_index: 0 } });
+    expect(playbackSessionViolations()).toEqual([]);
+    stopPlayback(); await h.done;
+  });
+
+  it("T32 a failed cross-chunk resume keeps the clicked cursor and Play can retry", async () => {
+    const h = start(); await playerBarrier.at(0);
+    players[0].exit.resolve(0); await playerBarrier.at(1); await synthBarrier.at(2);
+    pausePlayback(); await fixtureCheckpoint();
+    const clicked = tts.seekSpeechWord(h.id, 1, "retry-click");
+    expect(clicked.outcome).toBe("accept"); expect(clicked.offset_ms).toBeGreaterThan(0);
+    holdDecoder = true;
+    const conversionIndex = decoders.length;
+    expect(tts.resumePlayback().outcome).toBe("accept");
+    const conversion = await decoderBarrier.at(conversionIndex);
+    conversion.exit.resolve(1); await fixtureCheckpoint();
+    expect(events.filter(e => e.type === "error" && e.source === "seek")).not.toHaveLength(0);
+    expect(tts.isPlaybackPaused()).toBe(true); expect(players).toHaveLength(2);
+    holdDecoder = false;
+    expect(tts.resumePlayback()).toMatchObject({ outcome: "accept", offset_ms: clicked.offset_ms });
+    await playerBarrier.at(2);
+    expect(events.filter(e => e.state === "speaking" && !e.long_read?.preparing).at(-1).playback_offset_ms).toBe(clicked.offset_ms);
+    stopPlayback(); await h.done;
+  });
+
   it("seeks across retained chunks through the real queue and converts global stop time", async () => {
     const h = start(); await playerBarrier.at(0);
     players[0].exit.resolve(0); await playerBarrier.at(1); await synthBarrier.at(2);

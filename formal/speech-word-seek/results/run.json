@@ -12,13 +12,13 @@
     "formal/speech-word-seek/StaleMutant.cfg": "33d40021b2671ecdc71a75db08c391aa5afa9ac1f1319eb7c1196206976cdbff",
     "formal/speech-word-seek/OldReplayInvisibleMutant.cfg": "03631a98f22d3045049750e929ab93c4c63fe9f040fe1f1c97ad0dda641adbb2",
     "formal/speech-word-seek/Fixed.cfg": "5579cccbb15a1880ef97609ea24c189131079ced28c5ad4cca932a988078710e",
-    "src/tts.ts": "5715c62606ed07accb11f96885e8716a205664ba6009e784a5be0a22a9607957",
-    "src/tts/speech-words.ts": "65aee12e0d17659ed044c418edef306ca3f679c913fda08a09339f7006bdddf5",
+    "src/tts.ts": "83e934ffeb0bb89f1ea8b7046e4d92bd578a7ca93ec8107744a7a7c96622c4ed",
+    "src/tts/speech-words.ts": "bdc2f4936cc0e04bf0057236c017c183e5d3adcea5434bcb657226e7d28176dc",
     "src/__tests__/speech-words.test.ts": "ae10c21b242fe47d3930bffa974c00032cbe4e5e373aa314eb52a6ea25cf0d78",
     "src/socket-protocol.ts": "8329b558d26dd6f9f85b784552056698563193b9078a749a0597513d3e3681d2",
     "src/socket-handlers.ts": "ba966df991db38969594868381323d6b383c8eeabac71c5d9bf11130d39885fe",
-    "src/__tests__/tts-long-read-runtime.test.ts": "86a3ec07ed184a20c65d409ae3367d374c03748ff33ff5c9172d63b3182bb88f",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "f54b92d1b197cb65956819f0212f4760ad8d73258ea6dea5d56b37ce230b5935",
+    "src/__tests__/tts-long-read-runtime.test.ts": "9f5b521d4ce260182e476e6b0c1e797f806a185278aa3096d25ea125d9feded1",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "7abe28bdce68bfa7b3b6bdf20713c580b2b252827ad64fa325659816842cdee5",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {

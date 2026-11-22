@@ -150,6 +150,28 @@ describe("playback transition journal", () => {
   });
 });
 
+describe("T32 paused word seek", () => {
+  it("moves the cursor silently and Play starts at the clicked word", async () => {
+    await pauseAt4200();
+    const utterance = events.find(e => e.state === "speaking").utteranceId;
+    const trimIndex = trims.values.length;
+    expect(handleSocketCommand({ cmd: "speech_seek", utteranceId: utterance, wordIndex: 7, id: "paused-click" })).toMatchObject({ outcome: "accept", offset_ms: 7000 });
+    expect(tts.isPlaybackPaused()).toBe(true);
+    expect(events.filter(e => e.type === "playback_state").at(-1)).toMatchObject({ state: "paused", offset_ms: 7000, word_index: 7 });
+    expect(players.values).toHaveLength(1);
+    expect(tts.seekSpeechWord("stale", 7)).toMatchObject({ outcome: "reject", reason: "stale utterance" });
+    expect(tts.seekSpeechWord(utterance, 99)).toMatchObject({ outcome: "reject", reason: "word timing unavailable" });
+    const generation = events.filter(e => e.type === "playback_state").at(-1).generation;
+    expect(tts.seekSpeechWord(utterance, 7, "paused-click").outcome).toBe("accept");
+    expect(events.filter(e => e.type === "playback_state").at(-1).generation).toBe(generation);
+    const trim = await trims.at(trimIndex);
+    trim.exit.resolve(0); await fixtureCheckpoint();
+    expect(tts.resumePlayback()).toMatchObject({ outcome: "accept", offset_ms: 7000 });
+    await players.at(1);
+    expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ playback_offset_ms: 7000 });
+  });
+});
+
 describe("P10 queue pause/resume", () => {
   it("R1C pause at duration resumes to a durable completed receipt without another player", async () => {
     const archive = beginSpeechArchive("endpoint pause fixture");

@@ -47,17 +47,17 @@ struct TeleprompterPlaybackScrubBar: View {
         )
     }
 
-    static let pausedReason = "Paused. Press Play to seek"
+    static let pausedReason = "Paused. Click a word to jump"
 
-    /// Hunt C5 teleprompter #3: X1-34 keeps the scrubber on screen while paused. A paused read refuses seeks (the
-    /// paused-slider gate), and it says that, not "No word timing available".
+    /// Hunt C5 teleprompter #3: X1-34 keeps the scrubber on screen while paused. A paused read accepts word clicks; the slider stays disabled.
+    /// Its notice describes how to move the paused cursor.
     static func disabledReason(isPaused: Bool) -> String? {
         isPaused ? pausedReason : nil
     }
 
     /// R883 P2: the one line the notch draws under the scrubber. The frozen slider is disabled and SwiftUI `.help`
-    /// never shows in the non-activating panel, so the pause reason is drawn, not hovered. While paused it outranks
-    /// the timing warning (no seek works then anyway); after Play the timing warning returns.
+    /// never shows in the non-activating panel, so the pause reason is drawn, not hovered. While paused it explains
+    /// word clicks; after Play the timing warning returns.
     var notice: String? {
         Self.disabledReason(isPaused: state.isPlaybackPaused) ?? timingNotice
     }

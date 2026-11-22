@@ -146,6 +146,16 @@ Seek(r) == /\ st[r] = "playing" /\ SeekControls
            /\ st' = [st EXCEPT ![r] = "seeking"] /\ Leave(r)
            /\ UNCHANGED <<cur, pausedAt, mark, resumedAt, tele, prep, ask, parked, parkedFrom, mic, recorder, asks>>
 
+\* T32: a word click changes the stored resume cursor without starting or replacing a player.
+PausedSeek(r) == /\ st[r] = "paused" /\ SeekControls
+                 /\ \E to \in 0 .. (W - 1) :
+                      /\ cur' = [cur EXCEPT ![r] = to]
+                      /\ pausedAt' = [pausedAt EXCEPT ![r] = to]
+                      /\ mark' = [mark EXCEPT ![r] = to]
+                      /\ tele' = to
+                 /\ resumedAt' = [resumedAt EXCEPT ![r] = NoPos]
+                 /\ UNCHANGED <<st, seekTo, players, exiting, prep, ask, parked, parkedFrom, mic, recorder, asks>>
+
 SeekDone(r) == /\ st[r] = "seeking"
                /\ st' = [st EXCEPT ![r] = "preparing"]
                /\ cur' = [cur EXCEPT ![r] = seekTo[r]] /\ tele' = seekTo[r]
@@ -285,7 +295,7 @@ StopAll == /\ (\E r \in Reads : st[r] \in Positioned) \/ ask \notin {"none", "cl
            /\ UNCHANGED <<cur, pausedAt, mark, resumedAt, seekTo, tele, prep, recorder, asks>>
 
 Others == \/ \E r \in Reads : Start(r) \/ Ready(r) \/ DropPrep(r) \/ Advance(r) \/ TeleSync(r) \/ End(r)
-                              \/ Pause(r) \/ Resume(r) \/ Seek(r) \/ SeekDone(r) \/ Esc(r)
+                              \/ Pause(r) \/ Resume(r) \/ Seek(r) \/ PausedSeek(r) \/ SeekDone(r) \/ Esc(r)
           \/ Reap \/ AskPreempt \/ AskPromptStart \/ AskPromptEnd \/ MicOpen
           \/ CaptureEnd \/ AskAbort \/ RecorderExit \/ AskRestore \/ AskRelease \/ StopAll
 

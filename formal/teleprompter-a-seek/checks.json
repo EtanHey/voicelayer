@@ -20,7 +20,7 @@
     },
     "PausedSeekMutant": {
       "role": "mutant",
-      "target": "NoPausedSeek",
+      "target": "PausedSeekStaysPaused",
       "kind": "invariant"
     },
     "StaleSlideMutant": {
@@ -41,7 +41,7 @@
   },
   "acceptance": [
     "TableIsCurrent",
-    "NoPausedSeek",
+    "PausedSeekStaysPaused",
     "SettledShowsClock",
     "NoPausedSliderSend",
     "TruthfulTimingNotice"
