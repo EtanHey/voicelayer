@@ -218,7 +218,7 @@ function removeFillers(text: string, aggressive: boolean): string {
       const nextWord = /^\s+(\p{Lu}\p{L}*)/u.exec(tail)?.[1];
       const midSentence = /[\p{L},]\s*$/u.test(before) && !/\n\s*$/u.test(before);
       const name = /^(?:Um|Uh|Er)$/.test(word) && !!nextWord && nextWord !== "I" &&
-        (midSentence || (start === 0 && !/^(?:So|The|And|But|What|We|You|It|This|That)$/.test(nextWord)));
+        midSentence;
       const keep = /^(?:UM|UH|ER)$/.test(word) || quoted.has(start) || name || /^\.?\d/u.test(tail) ||
         (word.toLowerCase() === "er" && !/^\s*,/u.test(tail) && !repeated);
       if (!keep) return word;

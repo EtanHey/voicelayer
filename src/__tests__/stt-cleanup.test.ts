@@ -1058,7 +1058,11 @@ describe("conservative English hesitations", () => {
     ["Uh. We go.", "We go."],
     ["Er ist hier.", "Er ist hier."],
     ['He said "er" and left.', 'He said "er" and left.'],
-    ["Um Bongo tastes good.", "Um Bongo tastes good."],
+    // At the start of a transcript a name and a filler look alike; main's removal stands there (mid-sentence names stay).
+    ["Um Bongo tastes good.", "Bongo tastes good."],
+    ["Um Okay let's go.", "Okay let's go."],
+    ["Uh Let me check.", "Let me check."],
+    ["Um Can you check?", "Can you check?"],
     ["הוא אמר er ואז הלך.", "הוא אמר er ואז הלך."],
     ["Um, so the parser works.", "So the parser works."],
     ["I think, er, we should.", "I think, we should."],
