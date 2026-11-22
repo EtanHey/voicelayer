@@ -131,6 +131,12 @@ require_release_artifact_path "$ARTIFACT_DIR"
 require_release_artifact_path "$APP_PATH" "$ARTIFACT_DIR"
 require_release_artifact_path "$ZIP_PATH" "$ARTIFACT_DIR"
 
+# Release lock: the build comes from PACKAGE_ROOT's HEAD, which must be on origin/main.
+# Argument and path validation above has no side effects; this runs before the artifact
+# cleanup, the build and the signing.
+source "$SCRIPT_DIR/lib/require-main-ancestor.sh"
+require_clean_main_build release-voicebar "$PACKAGE_ROOT" "$(git -C "$PACKAGE_ROOT" rev-parse HEAD)" || exit 1
+
 mkdir -p "$ARTIFACT_DIR"
 "$(release_artifact_python)" "$SCRIPT_DIR/lib/cleanup-release-artifacts.py" "$ARTIFACT_DIR" "$APP_PATH" "$ZIP_PATH"
 

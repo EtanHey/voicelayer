@@ -1,4 +1,5 @@
 import { stubInstallerTransport } from "./setup/installer-transport";
+import { makeMainFixture } from "./setup/release-main-fixture";
 import { expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -18,6 +19,7 @@ function releaseFixture() {
   const base = realpathSync(mkdtempSync(join(runRoot, "release-guard-")));
   const applications = join(base, "Applications.noindex");
   mkdirSync(applications);
+  const pkg = makeMainFixture(base);
   writeFileSync(join(base, "sitecustomize.py"), `import os
 real_stat = os.stat
 def fixture_stat(path, *args, **kwargs):
@@ -66,14 +68,15 @@ fi
     markers.set(path, content);
   };
   const run = (output = safe) => {
-    const result = Bun.spawnSync(["/bin/bash", "scripts/release-voicebar.sh", "--output-dir", output, "--skip-tap-check"], {
-      cwd: root, env: { ...process.env, BASH_ENV: shellEnv, PYTHONPATH: base, TEST_APPLICATIONS: applications, NOINDEX1B_TRACE: trace, ...stubInstallerTransport(base, `${bin}:${process.env.PATH}`) },
+    // The release lock needs the build commit on origin/main; the fixture package root has one.
+    const result = Bun.spawnSync(["/bin/bash", join(pkg.root, "scripts", "release-voicebar.sh"), "--output-dir", output, "--skip-tap-check"], {
+      cwd: pkg.root, env: { ...process.env, BASH_ENV: shellEnv, PYTHONPATH: base, TEST_APPLICATIONS: applications, NOINDEX1B_TRACE: trace, ...stubInstallerTransport(base, `${bin}:${process.env.PATH}`) },
       stdout: "pipe", stderr: "pipe",
     });
     for (const [path, content] of markers) expect(readFileSync(path, "utf8")).toBe(content);
     return { ...result, operations: existsSync(trace) ? readFileSync(trace, "utf8") : "" };
   };
-  return { base, applications, safe, versionDir, keep, run };
+  return { base, applications, safe, versionDir, keep, run, pkg };
 }
 
 for (const output of ["/Applications/NOINDEX1B-synthetic", "/Applications/NOINDEX1B-synthetic.noindex"]) {
@@ -182,7 +185,7 @@ for (const mode of ["relative", "symlink-parent", "direct-noindex"]) {
     const destination = mode === "direct-noindex" ? f.safe : join(f.safe, "version");
     mkdirSync(destination, { recursive: true });
     let input = destination;
-    if (mode === "relative") input = relative(root, destination);
+    if (mode === "relative") input = relative(f.pkg.root, destination);
     if (mode === "symlink-parent") {
       input = join(f.base, "alias");
       symlinkSync(destination, input);
@@ -203,7 +206,7 @@ fi
     const result = Bun.spawnSync(["/bin/bash", "flow-bar/build-app.sh",
       "--install-path", join(input, "VoiceBar.app"), "--zip-path", join(input, "VoiceBar.zip"),
       "--no-stop", "--no-relaunch"], {
-      cwd: root, env: { ...process.env, ...stubInstallerTransport(f.base), BASH_ENV: hook }, stdout: "pipe", stderr: "pipe",
+      cwd: f.pkg.root, env: { ...process.env, ...stubInstallerTransport(f.base), BASH_ENV: hook }, stdout: "pipe", stderr: "pipe",
     });
     expect(result.stderr.toString()).toBe("");
     expect(result.exitCode).toBe(0);
