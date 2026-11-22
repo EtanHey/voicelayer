@@ -5,8 +5,8 @@ import { homedir } from 'node:os';
 import { __resetWhisperServerStateForTests, stopServerAndWait } from '../whisper-server';
 const binary = Bun.which('whisper-server');
 const enabled = process.env.QA_VOICE_GOLDEN_LIVE === '1';
-if (!binary || !enabled) console.warn('SKIP native teardown: requires whisper-server and QA_VOICE_GOLDEN_LIVE=1 with heavy lock');
-test.skipIf(!binary || !enabled)('owned real server shutdown creates no crash report', async () => {
+if (!binary || !enabled) console.warn('SKIP native teardown: requires whisper-server and S2_MODEL plus QA_VOICE_GOLDEN_LIVE=1 with heavy lock');
+test.skipIf(!binary || !enabled)('owned real server shutdown creates no crash report (requires S2_MODEL and native opt-in)', async () => {
  const directory = join(homedir(), 'Library/Logs/DiagnosticReports');
  const reports = () => readdirSync(directory).filter(n => n.startsWith('whisper-server-'));
  const before = new Set(reports());

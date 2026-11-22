@@ -190,7 +190,10 @@ async function whileWhisperOwnerOpen<T>(work: Promise<T>): Promise<T> {
 export async function shutdownWhisperServer(): Promise<void> {
   ownerShutdown.abort();
   for (const proc of startingChildren) killWhisperProcess(proc, "SIGKILL");
+  const ready = serverState && !serverState.adopted ? serverState.proc : null;
+  stopServer(true);
   const results = await Promise.allSettled([...ensureOperations]);
+  if (ready && !(await waitForWhisperProcessExit(ready))) throw new Error("child exit unconfirmed");
   await stopServerAndWait();
   // Startup cancellation is expected; cleanup uncertainty must survive shutdown.
   const cleanupFailure = results.find(result => result.status === "rejected" && String(result.reason).includes("cleanup unconfirmed"));
@@ -638,8 +641,7 @@ async function terminateFailedLaunch(
   killWhisperProcess(proc, "SIGKILL");
   if (await waitForWhisperProcessExit(proc)) return;
 
-  killWhisperProcess(proc, "SIGKILL");
-  if (!(await waitForWhisperProcessExit(proc))) throw new Error("Whisper cleanup unconfirmed: child exit unconfirmed");
+  throw new Error("Whisper cleanup unconfirmed: child exit unconfirmed");
 }
 
 function isPidAlive(pid: number): boolean {
@@ -1252,8 +1254,8 @@ let activeTranscriptions = 0;
 let pendingStop = false;
 const transcriptionDrainers: (() => void)[] = [];
 
-export function stopServer(): void {
-  if (activeTranscriptions > 0) { pendingStop = true; return; }
+export function stopServer(terminal = false): void {
+  if (!terminal && activeTranscriptions > 0) { pendingStop = true; return; }
   whisperResidency.reset();
   launchPromises.clear();
   if (!serverState) return;
@@ -1288,18 +1290,22 @@ export function stopServer(): void {
  * E2 real-client check: "adopting … PID 0", then nothing loaded).
  */
 export async function stopServerAndWait(): Promise<void> {
-  if (activeTranscriptions > 0) await new Promise<void>(resolve => transcriptionDrainers.push(resolve));
   const proc = serverState && !serverState.adopted ? serverState.proc : null;
-  stopServer();
-  if (!proc || (await waitForWhisperProcessExit(proc))) return;
-  // Our own child has not confirmed exit. Relaunching now would adopt it with its old
-  // flags (#142 round 2), so escalate; never signal a server we did not launch.
-  console.error(`[voicelayer] whisper-server (PID ${proc.pid}) has not confirmed exit; sending SIGKILL`);
-  try {
-    proc.kill("SIGKILL");
-  } catch {}
-  if (await waitForWhisperProcessExit(proc)) return;
-  throw new Error(`the old model server (PID ${proc.pid}) did not stop`);
+  if (activeTranscriptions > 0) {
+    await new Promise<void>(resolve => {
+      const finish = () => { clearTimeout(timer); resolve(); };
+      const timer = setTimeout(() => {
+        const index = transcriptionDrainers.indexOf(finish);
+        if (index >= 0) transcriptionDrainers.splice(index, 1);
+        resolve();
+      }, 5000);
+      transcriptionDrainers.push(finish);
+    });
+  }
+  stopServer(true);
+  if (proc && !(await waitForWhisperProcessExit(proc))) {
+    throw new Error(`the old model server (PID ${proc.pid}) did not stop`);
+  }
 }
 
 /** Explicit user unload. Only the live child this process launched may be stopped. */
@@ -1343,11 +1349,7 @@ function unloadOwnedServerWithEscalation(isBusy: () => boolean, escalate: boolea
       state.stoppingRecord = record;
       state.proc.kill("SIGKILL");
       if (!(await waitForWhisperProcessExit(state.proc))) {
-        if (!escalate || residencyBusy() || whisperLifecycleGate.shouldYieldToCapture) {
-          throw new Error("child exit unconfirmed");
-        }
-        state.proc.kill("SIGKILL");
-        if (!(await waitForWhisperProcessExit(state.proc))) throw new Error("child exit unconfirmed");
+        throw new Error("child exit unconfirmed");
       }
       detachExitedWhisperServer(state, record);
       const listeners = probeWhisperServerListeners(state.port);
@@ -1670,10 +1672,10 @@ export function isServerAvailable(): boolean {
 }
 
 // Clean up on process exit
-process.on("exit", stopServer);
+process.on("exit", () => stopServer(true));
 process.on("SIGTERM", () => {
-  stopServer();
+  stopServer(true);
 });
 process.on("SIGINT", () => {
-  stopServer();
+  stopServer(true);
 });
