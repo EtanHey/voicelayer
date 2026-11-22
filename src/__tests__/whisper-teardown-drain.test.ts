@@ -69,3 +69,14 @@ test("deferred stop plus waiter waits for confirmed child exit", async () => {
     console.error("P3 signals", JSON.stringify(s.signals));
   } finally { s.cleanup(); }
 });
+
+test("normal owned stop and stopServerAndWait send only SIGKILL", async () => {
+  for (const stop of [() => stopServer(), () => stopServerAndWait()]) {
+    const s = setup();
+    try {
+      await ensureServer(18893);
+      await stop();
+      expect(s.signals).toEqual(["SIGKILL"]);
+    } finally { s.cleanup(); }
+  }
+});
