@@ -22,10 +22,9 @@ guard let contents = try? String(contentsOfFile: args[1], encoding: .utf8) else 
 let expected = contents.hasSuffix("\n") ? String(contents.dropLast()) : contents
 guard !expected.isEmpty, AXIsProcessTrusted() else { refuse("empty text or Accessibility permission unavailable") }
 guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.t3tools.t3code").first else { refuse("T3 Code is not running") }
-let threadURL = URL(string: "t3-thread://v2/ccab97e3-1c39-4471-b2f1-ae0e076cec03/5de712f0-a1fa-4985-87ca-bdcd7dc23db7")!
-let opened = NSWorkspace.shared.open(threadURL)
-print("lead thread deep link handled=\(opened)")
-Thread.sleep(forTimeInterval: 2)
+// Never `open` a t3-thread:// link: no app on the proof host handles that scheme, and every call leaves a Finder
+// "no application set to open the URL" dialog on the screen (five were left on the M1 on 21 Nov). The thread is
+// reached through its sidebar row (AXPress) below.
 app.activate(options: [.activateIgnoringOtherApps]); Thread.sleep(forTimeInterval: 0.5)
 func frontmost() -> Bool { NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier }
 guard frontmost() else { refuse("T3 Code did not become frontmost") }
