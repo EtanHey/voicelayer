@@ -1252,10 +1252,18 @@ async function ensureServerUnlocked(port: number): Promise<number> {
  */
 let activeTranscriptions = 0;
 let pendingStop = false;
+let pendingStopDeadline: ReturnType<typeof setTimeout> | undefined;
 const transcriptionDrainers: (() => void)[] = [];
 
 export function stopServer(terminal = false): void {
-  if (!terminal && activeTranscriptions > 0) { pendingStop = true; return; }
+  if (!terminal && activeTranscriptions > 0) {
+    pendingStop = true;
+    pendingStopDeadline ??= setTimeout(() => stopServer(true), 5000);
+    return;
+  }
+  clearTimeout(pendingStopDeadline);
+  pendingStopDeadline = undefined;
+  pendingStop = false;
   whisperResidency.reset();
   launchPromises.clear();
   if (!serverState) return;
