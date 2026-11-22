@@ -319,11 +319,11 @@ usage: whisper-server [options]
       return signals;
     }
 
-    it("escalates to SIGKILL when the old server ignores SIGTERM", async () => {
+    it("stops the owned child directly without invoking its SIGTERM handler", async () => {
       const signals = ownedChild((signal) => signal === "SIGKILL");
       try {
         await stopServerAndWait();
-        expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+        expect(signals).toEqual(["SIGKILL"]);
       } finally {
         __resetWhisperServerStateForTests(null);
       }
@@ -333,7 +333,7 @@ usage: whisper-server [options]
       const signals = ownedChild(() => false);
       try {
         await expect(stopServerAndWait()).rejects.toThrow(/did not stop/);
-        expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+        expect(signals).toEqual(["SIGKILL", "SIGKILL"]);
       } finally {
         __resetWhisperServerStateForTests(null);
       }

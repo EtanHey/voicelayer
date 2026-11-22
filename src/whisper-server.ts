@@ -189,7 +189,7 @@ async function whileWhisperOwnerOpen<T>(work: Promise<T>): Promise<T> {
  * producer promises before stopping the ready child; never signal an adoptee. */
 export async function shutdownWhisperServer(): Promise<void> {
   ownerShutdown.abort();
-  for (const proc of startingChildren) killWhisperProcess(proc, "SIGTERM");
+  for (const proc of startingChildren) killWhisperProcess(proc, "SIGKILL");
   const results = await Promise.allSettled([...ensureOperations]);
   await stopServerAndWait();
   // Startup cancellation is expected; cleanup uncertainty must survive shutdown.
@@ -635,7 +635,7 @@ async function waitForWhisperProcessExit(
 async function terminateFailedLaunch(
   proc: KillableWhisperServerProcess,
 ): Promise<void> {
-  killWhisperProcess(proc, "SIGTERM");
+  killWhisperProcess(proc, "SIGKILL");
   if (await waitForWhisperProcessExit(proc)) return;
 
   killWhisperProcess(proc, "SIGKILL");
@@ -1248,7 +1248,12 @@ async function ensureServerUnlocked(port: number): Promise<number> {
  * touched ensureServer() would otherwise take down Etan's live sidecar on the
  * way out. An adopted server is detached from, never signalled.
  */
+let activeTranscriptions = 0;
+let pendingStop = false;
+const transcriptionDrainers: (() => void)[] = [];
+
 export function stopServer(): void {
+  if (activeTranscriptions > 0) { pendingStop = true; return; }
   whisperResidency.reset();
   launchPromises.clear();
   if (!serverState) return;
@@ -1265,9 +1270,11 @@ export function stopServer(): void {
     return;
   }
 
+  // whisper.cpp SIGTERM calls exit() during Metal teardown and can abort.
+  // Owned children hold no user data; bypass that handler after requests drain.
   console.error(`[voicelayer] Stopping whisper-server (PID ${state.pid})`);
   try {
-    state.proc.kill();
+    state.proc.kill("SIGKILL");
   } catch {}
   void state.proc.exited?.then(() => {
     if (!serverState) notifyWhisperModelStateChange();
@@ -1281,12 +1288,13 @@ export function stopServer(): void {
  * E2 real-client check: "adopting … PID 0", then nothing loaded).
  */
 export async function stopServerAndWait(): Promise<void> {
+  if (activeTranscriptions > 0) await new Promise<void>(resolve => transcriptionDrainers.push(resolve));
   const proc = serverState && !serverState.adopted ? serverState.proc : null;
   stopServer();
   if (!proc || (await waitForWhisperProcessExit(proc))) return;
-  // Our own child ignored SIGTERM. Relaunching now would adopt it with its old
+  // Our own child has not confirmed exit. Relaunching now would adopt it with its old
   // flags (#142 round 2), so escalate; never signal a server we did not launch.
-  console.error(`[voicelayer] whisper-server (PID ${proc.pid}) ignored SIGTERM; sending SIGKILL`);
+  console.error(`[voicelayer] whisper-server (PID ${proc.pid}) has not confirmed exit; sending SIGKILL`);
   try {
     proc.kill("SIGKILL");
   } catch {}
@@ -1333,7 +1341,7 @@ function unloadOwnedServerWithEscalation(isBusy: () => boolean, escalate: boolea
       if (whisperLifecycleGate.shouldYieldToCapture) throw new Error("capture took priority");
 
       state.stoppingRecord = record;
-      state.proc.kill("SIGTERM");
+      state.proc.kill("SIGKILL");
       if (!(await waitForWhisperProcessExit(state.proc))) {
         if (!escalate || residencyBusy() || whisperLifecycleGate.shouldYieldToCapture) {
           throw new Error("child exit unconfirmed");
@@ -1505,9 +1513,17 @@ export async function transcribeViaServer(
   port?: number,
   options?: WhisperServerTranscribeOptions,
 ): Promise<string> {
-  return whisperResidency.use(() => whisperLifecycleGate.use(() =>
-    transcribeViaServerAttempt(wavData, port, true, options)
-  ));
+  activeTranscriptions++;
+  try {
+    return await whisperResidency.use(() => whisperLifecycleGate.use(() =>
+      transcribeViaServerAttempt(wavData, port, true, options)
+    ));
+  } finally {
+    if (--activeTranscriptions === 0) {
+      if (pendingStop) { pendingStop = false; stopServer(); }
+      for (const resolve of transcriptionDrainers.splice(0)) resolve();
+    }
+  }
 }
 
 function normalizeTranscriptionText(text: string): string {
