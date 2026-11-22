@@ -220,7 +220,7 @@ function removeFillers(text: string, aggressive: boolean): string {
       const name = /^(?:Um|Uh|Er)$/.test(word) && !!nextWord && nextWord !== "I" &&
         midSentence;
       const keep = /^(?:UM|UH|ER)$/.test(word) || quoted.has(start) || name || /^\.?\d/u.test(tail) ||
-        (word.toLowerCase() === "er" && !/^\s*,/u.test(tail) && !repeated);
+        (word === "Er" && !/^\s*,/u.test(tail) && !repeated);
       if (!keep) return word;
       protectedTokens.push(word);
       return "\uE000" + (protectedTokens.length - 1) + "\uE001";
