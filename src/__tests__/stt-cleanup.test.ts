@@ -1036,6 +1036,21 @@ describe("stt-cleanup", () => {
 
 describe("conservative English hesitations", () => {
   for (const [input, expected] of [
+    ["We went to the, ER, and waited.", "We went to the, ER, and waited."],
+    ["Um I think so.", "I think so."],
+    ["Uh I don't know.", "I don't know."],
+    ["It works. Um I think so.", "It works. I think so."],
+    ["Um So what now?", "So what now?"],
+    ["We drank Um Bongo.", "We drank Um Bongo."],
+    ["We shipped it. Uh The parser broke.", "We shipped it. The parser broke."],
+    ["and then Um I said", "And then I said"],
+    ["the '90s were um great and uh fun", "The '90s were great and fun"],
+    ["'cause um I said so and uh left", "'cause I said so and left"],
+    ["He said \"hello um and uh we left", "He said \"hello and we left"],
+    ["so, er, yeah", "So, yeah"],
+    ["Take it to the ER, er, now.", "Take it to the ER, now."],
+    ["I er wanted", "I er wanted"],
+    ["er I mean", "Er I mean"],
     ["um um we go.", "We go."],
     ['He said “um, er” and left.', 'He said “um, er” and left.'],
     ["Uh… we go.", "Uh… we go."],
@@ -1046,6 +1061,6 @@ describe("conservative English hesitations", () => {
     ["Um Bongo tastes good.", "Um Bongo tastes good."],
     ["הוא אמר er ואז הלך.", "הוא אמר er ואז הלך."],
     ["Um, so the parser works.", "So the parser works."],
-    ["I think, er, we should.", "I think we should."],
+    ["I think, er, we should.", "I think, we should."],
   ]) it(input!, () => expect(cleanupTranscriptionText(input!, { VOICELAYER_STT_AGGRESSIVE_FILLERS: "0" })).toBe(expected!));
 });

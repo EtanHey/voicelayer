@@ -204,32 +204,29 @@ function removeFillers(text: string, aggressive: boolean): string {
   let result = text;
   const protectedTokens: string[] = [];
   if (!aggressive) {
-    // Quoted speech is evidence, including ambiguous or unmatched quotes.
+    // Protect only paired quotes within one sentence; elisions open no span.
     const quoted = new Set<number>();
-    let quote = "";
-    for (let i = 0; i < result.length; i++) {
-      const c = result[i]!;
-      if (quote) {
-        quoted.add(i);
-        if (c === quote || (quote === "“" && c === "”") || (quote === "‘" && c === "’")) quote = "";
-      } else if ('"“‘'.includes(c) || (c === "'" && !/\p{L}/u.test(result[i - 1] ?? ""))) {
-        quote = c;
-        quoted.add(i);
-      }
+    const spans = /"[^".!?\n]*"|“[^”.!?\n]*”|‘[^’.!?\n]*’|'(?!\d|cause\b)[^'.!?\n]*'/giu;
+    for (const match of result.matchAll(spans)) {
+      if (match[0][0] === "'" && /\p{L}/u.test(result[match.index! - 1] ?? "")) continue;
+      for (let i = match.index!; i < match.index! + match[0].length; i++) quoted.add(i);
     }
     result = result.replace(/(?<![\p{L}\p{N}-])(?:um|uh|er)(?![\p{L}\p{N}-])/giu, (word, start: number) => {
       const tail = text.slice(start + word.length);
       const before = text.slice(0, start);
       const repeated = /(?:um|uh|er)\s+$/iu.test(before) || /^\s+(?:um|uh|er)\b/iu.test(tail);
-      const name = /^(?:Um|Uh|Er)$/.test(word) && /^\s+\p{Lu}/u.test(tail);
-      const keep = quoted.has(start) || name || /^\.?\d/u.test(tail) ||
+      const nextWord = /^\s+(\p{Lu}\p{L}*)/u.exec(tail)?.[1];
+      const midSentence = /[\p{L},]\s*$/u.test(before) && !/\n\s*$/u.test(before);
+      const name = /^(?:Um|Uh|Er)$/.test(word) && !!nextWord && nextWord !== "I" &&
+        (midSentence || (start === 0 && !/^(?:So|The|And|But|What|We|You|It|This|That)$/.test(nextWord)));
+      const keep = /^(?:UM|UH|ER)$/.test(word) || quoted.has(start) || name || /^\.?\d/u.test(tail) ||
         (word.toLowerCase() === "er" && !/^\s*,/u.test(tail) && !repeated);
       if (!keep) return word;
       protectedTokens.push(word);
       return "\uE000" + (protectedTokens.length - 1) + "\uE001";
     });
   }
-  if (!aggressive) result = result.replace(/,\s*er\s*,/gi, " ");
+  if (!aggressive) result = result.replace(/,\s*[Ee]r\s*,/g, ",");
   const patterns = aggressive
     ? [...DISFLUENCY_PATTERNS, ...AGGRESSIVE_FILLER_PATTERNS]
     : DISFLUENCY_PATTERNS;
