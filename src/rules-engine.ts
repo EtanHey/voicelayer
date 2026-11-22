@@ -748,6 +748,11 @@ function markNounArticleBefore(
  * must be left verbatim.
  */
 function isLayoutNoun(text: string, start: number, end: number, decoderPunctuation = false): boolean {
+  if (/^new line$/iu.test(text.slice(start, end))) {
+    const prefix = text.slice(0, start);
+    if (!text.slice(end).replace(/[.!?\s]/gu, "")) return true;
+    if (/\b(?:a|an|its|his|her|each)(?:\s+(?:final|extra|trailing|leading|blank|empty|additional|unwanted|unexpected|missing|duplicate|accidental)){0,2}\s*$/iu.test(prefix)) return true;
+  }
   const quote = /(["'“‘])[ \t]*$/u.exec(text.slice(0, start))?.[1];
   if (quote && text.slice(end).trimStart().startsWith(({ '"': '"', "'": "'", "“": "”", "‘": "’" } as Record<string, string>)[quote])) return true;
   const clause = text.slice(0, start).replace(/\.{2,}|…/gu, " ")
