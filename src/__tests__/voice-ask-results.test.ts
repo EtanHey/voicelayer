@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test, spyOn } from "bun:test";
 import * as fs from "fs";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync, chmodSync } from "fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import * as handlers from "../handlers";
 import { getToolDefinitions } from "../mcp-tools";
@@ -159,11 +159,14 @@ for (const file of ["metadata.json", "voicelayer-transcript.txt", "ask-result.js
       }) as any);
       try {
         const result = await handlers.handleVoiceAskResults(explicit ? {archive_id: id(1)} : {});
-        if (file === "agent-transcript.txt") {
+        if (file === "agent-transcript.txt" || file === "ask-result.json") {
+          // Neither file can hide a readable answer: the preview falls back to empty, and ask-result.json is
+          // read only when the answer is empty (rs1 round 2).
           expect(result.isError).not.toBe(true);
           const row = JSON.parse(result.content[0].text).results.find((r: any) => r.id === id(1));
           expect(row.answer).toBe("Synthetic answer");
-          expect(row.question_preview).toBe("");
+          expect(row.status).toBe("answered");
+          if (file === "agent-transcript.txt") expect(row.question_preview).toBe("");
         } else if (explicit) {
           expect(result.isError).toBe(true);
           expect(result.content[0].text).toContain(code);
@@ -178,6 +181,26 @@ for (const file of ["metadata.json", "voicelayer-transcript.txt", "ask-result.js
     });
   }
 }
+for (const code of ["EIO", "EACCES"]) for (const explicit of [false, true]) test(`empty answer with unreadable ask-result.json ${code} explicit=${explicit} is unreadable, not away or needs-retranscribe`, async () => {
+  const dir = fixture(1, "");
+  fixture(2, "Other answer");
+  writeFileSync(join(dir, "ask-result.json"), JSON.stringify({ status: "away" }));
+  const original = fs.readFileSync;
+  const spy = spyOn(fs, "readFileSync").mockImplementation(((path: any, ...args: any[]) => {
+    if (path === join(dir, "ask-result.json")) throw Object.assign(new Error("private path"), {code});
+    return (original as any)(path, ...args);
+  }) as any);
+  try {
+    const result = await handlers.handleVoiceAskResults(explicit ? {archive_id: id(1)} : {});
+    if (explicit) { expect(result.isError).toBe(true); expect(result.content[0].text).toContain(code); }
+    else {
+      const rows = JSON.parse(result.content[0].text).results;
+      expect(rows.find((r: any) => r.id === id(2)).status).toBe("answered");
+      expect(rows.find((r: any) => r.id === id(1))).toMatchObject({status: "unreadable", error: code});
+    }
+    expect(result.content[0].text).not.toContain(root);
+  } finally { spy.mockRestore(); }
+});
 for (const code of ["ENOENT", "EIO", "EACCES"]) test(`day listing ${code} preserves other days`, async () => {
   fixture(1, "Other answer");
   mkdirSync(join(root, "2026-01-01"));

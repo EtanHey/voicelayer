@@ -30,7 +30,10 @@ function load(root: string, id: string): AskResult | null {
         typeof metadata.created_at !== "string" || !Number.isFinite(Date.parse(metadata.created_at))) return null;
     const answer = read(join(dir, "voicelayer-transcript.txt"));
     let away = false;
-    try { away = JSON.parse(read(join(dir, "ask-result.json")) ?? "null")?.status === "away"; } catch (error) { if (!(error instanceof SyntaxError)) throw error; }
+    // ask-result.json only decides away vs needs-retranscribe for an empty answer; never let it hide a readable one.
+    if (!answer?.trim()) {
+      try { away = JSON.parse(read(join(dir, "ask-result.json")) ?? "null")?.status === "away"; } catch (error) { if (!(error instanceof SyntaxError)) throw error; }
+    }
     return { id, asked_at: metadata.created_at,
       question_preview: preview(join(dir, "agent-transcript.txt")),
       answer, status: answer?.trim() ? "answered" : away ? "away" : "needs-retranscribe" };
