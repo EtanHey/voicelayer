@@ -189,8 +189,11 @@ async function whileWhisperOwnerOpen<T>(work: Promise<T>): Promise<T> {
  * producer promises before stopping the ready child; never signal an adoptee. */
 export async function shutdownWhisperServer(): Promise<void> {
   ownerShutdown.abort();
-  for (const proc of startingChildren) killWhisperProcess(proc, "SIGTERM");
+  for (const proc of startingChildren) killWhisperProcess(proc, "SIGKILL");
+  const ready = serverState && !serverState.adopted ? serverState.proc : null;
+  stopServer(true);
   const results = await Promise.allSettled([...ensureOperations]);
+  if (ready && !(await waitForWhisperProcessExit(ready))) throw new Error("child exit unconfirmed");
   await stopServerAndWait();
   // Startup cancellation is expected; cleanup uncertainty must survive shutdown.
   const cleanupFailure = results.find(result => result.status === "rejected" && String(result.reason).includes("cleanup unconfirmed"));
@@ -635,11 +638,10 @@ async function waitForWhisperProcessExit(
 async function terminateFailedLaunch(
   proc: KillableWhisperServerProcess,
 ): Promise<void> {
-  killWhisperProcess(proc, "SIGTERM");
+  killWhisperProcess(proc, "SIGKILL");
   if (await waitForWhisperProcessExit(proc)) return;
 
-  killWhisperProcess(proc, "SIGKILL");
-  if (!(await waitForWhisperProcessExit(proc))) throw new Error("Whisper cleanup unconfirmed: child exit unconfirmed");
+  throw new Error("Whisper cleanup unconfirmed: child exit unconfirmed");
 }
 
 function isPidAlive(pid: number): boolean {
@@ -1248,7 +1250,20 @@ async function ensureServerUnlocked(port: number): Promise<number> {
  * touched ensureServer() would otherwise take down Etan's live sidecar on the
  * way out. An adopted server is detached from, never signalled.
  */
-export function stopServer(): void {
+let activeTranscriptions = 0;
+let pendingStop = false;
+let pendingStopDeadline: ReturnType<typeof setTimeout> | undefined;
+const transcriptionDrainers: (() => void)[] = [];
+
+export function stopServer(terminal = false): void {
+  if (!terminal && activeTranscriptions > 0) {
+    pendingStop = true;
+    pendingStopDeadline ??= setTimeout(() => stopServer(true), 5000);
+    return;
+  }
+  clearTimeout(pendingStopDeadline);
+  pendingStopDeadline = undefined;
+  pendingStop = false;
   whisperResidency.reset();
   launchPromises.clear();
   if (!serverState) return;
@@ -1265,9 +1280,11 @@ export function stopServer(): void {
     return;
   }
 
+  // whisper.cpp SIGTERM calls exit() during Metal teardown and can abort.
+  // Owned children hold no user data; bypass that handler after requests drain.
   console.error(`[voicelayer] Stopping whisper-server (PID ${state.pid})`);
   try {
-    state.proc.kill();
+    state.proc.kill("SIGKILL");
   } catch {}
   void state.proc.exited?.then(() => {
     if (!serverState) notifyWhisperModelStateChange();
@@ -1282,16 +1299,21 @@ export function stopServer(): void {
  */
 export async function stopServerAndWait(): Promise<void> {
   const proc = serverState && !serverState.adopted ? serverState.proc : null;
-  stopServer();
-  if (!proc || (await waitForWhisperProcessExit(proc))) return;
-  // Our own child ignored SIGTERM. Relaunching now would adopt it with its old
-  // flags (#142 round 2), so escalate; never signal a server we did not launch.
-  console.error(`[voicelayer] whisper-server (PID ${proc.pid}) ignored SIGTERM; sending SIGKILL`);
-  try {
-    proc.kill("SIGKILL");
-  } catch {}
-  if (await waitForWhisperProcessExit(proc)) return;
-  throw new Error(`the old model server (PID ${proc.pid}) did not stop`);
+  if (activeTranscriptions > 0) {
+    await new Promise<void>(resolve => {
+      const finish = () => { clearTimeout(timer); resolve(); };
+      const timer = setTimeout(() => {
+        const index = transcriptionDrainers.indexOf(finish);
+        if (index >= 0) transcriptionDrainers.splice(index, 1);
+        resolve();
+      }, 5000);
+      transcriptionDrainers.push(finish);
+    });
+  }
+  stopServer(true);
+  if (proc && !(await waitForWhisperProcessExit(proc))) {
+    throw new Error(`the old model server (PID ${proc.pid}) did not stop`);
+  }
 }
 
 /** Explicit user unload. Only the live child this process launched may be stopped. */
@@ -1333,13 +1355,9 @@ function unloadOwnedServerWithEscalation(isBusy: () => boolean, escalate: boolea
       if (whisperLifecycleGate.shouldYieldToCapture) throw new Error("capture took priority");
 
       state.stoppingRecord = record;
-      state.proc.kill("SIGTERM");
+      state.proc.kill("SIGKILL");
       if (!(await waitForWhisperProcessExit(state.proc))) {
-        if (!escalate || residencyBusy() || whisperLifecycleGate.shouldYieldToCapture) {
-          throw new Error("child exit unconfirmed");
-        }
-        state.proc.kill("SIGKILL");
-        if (!(await waitForWhisperProcessExit(state.proc))) throw new Error("child exit unconfirmed");
+        throw new Error("child exit unconfirmed");
       }
       detachExitedWhisperServer(state, record);
       const listeners = probeWhisperServerListeners(state.port);
@@ -1505,9 +1523,17 @@ export async function transcribeViaServer(
   port?: number,
   options?: WhisperServerTranscribeOptions,
 ): Promise<string> {
-  return whisperResidency.use(() => whisperLifecycleGate.use(() =>
-    transcribeViaServerAttempt(wavData, port, true, options)
-  ));
+  activeTranscriptions++;
+  try {
+    return await whisperResidency.use(() => whisperLifecycleGate.use(() =>
+      transcribeViaServerAttempt(wavData, port, true, options)
+    ));
+  } finally {
+    if (--activeTranscriptions === 0) {
+      if (pendingStop) { pendingStop = false; stopServer(); }
+      for (const resolve of transcriptionDrainers.splice(0)) resolve();
+    }
+  }
 }
 
 function normalizeTranscriptionText(text: string): string {
@@ -1654,10 +1680,10 @@ export function isServerAvailable(): boolean {
 }
 
 // Clean up on process exit
-process.on("exit", stopServer);
+process.on("exit", () => stopServer(true));
 process.on("SIGTERM", () => {
-  stopServer();
+  stopServer(true);
 });
 process.on("SIGINT", () => {
-  stopServer();
+  stopServer(true);
 });
