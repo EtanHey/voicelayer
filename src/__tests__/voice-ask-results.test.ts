@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test, spyOn } from "bun:test";
+import * as fs from "fs";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync, chmodSync } from "fs";
 import { join } from "path";
 import * as handlers from "../handlers";
@@ -145,18 +146,50 @@ test("empty archive and maximum page size are deterministic", async () => {
 
 test("a spoken-question ID explicitly has no Ask answer", async () => { fixture(1, undefined, "speak"); expect(JSON.parse((await handlers.handleVoiceAskResults({archive_id: id(1)})).content[0].text)).toEqual({results: [], message: "No Ask answer exists for this archive ID."}); });
 
-for (const file of ["metadata.json", "voicelayer-transcript.txt", "ask-result.json"]) {
-  for (const explicit of [false, true]) test(`unreadable ${file} explicit=${explicit} reports storage error`, async () => {
-    const dir = fixture(1, "Synthetic answer");
-    const path = join(dir, file);
-    if (file === "ask-result.json") writeFileSync(path, '{"status":"away"}');
-    chmodSync(path, 0);
-    try {
-      const result = await handlers.handleVoiceAskResults(explicit ? {archive_id: id(1)} : {});
-      expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain(id(1));
-      expect(result.content[0].text).toContain("EACCES");
-      expect(result.content[0].text).not.toContain(root);
-    } finally { chmodSync(path, 0o600); }
-  });
+for (const file of ["metadata.json", "voicelayer-transcript.txt", "ask-result.json", "agent-transcript.txt"]) {
+  for (const code of ["EIO", "EACCES"]) {
+    for (const explicit of [false, true]) test(`injected ${code} ${file} explicit=${explicit}`, async () => {
+      const dir = fixture(1, "Synthetic answer");
+      fixture(2, "Other answer");
+      writeFileSync(join(dir, "ask-result.json"), '{}');
+      const original = fs.readFileSync;
+      const spy = spyOn(fs, "readFileSync").mockImplementation(((path: any, ...args: any[]) => {
+        if (path === join(dir, file)) throw Object.assign(new Error("private path"), {code});
+        return (original as any)(path, ...args);
+      }) as any);
+      try {
+        const result = await handlers.handleVoiceAskResults(explicit ? {archive_id: id(1)} : {});
+        if (file === "agent-transcript.txt") {
+          expect(result.isError).not.toBe(true);
+          const row = JSON.parse(result.content[0].text).results.find((r: any) => r.id === id(1));
+          expect(row.answer).toBe("Synthetic answer");
+          expect(row.question_preview).toBe("");
+        } else if (explicit) {
+          expect(result.isError).toBe(true);
+          expect(result.content[0].text).toContain(code);
+        } else {
+          expect(result.isError).not.toBe(true);
+          const rows = JSON.parse(result.content[0].text).results;
+          expect(rows.map((r: any) => r.status)).toEqual(["answered", "unreadable"]);
+          expect(rows[1].error).toBe(code);
+        }
+        expect(result.content[0].text).not.toContain(root);
+      } finally { spy.mockRestore(); }
+    });
+  }
 }
+for (const code of ["ENOENT", "EIO", "EACCES"]) test(`day listing ${code} preserves other days`, async () => {
+  fixture(1, "Other answer");
+  mkdirSync(join(root, "2026-01-01"));
+  const original = fs.readdirSync;
+  const spy = spyOn(fs, "readdirSync").mockImplementation(((path: any, ...args: any[]) => {
+    if (path === join(root, "2026-01-01")) throw Object.assign(new Error("private"), {code});
+    return (original as any)(path, ...args);
+  }) as any);
+  try {
+    const rows = await lookup();
+    expect(rows[0].answer).toBe("Other answer");
+    expect(rows).toHaveLength(code === "ENOENT" ? 1 : 2);
+    if (code !== "ENOENT") expect(rows[1]).toMatchObject({status: "unreadable", error: code});
+  } finally { spy.mockRestore(); }
+});

@@ -7,12 +7,19 @@ import type { McpTextResult } from "./voice-turn-result";
 
 const ID = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[a-f0-9]{8}$/;
 type AskResult = { id: string; asked_at: string; question_preview: string; answer: string | null;
-  status: "answered" | "away" | "needs-retranscribe" };
+  error?: string; status: "answered" | "away" | "needs-retranscribe" | "unreadable" };
 function directory(path: string): boolean {
   try { return lstatSync(path).isDirectory(); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; return false; }
 }
 function read(path: string): string | null {
   try { return lstatSync(path).isFile() ? readFileSync(path, "utf8") : null; } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; return null; }
+}
+function preview(path: string): string {
+  try { return questionPreview(read(path) ?? ""); } catch { return ""; }
+}
+function unreadable(id: string, error: unknown): AskResult {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  return { id, asked_at: id.length === 10 ? id : id.slice(0, 10) + "T" + id.slice(11, 23).replace(/-/g, (m, offset) => offset < 8 ? ":" : "." ) + "Z", question_preview: "", answer: null, status: "unreadable", error: typeof code === "string" && /^[A-Z0-9_]+$/.test(code) ? code : "UNKNOWN" };
 }
 function load(root: string, id: string): AskResult | null {
   const day = join(root, id.slice(0, 10)), dir = join(day, id);
@@ -25,7 +32,7 @@ function load(root: string, id: string): AskResult | null {
     let away = false;
     try { away = JSON.parse(read(join(dir, "ask-result.json")) ?? "null")?.status === "away"; } catch (error) { if (!(error instanceof SyntaxError)) throw error; }
     return { id, asked_at: metadata.created_at,
-      question_preview: questionPreview(read(join(dir, "agent-transcript.txt")) ?? ""),
+      question_preview: preview(join(dir, "agent-transcript.txt")),
       answer, status: answer?.trim() ? "answered" : away ? "away" : "needs-retranscribe" };
   } catch (error) { if (error instanceof SyntaxError) return null; throw error; } // Malformed entries stay out of the page.
 }
@@ -66,11 +73,18 @@ export async function handleVoiceAskResults(args: unknown): Promise<McpTextResul
   } else {
     try {
       for (const day of readdirSync(root).filter(day => /^\d{4}-\d{2}-\d{2}$/.test(day))) {
-        if (!directory(join(root, day))) continue;
-        for (const id of readdirSync(join(root, day))) {
+        let ids: string[];
+        try {
+          if (!directory(join(root, day))) continue;
+          ids = readdirSync(join(root, day));
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") results.push(unreadable(day, error));
+          continue;
+        }
+        for (const id of ids) {
           if (!ID.test(id) || !id.startsWith(day)) continue;
           let entry: AskResult | null;
-          try { entry = load(root, id); } catch (error) { return storageError(id, error); }
+          try { entry = load(root, id); } catch (error) { results.push(unreadable(id, error)); continue; }
           if (entry) results.push(entry);
         }
       }
