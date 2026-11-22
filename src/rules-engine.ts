@@ -202,6 +202,7 @@ const AGGRESSIVE_FILLER_PATTERNS: RegExp[] = [
 
 function removeFillers(text: string, aggressive: boolean): string {
   let result = text;
+  const protectedTokens: string[] = [];
   if (!aggressive) {
     // Quoted speech is evidence, including ambiguous or unmatched quotes.
     const quoted = new Set<number>();
@@ -216,26 +217,19 @@ function removeFillers(text: string, aggressive: boolean): string {
         quoted.add(i);
       }
     }
-    const tokens = [...result.matchAll(/(?<![\p{L}\p{N}-])(?:um|uh|er)(?![\p{L}\p{N}-])/giu)];
-    const spans: [number, number][] = [];
-    for (let i = 0; i < tokens.length; i++) {
-      const token = tokens[i]!;
-      const start = token.index!;
-      const end = start + token[0].length;
-      if (quoted.has(start) || /^(?:UM|UH|ER)$/.test(token[0])) continue;
-      const previous = tokens[i - 1];
-      const next = tokens[i + 1];
-      const repeated = (previous && !quoted.has(previous.index!) && /^\s+$/.test(result.slice(previous.index! + previous[0].length, start))) ||
-        (next && !quoted.has(next.index!) && /^\s+$/.test(result.slice(end, next.index!)));
-      const pause = /^\s*,/u.exec(result.slice(end));
-      if (!pause && !repeated) continue;
-      const comma = /,\s*$/.exec(result.slice(0, start));
-      spans.push([comma ? comma.index : start, end + (pause?.[0].length ?? 0)]);
-    }
-    for (const [start, end] of spans.reverse()) result = result.slice(0, start) + " " + result.slice(end);
-    // The remaining English tokens have no clear hesitation evidence.
-    return result.replace(DISFLUENCY_PATTERNS[1]!, " ").replace(/,\s*,/g, ",").replace(/  +/g, " ").trim();
+    result = result.replace(/(?<![\p{L}\p{N}-])(?:um|uh|er)(?![\p{L}\p{N}-])/giu, (word, start: number) => {
+      const tail = text.slice(start + word.length);
+      const before = text.slice(0, start);
+      const repeated = /(?:um|uh|er)\s+$/iu.test(before) || /^\s+(?:um|uh|er)\b/iu.test(tail);
+      const name = /^(?:Um|Uh|Er)$/.test(word) && /^\s+\p{Lu}/u.test(tail);
+      const keep = quoted.has(start) || name || /^\.?\d/u.test(tail) ||
+        (word.toLowerCase() === "er" && !/^\s*,/u.test(tail) && !repeated);
+      if (!keep) return word;
+      protectedTokens.push(word);
+      return "\uE000" + (protectedTokens.length - 1) + "\uE001";
+    });
   }
+  if (!aggressive) result = result.replace(/,\s*er\s*,/gi, " ");
   const patterns = aggressive
     ? [...DISFLUENCY_PATTERNS, ...AGGRESSIVE_FILLER_PATTERNS]
     : DISFLUENCY_PATTERNS;
@@ -254,7 +248,7 @@ function removeFillers(text: string, aggressive: boolean): string {
   for (const pattern of patterns) {
     result = result.replace(pattern, match => (isAcronym(match) ? match : " "));
   }
-  return result.replace(/  +/g, " ").trim();
+  return result.replace(/\uE000(\d+)\uE001/g, (_, index) => protectedTokens[Number(index)]!).replace(/  +/g, " ").trim();
 }
 
 // --- Stage 2: Spoken punctuation ---

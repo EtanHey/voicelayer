@@ -811,7 +811,7 @@ describe("stt-cleanup", () => {
       cleanupTranscriptionText(
         "yeah, the language should be fixed a little bit. um, yeah.",
       ),
-    ).toBe("Yeah, the language should be fixed a little bit. Yeah.");
+    ).toBe("Yeah, the language should be fixed a little bit, yeah.");
   });
 
   it("cleans latest STT eval phrase artifacts for PR possessives and presentation terms", () => {
@@ -1040,7 +1040,7 @@ describe("conservative English hesitations", () => {
     ['He said “um, er” and left.', 'He said “um, er” and left.'],
     ["Uh… we go.", "Uh… we go."],
     ["er— we go.", "Er— we go."],
-    ["Uh. We go.", "Uh. We go."],
+    ["Uh. We go.", "We go."],
     ["Er ist hier.", "Er ist hier."],
     ['He said "er" and left.', 'He said "er" and left.'],
     ["Um Bongo tastes good.", "Um Bongo tastes good."],

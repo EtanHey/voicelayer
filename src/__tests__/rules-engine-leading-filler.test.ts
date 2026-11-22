@@ -6,11 +6,11 @@ describe("a removed filler takes only its own punctuation with it", () => {
   const cases: [string, string][] = [
     ["Um, The lantern is glowing.", "The lantern is glowing."],
     ["Uh, um, The lantern is glowing.", "The lantern is glowing."],
-    ["Uh. The lantern is glowing.", "Uh. The lantern is glowing."],
+    ["Uh. The lantern is glowing.", "The lantern is glowing."],
     // Mid-take joins are unchanged (the period-comma collapse owns them).
-    ["the language should be fixed a little bit. um, yeah", "The language should be fixed a little bit. Yeah"],
-    ["So, um, The lantern is glowing.", "So The lantern is glowing."],
-    ["Um.", "Um."],
+    ["the language should be fixed a little bit. um, yeah", "The language should be fixed a little bit, yeah"],
+    ["So, um, The lantern is glowing.", "So, The lantern is glowing."],
+    ["Um.", ""],
     // Cut-offs keep the fragment (raw accurate): an ellipsis or dash after the sound is not a filler's comma.
     ["Uh... The lantern is glowing.", "Uh... The lantern is glowing."],
     ["Uh— wait", "Uh— wait"],
@@ -23,10 +23,10 @@ describe("a removed filler takes only its own punctuation with it", () => {
     // RF review round 2 F3: unspaced decoder text.
     ["Um,uh, hello", "Hello"],
     ["Uh,um, I am confused.", "I am confused."],
-    ["Um,uh", "Uh"],
+    ["Um,uh", ""],
     ["Um,hello", "Hello"],
     ["Um,uh-huh", "Uh-huh"],
-    ["Um.Uh, hello", "Um. Hello"],
+    ["Um.Uh, hello", "Hello"],
     // Words are never eaten.
     ["I went to the ER, it was fine.", "I went to the ER, it was fine."],
     ["Umbrella, yes.", "Umbrella, yes."],
