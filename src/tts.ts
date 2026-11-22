@@ -1058,6 +1058,8 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
   wordBoundaries?: WordBoundary[];
   /** Timings already measured for this file (replay, or a re-played chunk); broadcast at start. */
   preparedAmplitude?: PlaybackAmplitudeExtraction;
+  /** Full-file samples shared by replacement players and retained readback for this chunk. */
+  amplitudeCache?: { envelope?: PlaybackAmplitudeEnvelope };
   alignedWords?: AlignedWordBoundary[];
   cloneProjection?: ReturnType<typeof projectSpeakableText>;
   prosodyIdentity?: string;
@@ -1446,7 +1448,7 @@ class PlaybackQueueManager {
       audioFile,
       sliceFile: metadata?.seekSliceFile,
       skipAmplitudeDecode: metadata?.isSeek,
-      metadata: metadata ? { ...metadata } : undefined,
+      metadata: metadata ? { ...metadata, amplitudeCache: metadata.amplitudeCache ?? {} } : undefined,
       priority,
       enqueuedAt: Date.now(),
       expiresAt: Date.now() + ttlForPriority(priority),
@@ -2290,9 +2292,15 @@ class PlaybackQueueManager {
       this.processNext();
       return;
     }
-    if (playbackAmplitude) next.decodedAmplitude = playbackAmplitude;
-    next.playbackAmplitude = playbackAmplitude ?? (next.resuming
-      ? envelopeFromOffset(next.decodedAmplitude, next.metadata?.localOffsetMs ?? 0) : undefined);
+    if (playbackAmplitude) {
+      next.decodedAmplitude = playbackAmplitude;
+      if (next.metadata?.amplitudeCache) next.metadata.amplitudeCache.envelope = playbackAmplitude;
+    }
+    // Every replacement player starts its envelope at its own local offset, including Seek/Replay.
+    next.playbackAmplitude = envelopeFromOffset(
+      playbackAmplitude ?? next.metadata?.amplitudeCache?.envelope ?? next.decodedAmplitude,
+      next.metadata?.localOffsetMs ?? 0,
+    );
     const rate = currentPlaybackSpeed();
     let proc: ReturnType<typeof Bun.spawn>;
     try {
@@ -3810,6 +3818,7 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
   const chunkVoices = new Map<string, string>();
   const chunkEngines = new Map<string, string>();
   const chunkAmplitudes = new Map<string, PlaybackAmplitudeExtraction>();
+  const chunkAmplitudeCaches = new Map<string, NonNullable<PlaybackMetadata["amplitudeCache"]>>();
   const cloneProjections = new Map<string, ReturnType<typeof projectSpeakableText>>();
   const chunkAlignedWords = new Map<string, AlignedWordBoundary[]>();
   // Swift routes Escape only in active modes. Actual playback resets this clock/text.
@@ -3862,12 +3871,15 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
         if (result.projection) cloneProjections.set(audioFile, result.projection);
         if (!signal.aborted && activeLongRead === handle) broadcast(handle.wordTimeline.update(index, displayChunk, result.chunk.durationMs,
           displayTokenBoundaries(displayChunk, result.chunk.wordBoundaries)));
+        const amplitudeCache: NonNullable<PlaybackMetadata["amplitudeCache"]> = {};
+        chunkAmplitudeCaches.set(audioFile, amplitudeCache);
         const synthesizedAt = Date.now();
         if (index > 0) {
           const decode = startPlaybackAmplitudeEnvelopeExtraction(audioFile);
           signal.addEventListener("abort", decode.cancel, { once: true });
           chunkAmplitudes.set(audioFile, decode);
-          void decode.result.then(() => {
+          void decode.result.then(envelope => {
+            amplitudeCache.envelope = envelope;
             signal.removeEventListener("abort", decode.cancel);
             console.error(`[tts] chunk=${index} chars=${displayChunk.length} engine=${result.engine} synthesis_ms=${synthesizedAt - synthesisStarted} waveform_ms=${Date.now() - synthesizedAt}`);
           });
@@ -3898,6 +3910,7 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
           longRead: { ...info, ...(displays[info.chunk_index] ? { display: displays[info.chunk_index] } : {}) }, speechIdentity,
           wordBoundaries: chunk.wordBoundaries, priority: "normal",
           preparedAmplitude: chunkAmplitudes.get(chunk.audioFile),
+          amplitudeCache: chunkAmplitudeCaches.get(chunk.audioFile),
           cloneProjection: cloneProjections.get(chunk.audioFile),
           prosodyIdentity: prosodyPlan?.renderIdentity,
           alignedWords: chunkAlignedWords.get(chunk.audioFile),
@@ -3960,7 +3973,7 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
         if (index === 0) await prosodyRead?.settleTail();
         const decode = chunkAmplitudes.get(chunk.audioFile);
         decode?.cancel(); await decode?.result;
-        chunkAmplitudes.delete(chunk.audioFile); cloneProjections.delete(chunk.audioFile);
+        chunkAmplitudes.delete(chunk.audioFile); chunkAmplitudeCaches.delete(chunk.audioFile); cloneProjections.delete(chunk.audioFile);
         chunkAlignedWords.delete(chunk.audioFile); chunkEngines.delete(chunk.audioFile); chunkVoices.delete(chunk.audioFile);
         try { unlinkSpeechAudio(chunk.audioFile); } catch {}
       },

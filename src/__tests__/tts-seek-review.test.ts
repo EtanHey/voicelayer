@@ -24,11 +24,12 @@ describe("seek review regressions", () => {
   let players: ReturnType<typeof fixtureBarrier<any>>, cuts: ReturnType<typeof fixtureBarrier<any>>;
   let decodes: ReturnType<typeof fixtureBarrier<any>>, events: any[], now: number;
   let holdDecode: boolean, synthWords: any[];
+  let envelope: amplitude.PlaybackAmplitudeEnvelope;
   let recordingSpy: ReturnType<typeof spyOn>, localSpy: ReturnType<typeof spyOn>;
   const source = `${TEST_TMP}/review-seek-source.mp3`;
   beforeEach(() => {
     players = fixtureBarrier(); cuts = fixtureBarrier(); decodes = fixtureBarrier(); events = [];
-    now = 100000; holdDecode = false; synthWords = [];
+    now = 100000; holdDecode = false; synthWords = []; envelope = unavailable;
     writeFileSync(source, "source");
     spies.push(spyOn(Date, "now").mockImplementation(() => now));
     recordingSpy = spyOn(recording, "getEffectiveRecordingState").mockReturnValue("idle"); spies.push(recordingSpy);
@@ -36,7 +37,7 @@ describe("seek review regressions", () => {
     spies.push(spyOn(socket, "broadcast").mockImplementation(event => { events.push(event); }));
     spies.push(spyOn(amplitude, "startPlaybackAmplitudeEnvelopeExtraction").mockImplementation(() => {
       const result = deferred<any>(); decodes.push(result);
-      if (!holdDecode) result.resolve(unavailable);
+      if (!holdDecode) result.resolve(envelope);
       return { result: result.promise, cancel: () => result.resolve(unavailable) };
     }));
     spies.push(spyOn(health, "synthesizeWithRetry").mockImplementation(async (_text, _voice, _rate, file) => {
@@ -79,6 +80,31 @@ describe("seek review regressions", () => {
     expect(players.values).toHaveLength(2);
     expect(events.filter(event => event.state === "speaking").at(-1).playback_offset_ms).toBe(300);
   });
+  for (const kind of ["short", "edge", "clone"] as const) {
+    it(`T30 ${kind} seek immediately broadcasts target samples without another decode`, async () => {
+      envelope = { source: "decoded-rms", sample_interval_ms: 50,
+        samples: Array.from({ length: 40 }, (_, index) => (index + 1) / 40) };
+      if (kind === "clone") spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("cloned fixture")));
+      const read = kind === "short" ? undefined
+        : tts.speakLongRead("One sentence. ".repeat(100), { engine: kind, voice: "fixture", rate: "+0%" });
+      try {
+        if (kind === "short") await start(); else await players.at(0);
+        await checkpoint();
+        const decodeCount = decodes.values.length;
+        holdDecode = true;
+        for (const [index, offset] of [300, 700, 0].entries()) {
+          expect(tts.seekPlayback(offset).outcome).toBe("accept");
+          if (offset > 0) { await cuts.at(index); completeCut(index); }
+          await players.at(index + 1);
+          await checkpoint();
+          const edge = events.filter(event => event.state === "speaking").at(-1);
+          expect(edge.playback_offset_ms).toBe(offset);
+          expect(edge.playback_amplitude).toEqual({ ...envelope, samples: envelope.samples.slice(offset / 50) });
+          expect(decodes.values).toHaveLength(decodeCount);
+        }
+      } finally { tts.stopPlayback(); await read?.done; }
+    });
+  }
   it("R1-3 a failed conversion leaves current playback and clock intact", async () => {
     const handle = await start(); let settled = false; void handle.exited.then(() => { settled = true; });
     tts.seekPlayback(300); await cuts.at(0); completeCut(0, 8); await checkpoint();
