@@ -202,6 +202,40 @@ const AGGRESSIVE_FILLER_PATTERNS: RegExp[] = [
 
 function removeFillers(text: string, aggressive: boolean): string {
   let result = text;
+  if (!aggressive) {
+    // Quoted speech is evidence, including ambiguous or unmatched quotes.
+    const quoted = new Set<number>();
+    let quote = "";
+    for (let i = 0; i < result.length; i++) {
+      const c = result[i]!;
+      if (quote) {
+        quoted.add(i);
+        if (c === quote || (quote === "“" && c === "”") || (quote === "‘" && c === "’")) quote = "";
+      } else if ('"“‘'.includes(c) || (c === "'" && !/\p{L}/u.test(result[i - 1] ?? ""))) {
+        quote = c;
+        quoted.add(i);
+      }
+    }
+    const tokens = [...result.matchAll(/\b(?:um|uh|er)\b/giu)];
+    const spans: [number, number][] = [];
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i]!;
+      const start = token.index!;
+      const end = start + token[0].length;
+      if (quoted.has(start) || /^(?:UM|UH|ER)$/.test(token[0])) continue;
+      const previous = tokens[i - 1];
+      const next = tokens[i + 1];
+      const repeated = (previous && !quoted.has(previous.index!) && /^\s+$/.test(result.slice(previous.index! + previous[0].length, start))) ||
+        (next && !quoted.has(next.index!) && /^\s+$/.test(result.slice(end, next.index!)));
+      const pause = /^\s*(?:,|…|\.{2,}|\p{Pd})/u.exec(result.slice(end));
+      if (!pause && !repeated) continue;
+      const comma = /,\s*$/.exec(result.slice(0, start));
+      spans.push([comma ? comma.index : start, end + (pause?.[0].length ?? 0)]);
+    }
+    for (const [start, end] of spans.reverse()) result = result.slice(0, start) + " " + result.slice(end);
+    // The remaining English tokens have no clear hesitation evidence.
+    return result.replace(DISFLUENCY_PATTERNS[1]!, " ").replace(/,\s*,/g, ",").replace(/  +/g, " ").trim();
+  }
   const patterns = aggressive
     ? [...DISFLUENCY_PATTERNS, ...AGGRESSIVE_FILLER_PATTERNS]
     : DISFLUENCY_PATTERNS;

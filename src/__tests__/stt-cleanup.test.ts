@@ -811,7 +811,7 @@ describe("stt-cleanup", () => {
       cleanupTranscriptionText(
         "yeah, the language should be fixed a little bit. um, yeah.",
       ),
-    ).toBe("Yeah, the language should be fixed a little bit, yeah.");
+    ).toBe("Yeah, the language should be fixed a little bit. Yeah.");
   });
 
   it("cleans latest STT eval phrase artifacts for PR possessives and presentation terms", () => {
@@ -1032,4 +1032,20 @@ describe("stt-cleanup", () => {
 
     expect(cleanupTranscriptionText("then it does,..")).toBe("Then it does.");
   });
+});
+
+describe("conservative English hesitations", () => {
+  for (const [input, expected] of [
+    ["um um we go.", "We go."],
+    ['He said “um, er” and left.', 'He said “um, er” and left.'],
+    ["Uh… we go.", "We go."],
+    ["er— we go.", "We go."],
+    ["Uh. We go.", "Uh. We go."],
+    ["Er ist hier.", "Er ist hier."],
+    ['He said "er" and left.', 'He said "er" and left.'],
+    ["Um Bongo tastes good.", "Um Bongo tastes good."],
+    ["הוא אמר er ואז הלך.", "הוא אמר er ואז הלך."],
+    ["Um, so the parser works.", "So the parser works."],
+    ["I think, er, we should.", "I think we should."],
+  ]) it(input!, () => expect(cleanupTranscriptionText(input!, { VOICELAYER_STT_AGGRESSIVE_FILLERS: "0" })).toBe(expected!));
 });

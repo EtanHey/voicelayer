@@ -40,12 +40,12 @@ describe("rules-engine", () => {
   describe("filler removal", () => {
     it("removes common English fillers", () => {
       expect(applyRules("um I think uh this is working")).toBe(
-        "I think this is working",
+        "Um I think uh this is working",
       );
     });
 
     it("removes fillers at start and end", () => {
-      expect(applyRules("uh hello world um")).toBe("Hello world");
+      expect(applyRules("uh hello world um")).toBe("Uh hello world um");
     });
 
     it("preserves discourse phrases instead of deleting spoken content", () => {
@@ -354,12 +354,12 @@ describe("rules-engine", () => {
 
     it("collapses period-comma artifacts left by filler removal", () => {
       expect(applyRules("the language should be fixed a little bit. um, yeah")).toBe(
-        "The language should be fixed a little bit, yeah",
+        "The language should be fixed a little bit. Yeah",
       );
       expect(applyRules("the language should be fixed a little bit., yeah")).toBe(
         "The language should be fixed a little bit, yeah",
       );
-      expect(applyRules("pi is 3.14. um, yes")).toBe("Pi is 3.14, yes");
+      expect(applyRules("pi is 3.14. um, yes")).toBe("Pi is 3.14. Yes");
       expect(applyRules("version 3.14., yes")).toBe("Version 3.14, yes");
     });
 
