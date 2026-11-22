@@ -38,7 +38,8 @@ describe("personal vocabulary boundary", () => {
     }
     for (const root of ["src", "flow-bar/Sources", "flow-bar/Tests", "flow-bar/bundle", "flow-bar/Package.swift", "flow-bar/build-app.sh", "scripts", "launchd", "README.md", "eval/fixtures"]) visit(join(import.meta.dir, "..", root));
     expect(violations).toEqual([]);
-  });
+    // A whole-tree scan grows with the repo: 3.4 s on an idle M4, 5.9 s under load, so bun's 5 s default failed a push.
+  }, 60_000);
 
   it("contains none of the moved alias or priority surfaces in bundled vocabulary tables", () => {
     const text = readFileSync(join(import.meta.dir, "../src/stt-cleanup.ts"), "utf8");
