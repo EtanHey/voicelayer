@@ -125,7 +125,7 @@ describe("explicit whisper-server unload", () => {
     });
     expect(await ensureServer(18884)).toBe(18884);
     expect(await unloadOwnedServer(() => false)).toEqual({ outcome: "reject", reason: "child exit unconfirmed" });
-    expect(signals).toEqual(["SIGTERM"]);
+    expect(signals).toEqual(["SIGKILL"]);
     await expect(ensureServer(18884)).rejects.toThrow("unload unconfirmed");
     expect(spawns).toBe(1);
     alive = false;
