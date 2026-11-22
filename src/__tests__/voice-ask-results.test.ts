@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync, chmodSync } from "fs";
 import { join } from "path";
 import * as handlers from "../handlers";
 import { getToolDefinitions } from "../mcp-tools";
@@ -144,3 +144,19 @@ test("empty archive and maximum page size are deterministic", async () => {
 });
 
 test("a spoken-question ID explicitly has no Ask answer", async () => { fixture(1, undefined, "speak"); expect(JSON.parse((await handlers.handleVoiceAskResults({archive_id: id(1)})).content[0].text)).toEqual({results: [], message: "No Ask answer exists for this archive ID."}); });
+
+for (const file of ["metadata.json", "voicelayer-transcript.txt", "ask-result.json"]) {
+  for (const explicit of [false, true]) test(`unreadable ${file} explicit=${explicit} reports storage error`, async () => {
+    const dir = fixture(1, "Synthetic answer");
+    const path = join(dir, file);
+    if (file === "ask-result.json") writeFileSync(path, '{"status":"away"}');
+    chmodSync(path, 0);
+    try {
+      const result = await handlers.handleVoiceAskResults(explicit ? {archive_id: id(1)} : {});
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain(id(1));
+      expect(result.content[0].text).toContain("EACCES");
+      expect(result.content[0].text).not.toContain(root);
+    } finally { chmodSync(path, 0o600); }
+  });
+}
