@@ -333,7 +333,7 @@ usage: whisper-server [options]
       const signals = ownedChild(() => false);
       try {
         await expect(stopServerAndWait()).rejects.toThrow(/did not stop/);
-        expect(signals).toEqual(["SIGKILL", "SIGKILL"]);
+        expect(signals).toEqual(["SIGKILL"]);
       } finally {
         __resetWhisperServerStateForTests(null);
       }
