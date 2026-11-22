@@ -1038,8 +1038,8 @@ describe("conservative English hesitations", () => {
   for (const [input, expected] of [
     ["um um we go.", "We go."],
     ['He said “um, er” and left.', 'He said “um, er” and left.'],
-    ["Uh… we go.", "We go."],
-    ["er— we go.", "We go."],
+    ["Uh… we go.", "Uh… we go."],
+    ["er— we go.", "Er— we go."],
     ["Uh. We go.", "Uh. We go."],
     ["Er ist hier.", "Er ist hier."],
     ['He said "er" and left.', 'He said "er" and left.'],

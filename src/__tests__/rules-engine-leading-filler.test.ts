@@ -11,9 +11,9 @@ describe("a removed filler takes only its own punctuation with it", () => {
     ["the language should be fixed a little bit. um, yeah", "The language should be fixed a little bit. Yeah"],
     ["So, um, The lantern is glowing.", "So The lantern is glowing."],
     ["Um.", "Um."],
-    // Explicit pause marks identify hesitations under the conservative policy.
-    ["Uh... The lantern is glowing.", "The lantern is glowing."],
-    ["Uh— wait", "Wait"],
+    // Cut-offs keep the fragment (raw accurate): an ellipsis or dash after the sound is not a filler's comma.
+    ["Uh... The lantern is glowing.", "Uh... The lantern is glowing."],
+    ["Uh— wait", "Uh— wait"],
     // RF review F1: a decimal point or a domain dot is not the filler's punctuation.
     ["Um.5 liters", "Um.5 liters"],
     ["uh.25 is the probability", "Uh.25 is the probability"],
@@ -25,7 +25,7 @@ describe("a removed filler takes only its own punctuation with it", () => {
     ["Uh,um, I am confused.", "I am confused."],
     ["Um,uh", "Uh"],
     ["Um,hello", "Hello"],
-    ["Um,uh-huh", "Huh"],
+    ["Um,uh-huh", "Uh-huh"],
     ["Um.Uh, hello", "Um. Hello"],
     // Words are never eaten.
     ["I went to the ER, it was fine.", "I went to the ER, it was fine."],

@@ -216,7 +216,7 @@ function removeFillers(text: string, aggressive: boolean): string {
         quoted.add(i);
       }
     }
-    const tokens = [...result.matchAll(/\b(?:um|uh|er)\b/giu)];
+    const tokens = [...result.matchAll(/(?<![\p{L}\p{N}-])(?:um|uh|er)(?![\p{L}\p{N}-])/giu)];
     const spans: [number, number][] = [];
     for (let i = 0; i < tokens.length; i++) {
       const token = tokens[i]!;
@@ -227,7 +227,7 @@ function removeFillers(text: string, aggressive: boolean): string {
       const next = tokens[i + 1];
       const repeated = (previous && !quoted.has(previous.index!) && /^\s+$/.test(result.slice(previous.index! + previous[0].length, start))) ||
         (next && !quoted.has(next.index!) && /^\s+$/.test(result.slice(end, next.index!)));
-      const pause = /^\s*(?:,|…|\.{2,}|\p{Pd})/u.exec(result.slice(end));
+      const pause = /^\s*,/u.exec(result.slice(end));
       if (!pause && !repeated) continue;
       const comma = /,\s*$/.exec(result.slice(0, start));
       spans.push([comma ? comma.index : start, end + (pause?.[0].length ?? 0)]);
