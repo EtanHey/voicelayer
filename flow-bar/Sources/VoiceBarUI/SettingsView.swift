@@ -1472,7 +1472,9 @@ public struct SettingsView: View {
             if !visibleRows.isEmpty {
                 Label(SettingsGeneralCopy.microphoneNote, systemImage: "info.circle")
                     .font(.system(size: 11.5))
-                    .foregroundStyle(SettingsPanePalette.helper)
+                    .foregroundStyle(NotchInk.note)
+                    .help(SettingsGeneralCopy.microphoneNoteDetail)
+                    .accessibilityLabel(SettingsGeneralCopy.microphoneNoteDetail)
             }
         } header: {
             Text("Microphone priority")

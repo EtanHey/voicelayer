@@ -77,15 +77,19 @@ final class SettingsTranscriptionPaneTests: XCTestCase {
         let row = try XCTUnwrap(ModelsSettingsView.unloadWhenIdleRow(for: state()))
         XCTAssertEqual(row.title, "Unload when idle")
         XCTAssertFalse(row.isOn)
-        XCTAssertEqual(row.line, "Frees about 2.5 GB of memory after 5 min without dictation. "
+        // 2.4.6 track T: one painted line; the load cost is the hover detail.
+        XCTAssertEqual(row.line, "Frees about 2.5 GB of memory after 5 min idle.")
+        XCTAssertEqual(row.tooltip, "Frees about 2.5 GB of memory after 5 min idle. "
                        + "The next dictation loads Parakeet again, which adds a few seconds.")
     }
 
     func testProcessingRowsSayWhatEachDoesToYourWords() {
         let rows = ModelsSettingsView.processingRows(for: Self.controls, recognizer: state(selected: .whisper))
         XCTAssertEqual(rows.map(\.key.title), ["Model polish", "Remove made-up closing phrases", "Smart chunks"])
-        XCTAssertEqual(rows[0].line, "Fixes punctuation and capitals. If polish would add or drop a word, VoiceBar keeps the raw text instead.",
-                       "polish states its fidelity guard (stt-polish.ts CHANGED_LEXICAL_CONTENT)")
+        XCTAssertEqual(rows[0].line, "Fixes punctuation and capitals, never your words.")
+        XCTAssertEqual(rows[0].tooltip, "Fixes punctuation and capitals, never your words. "
+                       + "If polish would add or drop a word, VoiceBar keeps the raw text instead.",
+                       "polish states its fidelity guard (stt-polish.ts CHANGED_LEXICAL_CONTENT) on hover")
         XCTAssertNil(rows[2].lockedReason)
         XCTAssertTrue(rows[2].experimental)
     }
@@ -180,5 +184,23 @@ final class SettingsTranscriptionPaneTests: XCTestCase {
     private static func source(_ file: String) -> URL {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Sources/VoiceBarUI/\(file)")
+    }
+}
+
+/// 2.4.6 track T: each recognizer row paints one short line (language and status); the full blurb and the
+/// auto-load line are the row's hover and VoiceOver hint, so nothing the row used to say is lost.
+final class RecognizerRowOneLineTests: XCTestCase {
+    func testTheRowLineIsShortAndTheDetailKeepsEverything() {
+        let state = RecognizerPickerState(
+            selected: .parakeet, effective: .parakeet, parakeet: .loaded, whisper: .unloaded,
+            parakeetAvailable: true, parakeetAssetsPresent: true, whisperAssetsPresent: true,
+            diskBytes: [.parakeet: 2_509_000_000, .whisper: 1_620_000_000], downloads: [:],
+            idleUnloadSeconds: 300, unloadWhenIdle: RecognizerUnloadWhenIdle(effective: false))
+        XCTAssertEqual(RecognizerPickerView.rowLine(state, .parakeet), "English · Loaded · 2.51 GB")
+        XCTAssertEqual(RecognizerPickerView.rowLine(state, .whisper), "Hebrew and mixed · On disk · 1.62 GB")
+        XCTAssertEqual(RecognizerPickerView.rowDetail(state, .parakeet),
+                       "Fastest on this Mac. English. Loaded · 2.51 GB. Stays loaded between dictations.")
+        XCTAssertEqual(RecognizerPickerView.rowDetail(state, .whisper),
+                       "Slower. Handles Hebrew and mixed languages. On disk · 1.62 GB.")
     }
 }
