@@ -31,7 +31,13 @@ struct NotchPaneInk {
     /// Titles, field text, term names.
     var primary: Color { palette.primary.color }
     /// Notes, placeholders, variants and helper glyphs: the teleprompter's non-current (read) word ink.
-    var note: Color { palette.primary.color.opacity(TeleprompterA.Tier.read.opacity) }
+    var note: Color { palette.primary.color.opacity(Self.noteOpacity(appearance)) }
+
+    /// Dark keeps the read tier (64 %: 6.4:1 on the dark glass, rgb 41). Light departs to 70 % because 64 % is only
+    /// 3.96:1 on the darkest light glass measured (rgb 185); 0.691 is the 4.5:1 floor, 70 % gives 4.61:1.
+    static func noteOpacity(_ appearance: VoiceBarNotchAppearance) -> Double {
+        appearance == .light ? 0.70 : TeleprompterA.Tier.read.opacity
+    }
     /// Errors (a blocking conflict, a failed save).
     var error: Color { VoiceBarNotchContrastPalette.errorText(for: appearance).color }
 

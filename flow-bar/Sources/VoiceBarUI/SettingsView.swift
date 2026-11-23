@@ -2706,18 +2706,22 @@ public struct SettingsView: View {
                     Text("Delete term?").font(.system(size: 13, weight: .semibold)).foregroundStyle(NotchInk.primary)
                     Text("Remove “\(removal.canonical)” from your dictionary?")
                         .font(SettingsRowLabel.descriptionFont).foregroundStyle(NotchInk.note)
-                    HStack {
+                    HStack(spacing: 6) {
                         Spacer()
-                        Button("Cancel") { termRemoval = nil }
+                        let removalInk = NotchPaneInk(colorScheme: colorScheme)
+                        NotchDrawerButton(title: "Cancel", palette: removalInk.palette) { termRemoval = nil }
                             .keyboardShortcut(.cancelAction)
                             .focusable(interactions: .edit)
                             .focused($removalCancelFocused)
                             .onKeyPress(.space) { termRemoval = nil; return .handled }
-                        Button("Delete", role: .destructive) {
+                        // Destructive: the palette's errorText on the prominent capsule, never system red on glass.
+                        NotchDrawerButton(title: "Delete", palette: removalInk.palette, prominent: true,
+                                          ink: removalInk.error) {
                             confirmTermRemoval()
                         }
                         .focusable(interactions: .edit)
                         .onKeyPress(.space) { confirmTermRemoval(); return .handled }
+                        .accessibilityHint("Removes the term from your dictionary")
                     }
                 }
                 .padding(12).frame(maxWidth: .infinity, alignment: .leading)
@@ -2924,7 +2928,7 @@ public struct SettingsView: View {
                     .foregroundStyle(NotchInk.note)
                 if entry.variants.count > 1 {
                     Text("\(entry.variants.count - 1) more").font(SettingsRowLabel.descriptionFont)
-                        .foregroundStyle(NotchInk.note).opacity(0.8).fixedSize()
+                        .foregroundStyle(NotchInk.note).fixedSize()
                 }
             }
         }

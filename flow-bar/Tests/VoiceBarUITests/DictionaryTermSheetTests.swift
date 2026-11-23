@@ -228,7 +228,7 @@ final class DictionaryTermSheetTests: XCTestCase {
         XCTAssertTrue(source.contains("ForEach(edit.keptVariants"))
         XCTAssertTrue(source.contains("edit.removedVariants.append(variant)"))
         XCTAssertTrue(source.contains("edit.isEditing ? \"Save\" : \"Add\""))
-        XCTAssertTrue(source.contains("edit.isEditing ? \"Edit Term\" : \"Add to Dictionary\""))
+        XCTAssertTrue(source.contains("edit.isEditing ? \"Edit term\" : \"Add term\""))
     }
 
     private func source(_ name: String) throws -> String {

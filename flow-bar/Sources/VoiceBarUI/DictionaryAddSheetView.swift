@@ -65,7 +65,7 @@ public struct DictionaryAddSheetView: View {
         let warning = edit.variantWarning(in: existingEntries)
         let canSubmit = edit.canSave && !(requiresMisheard && edit.trimmedWrong.isEmpty) && warning == nil
         VStack(alignment: .leading, spacing: 12) {
-            Text(edit.isEditing ? "Edit Term" : "Add to Dictionary")
+            Text(edit.isEditing ? "Edit term" : "Add term")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(ink.primary)
 

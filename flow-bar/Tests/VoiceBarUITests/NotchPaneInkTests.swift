@@ -29,12 +29,51 @@ final class NotchPaneInkTests: XCTestCase {
         XCTAssertGreaterThan(light.red, light.green + 0.3, "still reads as red, not a brown-grey")
     }
 
-    func testNotesUseTheTeleprompterReadTier() {
-        XCTAssertEqual(TeleprompterA.Tier.read.opacity, 0.64)
-        let dark = NotchPaneInk(.dark)
-        XCTAssertEqual(dark.palette, VoiceBarNotchContrastPalette.resolve(for: .dark))
+    /// The note ink as painted: palette primary at the note opacity, composited over the glass.
+    private func noteOnGlass(_ appearance: VoiceBarNotchAppearance, glass: Double) -> VoiceBarRGB {
+        let primary = VoiceBarNotchContrastPalette.resolve(for: appearance).primary
+        let alpha = primary.alpha * NotchPaneInk.noteOpacity(appearance)
+        let bg = glass / 255
+        return VoiceBarRGB(red: primary.red * alpha + bg * (1 - alpha), green: primary.green * alpha + bg * (1 - alpha),
+                           blue: primary.blue * alpha + bg * (1 - alpha))
+    }
+
+    /// Lead ruling (review fb68174ad P2): note ink reads at 4.5:1 or better on both glasses. Dark keeps the
+    /// teleprompter read tier; light rises to 70 % because 64 % measured 3.96:1 on rgb 185.
+    func testNoteInkIsReadableOnBothGlasses() {
+        XCTAssertEqual(NotchPaneInk.noteOpacity(.dark), TeleprompterA.Tier.read.opacity, "dark keeps the read tier")
+        XCTAssertEqual(NotchPaneInk.noteOpacity(.light), 0.70)
+        for (appearance, glasses) in [(VoiceBarNotchAppearance.light, [185.0, 219]), (.dark, [35.0, 41])] {
+            for glass in glasses {
+                let ratio = VoiceBarContrast.ratio(foreground: noteOnGlass(appearance, glass: glass), background: grey(glass))
+                XCTAssertGreaterThanOrEqual(ratio, VoiceBarContrast.minimumTextRatio, "\(appearance) note on \(glass): \(ratio)")
+            }
+        }
+        // The departure is the lowest that passes: the read tier itself fails on the darker light glass.
+        let primary = VoiceBarNotchContrastPalette.resolve(for: .light).primary
+        let alpha = primary.alpha * TeleprompterA.Tier.read.opacity, bg = 185.0 / 255
+        let readTier = VoiceBarRGB(red: primary.red * alpha + bg * (1 - alpha), green: primary.green * alpha + bg * (1 - alpha),
+                                   blue: primary.blue * alpha + bg * (1 - alpha))
+        XCTAssertLessThan(VoiceBarContrast.ratio(foreground: readTier, background: grey(185)), 4.5)
         XCTAssertEqual(NotchPaneInk(colorScheme: .light).appearance, .light)
         XCTAssertEqual(NotchPaneInk(colorScheme: .dark).appearance, .dark)
+    }
+
+    /// Review fb68174ad P2: the delete confirmation on glass uses the drawer capsules, Delete in errorText, and keeps
+    /// its focus, Escape and Space handling. The overflow count carries no extra dimming.
+    func testDeleteConfirmationUsesPaletteCapsules() throws {
+        let text = try source("SettingsView.swift")
+        let start = try XCTUnwrap(text.range(of: "            if let removal = termRemoval {"))
+        let block = String(text[start.lowerBound...].prefix(2200))
+        XCTAssertFalse(block.contains("Button(\"Cancel\")"))
+        XCTAssertFalse(block.contains("Button(\"Delete\""))
+        XCTAssertTrue(block.contains("NotchDrawerButton(title: \"Cancel\""))
+        XCTAssertTrue(block.contains("NotchDrawerButton(title: \"Delete\""))
+        XCTAssertTrue(block.contains("ink: removalInk.error"))
+        XCTAssertTrue(block.contains(".keyboardShortcut(.cancelAction)"))
+        XCTAssertTrue(block.contains(".focused($removalCancelFocused)"))
+        XCTAssertTrue(block.contains(".onKeyPress(.space) { confirmTermRemoval(); return .handled }"))
+        XCTAssertFalse(text.contains(".foregroundStyle(NotchInk.note).opacity("), "no extra dimming on note ink")
     }
 
     private func source(_ name: String) throws -> String {
