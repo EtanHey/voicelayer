@@ -113,6 +113,23 @@ final class NotchPaneInkTests: XCTestCase {
         XCTAssertFalse(text.contains(".foregroundStyle(NotchInk.note).opacity("), "no extra dimming on note ink")
     }
 
+    /// #968 CI (macOS 26) and Etan's M1: a native prompt painted `Color.clear` still drew at primary ink before macOS 27.
+    /// No Dictionary field carries a native prompt or title; each keeps an explicit accessibility label, and the
+    /// placeholder reaches VoiceOver as the field's hint.
+    func testDictionaryFieldsCarryNoNativePrompt() throws {
+        for file in ["SettingsView.swift", "DictionaryAddSheetView.swift", "DictionaryTextFieldStyle.swift"] {
+            let text = try source(file)
+            XCTAssertFalse(text.contains("dictionaryPrompt("), "\(file) still builds a native prompt")
+            XCTAssertFalse(text.contains("TextField(\"\", text: $dictionarySearch, prompt:"), file)
+        }
+        let sheet = try source("DictionaryAddSheetView.swift")
+        XCTAssertFalse(sheet.contains("prompt:"), "the Add/Edit fields carry no native prompt")
+        XCTAssertTrue(sheet.contains(".accessibilityLabel(\"Correct spelling\")"))
+        XCTAssertTrue(sheet.contains(".accessibilityLabel(\"Misheard as\")"))
+        XCTAssertTrue(try source("SettingsView.swift").contains(".accessibilityLabel(\"Search your dictionary\")"))
+        XCTAssertTrue(try source("DictionaryTextFieldStyle.swift").contains(".accessibilityHint(isEmpty ? placeholder : \"\")"))
+    }
+
     private func source(_ name: String) throws -> String {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

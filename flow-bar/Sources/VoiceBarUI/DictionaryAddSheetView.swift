@@ -74,7 +74,7 @@ public struct DictionaryAddSheetView: View {
                     GridRow {
                         Text("Correct")
                             .gridColumnAlignment(.trailing)
-                        TextField("", text: $edit.correct, prompt: dictionaryPrompt("Intended text"))
+                        TextField("", text: $edit.correct)
                             .dictionaryTextField(placeholder: "Intended text", isEmpty: edit.correct.isEmpty)
                             .dictionaryFieldContainer()
                             .focused($focusedField, equals: .correct)
@@ -85,8 +85,7 @@ public struct DictionaryAddSheetView: View {
                     GridRow(alignment: .firstTextBaseline) {
                         Text("Misheard as")
                         VStack(alignment: .leading, spacing: 5) {
-                            TextField("", text: $edit.wrong, prompt: dictionaryPrompt(edit.isEditing
-                                ? "Add a misheard spelling" : "Misheard text"))
+                            TextField("", text: $edit.wrong)
                                 .dictionaryTextField(placeholder: edit.isEditing ? "Add a misheard spelling"
                                     : "Misheard text", isEmpty: edit.wrong.isEmpty)
                                 .dictionaryFieldContainer()
