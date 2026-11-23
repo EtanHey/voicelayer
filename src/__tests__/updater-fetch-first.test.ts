@@ -12,9 +12,9 @@ function exercise(offer: string, fail = false, dry = false) {
   writeFileSync(brew, `#!/bin/bash\nprintf '%s\n' "$*" >> "$CALLS"\n[[ "$1" != fetch || "$FAIL" != 1 ]]\n`);
   chmodSync(brew, 0o755);
   const body = `source "$1"
-print_plan() { :; }; validate_args() { :; }; ensure_command() { :; }
+updater_validate_offer_freshness() { :; }; print_plan() { :; }; validate_args() { :; }; ensure_command() { :; }
 detect_install_type() { echo git-checkout; }; voicebar_app_update_mode() { echo cask-sync; }
-bcs_tap_repo_path() { echo /stub/tap; }; bcs_preflight_tap_refresh() { :; }
+updater_offer_identity() { echo fixture; }; bcs_tap_repo_path() { echo /stub/tap; }; bcs_preflight_tap_refresh() { :; }
 vl_update_gate() { echo gate >> "$CALLS"; bash -c 'echo "pin=\${VOICELAYER_UPDATE_PREFETCHED_CASK_VERSION:-unset}"' >> "$CALLS"; export VOICELAYER_INSTALL_OPERATION=stub; }
 update_package() { :; }; update_voicebar_app() { bcs_brew install --cask example; }
 update_formula() { :; }; run_qwen3_model_step() { :; }; sync_personal_data() { :; }
@@ -56,20 +56,20 @@ test('changed offer after prefetch refuses before mutation', () => {
   expect(r.exitCode).not.toBe(0); expect(r.stdout.toString()).not.toContain('install');
 });
 test('unreadable existing app refuses before gate', () => {
-  const body = `source "$1"; VOICEBAR_CANONICAL_APP="$2"; bcs_preflight_tap_refresh() { :; }; bcs_tap_repo_path() { echo /stub; }; bcs_tap_offered_version() { echo 2.4.1; }; bcs_app_bundle_version() { :; }; preflight_brew() { :; }; preflight_cask_download`;
+  const body = `source "$1"; VOICEBAR_CANONICAL_APP="$2"; bcs_preflight_tap_refresh() { :; }; updater_offer_identity() { echo fixture; }; bcs_tap_repo_path() { echo /stub; }; bcs_tap_offered_version() { echo 2.4.1; }; bcs_app_bundle_version() { :; }; preflight_brew() { :; }; preflight_cask_download`;
   const r = Bun.spawnSync(['bash','-c',body,'_',script,import.meta.dir], {env: {...process.env}, stdout:'pipe',stderr:'pipe'});
   expect(r.exitCode).not.toBe(0);
 });
 
 function shell(body: string) {
-  return Bun.spawnSync(['bash','-c', `source "$1"; ${body}`, '_', script], {env:{...process.env}, stdout:'pipe',stderr:'pipe'});
+  return Bun.spawnSync(['bash','-c', `source "$1"; updater_validate_offer_freshness() { :; }; ${body}`, '_', script], {env:{...process.env}, stdout:'pipe',stderr:'pipe'});
 }
 test('missing brew simulation succeeds', () => {
   const r = shell('bcs_brew_bin() { return 1; }; bcs_caller_simulates_commands() { return 0; }; preflight_cask_download');
   expect(r.exitCode).toBe(0);
 });
 test('installed older formula is fetched', () => {
-  const r = shell('bcs_brew_bin() { echo /stub; }; bcs_preflight_tap_refresh() { :; }; bcs_tap_repo_path() { echo /stub; }; bcs_tap_offered_version() { echo 2.4.1; }; bcs_app_bundle_version() { echo 2.4.0; }; bcs_formula_version() { echo 2.4.0; }; formula_offered_version() { echo 2.4.1; }; preflight_brew() { echo "$*"; }; preflight_cask_download');
+  const r = shell('bcs_brew_bin() { echo /stub; }; bcs_preflight_tap_refresh() { :; }; updater_offer_identity() { echo fixture; }; bcs_tap_repo_path() { echo /stub; }; bcs_tap_offered_version() { echo 2.4.1; }; bcs_app_bundle_version() { echo 2.4.0; }; bcs_formula_version() { echo 2.4.0; }; formula_offered_version() { echo 2.4.1; }; preflight_brew() { echo "$*"; }; preflight_cask_download');
   expect(r.exitCode).toBe(0); expect(r.stdout.toString()).toContain('fetch --formula');
 });
 test('real preflight tap refresh pulls branch', () => {
@@ -84,6 +84,56 @@ test('preflight failures explain refusal', () => {
   for (const setup of [
     'bcs_tap_repo_path() { return 1; }; bcs_preflight_tap_refresh tap',
     'bcs_brew_bin() { echo /stub; }; bcs_preflight_tap_refresh() { :; }; bcs_tap_repo_path() { return 1; }; preflight_cask_download',
-    'bcs_brew_bin() { echo /stub; }; bcs_preflight_tap_refresh() { :; }; bcs_tap_repo_path() { echo /stub; }; bcs_tap_offered_version() { echo 2.4.1; }; bcs_app_bundle_version() { echo 2.4.0; }; preflight_brew() { :; }; bcs_formula_version() { echo 2.4.0; }; formula_offered_version() { :; }; preflight_cask_download'
+    'bcs_brew_bin() { echo /stub; }; bcs_preflight_tap_refresh() { :; }; updater_offer_identity() { echo fixture; }; bcs_tap_repo_path() { echo /stub; }; bcs_tap_offered_version() { echo 2.4.1; }; bcs_app_bundle_version() { echo 2.4.0; }; preflight_brew() { :; }; bcs_formula_version() { echo 2.4.0; }; formula_offered_version() { :; }; preflight_cask_download'
   ]) { const r = shell(setup); expect(r.exitCode).not.toBe(0); expect(r.stderr.toString()).toContain('refusing update before stopping VoiceBar'); }
+});
+
+test('formula prefetch includes dependencies', () => {
+  const r = shell('bcs_brew_bin() { echo /stub; }; bcs_preflight_tap_refresh() { :; }; updater_offer_identity() { echo fixture; }; bcs_tap_repo_path() { echo /stub; }; bcs_tap_offered_version() { echo 2.4.1; }; bcs_app_bundle_version() { echo 2.4.0; }; bcs_formula_version() { echo 2.4.0; }; formula_offered_version() { echo 2.4.1; }; preflight_brew() { echo "$*"; }; preflight_cask_download');
+  expect(r.stdout.toString()).toContain('fetch --formula --deps');
+});
+
+test('same-version checksum changes invalidate the pinned offer', () => {
+  const root = mkdtempSync(join(bundleFixtureRoot(), 'offer-pin-'));
+  try {
+    for (const dir of ['Casks', 'Formula']) Bun.spawnSync(['mkdir', '-p', join(root, dir)], {env: process.env});
+    const cask = join(root, 'Casks/voicebar.rb');
+    writeFileSync(cask, 'version "2.4.1"\nsha256 "aaa"\n');
+    writeFileSync(join(root, 'Formula/voicelayer.rb'), 'url "https://example.invalid/2.4.1.tar.gz"\nsha256 "bbb"\n');
+    const r = shell(`bcs_tap_repo_path() { echo "${root}"; }; export VOICELAYER_UPDATE_PINNED_OFFER="$(updater_offer_identity)"; updater_validate_offer || exit 9; echo 'sha256 "changed"' >> "${cask}"; updater_validate_offer`);
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toContain('Tap offer moved');
+  } finally { rmSync(root, {recursive: true, force: true}); }
+});
+
+test('tap refresh freshness refuses behind or unavailable remote; quiet current tap proceeds', () => {
+  for (const [remote, code] of [['behind', 1], ['offline', 1], ['current', 0]] as const) {
+    const r = shell(`source "$1"; git() { case "$*" in *rev-parse*) echo current;; *ls-remote*) ${remote === 'offline' ? 'return 1' : `printf '${remote}\\trefs/heads/main\\n'`};; *log*) echo 1;; esac; }; updater_validate_offer_freshness /fixture`);
+    expect(r.exitCode).toBe(code);
+    if (code) expect(r.stderr.toString()).toContain('Tap refresh freshness');
+  }
+});
+ test('formula checksum alone invalidates fingerprint', () => {
+   const root = mkdtempSync(join(bundleFixtureRoot(), 'formula-pin-'));
+   try {
+     for (const dir of ['Casks', 'Formula']) Bun.spawnSync(['mkdir', '-p', join(root, dir)], {env: process.env});
+     writeFileSync(join(root, 'Casks/voicebar.rb'), 'version "2.4.1"\nsha256 "aaa"\n');
+     const formula = join(root, 'Formula/voicelayer.rb');
+     writeFileSync(formula, 'sha256 "bbb"\n');
+     const r = shell(`bcs_tap_repo_path() { echo "${root}"; }; export VOICELAYER_UPDATE_PINNED_OFFER="$(updater_offer_identity)"; echo 'sha256 "ccc"' > "${formula}"; updater_validate_offer`);
+     expect(r.exitCode).not.toBe(0);
+     expect(r.stderr.toString()).toContain('Tap offer moved');
+   } finally { rmSync(root, {recursive:true, force:true}); }
+ });
+
+test('missing offer file reports a clear refusal without traceback', () => {
+  const root = mkdtempSync(join(bundleFixtureRoot(), 'missing-offer-'));
+  try {
+    Bun.spawnSync(['mkdir', '-p', join(root, 'Casks')], {env:process.env});
+    writeFileSync(join(root, 'Casks/voicebar.rb'), 'sha256 "aaa"\n');
+    const r = shell(`bcs_tap_repo_path() { echo "${root}"; }; updater_offer_identity`);
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toContain('Offer file missing:');
+    expect(r.stderr.toString()).not.toContain('Traceback');
+  } finally { rmSync(root, {recursive:true, force:true}); }
 });
