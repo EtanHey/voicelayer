@@ -43,7 +43,7 @@
     "scripts/promote-voicebar-release.sh": "0bbf4a2c3c357a6c743386422c02e968e3bed4d4331204cfeec1408c6836cd61",
     "src/update-gate-installer-participant.ts": "daad633ba3a8d0c5b3fbcc9749f1f1bac8caeb44e7b19a449d19793a0aaf22c8",
     "src/update-gate.ts": "942e63224305214373116d2e1b3f4929713f870bb38b186e75196372ecd59954",
-    "src/update-gate-installer.ts": "1626adaff2724a667ff77752ec89ecc8a9c58ede9f4fee589c539d04e7fb547c",
+    "src/update-gate-installer.ts": "0c14dee3a2ac8be7f61d329cfbf3ac330934a5145badd5fe5a6d14edd6a226b1",
     "src/mcp-server-daemon.ts": "96f2389b0aa6e7406e6d9e8f281a51cac4d1b70935baf9192499d96ac54c0a99",
     "flow-bar/Sources/VoiceBar/VoiceBarDaemonController.swift": "dc4d888ca56de9b6c34f846154ba8fc7dc221280c51cea54f2c9cafb01f809bb",
     "scripts/lib/voicebar-launchagent.sh": "c22a3721759080a4ecf88788907751bd27131f5feb9b2ebdc01e10e736b99de2",
