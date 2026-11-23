@@ -881,6 +881,21 @@ updater_validate_offer() {
     }
 }
 
+# Thirty days permits quiet releases while refusing a stale refreshed tap.
+updater_validate_offer_age() {
+    local timestamp now
+    timestamp="$(git -C "$1" log -1 --format=%ct 2>/dev/null)" || timestamp=""
+    if [[ ! "$timestamp" =~ ^[0-9]+$ ]]; then
+        log "Offer age check skipped: tap has no usable commit timestamp."
+        return 0
+    fi
+    now="$(date +%s)"
+    if (( now - timestamp > 2592000 )); then
+        err "Tap offer is older than 30 days; refusing update."
+        return 1
+    fi
+}
+
 preflight_cask_download() {
     local tap repo offered installed formula formula_offer
     if ! bcs_brew_bin >/dev/null 2>&1 && bcs_caller_simulates_commands; then
@@ -890,6 +905,7 @@ preflight_cask_download() {
     tap="$(bcs_cask_tap "$VOICEBAR_CASK_NAME")"
     bcs_preflight_tap_refresh "$tap" || { err "Tap refresh failed; refusing update before stopping VoiceBar."; return 1; }
     repo="$(bcs_tap_repo_path "$tap")" || { err "Cannot resolve tap $tap; refusing update before stopping VoiceBar."; return 1; }
+    updater_validate_offer_age "$repo" || return 1
     offered="$(bcs_tap_offered_version "$VOICEBAR_CASK_NAME")"
     installed="$(bcs_app_bundle_version "$VOICEBAR_CANONICAL_APP")"
     if [[ -z "$offered" ]]; then

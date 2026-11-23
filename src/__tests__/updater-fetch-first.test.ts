@@ -105,3 +105,22 @@ test('same-version checksum changes invalidate the pinned offer', () => {
     expect(r.stderr.toString()).toContain('Tap offer moved');
   } finally { rmSync(root, {recursive: true, force: true}); }
 });
+
+ test('offer age refuses stale timestamp and accepts recent or unavailable timestamp', () => {
+   for (const [timestamp, code] of [['1', 1], [String(Math.floor(Date.now()/1000)), 0], ['', 0]] as const) {
+     const r = shell(`git() { echo '${timestamp}'; }; updater_validate_offer_age /fixture`);
+     expect(r.exitCode).toBe(code);
+   }
+ });
+ test('formula checksum alone invalidates fingerprint', () => {
+   const root = mkdtempSync(join(bundleFixtureRoot(), 'formula-pin-'));
+   try {
+     for (const dir of ['Casks', 'Formula']) Bun.spawnSync(['mkdir', '-p', join(root, dir)], {env: process.env});
+     writeFileSync(join(root, 'Casks/voicebar.rb'), 'version "2.4.1"\nsha256 "aaa"\n');
+     const formula = join(root, 'Formula/voicelayer.rb');
+     writeFileSync(formula, 'sha256 "bbb"\n');
+     const r = shell(`bcs_tap_repo_path() { echo "${root}"; }; export VOICELAYER_UPDATE_PINNED_OFFER="$(updater_offer_identity)"; echo 'sha256 "ccc"' > "${formula}"; updater_validate_offer`);
+     expect(r.exitCode).not.toBe(0);
+     expect(r.stderr.toString()).toContain('Tap offer moved');
+   } finally { rmSync(root, {recursive:true, force:true}); }
+ });
