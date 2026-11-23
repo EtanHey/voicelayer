@@ -609,6 +609,7 @@ public struct SettingsView: View {
     /// M27 design: personal entries form an expandable section, initially open.
     @State private var yourTermsExpanded = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
     /// UI pass #18: after Add/Edit the saved term is scrolled to, selected and flashed.
     @State private var selectedTermRowID: String?
     @State private var flashingTermRowID: String?
@@ -621,6 +622,8 @@ public struct SettingsView: View {
     @State private var dictionaryDisplayIndex: STTDictionaryDisplayIndex
     /// The one Add/Edit sheet (nil = closed). Etan's 2.2.24 review #3: no inline box, no per-term misheard row.
     @State private var termSheet: DictionaryTermEdit?
+    /// Snapshot fixtures only: the sheet a render opens with. Production passes nil, so arriving closes the editor.
+    private let initialTermSheet: DictionaryTermEdit?
     /// A term deleted from Your terms that Undo can still put back (4 s; spec Dictionary).
     @State private var pendingDeletion: DictionaryPendingDeletion?
     @State private var hoveredTermRowID: String?
@@ -783,6 +786,7 @@ public struct SettingsView: View {
         initialIncludedTermsExpanded: Bool = false,
         initialYourTermsExpanded: Bool = true,
         initialSelectedTermRowID: String? = nil,
+        initialTermSheet: DictionaryTermEdit? = nil,
         onSelectedTabChange: @escaping (SettingsTab) -> Void = { _ in },
         historyPlayback: SettingsAudioPlayback? = nil,
         installedVersion: VoiceBarInstalledVersion = .current(),
@@ -905,6 +909,8 @@ public struct SettingsView: View {
         _groupsBeforeSearch = State(initialValue: Self.dictionaryQuery(initialDictionarySearch).isEmpty ? nil
             : DictionaryGroupExpansion(your: initialYourTermsExpanded, included: initialIncludedTermsExpanded))
         _selectedTermRowID = State(initialValue: initialSelectedTermRowID)
+        _termSheet = State(initialValue: initialTermSheet)
+        self.initialTermSheet = initialTermSheet
         _selectedHistoryScope = State(initialValue: initialHistoryScope)
         if let historyPlayback {
             _historyPlayback = State(initialValue: historyPlayback)
@@ -2573,19 +2579,18 @@ public struct SettingsView: View {
                 if notchEmbeddedTab == nil {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Dictionary").font(.title2.weight(.semibold))
-                        Text("Used on every dictation").font(.subheadline).foregroundStyle(SettingsPanePalette.helper)
+                        Text("Used on every dictation").font(.subheadline).foregroundStyle(NotchInk.note)
                     }
                 }
                 // Reported 2026-11-11, video 299.8 s: search and Add term share one toolbar row.
                 HStack(alignment: .center, spacing: 8) {
                     searchRow
-                    Button {
+                    NotchDrawerButton(title: "Add term", palette: NotchPaneInk(colorScheme: colorScheme).palette,
+                                      isEnabled: Self.addTermEnabled(loaded: hasLoadedDictionaryOnce),
+                                      systemImage: "plus") {
                         termSheet = DictionaryTermEdit()
-                    } label: {
-                        Label("Add term", systemImage: "plus")
                     }
                     .fixedSize()
-                    .disabled(!Self.addTermEnabled(loaded: hasLoadedDictionaryOnce))
                     .help("Add a term to your dictionary")
                 }
             }
@@ -2593,7 +2598,7 @@ public struct SettingsView: View {
             .padding(.horizontal, notchEmbeddedTab == nil ? 22 : 0)
             .padding(.top, notchEmbeddedTab == nil ? 19 : 8)
             .padding(.bottom, notchEmbeddedTab == nil ? 14 : 8)
-            Divider()
+            DictionaryHairline()
             ScrollViewReader { proxy in
                 ScrollView {
                     let isSearching = !Self.dictionaryQuery(dictionarySearch).isEmpty
@@ -2613,6 +2618,7 @@ public struct SettingsView: View {
                         )
                         SettingsDisclosureHeader(yourTermsTitle, isExpanded: $yourTermsExpanded)
                             .font(Self.dictionaryGroupFont)
+                        .foregroundStyle(NotchInk.primary)
                             .help(yourTermsExpanded ? "Collapse your terms" : "Show your terms")
                         if yourTermsExpanded {
                             switch Self.dictionaryPlaceholder(
@@ -2635,7 +2641,7 @@ public struct SettingsView: View {
                             ForEach(personal, id: \.rowID) { row in
                                 dictionaryEntryCard(row.entry, rowID: row.rowID)
                                     .id(row.rowID)
-                                Divider()
+                                DictionaryHairline()
                             }
                         }
                         let includedHeader = Self.includedTermsHeader(
@@ -2651,6 +2657,7 @@ public struct SettingsView: View {
                             includedTermsHeaderLabel(includedHeader)
                         }
                         .font(Self.dictionaryGroupFont)
+                        .foregroundStyle(NotchInk.primary)
                         .help(includedTermsExpanded ? "Collapse included terms" : "Show included terms")
                         .padding(.top, 18)
                         if includedHeader.showsChevron, includedTermsExpanded, !isSearching {
@@ -2659,7 +2666,7 @@ public struct SettingsView: View {
                         if includedTermsExpanded {
                             ForEach(included, id: \.rowID) { row in
                                 dictionaryEntryCard(row.entry, rowID: row.rowID, isEditable: false)
-                                Divider()
+                                DictionaryHairline()
                             }
                         }
                     }
@@ -2696,9 +2703,9 @@ public struct SettingsView: View {
             }
             if let removal = termRemoval {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Delete term?").font(.system(size: 13, weight: .semibold))
+                    Text("Delete term?").font(.system(size: 13, weight: .semibold)).foregroundStyle(NotchInk.primary)
                     Text("Remove “\(removal.canonical)” from your dictionary?")
-                        .font(SettingsRowLabel.descriptionFont).foregroundStyle(SettingsPanePalette.helper)
+                        .font(SettingsRowLabel.descriptionFont).foregroundStyle(NotchInk.note)
                     HStack {
                         Spacer()
                         Button("Cancel") { termRemoval = nil }
@@ -2714,7 +2721,8 @@ public struct SettingsView: View {
                     }
                 }
                 .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                .background(.bar)
+                .background(NotchInk.bar)
+                .overlay(alignment: .top) { DictionaryHairline() }
                 .onAppear {
                     removalCancelFocused = true
                     if notchEmbeddedTab != nil {
@@ -2790,7 +2798,7 @@ public struct SettingsView: View {
     private func includedTermsSummary(expanded: Bool) -> some View {
         Text(DictionarySearchPresentation.includedExplanation)
             .font(SettingsRowLabel.descriptionFont)
-            .foregroundStyle(SettingsPanePalette.helper)
+            .foregroundStyle(NotchInk.note)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 6).padding(.vertical, 8)
     }
@@ -2799,6 +2807,7 @@ public struct SettingsView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("No terms match \u{201C}\(query)\u{201D}.")
                 .font(SettingsRowLabel.titleFont)
+                .foregroundStyle(NotchInk.primary)
                 .lineLimit(2)
             Button {
                 termSheet = DictionaryTermEdit(correct: query)
@@ -2825,20 +2834,23 @@ public struct SettingsView: View {
                 .accessibilityHint("Puts the term back")
         }
         .font(.callout)
+        .foregroundStyle(NotchInk.primary)
         .padding(.horizontal, 22)
         .padding(.vertical, 10)
-        .background(.bar)
-        .overlay(alignment: .top) { Divider() }
+        .background(NotchInk.bar)
+        .overlay(alignment: .top) { DictionaryHairline() }
         .accessibilityElement(children: .contain)
     }
 
     private var searchRow: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(NotchInk.note)
             // The search is a plain TextField: normal macOS editing, Edit menu ⌘V, and P1's paste integration reach it
             // through `focusedEditorField == .search`. No paste path of its own.
-            TextField("Search terms and variants", text: $dictionarySearch)
+            // Track D: the placeholder reads at the rows' note tier, not the system's dimmer placeholder grey.
+            TextField("", text: $dictionarySearch,
+                      prompt: Text("Search terms and variants").foregroundStyle(NotchInk.note))
                 .dictionaryTextField()
                 .focused($focusedEditorField, equals: .search)
                 .onExitCommand { dictionarySearch = "" }
@@ -2850,7 +2862,7 @@ public struct SettingsView: View {
                     dictionarySearch = ""
                     focusedEditorField = .search
                 }
-                .foregroundStyle(.secondary)
+                .foregroundStyle(NotchInk.note)
             }
         }
         .dictionaryFieldContainer()
@@ -2872,9 +2884,8 @@ public struct SettingsView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.accentColor.opacity(
-                        flashingTermRowID == rowID ? 0.28 : isSelected ? 0.12 : 0
-                    ))
+                    .fill(flashingTermRowID == rowID ? AnyShapeStyle(NotchInk.flash)
+                        : isSelected ? AnyShapeStyle(NotchInk.selection) : AnyShapeStyle(Color.clear))
             )
             .animation(reduceMotion ? nil : .easeOut(duration: 0.6), value: flashingTermRowID)
             .contentShape(Rectangle())
@@ -2905,13 +2916,15 @@ public struct SettingsView: View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             ClippingAwareText(text: entry.canonical, font: SettingsRowLabel.titleFont, lineLimit: nil)
                 .alignmentGuide(.settingsTitleCapCentre) { $0[.firstTextBaseline] - SettingsRowLabel.titleNSFont.capHeight / 2 }
-                .foregroundStyle(.primary).layoutPriority(1)
+                .foregroundStyle(NotchInk.primary).layoutPriority(1)
+            // Track D: the first misheard spelling in note ink with no "also heard as" prose (the hint, tooltip and
+            // edit sheet still say it); the overflow count stays, quieter again.
             if let first = entry.variants.first {
-                ClippingAwareText(text: variantSummary([first]).lowercasedFirst, font: SettingsRowLabel.descriptionFont, lineLimit: nil)
-                    .foregroundStyle(SettingsPanePalette.helper)
+                ClippingAwareText(text: first, font: SettingsRowLabel.descriptionFont, lineLimit: nil)
+                    .foregroundStyle(NotchInk.note)
                 if entry.variants.count > 1 {
                     Text("\(entry.variants.count - 1) more").font(SettingsRowLabel.descriptionFont)
-                        .foregroundStyle(SettingsPanePalette.helper).fixedSize()
+                        .foregroundStyle(NotchInk.note).opacity(0.8).fixedSize()
                 }
             }
         }
@@ -2939,7 +2952,7 @@ public struct SettingsView: View {
                             .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
                     }
                     .buttonStyle(.borderless)
-                    .foregroundStyle(SettingsPanePalette.helper)
+                    .foregroundStyle(NotchInk.note)
                     .focusable(isSelected, interactions: .edit)
                     .onKeyPress(.space) {
                         guard isSelected else { return .ignored }
@@ -2962,6 +2975,7 @@ public struct SettingsView: View {
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
+                .foregroundStyle(NotchInk.note)
                 .fixedSize()
                 .focusable(isSelected, interactions: .edit)
                 .focused($focusedTermAction, equals: rowID)
@@ -3385,7 +3399,7 @@ public struct SettingsView: View {
 
     /// Arriving on the tab never finds an editor already open (UI pass #17: the first row was).
     private func resetDictionaryEditors() {
-        termSheet = nil
+        termSheet = initialTermSheet
         termRemoval = nil
         removalCancelFocused = false
     }
@@ -3510,17 +3524,23 @@ struct DictionaryTermEditorPresentation<Editor: View>: ViewModifier {
 
     func body(content: Content) -> some View {
         if inDrawer {
-            content.overlay {
-                if let edit {
-                    ScrollView {
-                        editor(edit)
+            // 2.4.6 track D: the editor takes the pane like every other drawer pane, straight on the notch glass. No
+            // material slab over a half-visible list: the list stays alive underneath (its scroll position and
+            // selection survive) but is hidden and out of reach while the editor is open.
+            content
+                .opacity(edit == nil ? 1 : 0)
+                .allowsHitTesting(edit == nil)
+                .accessibilityHidden(edit != nil)
+                .overlay(alignment: .top) {
+                    if let edit {
+                        ScrollView {
+                            editor(edit)
+                        }
+                        .accessibilityAddTraits(.isModal)
+                        .onAppear { escapeOwnership.claim(escapeClaim) { self.edit = nil } }
+                        .onDisappear { escapeOwnership.release(escapeClaim) }
                     }
-                    .background(.regularMaterial)
-                    .accessibilityAddTraits(.isModal)
-                    .onAppear { escapeOwnership.claim(escapeClaim) { self.edit = nil } }
-                    .onDisappear { escapeOwnership.release(escapeClaim) }
                 }
-            }
         } else {
             content.sheet(item: $edit) { edit in
                 editor(edit).frame(width: 420)

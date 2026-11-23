@@ -149,10 +149,11 @@ final class DictionaryAddExistingTermTests: XCTestCase {
                 .appendingPathComponent("Sources/VoiceBarUI/SettingsView.swift"),
             encoding: .utf8
         )
-        // U3b moved the button into the header and keeps its natural width (`.fixedSize()`); the gate is unchanged.
+        // U3b moved the button into the header; 2.4.6 track D made it the notch drawer capsule, whose `isEnabled`
+        // carries the same gate.
         XCTAssertNotNil(source.range(
-            of: #"Label\("Add term", systemImage: "plus"\)\s*\}\s*(\.fixedSize\(\)\s*)?"#
-                + #"\.disabled\(!Self\.addTermEnabled\(loaded: hasLoadedDictionaryOnce\)\)"#,
+            of: #"NotchDrawerButton\(title: "Add term",[^)]*\)\.palette,\s*"#
+                + #"isEnabled: Self\.addTermEnabled\(loaded: hasLoadedDictionaryOnce\),\s*systemImage: "plus"\)"#,
             options: .regularExpression
         ))
     }

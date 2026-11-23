@@ -68,7 +68,7 @@ final class SettingsViewContractTests: XCTestCase {
         let source = try settingsViewSource()
         let tab = try XCTUnwrap(source.components(separatedBy: "private var dictionaryTab: some View {")
             .dropFirst().first?.components(separatedBy: "private func includedTermsHeaderLabel(").first)
-        let addRange = try XCTUnwrap(tab.range(of: "Label(\"Add term\""))
+        let addRange = try XCTUnwrap(tab.range(of: "NotchDrawerButton(title: \"Add term\""))
         let searchRange = try XCTUnwrap(tab.range(of: "searchRow"))
         let cardRange = try XCTUnwrap(tab.range(of: "dictionaryEntryCard"))
 

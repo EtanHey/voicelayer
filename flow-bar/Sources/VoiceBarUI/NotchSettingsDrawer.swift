@@ -201,14 +201,21 @@ struct NotchDrawerButton: View {
     let palette: VoiceBarNotchContrastPalette
     var prominent = false
     var isEnabled = true
+    /// An optional leading glyph (Dictionary's Add term). Without it the capsule is text only.
+    var systemImage: String? = nil
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Text(title)
-                .font(.system(size: 11.5, weight: .medium))
-                .lineLimit(1)
-                .fixedSize()
+            HStack(spacing: 4) {
+                if let systemImage {
+                    Image(systemName: systemImage).font(.system(size: 10.5, weight: .semibold))
+                }
+                Text(title)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .lineLimit(1)
+                    .fixedSize()
+            }
                 .foregroundStyle(palette.primary.color.opacity(isEnabled ? 1 : 0.45))
                 .padding(.horizontal, 10)
                 .frame(height: 24)

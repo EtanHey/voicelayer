@@ -1,21 +1,14 @@
 import SwiftUI
 
 extension View {
+    /// Plain field text in the notch palette's primary ink.
     func dictionaryTextField() -> some View {
         textFieldStyle(.plain)
-            .foregroundStyle(.primary)
+            .foregroundStyle(NotchInk.primary)
     }
 
+    /// The notch field well (`NotchFieldWell`): palette fill and hairline, no system text background.
     func dictionaryFieldContainer() -> some View {
-        padding(.vertical, 5)
-            .padding(.horizontal, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color(nsColor: .textBackgroundColor))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-            )
+        modifier(NotchFieldWell())
     }
 }
