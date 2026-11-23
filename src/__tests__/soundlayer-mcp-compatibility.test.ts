@@ -337,7 +337,11 @@ describe("SoundLayer MCP compatibility regression", () => {
       voice: "theo",
       captureAudioArtifact: true,
       textOnlyOnSynthesisFailure: expect.any(AbortSignal),
+      signal: expect.any(AbortSignal),
     });
+    const speakOptions = speakSpy.mock.calls[0]?.[1];
+    expect(speakOptions?.signal).not.toBe(speakOptions?.textOnlyOnSynthesisFailure);
+    expect(waitForInputSpy.mock.calls[0]?.[3]?.signal).toBe(speakOptions?.textOnlyOnSynthesisFailure);
     expect(waitForInputSpy).toHaveBeenCalledWith(45_000, "quick", true, {
       archiveSource: "voice_ask",
       onArchiveCreated: expect.any(Function),

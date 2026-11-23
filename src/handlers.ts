@@ -1,3 +1,4 @@
+import { registerAskPrompt } from "./ask-prompt-interruption";
 export { handleVoiceAskResults } from "./ask-results";
 import { atomicWriteFile } from "./recordings-archive-fs";
 import { OpenAskHandle } from "./open-ask";
@@ -111,6 +112,7 @@ import { whisperLifecycleGate } from "./whisper-lifecycle-gate";
 type McpResult = McpTextResult;
 
 export type VoiceOperationLifecycle = {
+  released?: Promise<void>;
   deferReleaseUntil: (settlement: Promise<unknown>) => void;
 };
 
@@ -528,12 +530,15 @@ async function executeAdmittedNormalAsk({ ingress, context }: {
     ) };
   }
   let releaseDeferred = false;
+  const released = Promise.withResolvers<void>();
+  const release = () => { reservation.release(); releaseAskReadSuccessor(); released.resolve(); };
   const operationLifecycle: VoiceOperationLifecycle = {
+    released: released.promise,
     deferReleaseUntil: (settlement) => {
       releaseDeferred = true;
       void settlement.then(
-        () => { reservation.release(); releaseAskReadSuccessor(); },
-        () => { reservation.release(); releaseAskReadSuccessor(); },
+        release,
+        release,
       );
     },
   };
@@ -551,7 +556,7 @@ async function executeAdmittedNormalAsk({ ingress, context }: {
       archiveContext,
     }) };
   } finally {
-    if (!releaseDeferred) reservation.release();
+    if (!releaseDeferred) release();
   }
 }
 
@@ -760,7 +765,13 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
   const outerTimeoutMs =
     (timeoutSeconds + VOICE_ASK_CAPTURE_TIMEOUT_ALLOWANCE_SECONDS) * 1000;
   const inputAbortController = new AbortController();
+  // F5 alone cancels prompt synthesis; timeout/disconnect retain their bounded teardown contract.
+  const dictationPromptAbortController = new AbortController();
   let captureAdmission: CaptureAdmission | undefined;
+  let dictationInterrupted = false;
+  let unregisterPrompt: (() => void) | undefined;
+  const flowReleased = Promise.withResolvers<void>();
+  const dictationOutcome = (): VoiceAskTurnOutcome => ({ kind: "dictation-started", archiveId: archiveContext?.id ?? null });
   const promptPlayers: QueuedPlaybackHandle[] = [];
   const onDisconnect = (): void => {
     inputAbortController.abort(new Error("MCP client disconnected"));
@@ -915,6 +926,14 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     }
     if (!captureAdmission) throw new Error("Playback changed before Ask could reserve capture admission; try again");
 
+    // F5 may end this prompt, but never an Ask whose microphone has been admitted.
+    unregisterPrompt = registerAskPrompt(() => {
+      dictationInterrupted = true;
+      dictationPromptAbortController.abort(new Error("Ask yielded to dictation"));
+      inputAbortController.abort(new Error("Ask yielded to dictation"));
+      for (const handle of promptPlayers) cancelPlayback({ id: handle.id });
+    }, operationLifecycle?.released ?? flowReleased.promise);
+
     // Speak the question aloud — BLOCKING for converse
     promptBudgetStartedAt = performance.now();
     armTimeout(promptBudgetRemaining, "prompt");
@@ -931,6 +950,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         voice: voiceName,
         captureAudioArtifact: true,
         textOnlyOnSynthesisFailure: inputAbortController.signal,
+        signal: dictationPromptAbortController.signal,
         onPlaybackQueued: handle => {
           promptPlayers.push(handle);
           if (inputAbortController.signal.aborted || !captureAdmission!.admit(handle, onPromptParkedChange)) {
@@ -956,6 +976,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     if (timeoutSettled || inputAbortController.signal.aborted) {
       return { kind: "ended-before-capture" };
     }
+    unregisterPrompt?.();
     const promptStopped = speech.playbackOutcome?.reason === "stopped";
     if (speech.playbackOutcome && speech.playbackOutcome.status !== "completed" && !promptStopped) {
       captureAdmission.release();
@@ -1093,6 +1114,16 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
       }
     }
   }).finally(async () => {
+    unregisterPrompt?.();
+    // Logical cancellation is not silence. No release/admission until every owned player exited.
+    if (dictationInterrupted) {
+      await new Promise<void>(resolve => {
+        void Promise.all(promptPlayers.map(handle => handle.playerExited)).then(() => resolve(), () => {
+          console.error("[voicelayer] Ask prompt exit unconfirmed; dictation admission remains fenced");
+        });
+      });
+      broadcast({ type: "state", state: "idle", source: "playback", next_state: "recording", ask_cancelled_for_dictation: true });
+    }
     openAsk.end(); // Every flow end (answer, away, cancel, error, abandoned prompt) closes the record first.
     await promptTimeoutCleanup;
     captureAdmission?.release();
@@ -1101,6 +1132,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     try { readHold?.restore(); }
     catch (error) { console.error(`[voicelayer] Parked read restore failed: ${error instanceof Error ? error.message : String(error)}`); }
     if (!operationLifecycle) releaseAskReadSuccessor();
+    flowReleased.resolve();
   });
   const confirmedTeardown = async () => {
     await Promise.all(promptPlayers.map(handle => handle.playerExited));
@@ -1117,10 +1149,12 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
   try {
     const result = await Promise.race([flowPromise, timeoutPromise]);
     if (timer) clearTimeout(timer);
+    if (dictationInterrupted) return dictationOutcome();
     if (!promptAttempted) finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
     return result;
   } catch (err) {
     if (timer) clearTimeout(timer);
+    if (dictationInterrupted) return dictationOutcome();
     if (!promptAttempted) finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
     if (
       !isSpeakerOutputRefusedError(err) &&

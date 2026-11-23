@@ -3,6 +3,43 @@ import XCTest
 
 final class VoiceStateRecoveryTests: XCTestCase {
     @MainActor
+    func testAskPromptF5HandoffClearsSpeechAndAllowsDictationDrawer() {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        defer { state.setConnectionStatus(false) }
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Question?",
+                           "playback_id": "ask-prompt", "generation": 1,
+                           "long_read": ["id": "ask", "chunk_index": 0, "preparing": true]])
+        XCTAssertTrue(state.isPlaybackPreparing)
+        state.record()
+        // Daemon sends this only after scoped cancellation and real player exit.
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback",
+                           "next_state": "recording", "ask_cancelled_for_dictation": true])
+        XCTAssertFalse(state.isPlaybackPreparing, "Cancelled Ask preparation must not survive F5 handoff")
+        XCTAssertFalse(state.isAskCapture)
+        state.handleEvent(["type": "state", "state": "recording", "mode": "vad", "bar_owned": true])
+        XCTAssertEqual(state.mode, .recording)
+        XCTAssertFalse(state.isAskCapture)
+        XCTAssertFalse(state.isPlaybackPreparing)
+        let reading = VoiceStateReading(mode: state.mode, isConnected: state.isConnected, gate: .open,
+            captureAdmission: .capturing, recordingMode: "vad", isRecordingPaused: state.isRecordingPaused,
+            isAskCapture: state.isAskCapture, agentAskSession: .none, hasQueuedRecording: false,
+            processingTakeCount: 0, isHistoryRetranscriptionPending: false, supportsRecordingJobs: false,
+            isPlaybackPreparing: state.isPlaybackPreparing, isPlaybackPaused: state.isPlaybackPaused,
+            isTeleprompterReadback: state.isTeleprompterReadback, isHistoryPlaybackActive: false,
+            isHistoryVoiceBusy: false, isHidden: state.isHidden, drawer: .none, isModalPresented: false,
+            hotkeyPhase: state.hotkeyPhase, modelsSettings: .ready, pending: [])
+        XCTAssertTrue(ControlAvailabilityAdapter.facts(reading).drawerAllowed)
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        state.record()
+        state.handleEvent(["type": "state", "state": "recording", "mode": "vad", "bar_owned": true])
+        XCTAssertFalse(state.isAskCapture)
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        state.handleEvent(["type": "state", "state": "recording", "mode": "vad", "bar_owned": false])
+        XCTAssertTrue(state.isAskCapture, "A subsequent Ask must still be classified as remote")
+    }
+
+    @MainActor
     func testLiveMCPTranscriptionSurvivesThirtySeconds() async throws {
         let state = VoiceState()
         state.setConnectionStatus(true)

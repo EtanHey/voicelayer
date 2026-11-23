@@ -4091,9 +4091,20 @@ async function speakAdmitted(
   let playback: QueuedPlaybackHandle | undefined;
   const onQueued = options?.onPlaybackQueued;
   const onCompleted = options?.onPlaybackComplete;
+  const cancelOwned = () => {
+    controller.abort(options?.signal?.reason);
+    if (playback) cancelPlayback({ id: playback.id });
+  };
+  options?.signal?.addEventListener("abort", cancelOwned, { once: true });
+  if (options?.signal?.aborted) cancelOwned();
   try {
+    throwIfAbortedSafe(controller.signal);
     const result = await prepareSpeech(text, { ...options, speechArchive: archive,
-      onPlaybackQueued: handle => { playback = handle; onQueued?.(handle); },
+      onPlaybackQueued: handle => {
+        playback = handle;
+        if (controller.signal.aborted) cancelPlayback({ id: handle.id });
+        onQueued?.(handle);
+      },
       onPlaybackComplete: outcome => {
         try { archive.finish(outcome.status === "completed" ? "completed" : outcome.status === "failed" ? "failed" : "stopped",
           outcome.status === "completed" ? "PLAYBACK_COMPLETED" : outcome.status === "failed" ? "PLAYER_FAILED" : "USER_STOP"); }
@@ -4111,7 +4122,10 @@ async function speakAdmitted(
   } finally {
     speechPreparations.delete(controller);
     preparationArchives.delete(controller);
-    const finish = () => { speechPreparationSettlements.delete(settlement); settle(); };
+    const finish = () => {
+      options?.signal?.removeEventListener("abort", cancelOwned);
+      speechPreparationSettlements.delete(settlement); settle();
+    };
     // Preparation may enqueue after a waiter's queue snapshot has drained. Keep
     // this operation's barrier through its player, without adopting newer speech.
     if (playback) void playback.playerExited.then(finish, finish);

@@ -65,6 +65,8 @@ export interface SpeechToTextBackendSelector {
 }
 
 export interface TextToSpeechOptions {
+  /** Cancels only this call's preparation and queued playback. */
+  signal?: AbortSignal;
   /** Private ingress receipt, carried explicitly for future generation writers. */
   archiveContext?: SpeakArchiveContext;
   /** Default SHORT for MCP; long-read callers can opt into automatic selection. */
