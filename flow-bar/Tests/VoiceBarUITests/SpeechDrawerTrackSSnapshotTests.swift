@@ -17,6 +17,10 @@ final class SpeechDrawerTrackSSnapshotTests: XCTestCase {
         case stoppedLocked = "stopped-locked"
         /// A speech request failed: the notice and its Copy button.
         case notice
+        /// "Start with VoiceBar" off: the palette switch's off track.
+        case autostartOff = "autostart-off"
+        /// A voice session is running, so Apply is locked; the hover preview forces its reason (and Preview's) on.
+        case lockedReason = "locked-reason"
     }
 
     static func controls(_ scenario: Scenario) throws -> SpeechControlsState {
@@ -40,7 +44,7 @@ final class SpeechDrawerTrackSSnapshotTests: XCTestCase {
         let snapshot = CloneEngineSnapshot(state: scenario == .stoppedLocked ? .stopped : .running,
                                            since: "2026-11-23T09:00:00Z",
                                            reason: nil, pid: scenario == .stoppedLocked ? nil : 4242,
-                                           startWithVoiceBar: true)
+                                           startWithVoiceBar: scenario != .autostartOff)
         return CloneEngineControlViewModel(snapshot: snapshot, send: { _ in true }, now: { now })
     }
 
@@ -49,7 +53,8 @@ final class SpeechDrawerTrackSSnapshotTests: XCTestCase {
         return SettingsView(
             hotkeyEnabled: true, missingPermissions: [], availableDevices: { [] }, selectedDeviceID: { nil },
             modelsStatus: { .loading }, onRefreshModelsStatus: {},
-            speechControls: { controls }, speechConnected: { true }, speechBusyReason: { nil },
+            speechControls: { controls }, speechConnected: { true },
+            speechBusyReason: { scenario == .lockedReason ? "Voice session in progress." : nil },
             speechNotice: { scenario == .notice ? "Couldn't complete the speech request: provider unavailable." : nil },
             onChangeSpeech: { _, _ in }, onSelectSpeechEngine: { _, _, _ in }, onPreviewSpeech: { _ in },
             cloneEngineControl: engine(scenario),
@@ -66,6 +71,7 @@ final class SpeechDrawerTrackSSnapshotTests: XCTestCase {
             }),
             onSelectTab: { _ in }
         )
+        .environment(\.settingsHoverPreview, SettingsHoverPreview(lockedReasons: scenario == .lockedReason))
     }
 
     /// The drawer's own glass is drawn by BarView; these stand-ins are the measured dark band and a light glass grey.

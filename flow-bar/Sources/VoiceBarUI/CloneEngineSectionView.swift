@@ -15,6 +15,10 @@ struct CloneEngineSection: View {
     /// short line per row).
     static let startWithVoiceBarDescription = "Starts when VoiceBar opens and restarts by itself if it stops. A change here applies the next time VoiceBar opens."
     static let startWithVoiceBarNote = "Restarts if it stops. Takes effect next launch."
+    /// Status lines that wrapped beside the pill and its action, cut to one line; the full sentence stays on hover and
+    /// as the VoiceOver hint (2.4.6 track S, taste-S P2: the stopped card was 28 pt taller than the running one).
+    static let shortNotes = ["Long replies use the fast voice until it runs.": "Long replies use the fast voice."]
+    static func visibleNote(_ description: String) -> String { shortNotes[description] ?? description }
 
     private var presentation: CloneEnginePresentation {
         viewModel?.presentation() ?? CloneEngineControlModel().presentation(now: Date())
@@ -26,7 +30,10 @@ struct CloneEngineSection: View {
             VStack(alignment: .leading, spacing: 8) {
                 // Status, pill and actions share one row (2.4.6 track S: the status card was three rows tall).
                 SettingsRowLayout {
-                    SettingsRowLabel(title: "Cloned voice engine", description: shown.description)
+                    let note = Self.visibleNote(shown.description)
+                    SettingsRowLabel(title: "Cloned voice engine", description: note)
+                        .modifier(OptionalHelp(text: note == shown.description ? nil : shown.description))
+                        .modifier(OptionalAccessibilityHint(text: note == shown.description ? nil : shown.description))
                     HStack(spacing: 6) {
                         CloneEnginePill(presentation: shown, pulses: shown.pulses && !reduceMotion)
                         ForEach(shown.actions, id: \.button) { action in

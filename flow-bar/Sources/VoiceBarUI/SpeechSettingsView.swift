@@ -263,7 +263,19 @@ public struct SpeechSettingsView: View {
                              controls: SpeechControlsState) -> some View {
         let rate = binding("\(kind.rawValue).rate", profile.rate.effective)
         if controls.lockReason(for: "\(kind.rawValue).rate") != nil {
-            Text(Self.rateLabel(rate.wrappedValue)).foregroundStyle(primaryInk)
+            // A locked rate says so where it stands, not only in the note at the bottom (taste-S P3).
+            let lock = Self.lockFooter(kind, controls: controls) ?? controls.lockReason(for: "\(kind.rawValue).rate") ?? ""
+            HStack(spacing: 5) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(readInk)
+                    .accessibilityHidden(true)
+                Text(Self.rateLabel(rate.wrappedValue)).foregroundStyle(primaryInk)
+            }
+            .help(lock)
+            .accessibilityElement(children: .combine)
+            .accessibilityHint(lock)
+            .accessibilityIdentifier("speech-\(kind.rawValue)-rate-locked")
         } else {
             HStack(spacing: 8) {
                 Slider(value: Binding(get: { rateDraft[kind] ?? min(50, max(-30, Double(rate.wrappedValue.dropLast()) ?? 0)) },
