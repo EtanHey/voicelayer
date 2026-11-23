@@ -96,7 +96,12 @@ test("Ask delivery capability: overwrites a forged identity, survives daemon res
   const capability = meta(first.messages, "a")["voicelayer/caller"];
   expect(capability).toMatch(/^[a-f0-9]{64}$/); expect(capability).not.toBe(forged);
   expect(meta(first.messages, "a").progressToken).toBe(7);
-  await first.stop(); const next = await daemon(path, "new");
+  // A server-side close does not mean the bridge has processed its close event.
+  // Sending now can make b in-flight on the dying connection; production correctly
+  // refuses to retry such calls. Wait for the bridge's observed disconnect.
+  await until(() => bridge.messages.some(m => m.id === "a"));
+  await first.stop(); await until(() => bridge.retries.length > 0);
+  const next = await daemon(path, "new");
   bridge.send(call("b")); await until(() => next.messages.some(m => m.id === "b"));
   expect(meta(next.messages, "b")["voicelayer/caller"]).toBe(capability);
   const other = launch(path);
