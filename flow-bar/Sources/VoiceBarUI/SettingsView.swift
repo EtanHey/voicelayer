@@ -2861,11 +2861,12 @@ public struct SettingsView: View {
             // The search is a plain TextField: normal macOS editing, Edit menu ⌘V, and P1's paste integration reach it
             // through `focusedEditorField == .search`. No paste path of its own.
             // Track D: the placeholder reads at the rows' note tier (drawn by dictionaryTextField, see its note).
-            TextField("", text: $dictionarySearch, prompt: dictionaryPrompt("Search terms and variants"))
+            TextField("", text: $dictionarySearch)
                 .dictionaryTextField(placeholder: "Search terms and variants", isEmpty: dictionarySearch == "")
                 .focused($focusedEditorField, equals: .search)
                 .onExitCommand { dictionarySearch = "" }
                 .accessibilityLabel("Search your dictionary")
+                .accessibilityIdentifier(DictionarySearchPresentation.searchFieldIdentifier)
             // QA-27: the same clear (X) the History search has. It follows the raw field, not the trimmed query:
             // a lone space is not a search, but it is still text the X should clear.
             if dictionarySearch != "" {
