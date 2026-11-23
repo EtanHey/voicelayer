@@ -91,9 +91,9 @@ final class SettingsRS5BuildTests: XCTestCase {
             let bitmap = try SettingsPolishS5Tests.render(view.onPreferenceChange(SettingsTextAuditKey.self) { entries = $0 },
                 width: width, height: 650, name: "speech-startup-\(surface)-dark")
             let text = try SettingsPolishS5Tests.ocr(bitmap).joined(separator: " ")
-            XCTAssertTrue(text.contains("starts when voicebar opens and restarts by itself if it stops."), text)
-            XCTAssertTrue(text.contains("a change here applies the next time voicebar opens."), text)
-            let helper = try XCTUnwrap(entries.first { $0.text == CloneEngineSection.startWithVoiceBarDescription })
+            // 2.4.6 track S: one short line on the row; the full sentence is its hover text and VoiceOver hint.
+            XCTAssertTrue(text.contains("restarts if it stops. takes effect next launch."), text)
+            let helper = try XCTUnwrap(entries.first { $0.text == CloneEngineSection.startWithVoiceBarNote })
             let reference = NSHostingView(rootView: Text(helper.text).font(helper.font)
                 .fixedSize(horizontal: false, vertical: true).frame(width: helper.frame.width, alignment: .leading))
             let full = reference.fittingSize.height

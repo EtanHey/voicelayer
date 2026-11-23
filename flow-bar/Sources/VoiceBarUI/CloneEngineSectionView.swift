@@ -9,8 +9,16 @@ struct CloneEngineSection: View {
     let viewModel: CloneEngineControlViewModel?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.notchPaneInk) private var notchInk
 
+    /// The full fact, on hover and for VoiceOver; the row itself shows `startWithVoiceBarNote` (2.4.6 track S: one
+    /// short line per row).
     static let startWithVoiceBarDescription = "Starts when VoiceBar opens and restarts by itself if it stops. A change here applies the next time VoiceBar opens."
+    static let startWithVoiceBarNote = "Restarts if it stops. Takes effect next launch."
+    /// Status lines that wrapped beside the pill and its action, cut to one line; the full sentence stays on hover and
+    /// as the VoiceOver hint (2.4.6 track S, taste-S P2: the stopped card was 28 pt taller than the running one).
+    static let shortNotes = ["Long replies use the fast voice until it runs.": "Long replies use the fast voice."]
+    static func visibleNote(_ description: String) -> String { shortNotes[description] ?? description }
 
     private var presentation: CloneEnginePresentation {
         viewModel?.presentation() ?? CloneEngineControlModel().presentation(now: Date())
@@ -20,9 +28,22 @@ struct CloneEngineSection: View {
         let shown = self.presentation
         Section {
             VStack(alignment: .leading, spacing: 8) {
+                // Status, pill and actions share one row (2.4.6 track S: the status card was three rows tall).
                 SettingsRowLayout {
-                    SettingsRowLabel(title: "Cloned voice engine", description: shown.description)
-                    CloneEnginePill(presentation: shown, pulses: shown.pulses && !reduceMotion)
+                    let note = Self.visibleNote(shown.description)
+                    SettingsRowLabel(title: "Cloned voice engine", description: note)
+                        .modifier(OptionalHelp(text: note == shown.description ? nil : shown.description))
+                        .modifier(OptionalAccessibilityHint(text: note == shown.description ? nil : shown.description))
+                    HStack(spacing: 6) {
+                        CloneEnginePill(presentation: shown, pulses: shown.pulses && !reduceMotion)
+                        ForEach(shown.actions, id: \.button) { action in
+                            SettingsPaneButton(title: action.button.title,
+                                               isEnabled: action.isEnabled && viewModel != nil) {
+                                viewModel?.press(action.button)
+                            }
+                            .accessibilityIdentifier("speech-clone-engine-\(action.button.title)")
+                        }
+                    }
                 }
                 if shown.showsProgress {
                     ProgressView()
@@ -36,26 +57,15 @@ struct CloneEngineSection: View {
                         Image(systemName: shown.noteIsProblem ? "exclamationmark.triangle.fill" : "info.circle")
                     }
                     .font(.system(size: 11.5))
-                    .foregroundStyle(shown.noteIsProblem ? SettingsPanePalette.warning : SettingsPanePalette.helper)
+                    .foregroundStyle(shown.noteIsProblem ? (notchInk?.error ?? SettingsPanePalette.warning)
+                        : (notchInk?.note ?? SettingsPanePalette.helper))
                     .accessibilityIdentifier("speech-clone-engine-note")
-                }
-                if !shown.actions.isEmpty {
-                    HStack(spacing: 8) {
-                        ForEach(shown.actions, id: \.button) { action in
-                            Button(action.button.title) { viewModel?.press(action.button) }
-                                .disabled(!action.isEnabled || viewModel == nil)
-                                .fixedSize()
-                                .accessibilityIdentifier("speech-clone-engine-\(action.button.title)")
-                        }
-                    }
                 }
             }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("speech-clone-engine")
 
             if shown.startWithVoiceBar != nil { startWithVoiceBarRow(shown) }
-        } header: {
-            Text("Voice engine")
         }
         // A missing acknowledgement, or an accepted retry that changed nothing, ends instead of waiting forever.
         .task(id: viewModel?.nextDeadline) {
@@ -69,7 +79,9 @@ struct CloneEngineSection: View {
 
     @ViewBuilder
     private func startWithVoiceBarRow(_ presentation: CloneEnginePresentation) -> some View {
-        let label = SettingsRowLabel(title: "Start with VoiceBar", description: Self.startWithVoiceBarDescription)
+        let label = SettingsRowLabel(title: "Start with VoiceBar", description: Self.startWithVoiceBarNote)
+            .help(Self.startWithVoiceBarDescription)
+            .accessibilityHint(Self.startWithVoiceBarDescription)
         if let isOn = presentation.startWithVoiceBar {
             SettingsRowLayout {
                 label
@@ -78,7 +90,7 @@ struct CloneEngineSection: View {
                     set: { viewModel?.setStartWithVoiceBar($0) }
                 ))
                 .labelsHidden()
-                .toggleStyle(.switch)
+                .toggleStyle(.settingsSwitch)
                 .disabled(!presentation.startWithVoiceBarEnabled || viewModel == nil)
                 .accessibilityLabel("Start with VoiceBar")
             }
@@ -88,7 +100,7 @@ struct CloneEngineSection: View {
                 label
                 Text("Unavailable")
                     .font(.system(size: 11.5))
-                    .foregroundStyle(SettingsPanePalette.helper)
+                    .foregroundStyle(notchInk?.note ?? SettingsPanePalette.helper)
                     .fixedSize()
             }
             .accessibilityElement(children: .combine)
@@ -102,6 +114,7 @@ struct CloneEngineSection: View {
 struct CloneEnginePill: View {
     let presentation: CloneEnginePresentation
     let pulses: Bool
+    @Environment(\.notchPaneInk) private var notchInk
 
     static func color(_ tone: CloneEnginePillTone) -> Color {
         switch tone {
@@ -112,20 +125,32 @@ struct CloneEnginePill: View {
         }
     }
 
+    /// On the notch glass the dot takes the notch's own state inks: the setup mark's green, the processing blue,
+    /// the error red and the note ink for grey (no system colours on the glass).
+    static func color(_ tone: CloneEnginePillTone, ink: NotchPaneInk) -> Color {
+        switch tone {
+        case .green: return SettingsMarkPalette.color(done: ink.appearance)
+        case .blue: return Theme.transcribingSpinnerColor(for: ink.appearance)
+        case .grey: return ink.note
+        case .red: return ink.error
+        }
+    }
+
     var body: some View {
+        let tint = notchInk.map { Self.color(presentation.tone, ink: $0) } ?? Self.color(presentation.tone)
         HStack(spacing: 5) {
             Image(systemName: "circle.fill")
                 .font(.system(size: 7))
-                .foregroundStyle(Self.color(presentation.tone))
+                .foregroundStyle(tint)
                 .symbolEffect(.pulse, options: .repeating, isActive: pulses)
             Text(presentation.pill)
                 .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(.primary)
+                .foregroundStyle(notchInk.map { AnyShapeStyle($0.primary) } ?? AnyShapeStyle(.primary))
                 .lineLimit(1)
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(Capsule().fill(Self.color(presentation.tone).opacity(0.14)))
+        .frame(height: 24)
+        .background(Capsule().fill(tint.opacity(0.14)))
         .fixedSize()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(presentation.accessibilityStatus)

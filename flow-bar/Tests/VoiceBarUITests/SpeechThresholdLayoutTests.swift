@@ -43,23 +43,20 @@ final class SpeechThresholdLayoutTests: XCTestCase {
                 guard let text = observation.topCandidates(1).first?.string else { return nil }
                 return (text, observation.boundingBox)
             }
-            let draft = try XCTUnwrap(lines.first { $0.0.contains("Draft") }, "\(lines)")
-            // The candidate title, purpose and reporting caveat remain visible beside the controls.
-            let summary = try XCTUnwrap(lines.first { $0.0.contains("Chooses the short or long") }, "\(lines)")
+            // 2.4.6 track S: one row. Its title and one-line purpose, then the draft field and its actions beside
+            // them; the reported cutoff's provenance and the report caveat are behind the info glyph (hover), so
+            // they must not be painted here.
+            let summary = try XCTUnwrap(lines.first { $0.0.contains("Long voice over 400 characters") }, "\(lines)")
             let text = lines.map(\.0).joined(separator: " ")
-            XCTAssertTrue(text.contains("Last reported cutoff: 400 characters"), text)
-            XCTAssertTrue(text.contains("for the next speech."), text)
-            XCTAssertTrue(text.contains("Profile descriptions and Revert use the last reported cutoff"), text)
+            XCTAssertTrue(text.contains("Voice threshold"), text)
+            XCTAssertFalse(text.contains("Last reported cutoff"), text)
+            XCTAssertFalse(text.contains("Profile descriptions and Revert use the last reported cutoff"), text)
             let apply = try XCTUnwrap(lines.first { $0.0 == "Apply" }, "\(lines)")
             let revert = try XCTUnwrap(lines.first { $0.0 == "Revert" }, "\(lines)")
             let number = try XCTUnwrap(lines.first { $0.0 == "400" }, "Number field missing: \(lines)")
-            XCTAssertGreaterThan(draft.1.midY, number.1.midY, "Draft labels the field above it")
             XCTAssertLessThan(summary.1.maxX, number.1.minX, "The summary leaves the controls their own column")
-            // The number sits about 6.5 pt lower than the buttons' labels today (measured on the M1: 6.2-6.8 pt; the
-            // field is bottom-aligned under "Draft"). That offset is a known look defect left for the Rune rewrite.
-            // The hosted runner's text boxes read it as 8.5 pt, so 8 was inside the measurement noise: 11 still
-            // fails if the number leaves the buttons' row (a wrapped row moves it by 20 pt or more).
-            XCTAssertEqual(number.1.midY * size.height, apply.1.midY * size.height, accuracy: 11)
+            // No "Draft" caption over the field any more, so the number sits on the buttons' line.
+            XCTAssertEqual(number.1.midY * size.height, apply.1.midY * size.height, accuracy: 4)
             XCTAssertEqual(revert.1.midY * size.height, apply.1.midY * size.height, accuracy: 8)
         }
     }

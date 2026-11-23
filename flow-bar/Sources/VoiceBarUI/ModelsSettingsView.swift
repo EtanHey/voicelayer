@@ -294,7 +294,7 @@ public struct ModelsSettingsView: View {
                 get: { processingPending[row.key] ?? row.isOn },
                 set: { onToggleProcessing?(row.key, $0) }
             ))
-            .labelsHidden().toggleStyle(.switch)
+            .labelsHidden().toggleStyle(.settingsSwitch)
             .disabled(disabled)
             .accessibilityIdentifier("models-processing-\(row.key.rawValue)")
             // The painted line is short; VoiceOver hears the whole explanation, not only the hover.
@@ -360,7 +360,7 @@ public struct ModelsSettingsView: View {
     private func unloadWhenIdleToggle(_ row: UnloadWhenIdleRow) -> some View {
         SettingsRow(title: row.title, description: row.line) {
             Toggle(row.title, isOn: Binding(get: { row.isOn }, set: { onSetUnloadWhenIdle?($0) }))
-                .labelsHidden().toggleStyle(.switch)
+                .labelsHidden().toggleStyle(.settingsSwitch)
                 .disabled(row.disabled)
                 .accessibilityIdentifier("recognizer-unload-when-idle")
                 .accessibilityHint(row.tooltip)

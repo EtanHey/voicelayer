@@ -94,7 +94,7 @@ final class EtanQA0510Tests: XCTestCase {
     func testN1EveryNotchTabHoldsRealSettingsNotAHandoff() throws {
         let expectedSetting: [SettingsTab: String] = [
             .general: "microphone priority", .transcription: "recognizer", .dictionary: "add term",
-            .speech: "voice profile threshold", .history: "qa history row",
+            .speech: "voice threshold", .history: "qa history row",
         ]
         for tab in SettingsTab.allCases {
             let drawer = NotchSettingsDrawer(selectedTab: tab, appearance: .dark, context: Self.settingsPaneContext(),
