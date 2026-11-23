@@ -575,7 +575,9 @@ update_package() {
             run_cmd bun install --cwd "$PACKAGE_ROOT"
             ;;
         brew-formula)
-            bcs_tap_update "$(bcs_cask_tap "$VOICEBAR_CASK_NAME")" "$VOICEBAR_CASK_TAP_BRANCH"
+            if [[ -z "${VOICELAYER_UPDATE_PINNED_OFFER:-}" ]]; then
+                bcs_tap_update "$(bcs_cask_tap "$VOICEBAR_CASK_NAME")" "$VOICEBAR_CASK_TAP_BRANCH"
+            fi
             update_formula || return
             refresh_formula_package_root
             ;;
@@ -855,6 +857,30 @@ preflight_brew() {
     run_cmd env HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1 "$brew_bin" "$@"
 }
 
+# Hash the exact tap definitions, including version and sha256. No brew API cache.
+updater_offer_identity() {
+    local repo
+    repo="$(bcs_tap_repo_path "$(bcs_cask_tap "$VOICEBAR_CASK_NAME")")" || return 1
+    python3 - "$repo/Casks/$(bcs_cask_name "$VOICEBAR_CASK_NAME").rb" "$repo/Formula/${VOICEBAR_FORMULA_NAME##*/}.rb" <<'PYPIN'
+import hashlib, pathlib, sys
+parts = []
+for name in sys.argv[1:]:
+    data = pathlib.Path(name).read_bytes()
+    if b'sha256' not in data:
+        raise SystemExit("Offer lacks checksum")
+    parts.append(hashlib.sha256(data).hexdigest())
+print(":".join(parts))
+PYPIN
+}
+
+updater_validate_offer() {
+    local current
+    current="$(updater_offer_identity)" || return 1
+    [[ -n "${VOICELAYER_UPDATE_PINNED_OFFER:-}" && "$current" = "$VOICELAYER_UPDATE_PINNED_OFFER" ]] || {
+        err "Tap offer moved; refusing install before COMMIT."; return 1;
+    }
+}
+
 preflight_cask_download() {
     local tap repo offered installed formula formula_offer
     if ! bcs_brew_bin >/dev/null 2>&1 && bcs_caller_simulates_commands; then
@@ -893,15 +919,19 @@ PYVERSION
             return 1
         fi
     fi
+    export VOICELAYER_UPDATE_PINNED_OFFER="$(updater_offer_identity)"
+    [[ -n "$VOICELAYER_UPDATE_PINNED_OFFER" ]] || return 1
+    export VOICELAYER_UPDATE_OFFER_SCRIPT="$SCRIPT_DIR/voicelayer-update.sh"
     preflight_brew fetch --cask "$VOICEBAR_CASK_NAME" || { err "Cask fetch failed; refusing update before stopping VoiceBar."; return 1; }
     formula="$(bcs_formula_version "$VOICEBAR_FORMULA_NAME")" || { err "Cannot read installed formula version; refusing update before stopping VoiceBar."; return 1; }
     if [[ -n "$formula" ]]; then
         formula_offer="$(formula_offered_version)" || { err "Cannot read offered formula version; refusing update before stopping VoiceBar."; return 1; }
         [[ -n "$formula_offer" ]] || { err "Cannot read offered formula version; refusing update before stopping VoiceBar."; return 1; }
         if [[ "$formula" != "$formula_offer" ]]; then
-            preflight_brew fetch --formula "$VOICEBAR_FORMULA_NAME" || { err "Formula fetch failed; refusing update before stopping VoiceBar."; return 1; }
+            preflight_brew fetch --formula --deps "$VOICEBAR_FORMULA_NAME" || { err "Formula fetch failed; refusing update before stopping VoiceBar."; return 1; }
         fi
     fi
+    updater_validate_offer || return 1
     export VOICELAYER_UPDATE_PREFETCHED_CASK_VERSION="$offered"
 }
 
@@ -951,6 +981,7 @@ main() {
     else
         log "[update-gate] Simulation: would request drain and wait for idle before mutation (no lease taken)."
     fi
+    if [[ -n "${VOICELAYER_UPDATE_PINNED_OFFER:-}" ]]; then updater_validate_offer || return 1; fi
     update_package
     update_voicebar_app
     # Dedupe may move the original QA bundle into backup. Only a canonical app
@@ -971,5 +1002,5 @@ main() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    main "$@"
+    if [[ "${1:-}" == --validate-offer ]]; then updater_validate_offer; else main "$@"; fi
 fi
