@@ -860,8 +860,13 @@ preflight_brew() {
 # Hash the exact tap definitions, including version and sha256. No brew API cache.
 updater_offer_identity() {
     local repo formula_repo
-    formula_repo="$(bcs_tap_repo_path "${VOICEBAR_FORMULA_NAME%/*}")" || return 1
     repo="$(bcs_tap_repo_path "$(bcs_cask_tap "$VOICEBAR_CASK_NAME")")" || return 1
+    # A bare formula name has no tap of its own: read it from the cask's tap, as before.
+    if [[ "$VOICEBAR_FORMULA_NAME" == */* ]]; then
+        formula_repo="$(bcs_tap_repo_path "${VOICEBAR_FORMULA_NAME%/*}")" || return 1
+    else
+        formula_repo="$repo"
+    fi
     python3 - "$repo/Casks/$(bcs_cask_name "$VOICEBAR_CASK_NAME").rb" "$formula_repo/Formula/${VOICEBAR_FORMULA_NAME##*/}.rb" <<'PYPIN'
 import hashlib, pathlib, sys
 parts = []
