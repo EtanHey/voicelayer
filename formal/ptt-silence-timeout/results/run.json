@@ -25,7 +25,7 @@
     "formal/ptt-silence-timeout/Fixed.cfg": "e31cf7a878a931cee158e890f87c6ea42673471eb986e7838e199ee1351284bf",
     "src/input.ts": "d9ed60841892ae703dc0743436ff258aa2d060f85cb9b9c5b97887c14a5e783f",
     "src/__tests__/input-durability.test.ts": "251949448dc5256db52dab1c4a78110a32cc92398016bfa54d1b8c918609f7ff",
-    "src/socket-handlers.ts": "ae4d17c53965cbee48bd629de4a79e1a286d9e7fd105682dacdde3268d1bf890",
+    "src/socket-handlers.ts": "1661715474c9e172abbff70ea5103b561eebf848cf6d51f219b9f06122a5b17b",
     "src/f5-capture.ts": "3f445b9fd24ea92d9eb176c39f06f3bfd9a37eeca9ab537326aaa5540ded8740",
     "src/recording-pause.ts": "210914f612dcf9363f33a6175809ef2563118cd89efdb1490b653225ad2251be",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
@@ -115,8 +115,8 @@
       "kind": "temporal",
       "target": "SettlesAfterSilence",
       "status": "EXPECTED_FAIL",
-      "generated": 445905,
-      "distinct": 83705
+      "generated": 639358,
+      "distinct": 115591
     },
     "NoRenewalMutant": {
       "role": "mutant",

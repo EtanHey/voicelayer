@@ -34,11 +34,11 @@
     "src/__tests__/playback-session.test.ts": "17b75406021a2e56ccc54496432f13166e005a6315c4d2b968023aa573d5193c",
     "src/tts.ts": "3bf5ba6583a19d22e8ef6e960336910465fb86f1fa0d1b57f27f00e358c20c80",
     "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "7abe28bdce68bfa7b3b6bdf20713c580b2b252827ad64fa325659816842cdee5",
-    "src/ask-prompt-interruption.ts": "84542c3a9b95a051c882dcaab77f55a1e80d4e01485be9a7e3de984a0392979f",
-    "src/handlers.ts": "ac3e6dca87333f86b9ad07993f1d61e1ac2d51798d7b8335141bcab55b39f8c4",
+    "src/ask-prompt-interruption.ts": "ae5fe55a32db24b0264a95b8ce8649350736de102d89e529e9cb191b64c3c6cc",
+    "src/handlers.ts": "fb0066481d14a924c66d76f0c0ab9836d2d803727140aefc32bb123efd250fef",
     "src/f5-capture.ts": "3f445b9fd24ea92d9eb176c39f06f3bfd9a37eeca9ab537326aaa5540ded8740",
-    "src/socket-handlers.ts": "ae4d17c53965cbee48bd629de4a79e1a286d9e7fd105682dacdde3268d1bf890",
-    "src/__tests__/pause-ask.test.ts": "8fcf51e46a585922f62e0f2da32ab5ad9045a4e56d09d480a40bba78c47cd81d",
+    "src/socket-handlers.ts": "1661715474c9e172abbff70ea5103b561eebf848cf6d51f219b9f06122a5b17b",
+    "src/__tests__/pause-ask.test.ts": "0731518dfe4014c1e22bcd98231172b62d1f767e4f462acc646ad9653066c119",
     "flow-bar/Tests/VoiceBarUITests/VoiceStateRecoveryTests.swift": "799f66b92a08d5c9e318169720f640171c590406599c17786b8e8cd52465801e",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
@@ -216,8 +216,8 @@
       "kind": "temporal",
       "target": "ParkedEventuallyReleased",
       "status": "EXPECTED_FAIL",
-      "generated": 144023,
-      "distinct": 46929
+      "generated": 187568,
+      "distinct": 60091
     },
     "AskCancelsReadMutant": {
       "role": "mutant",
