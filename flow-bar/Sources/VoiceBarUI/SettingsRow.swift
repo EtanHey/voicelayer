@@ -223,6 +223,7 @@ struct SettingsSwitch: View {
 
     static let size = CGSize(width: 32, height: 19)
     static let knobInset: CGFloat = 2
+    static var knobDiameter: CGFloat { size.height - 2 * knobInset }
 
     var body: some View {
         if let notchInk {
@@ -233,9 +234,12 @@ struct SettingsSwitch: View {
                 ZStack(alignment: isOn ? .trailing : .leading) {
                     Capsule(style: .continuous)
                         .fill(isOn ? NotchControlInk.switchOn(notchInk) : notchInk.palette.subtleTrack.color)
+                    // A fixed square: a bare Circle fills the padded frame and sits centred whatever the alignment
+                    // (#968 CodeRabbit), so the knob would not move between off and on.
                     Circle()
                         .fill(Color.white)
                         .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
+                        .frame(width: Self.knobDiameter, height: Self.knobDiameter)
                         .padding(Self.knobInset)
                 }
                 .frame(width: Self.size.width, height: Self.size.height)

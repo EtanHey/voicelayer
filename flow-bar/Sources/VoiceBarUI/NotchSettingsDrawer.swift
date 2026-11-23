@@ -208,6 +208,9 @@ struct NotchDrawerButton: View {
     var ink: Color? = nil
     let action: () -> Void
 
+    /// The capsule's fill, as an opacity of the palette primary.
+    static func fillOpacity(prominent: Bool) -> Double { prominent ? 0.2 : 0.12 }
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 4) {
@@ -224,7 +227,7 @@ struct NotchDrawerButton: View {
                 .frame(height: 24)
                 .background(
                     Capsule(style: .continuous)
-                        .fill(palette.primary.color.opacity(prominent ? 0.2 : 0.12))
+                        .fill(palette.primary.color.opacity(Self.fillOpacity(prominent: prominent)))
                 )
                 .contentShape(Capsule())
         }

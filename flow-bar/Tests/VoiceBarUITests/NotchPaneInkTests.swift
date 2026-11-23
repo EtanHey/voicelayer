@@ -15,45 +15,82 @@ final class NotchPaneInkTests: XCTestCase {
 
     private func grey(_ value: Double) -> VoiceBarRGB { VoiceBarRGB(red: value / 255, green: value / 255, blue: value / 255) }
 
+    /// `fg` at `alpha` laid over `bg`.
+    private func over(_ fg: VoiceBarRGBA, alpha: Double, _ bg: VoiceBarRGB) -> VoiceBarRGB {
+        VoiceBarRGBA(red: fg.red, green: fg.green, blue: fg.blue, alpha: alpha).composited(over: bg)
+    }
+
+    /// The glasses each appearance is checked on: the c9-P offscreen wing's light glass (185) and a lighter 219; the
+    /// dark glass at 35 and 41.
+    private static let glasses: [(VoiceBarNotchAppearance, [Double])] = [(.light, [185, 219]), (.dark, [35, 41])]
+
     func testErrorTextIsReadableOnBothGlasses() {
-        let light = rgb(VoiceBarNotchContrastPalette.errorText(for: .light))
-        let dark = rgb(VoiceBarNotchContrastPalette.errorText(for: .dark))
-        // The light glass as the c9-P offscreen wing measured it (185), and a lighter 219; the dark glass at 41.
-        for glass in [185.0, 219] {
-            XCTAssertGreaterThanOrEqual(VoiceBarContrast.ratio(foreground: light, background: grey(glass)),
-                                        VoiceBarContrast.minimumTextRatio, "light errorText on \(glass)")
-        }
-        XCTAssertGreaterThanOrEqual(VoiceBarContrast.ratio(foreground: dark, background: grey(41)),
-                                    VoiceBarContrast.minimumTextRatio, "dark errorText")
-        XCTAssertGreaterThan(dark.red, dark.green + 0.3, "still reads as red, not a pink-grey")
-        XCTAssertGreaterThan(light.red, light.green + 0.3, "still reads as red, not a brown-grey")
-    }
-
-    /// The note ink as painted: palette primary at the note opacity, composited over the glass.
-    private func noteOnGlass(_ appearance: VoiceBarNotchAppearance, glass: Double) -> VoiceBarRGB {
-        let primary = VoiceBarNotchContrastPalette.resolve(for: appearance).primary
-        let alpha = primary.alpha * NotchPaneInk.noteOpacity(appearance)
-        let bg = glass / 255
-        return VoiceBarRGB(red: primary.red * alpha + bg * (1 - alpha), green: primary.green * alpha + bg * (1 - alpha),
-                           blue: primary.blue * alpha + bg * (1 - alpha))
-    }
-
-    /// Lead ruling (review fb68174ad P2): note ink reads at 4.5:1 or better on both glasses. Dark keeps the
-    /// teleprompter read tier; light rises to 70 % because 64 % measured 3.96:1 on rgb 185.
-    func testNoteInkIsReadableOnBothGlasses() {
-        XCTAssertEqual(NotchPaneInk.noteOpacity(.dark), TeleprompterA.Tier.read.opacity, "dark keeps the read tier")
-        XCTAssertEqual(NotchPaneInk.noteOpacity(.light), 0.70)
-        for (appearance, glasses) in [(VoiceBarNotchAppearance.light, [185.0, 219]), (.dark, [35.0, 41])] {
+        for (appearance, glasses) in Self.glasses {
+            let error = rgb(VoiceBarNotchContrastPalette.errorText(for: appearance))
             for glass in glasses {
-                let ratio = VoiceBarContrast.ratio(foreground: noteOnGlass(appearance, glass: glass), background: grey(glass))
-                XCTAssertGreaterThanOrEqual(ratio, VoiceBarContrast.minimumTextRatio, "\(appearance) note on \(glass): \(ratio)")
+                let ratio = VoiceBarContrast.ratio(foreground: error, background: grey(glass))
+                XCTAssertGreaterThanOrEqual(ratio, VoiceBarContrast.minimumTextRatio, "\(appearance) errorText on \(glass): \(ratio)")
+            }
+            XCTAssertGreaterThan(error.red, error.green + 0.3, "\(appearance) errorText still reads as red")
+        }
+    }
+
+    /// #968 CodeRabbit: Delete draws errorText on the prominent drawer capsule over the confirmation bar. The whole
+    /// stack (glass, `barFill`, capsule) must keep 4.5:1 in both appearances, and so must the Transcription pane's
+    /// Delete (resting capsule on its error-tinted plate).
+    func testErrorTextIsReadableOnTheDeleteCapsuleStack() {
+        for (appearance, glasses) in Self.glasses {
+            let palette = VoiceBarNotchContrastPalette.resolve(for: appearance)
+            let errorRGBA = VoiceBarNotchContrastPalette.errorText(for: appearance)
+            let error = rgb(errorRGBA)
+            for glass in glasses {
+                let bar = palette.surfaceTint.composited(over: grey(glass))
+                let prominent = palette.primary.alpha * NotchDrawerButton.fillOpacity(prominent: true)
+                let resting = palette.primary.alpha * NotchDrawerButton.fillOpacity(prominent: false)
+                let stacks: [(String, VoiceBarRGB)] = [
+                    // Dictionary's Delete: prominent capsule on the confirmation bar.
+                    ("bar + prominent capsule", over(palette.primary, alpha: prominent, bar)),
+                    // Transcription's Delete: resting capsule on the error-tinted confirmation plate.
+                    ("error plate + resting capsule",
+                     over(palette.primary, alpha: resting, over(errorRGBA, alpha: 0.10, grey(glass)))),
+                    ("glass + resting capsule", over(palette.primary, alpha: resting, grey(glass))),
+                ]
+                for (name, background) in stacks {
+                    let ratio = VoiceBarContrast.ratio(foreground: error, background: background)
+                    XCTAssertGreaterThanOrEqual(ratio, VoiceBarContrast.minimumTextRatio,
+                                                "\(appearance) errorText on \(name) over \(glass): \(ratio)")
+                }
             }
         }
-        // The departure is the lowest that passes: the read tier itself fails on the darker light glass.
+    }
+
+    /// The note ink as painted: palette primary at the note opacity, over `surface`.
+    private func note(_ appearance: VoiceBarNotchAppearance, on surface: VoiceBarRGB) -> VoiceBarRGB {
+        let primary = VoiceBarNotchContrastPalette.resolve(for: appearance).primary
+        return over(primary, alpha: primary.alpha * NotchPaneInk.noteOpacity(appearance), surface)
+    }
+
+    /// Lead ruling (review fb68174ad P2) and #968 CodeRabbit: note ink reads at 4.5:1 or better on both glasses, bare
+    /// and on every fill it is drawn on (field well, selected row, control plate). Dark keeps the teleprompter read
+    /// tier; light rises to 76 %.
+    func testNoteInkIsReadableOnBothGlassesAndTheirFills() {
+        XCTAssertEqual(NotchPaneInk.noteOpacity(.dark), TeleprompterA.Tier.read.opacity, "dark keeps the read tier")
+        XCTAssertEqual(NotchPaneInk.noteOpacity(.light), 0.76)
+        XCTAssertEqual(NotchPaneInk.noteSurfaceFillOpacities, [0, 0.08, 0.10, 0.12])
+        for (appearance, glasses) in Self.glasses {
+            let primary = VoiceBarNotchContrastPalette.resolve(for: appearance).primary
+            for glass in glasses {
+                for fill in NotchPaneInk.noteSurfaceFillOpacities {
+                    let surface = over(primary, alpha: primary.alpha * fill, grey(glass))
+                    let ratio = VoiceBarContrast.ratio(foreground: note(appearance, on: surface), background: surface)
+                    XCTAssertGreaterThanOrEqual(ratio, VoiceBarContrast.minimumTextRatio,
+                                                "\(appearance) note on fill \(fill) over \(glass): \(ratio)")
+                }
+            }
+        }
+        // Why light departs: the read tier fails on the darker light glass even bare.
         let primary = VoiceBarNotchContrastPalette.resolve(for: .light).primary
-        let alpha = primary.alpha * TeleprompterA.Tier.read.opacity, bg = 185.0 / 255
-        let readTier = VoiceBarRGB(red: primary.red * alpha + bg * (1 - alpha), green: primary.green * alpha + bg * (1 - alpha),
-                                   blue: primary.blue * alpha + bg * (1 - alpha))
+        let readTier = over(primary, alpha: primary.alpha * TeleprompterA.Tier.read.opacity, grey(185))
         XCTAssertLessThan(VoiceBarContrast.ratio(foreground: readTier, background: grey(185)), 4.5)
         XCTAssertEqual(NotchPaneInk(colorScheme: .light).appearance, .light)
         XCTAssertEqual(NotchPaneInk(colorScheme: .dark).appearance, .dark)

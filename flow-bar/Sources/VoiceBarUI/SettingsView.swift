@@ -2779,6 +2779,9 @@ public struct SettingsView: View {
         .onChange(of: termSheet) { _, sheet in
             // A save could re-add the very term waiting for its Undo window; send that removal first.
             if sheet != nil { DictionaryDeletion.commitNow(pending: &pendingDeletion, commit: commitDeletion) }
+            // The editor covers the list in the drawer without disabling it: drop search/list focus so keys cannot
+            // reach the hidden search field (#968 CodeRabbit).
+            if sheet != nil { focusedEditorField = nil }
         }
         .onAppear {
             resetDictionaryEditors()
