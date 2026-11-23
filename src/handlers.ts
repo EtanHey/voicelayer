@@ -1140,7 +1140,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
   };
   // A bounded handler return is not the completion of retained background STT.
   if (context?.askDelivery) {
-    const settled = flowPromise.then(formatVoiceAskTurnResult);
+    const settled = flowPromise.then(result => formatVoiceAskTurnResult(dictationInterrupted ? dictationOutcome() : result));
     settled.catch(() => {}); // The handler's own catch reports this rejection.
     context.askDelivery.defer(settled);
   }

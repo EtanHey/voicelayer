@@ -542,7 +542,7 @@ function handleSocketCommandAdmitted(
       if (promptExit) {
         const takeID = command.take_id!;
         return afterAskPromptExit(takeID, promptExit,
-          () => handleSocketCommandAdmitted({ ...command, take_id: takeID }, onSpeak), command.take_id !== undefined);
+          () => handleSocketCommandAdmitted({ ...command, take_id: takeID }, onSpeak), command.take_id !== undefined).catch(() => buildAck(command, "reject", "busy"));
       }
       if (recordingState === "recording") {
         if (isBarCaptureDraining()) return buildAck(command, "reject", "Previous recording is finishing. Try record again when ready.");
