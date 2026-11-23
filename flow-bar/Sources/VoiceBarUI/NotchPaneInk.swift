@@ -2,12 +2,15 @@ import SwiftUI
 
 extension VoiceBarNotchContrastPalette {
     /// A red that reads on the notch glass, for errors (Etan's notch rules, 18 Nov: "a readable red from the palette,
-    /// never system red on glass"). Light 0x8E1B1B is 4.6:1 on the light glass (rgb 185) and 6.5:1 on 219; dark
-    /// 0xFF8F87 is 6.6:1 on the dark glass (rgb 41). `NotchPaneInkTests` pins both.
+    /// never system red on glass"). It must also read on the darkest stack it is drawn on: Delete's prominent capsule
+    /// over the confirmation bar (#968 CodeRabbit; the earlier 0x8E1B1B / 0xFF8F87 fell to 3.3:1 / 4.0:1 there).
+    /// Light 0x620F0F is 6.7:1 on the light glass (rgb 185), 4.81:1 on that capsule stack and 4.58:1 on the Transcription
+    /// Delete's plate; dark 0xFFADA6 is 8.2:1 on the dark glass (rgb 41), 4.91:1 and 4.60:1 on the same stacks.
+    /// `NotchPaneInkTests` pins every stack.
     public static func errorText(for appearance: VoiceBarNotchAppearance) -> VoiceBarRGBA {
         switch appearance {
-        case .light: VoiceBarRGBA(red: 0x8E / 255, green: 0x1B / 255, blue: 0x1B / 255, alpha: 1)
-        case .dark: VoiceBarRGBA(red: 1, green: 0x8F / 255, blue: 0x87 / 255, alpha: 1)
+        case .light: VoiceBarRGBA(red: 0x62 / 255, green: 0x0F / 255, blue: 0x0F / 255, alpha: 1)
+        case .dark: VoiceBarRGBA(red: 1, green: 0xAD / 255, blue: 0xA6 / 255, alpha: 1)
         }
     }
 }
@@ -33,21 +36,28 @@ struct NotchPaneInk {
     /// Notes, placeholders, variants and helper glyphs: the teleprompter's non-current (read) word ink.
     var note: Color { palette.primary.color.opacity(Self.noteOpacity(appearance)) }
 
-    /// Dark keeps the read tier (64 %: 6.4:1 on the dark glass, rgb 41). Light departs to 70 % because 64 % is only
-    /// 3.96:1 on the darkest light glass measured (rgb 185); 0.691 is the 4.5:1 floor, 70 % gives 4.61:1.
+    /// Dark keeps the read tier (64 %: 6.4:1 on the dark glass, rgb 41; 5.0:1 on a control plate). Light departs to
+    /// 76 % because notes also sit on filled surfaces: on the darkest light glass measured (rgb 185) 70 % was 4.61:1
+    /// bare but 4.27:1 on a field well and 4.18:1 on a selected row (#968 CodeRabbit). 76 % gives 5.36:1 bare, 4.90:1
+    /// on a field well, 4.78:1 on a selected row and 4.67:1 on a control plate.
     static func noteOpacity(_ appearance: VoiceBarNotchAppearance) -> Double {
-        appearance == .light ? 0.70 : TeleprompterA.Tier.read.opacity
+        appearance == .light ? 0.76 : TeleprompterA.Tier.read.opacity
     }
+
+    /// The fills note ink is drawn on, as opacities of the palette primary (see the fills below). The contrast tests
+    /// walk every one.
+    static let fieldFillOpacity = 0.08, selectionFillOpacity = 0.10, controlFillOpacity = 0.12
+    static let noteSurfaceFillOpacities: [Double] = [0, fieldFillOpacity, selectionFillOpacity, controlFillOpacity]
     /// Errors (a blocking conflict, a failed save).
     var error: Color { VoiceBarNotchContrastPalette.errorText(for: appearance).color }
 
     /// A text field's well and its hairline edge.
-    var fieldFill: Color { palette.primary.color.opacity(0.08) }
+    var fieldFill: Color { palette.primary.color.opacity(Self.fieldFillOpacity) }
     var fieldStroke: Color { palette.primary.color.opacity(0.14) }
     /// A small control's plate (the swap button, a variant chip): the drawer button's resting fill.
-    var controlFill: Color { palette.primary.color.opacity(0.12) }
+    var controlFill: Color { palette.primary.color.opacity(Self.controlFillOpacity) }
     /// A selected list row; a just-saved row flashes at `flashFill`.
-    var selectionFill: Color { palette.primary.color.opacity(0.10) }
+    var selectionFill: Color { palette.primary.color.opacity(Self.selectionFillOpacity) }
     var flashFill: Color { palette.primary.color.opacity(0.20) }
     /// Row separators and bar edges.
     var hairline: Color { palette.primary.color.opacity(0.10) }
