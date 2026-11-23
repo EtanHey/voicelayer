@@ -149,7 +149,8 @@ public struct SpeechSettingsView: View {
                                          pending: pending, onChange: onChange)
                 }
                 .accessibilityIdentifier("speech-threshold-apply")
-                .settingsLockedReason(canApply ? nil : blocked, stateLabel: nil)
+                // Under the row: the space above it is the engine card's (lead ruling, 23 Nov).
+                .settingsLockedReason(canApply ? nil : blocked, stateLabel: nil, below: true)
                 SettingsPaneButton(title: "Revert", isEnabled: thresholdDraft.text != nil && controls != nil) {
                     thresholdDraft.revert()
                 }
@@ -168,14 +169,8 @@ public struct SpeechSettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("speech-threshold-invalid")
             }
-        } header: {
-            // No words: the row says what it is. The band only gives Apply's locked reason, which rises above the
-            // row, empty space to land in instead of the engine card's last line.
-            Color.clear.frame(height: Self.thresholdReasonBand).accessibilityHidden(true)
         }
     }
-
-    static let thresholdReasonBand: CGFloat = 1
 
     static let thresholdTitle = "Voice threshold"
     /// The row's one line: what the last reported cutoff does.
@@ -206,7 +201,7 @@ public struct SpeechSettingsView: View {
             if controls.lockReason(for: key) != nil || controls.lockReason(for: "\(kind.rawValue).engine") != nil {
                 Text(Self.voiceLabel(display.voice)).foregroundStyle(primaryInk)
             } else {
-                Picker("Voice", selection: Binding(get: { "\(display.engine):\(display.voice)" }, set: { id in
+                let picker = Picker("Voice", selection: Binding(get: { "\(display.engine):\(display.voice)" }, set: { id in
                     if let selected = controls.availableVoices.first(where: { "\($0.engine):\($0.voice)" == id }) {
                         onSelectEngine?(kind, selected.engine, selected.voice)
                     }
@@ -222,8 +217,25 @@ public struct SpeechSettingsView: View {
                         }
                     }
                 }
-                .labelsHidden()
-                .fixedSize()
+                if let notchInk {
+                    // On the glass: the native menu still does the choosing (same binding and callback); only the
+                    // closed surface is drawn, as a palette capsule like SettingsPaneButton (rev-S P2, 23 Nov).
+                    Menu {
+                        picker.pickerStyle(.inline).labelsHidden()
+                    } label: {
+                        NotchPickerLabel(title: Self.voiceLabel(display.voice), ink: notchInk)
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .accessibilityLabel("Voice")
+                    .accessibilityValue(Self.voiceLabel(display.voice))
+                } else {
+                    picker
+                        .labelsHidden()
+                        .fixedSize()
+                }
             }
         }
         .disabled(Self.fieldDisabled(key, controls: controls, pending: pending, callbackAvailable: onSelectEngine != nil))

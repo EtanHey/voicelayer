@@ -24,8 +24,10 @@ final class SettingsRS5ThresholdHoverTests: XCTestCase {
             }
             let reason = try XCTUnwrap(lines.first { $0.0.contains("voice session in progress") }, "\(lines)")
             let title = try XCTUnwrap(lines.first { $0.0.contains("voice threshold") }, "\(lines)")
-            // Vision uses a bottom-left origin: the bubble must finish above the first title line.
-            XCTAssertGreaterThan(reason.1.minY, title.1.maxY, surface)
+            // 2.4.6 track S (lead ruling 23 Nov): the space above the threshold row is the engine card's, so the
+            // bubble hangs under the row. Vision uses a bottom-left origin: it must start below the title line, and
+            // (below) cover no painted line, so the reason and everything around it stay readable.
+            XCTAssertLessThan(reason.1.maxY, title.1.minY, surface)
             let bubble = reason.1.insetBy(dx: -8 / width, dy: -5 / 1124)
             for line in lines where !line.0.contains("voice session in progress") {
                 XCTAssertFalse(bubble.intersects(line.1), "\(surface): reason covers \(line.0)")

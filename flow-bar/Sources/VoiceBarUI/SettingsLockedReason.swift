@@ -11,6 +11,9 @@ struct SettingsLockedReasonPreference {
     let isShown: Bool
     var lift: CGFloat = SettingsLockedReasonMotion.lift
     var rowBounds: Anchor<CGRect>? = nil
+    /// Hang the bubble under the control (or its row) instead of over it: for a row whose space above belongs to
+    /// another card (Speech's threshold row sits right under the engine card; 2.4.6 track S).
+    var below = false
 }
 
 struct SettingsLockedReasonKey: PreferenceKey {
@@ -34,6 +37,7 @@ struct SettingsLockedReasonSource: ViewModifier {
     let reason: String?
     var stateLabel: String? = "Locked"
     var lift: CGFloat = SettingsLockedReasonMotion.lift
+    var below = false
     @FocusState private var isFocused: Bool
     @Environment(\.settingsHoverPreview) private var hoverPreview
     @State private var isHovered = false
@@ -68,7 +72,7 @@ struct SettingsLockedReasonSource: ViewModifier {
                 }
             }
             .anchorPreference(key: SettingsLockedReasonKey.self, value: .bounds) { anchor in
-                reason.map { [SettingsLockedReasonPreference(reason: $0, bounds: anchor, isShown: isHovered || isFocused || hoverPreview.lockedReasons, lift: lift)] } ?? []
+                reason.map { [SettingsLockedReasonPreference(reason: $0, bounds: anchor, isShown: isHovered || isFocused || hoverPreview.lockedReasons, lift: lift, below: below)] } ?? []
             }
             .modifier(OptionalAccessibilityHint(text: reason))
             .onChange(of: reason) { _, new in if new == nil { hover(false) } }
@@ -100,11 +104,14 @@ struct SettingsLockedReasonBubbleHost: ViewModifier {
                   if preference.isShown {
                     let rect = proxy[preference.bounds]
                     let top = preference.rowBounds.map { proxy[$0].minY } ?? rect.minY
+                    let bottom = preference.rowBounds.map { proxy[$0].maxY } ?? rect.maxY
                     SettingsReasonBubble(text: preference.reason)
                         .frame(width: rect.maxX, alignment: .trailing)
-                        .offset(y: min(rect.minY, top) - SettingsReasonBubble.height - preference.lift)
+                        .offset(y: preference.below ? max(rect.maxY, bottom) + preference.lift
+                            : min(rect.minY, top) - SettingsReasonBubble.height - preference.lift)
                         .transition(reduceMotion ? .opacity
-                            : .opacity.combined(with: .scale(scale: 0.97, anchor: .bottomTrailing)))
+                            : .opacity.combined(with: .scale(scale: 0.97,
+                                                             anchor: preference.below ? .topTrailing : .bottomTrailing)))
                         .allowsHitTesting(false)
                         .accessibilityHidden(true) // the switch carries it as its hint
                   }
@@ -161,8 +168,8 @@ struct OptionalAccessibilityHint: ViewModifier {
 extension View {
     /// The switch side: `reason` non-nil means the switch is locked and hovering it shows why.
     func settingsLockedReason(_ reason: String?, stateLabel: String? = "Locked",
-                              lift: CGFloat = SettingsLockedReasonMotion.lift) -> some View {
-        modifier(SettingsLockedReasonSource(reason: reason, stateLabel: stateLabel, lift: lift))
+                              lift: CGFloat = SettingsLockedReasonMotion.lift, below: Bool = false) -> some View {
+        modifier(SettingsLockedReasonSource(reason: reason, stateLabel: stateLabel, lift: lift, below: below))
     }
 
     /// A tall row must clear its complete title and helper, while keeping the control's horizontal anchor.

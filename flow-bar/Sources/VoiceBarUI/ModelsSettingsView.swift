@@ -290,7 +290,7 @@ public struct ModelsSettingsView: View {
                 get: { processingPending[row.key] ?? row.isOn },
                 set: { onToggleProcessing?(row.key, $0) }
             ))
-            .labelsHidden().toggleStyle(.switch)
+            .labelsHidden().toggleStyle(.settingsSwitch)
             .disabled(disabled)
             .accessibilityIdentifier("models-processing-\(row.key.rawValue)")
             // Etan (QA 2026-11-11, shot 5): why it is locked shows on hover of the switch, never in the text.
@@ -347,7 +347,7 @@ public struct ModelsSettingsView: View {
     private func unloadWhenIdleToggle(_ row: UnloadWhenIdleRow) -> some View {
         SettingsRow(title: row.title, description: row.line) {
             Toggle(row.title, isOn: Binding(get: { row.isOn }, set: { onSetUnloadWhenIdle?($0) }))
-                .labelsHidden().toggleStyle(.switch)
+                .labelsHidden().toggleStyle(.settingsSwitch)
                 .disabled(row.disabled)
                 .accessibilityIdentifier("recognizer-unload-when-idle")
                 .settingsLockedReason(row.lockedReason)

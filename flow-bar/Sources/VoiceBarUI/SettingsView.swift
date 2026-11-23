@@ -1373,7 +1373,7 @@ public struct SettingsView: View {
             SettingsRow(title: SettingsGeneralCopy.mouseTitle, description: SettingsGeneralCopy.mouseDescription) {
                 if let mouseSideButtons {
                     Toggle("Mouse side buttons", isOn: Binding(get: mouseSideButtons.isOn, set: mouseSideButtons.set))
-                        .labelsHidden().toggleStyle(.switch)
+                        .labelsHidden().toggleStyle(.settingsSwitch)
                 }
             }
         }
@@ -1405,7 +1405,7 @@ public struct SettingsView: View {
             if let openAtLogin {
                 SettingsRow(title: SettingsGeneralCopy.openAtLoginTitle) {
                     Toggle("Open at login", isOn: Binding(get: openAtLogin.isOn, set: openAtLogin.set))
-                        .labelsHidden().toggleStyle(.switch)
+                        .labelsHidden().toggleStyle(.settingsSwitch)
                 }
             }
             SettingsRow(title: SettingsGeneralCopy.hideTitle,

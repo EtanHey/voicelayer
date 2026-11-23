@@ -83,7 +83,7 @@ struct CloneEngineSection: View {
                     set: { viewModel?.setStartWithVoiceBar($0) }
                 ))
                 .labelsHidden()
-                .toggleStyle(.switch)
+                .toggleStyle(.settingsSwitch)
                 .disabled(!presentation.startWithVoiceBarEnabled || viewModel == nil)
                 .accessibilityLabel("Start with VoiceBar")
             }

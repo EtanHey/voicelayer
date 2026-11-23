@@ -191,3 +191,85 @@ extension EnvironmentValues {
         set { self[NotchPaneInkKey.self] = newValue }
     }
 }
+
+/// Control inks for the drawer's native controls (2.4.6 track S, lead ruling 23 Nov): a switch's on-state takes the
+/// notch's processing blue (`Theme.transcribingSpinnerColor`: 7.0:1 on the dark glass, 3.28:1 on the light glass,
+/// so the white knob and the track both read), never the system accent.
+enum NotchControlInk {
+    static func switchOn(_ ink: NotchPaneInk) -> Color { Theme.transcribingSpinnerColor(for: ink.appearance) }
+}
+
+/// Every Settings switch (`.toggleStyle(.settingsSwitch)`). On the notch glass it draws its own track and knob from the
+/// palette: the on-state in `NotchControlInk.switchOn`, the off track in the palette's subtle track. A system switch
+/// in a panel that is not key draws its on-state grey whatever the tint, so the drawer cannot rely on `.tint`. In the
+/// legacy Settings window (no `notchPaneInk`) it is the system switch, unchanged. VoiceOver reads it as the system
+/// toggle (`accessibilityRepresentation`).
+struct SettingsSwitchToggleStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View { SettingsSwitch(configuration: configuration) }
+}
+
+extension ToggleStyle where Self == SettingsSwitchToggleStyle {
+    static var settingsSwitch: SettingsSwitchToggleStyle { SettingsSwitchToggleStyle() }
+}
+
+struct SettingsSwitch: View {
+    let configuration: ToggleStyleConfiguration
+    @Environment(\.notchPaneInk) private var notchInk
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    static let size = CGSize(width: 32, height: 19)
+    static let knobInset: CGFloat = 2
+
+    var body: some View {
+        if let notchInk {
+            let isOn = configuration.isOn
+            Button {
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) { configuration.isOn.toggle() }
+            } label: {
+                ZStack(alignment: isOn ? .trailing : .leading) {
+                    Capsule(style: .continuous)
+                        .fill(isOn ? NotchControlInk.switchOn(notchInk) : notchInk.palette.subtleTrack.color)
+                    Circle()
+                        .fill(Color.white)
+                        .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
+                        .padding(Self.knobInset)
+                }
+                .frame(width: Self.size.width, height: Self.size.height)
+                .opacity(isEnabled ? 1 : 0.45)
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityRepresentation {
+                Toggle(isOn: configuration.$isOn) { configuration.label }
+            }
+        } else {
+            Toggle(isOn: configuration.$isOn) { configuration.label }
+                .toggleStyle(.switch)
+        }
+    }
+}
+
+/// The closed surface of a drawer menu (the Speech voice picker): the current choice and an up-down chevron on the
+/// drawer button's capsule, in palette ink. The native menu still opens on click.
+struct NotchPickerLabel: View {
+    let title: String
+    let ink: NotchPaneInk
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(title)
+                .font(.system(size: 11.5, weight: .medium))
+                .lineLimit(1)
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 8.5, weight: .semibold))
+        }
+        .fixedSize()
+        .foregroundStyle(ink.primary.opacity(isEnabled ? 1 : 0.45))
+        .padding(.horizontal, 10)
+        .frame(height: 24)
+        .background(Capsule(style: .continuous).fill(ink.controlFill))
+        .contentShape(Capsule())
+    }
+}

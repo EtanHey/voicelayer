@@ -145,6 +145,15 @@ final class SpeechDrawerTrackSSnapshotTests: XCTestCase {
                 XCTAssertFalse(source.contains(banned), "\(file) uses \(banned)")
             }
         }
+        // rev-S P2 (23 Nov): every Settings switch draws its on-state from the palette on the glass, and the voice
+        // picker's closed surface is a palette capsule (the native menu still chooses).
+        for file in ["SpeechSettingsView.swift", "CloneEngineSectionView.swift", "ModelsSettingsView.swift",
+                     "SettingsView.swift"] {
+            let source = try String(contentsOf: root.appendingPathComponent(file), encoding: .utf8)
+            XCTAssertFalse(source.contains(".toggleStyle(.switch)"), "\(file) has a bare system switch")
+        }
+        let speech = try String(contentsOf: root.appendingPathComponent("SpeechSettingsView.swift"), encoding: .utf8)
+        XCTAssertTrue(speech.contains("NotchPickerLabel("), "the voice picker draws its closed surface in the palette")
     }
 
     /// Goldens for the Speech drawer in both appearances, under `Snapshots/ui-speech/`. Same contract as track D's:
