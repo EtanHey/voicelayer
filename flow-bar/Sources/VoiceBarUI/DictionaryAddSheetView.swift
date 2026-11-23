@@ -27,6 +27,7 @@ public struct DictionaryAddSheetView: View {
 
     @State private var edit: DictionaryTermEdit
     @FocusState private var focusedField: Field?
+    @Environment(\.colorScheme) private var colorScheme
 
     private let existingEntries: [STTDictionaryEntry]
     private let onSaveEdit: (DictionaryTermEdit) -> Void
@@ -60,99 +61,118 @@ public struct DictionaryAddSheetView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(edit.isEditing ? "Edit Term" : "Add to Dictionary")
-                .font(.headline)
+        let ink = NotchPaneInk(colorScheme: colorScheme)
+        let warning = edit.variantWarning(in: existingEntries)
+        let canSubmit = edit.canSave && !(requiresMisheard && edit.trimmedWrong.isEmpty) && warning == nil
+        VStack(alignment: .leading, spacing: 12) {
+            Text(edit.isEditing ? "Edit term" : "Add term")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(ink.primary)
 
-            HStack(alignment: .center, spacing: 10) {
-                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 10) {
+            HStack(alignment: .center, spacing: 8) {
+                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
                     GridRow {
                         Text("Correct")
                             .gridColumnAlignment(.trailing)
-                        TextField("Intended text", text: $edit.correct)
-                            .dictionaryTextField()
+                        TextField("", text: $edit.correct, prompt: dictionaryPrompt("Intended text"))
+                            .dictionaryTextField(placeholder: "Intended text", isEmpty: edit.correct.isEmpty)
                             .dictionaryFieldContainer()
                             .focused($focusedField, equals: .correct)
                             .accessibilityLabel("Correct spelling")
                     }
-                    GridRow {
+                    // Taste review P2: the misheard-spelling error belongs to that field, so it sits right under it, in
+                    // the field's own cell (the row aligns on the label's and the field's first baseline).
+                    GridRow(alignment: .firstTextBaseline) {
                         Text("Misheard as")
-                        TextField(edit.isEditing ? "Add a misheard spelling" : "Misheard text", text: $edit.wrong)
-                            .dictionaryTextField()
-                            .dictionaryFieldContainer()
-                            .focused($focusedField, equals: .misheard)
-                            .accessibilityLabel("Misheard as")
+                        VStack(alignment: .leading, spacing: 5) {
+                            TextField("", text: $edit.wrong, prompt: dictionaryPrompt(edit.isEditing
+                                ? "Add a misheard spelling" : "Misheard text"))
+                                .dictionaryTextField(placeholder: edit.isEditing ? "Add a misheard spelling"
+                                    : "Misheard text", isEmpty: edit.wrong.isEmpty)
+                                .dictionaryFieldContainer()
+                                .focused($focusedField, equals: .misheard)
+                                .accessibilityLabel("Misheard as")
+                            if let warning {
+                                Label(warning, systemImage: "exclamationmark.circle")
+                                    .font(SettingsRowLabel.descriptionFont)
+                                    .foregroundStyle(ink.error)
+                                    .padding(.leading, 2)
+                                    .accessibilityLabel(warning)
+                            }
+                        }
                     }
                 }
+                .font(.system(size: 12))
+                .foregroundStyle(ink.note)
                 Button {
                     (edit.correct, edit.wrong) = (edit.wrong, edit.correct)
                 } label: {
                     Image(systemName: "arrow.up.arrow.down")
-                        .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(ink.primary)
+                        .frame(width: 26, height: 26)
+                        .background(Circle().fill(ink.controlFill))
+                        .contentShape(Circle())
                 }
+                .buttonStyle(.plain)
                 .help("Swap correct and misheard")
                 .accessibilityLabel("Swap correct and misheard text")
             }
 
             if Self.showsExistingTermHint(for: edit, existingEntries: existingEntries) {
                 Text(Self.existingTermHint)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            if let warning = edit.variantWarning(in: existingEntries) {
-                Text(warning)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .accessibilityLabel(warning)
+                    .font(SettingsRowLabel.descriptionFont)
+                    .foregroundStyle(ink.note)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if edit.isEditing, !edit.keptVariants.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Also heard as")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(SettingsRowLabel.descriptionFont)
+                        .foregroundStyle(ink.note)
                     FlowLayout(spacing: 6) {
                         ForEach(edit.keptVariants, id: \.self) { variant in
-                            HStack(spacing: 2) {
+                            HStack(spacing: 0) {
                                 Text(variant)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(ink.primary)
                                 Button {
                                     edit.removedVariants.append(variant)
                                 } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .foregroundStyle(.secondary)
-                                        .frame(width: 24, height: 24)
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 8.5, weight: .bold))
+                                        .foregroundStyle(ink.note)
+                                        .frame(width: 22, height: 22)
                                         .contentShape(Rectangle())
                                 }
-                                .buttonStyle(.borderless)
+                                .buttonStyle(.plain)
                                 .help("Remove misheard spelling \(variant)")
                                 .accessibilityLabel("Remove misheard spelling \(variant)")
                             }
                             .padding(.leading, 9)
-                            .background(Color(nsColor: .quaternaryLabelColor).opacity(0.24))
-                            .clipShape(RoundedRectangle(cornerRadius: 7))
+                            .padding(.trailing, 1)
+                            .background(Capsule(style: .continuous).fill(ink.controlFill))
                         }
                     }
                 }
             }
 
-            HStack {
+            HStack(spacing: 6) {
                 Spacer()
-                Button("Cancel") {
+                NotchDrawerButton(title: "Cancel", palette: ink.palette) {
                     onCancel()
                 }
                 .keyboardShortcut(.cancelAction)
-                Button(edit.isEditing ? "Save" : "Add") {
+                NotchDrawerButton(title: edit.isEditing ? "Save" : "Add", palette: ink.palette, prominent: true,
+                                  isEnabled: canSubmit) {
                     submit()
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(!edit.canSave || (requiresMisheard && edit.trimmedWrong.isEmpty)
-                    || edit.variantWarning(in: existingEntries) != nil)
             }
         }
-        .padding(18)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 12)
         .onChange(of: focusedField) { previous, next in
             if let opened = Self.focusRedirect(edit, from: previous, to: next, existingEntries: existingEntries) {
                 open(opened)
@@ -193,7 +213,9 @@ public struct DictionaryAddSheetView: View {
         return edit.openingExisting(entry)
     }
 
+    /// The hint asks for a misheard spelling, so it goes once one is typed (taste review P2).
     static func showsExistingTermHint(for edit: DictionaryTermEdit, existingEntries: [STTDictionaryEntry]) -> Bool {
-        edit.openedExisting || edit.existingTerm(in: existingEntries) != nil
+        guard edit.trimmedWrong.isEmpty else { return false }
+        return edit.openedExisting || edit.existingTerm(in: existingEntries) != nil
     }
 }

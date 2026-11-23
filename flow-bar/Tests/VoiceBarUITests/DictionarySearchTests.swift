@@ -48,7 +48,7 @@ final class DictionarySearchTests: XCTestCase {
         let section = try Self.dictionarySection()
         let row = try XCTUnwrap(section.components(separatedBy: "private var searchRow: some View {")
             .dropFirst().first?.components(separatedBy: "private func dictionaryEntryCard(").first)
-        XCTAssertTrue(row.contains(".dictionaryTextField()"))
+        XCTAssertTrue(row.contains(".dictionaryTextField(placeholder:"))
         XCTAssertTrue(row.contains(".focused($focusedEditorField, equals: .search)"))
         XCTAssertTrue(row.contains(".onExitCommand { dictionarySearch = \"\" }"))
         XCTAssertTrue(row.contains("dictionarySearch = \"\"\n                    focusedEditorField = .search"),

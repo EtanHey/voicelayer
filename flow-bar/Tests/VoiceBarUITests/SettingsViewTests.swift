@@ -42,14 +42,14 @@ final class SettingsViewTests: XCTestCase {
 
     func testDictionaryInputsUseVisibleFieldTreatmentAtRest() throws {
         let source = try settingsViewSource()
-        let visibleFieldCount = source.components(separatedBy: ".dictionaryTextField()").count - 1
+        let visibleFieldCount = source.components(separatedBy: ".dictionaryTextField(placeholder:").count - 1
 
         XCTAssertEqual(visibleFieldCount, 1, "the tab keeps only search; rename and variants live in the sheet (R4/D1)")
         let sheetURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/VoiceBarUI/DictionaryAddSheetView.swift")
         let sheetSource = try String(contentsOf: sheetURL)
-        XCTAssertEqual(sheetSource.components(separatedBy: ".dictionaryTextField()").count - 1, 2)
+        XCTAssertEqual(sheetSource.components(separatedBy: ".dictionaryTextField(placeholder:").count - 1, 2)
     }
 
     func testSearchFieldReadsAsSearchInput() throws {
