@@ -2,8 +2,8 @@
   "complete": true,
   "tlcJarSHA256": "011267fca25d0752cf18894dd585cd28b96960c112ea8a20b823ea770e7e10cd",
   "hashes": {
-    "formal/playback-session/PlaybackSession.tla": "9a7f240bdc400f392b61bfcc608ee905ffbe80f8703f1975c47f2c2e87e2d766",
-    "formal/playback-session/checks.json": "c7c8e6478b93b728c49094a1e0f3db97dd1e8d1ed382b67bcf8ed5b68e33c9cd",
+    "formal/playback-session/PlaybackSession.tla": "a29c40d8265386a1d41e50c5074fecb9c3494bcf3d9127ea8a7dfdda90993ab0",
+    "formal/playback-session/checks.json": "0e6f2313138e58a3a86e312e79cfb51f5430aae1fd530bf804a068d8e2ce06b6",
     "formal/check-model.py": "619da5cb15f1acb7d1c9ecb30fcad693dc8b7ee8eff44252fcf277709bb68b22",
     "formal/graph_retention.py": "14c4f44fd37991b94cd1bd0e83a6571039dc81d7688b3ff74dc898455f2b7ef7",
     "formal/playback-session/ZombieMutant.cfg": "6db2541826eb6e63989404e8d0b60bd62f02378ebe7f904688d5c009af3432da",
@@ -12,13 +12,16 @@
     "formal/playback-session/StrandMutant.cfg": "b3b890172011d19298a68f8f90b83f2cf34a9d7ae47f3a0d8889fb48ee527d64",
     "formal/playback-session/PrevOverlapMutant.cfg": "6cbf19d1071aa83088b8f1f6a1f6566ee9906163dae02d7f20c0485130132853",
     "formal/playback-session/ClientFixed.cfg": "1769110d1f619a1ed45fc953e26d4f0782ea6cbac6dd0b2856a485426992d453",
+    "formal/playback-session/AskDictationFixed.cfg": "0142c4fabe77bfbc6a6c8db5232b8c9896b982330bfd994fa3b7f0a0a6306414",
     "formal/playback-session/JumpBackMutant.cfg": "ceb7400862c84cfccd0b3387d818365bac1e0b7c9cd0b20e92034d63a49bd7d2",
+    "formal/playback-session/AskReservationRetainedMutant.cfg": "aeab1600904d0bddbe6799311f16d024ed1a1a1039eceda4ad1300be898e65ff",
     "formal/playback-session/OldPrevReturnMutant.cfg": "1162b95b0e9936a5c6b406a83af086d11c50cea089b5ea0009ce0ec10c5dbea5",
     "formal/playback-session/EarlySuccessorMutant.cfg": "9df9d4832bdd47c2b4182b7f2bd64903b64d322e4aec9975aa73b0b981cadc32",
     "formal/playback-session/NoRestoreMutant.cfg": "5060cab6698ddf4cd145f1be8c87f79b23358ae377569a1f0b4bc5e0cfff10bc",
     "formal/playback-session/SameQueuesMutant.cfg": "4918b8340cb0406ff4b1fa84a51e4fb1d677e19c82d5e3e727369061910bd741",
     "formal/playback-session/OverlapMutant.cfg": "778d44437c391005d91475b013c8382497fbd5b963a5f25ff86a8edbd4b47550",
     "formal/playback-session/EarlyMicMutant.cfg": "a0aec1e3c23d1a38b2bcefee78ab8bf11d636c0d2c3a1ed8f20b63a127eeb033",
+    "formal/playback-session/AskDictationEarlyMutant.cfg": "3e7024a5ff2bc20cde3d81314b72ab80a2031b13db314067c828ba4612144d57",
     "formal/playback-session/AskCancelsReadMutant.cfg": "c392a6c85adde577194f8bb50c96387dfe509f5eb733825914bb64b4e18188bc",
     "formal/playback-session/Liveness.cfg": "06e1bb916c19a58ef8b4c3295ef19ce1cc4ecbc437ba186a856b481adbb4252b",
     "formal/playback-session/ClockResetMutant.cfg": "add92d0049b642f8b4021e4a3cb03e873e8a8d60d2f9627cf5c1a549ec7e0a60",
@@ -29,8 +32,14 @@
     "src/playback/session.ts": "7cdd7497525f5b9371d39617ca9e0f0714d4e40c481db9f9a7a57212f1f7b449",
     "src/playback/ledger.ts": "1882ab3872f3bb2a1c076a4cd1446112f128d63f06b2dc5bfa16d38f57aad165",
     "src/__tests__/playback-session.test.ts": "17b75406021a2e56ccc54496432f13166e005a6315c4d2b968023aa573d5193c",
-    "src/tts.ts": "83e934ffeb0bb89f1ea8b7046e4d92bd578a7ca93ec8107744a7a7c96622c4ed",
+    "src/tts.ts": "3bf5ba6583a19d22e8ef6e960336910465fb86f1fa0d1b57f27f00e358c20c80",
     "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "7abe28bdce68bfa7b3b6bdf20713c580b2b252827ad64fa325659816842cdee5",
+    "src/ask-prompt-interruption.ts": "84542c3a9b95a051c882dcaab77f55a1e80d4e01485be9a7e3de984a0392979f",
+    "src/handlers.ts": "ac3e6dca87333f86b9ad07993f1d61e1ac2d51798d7b8335141bcab55b39f8c4",
+    "src/f5-capture.ts": "3f445b9fd24ea92d9eb176c39f06f3bfd9a37eeca9ab537326aaa5540ded8740",
+    "src/socket-handlers.ts": "ae4d17c53965cbee48bd629de4a79e1a286d9e7fd105682dacdde3268d1bf890",
+    "src/__tests__/pause-ask.test.ts": "8fcf51e46a585922f62e0f2da32ab5ad9045a4e56d09d480a40bba78c47cd81d",
+    "flow-bar/Tests/VoiceBarUITests/VoiceStateRecoveryTests.swift": "799f66b92a08d5c9e318169720f640171c590406599c17786b8e8cd52465801e",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {
@@ -78,6 +87,12 @@
     ],
     "EndedReplayNotShownRunning": [
       "OldReplayShownMutant"
+    ],
+    "DictationOwnsQuietVoice": [
+      "AskDictationEarlyMutant"
+    ],
+    "DictationEventuallyAdmitted": [
+      "AskReservationRetainedMutant"
     ]
   },
   "graphHashes": {
@@ -201,8 +216,8 @@
       "kind": "temporal",
       "target": "ParkedEventuallyReleased",
       "status": "EXPECTED_FAIL",
-      "generated": 196922,
-      "distinct": 62917
+      "generated": 144023,
+      "distinct": 46929
     },
     "AskCancelsReadMutant": {
       "role": "mutant",
@@ -243,6 +258,30 @@
       "status": "EXPECTED_FAIL",
       "generated": 1416,
       "distinct": 740
+    },
+    "AskDictationFixed": {
+      "role": "positive",
+      "kind": "pass",
+      "target": null,
+      "status": "PASS",
+      "generated": 6,
+      "distinct": 6
+    },
+    "AskReservationRetainedMutant": {
+      "role": "mutant",
+      "kind": "temporal",
+      "target": "DictationEventuallyAdmitted",
+      "status": "EXPECTED_FAIL",
+      "generated": 5,
+      "distinct": 5
+    },
+    "AskDictationEarlyMutant": {
+      "role": "mutant",
+      "kind": "invariant",
+      "target": "DictationOwnsQuietVoice",
+      "status": "EXPECTED_FAIL",
+      "generated": 9,
+      "distinct": 7
     }
   }
 }
