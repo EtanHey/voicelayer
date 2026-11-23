@@ -42,8 +42,9 @@ final class WaveformViewTests: XCTestCase {
         let processing = VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(mode: .transcribing, statusText: "Transcribing")
         )
-        XCTAssertEqual(processing.geometry.trailingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth)
-        XCTAssertEqual(processing.geometry.leadingWingWidth, VoiceBarNotchContract.recordingTrailingWingWidth)
+        XCTAssertEqual(processing.geometry.trailingWingWidth, VoiceBarNotchContract.fixedWingWidth)
+        // Owner r2: the transcribing left wing is the launcher's (the chevron's ink on the left-side rule).
+        XCTAssertEqual(processing.geometry.leadingWingWidth, VoiceBarNotchContract.launcherLeadingWingWidth)
 
         let calibratedInset = VoiceBarNotchContract.hardwareHorizontalCalibrationInset
         let speaking = VoiceBarPresentation.notchPresentation(
@@ -167,7 +168,7 @@ final class WaveformViewTests: XCTestCase {
         )
 
         for (state, presentation, label, drawsMeter) in [
-            (processingState, processingPresentation, "processing", true),
+            (processingState, processingPresentation, "processing", false),
             (speakingState, speakingPresentation, "speaking", true),
         ] {
             let image = try renderBar(
@@ -427,8 +428,9 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertFalse(source.contains("centerOutHistory"))
     }
 
-    /// c9-P (Etan, 2026-11-12): the spinner stays left; on the right the recording meter row stays and ripples (the
-    /// same row as recording, outside the band switch so it keeps its identity), and History + Settings leave it.
+    /// c9-P: in the left wing the spinner stays nearest the notch, with the microphone on its outer side.
+    /// On the right the recording meter row stays and ripples (the same row as recording, outside the band switch
+    /// so it keeps its identity), and History + Settings leave it.
     func testTranscribingShowsTheSpinnerLeftAndTheRecordingMeterRippleRight() throws {
         let source = try barViewSource()
         let leading = try XCTUnwrap(source.components(separatedBy: "private var notchLeadingContent").dropFirst().first)
@@ -445,19 +447,30 @@ final class WaveformViewTests: XCTestCase {
         let transcribingBranch = try XCTUnwrap(leadingCompactStatusBranch.components(
             separatedBy: "if notchPresentation.bandState == .compactStatus, state.mode == .transcribing {").dropFirst().first)
             .components(separatedBy: "} else if")[0]
-        let spinner = try XCTUnwrap(transcribingBranch.range(of: "transcriptionSpinner")).lowerBound
-        let chevron = try XCTUnwrap(transcribingBranch.range(of: "microphonePickerButton")).lowerBound
-        XCTAssertLessThan(spinner, chevron, "the spinner sits left of the 0510 N9 microphone control")
-        XCTAssertTrue(leadingCompactStatusBranch.contains("ProcessingSpinner(color: Theme.processingRippleColor(for: notchAppearance))"))
+        XCTAssertTrue(transcribingBranch.contains("if VoiceBarPresentation.transcribingCaretNextToCore"))
+        let geometry = VoiceBarPresentation.notchPresentation(from: .init(mode: .transcribing)).geometry
+        let hits = VoiceBarNotchHitRegion(geometry: geometry, configuration: .init(leadingControlCount: 1,
+            leadingCoreInset: VoiceBarPresentation.transcribingMicrophoneCoreInset)).rects
+        XCTAssertEqual(hits.count, 1)
+        XCTAssertEqual(geometry.coreOriginX - hits[0].midX, 20) // owner r2: 10 pt off the core, not 13.5
+        let spinnerCenter = CGPoint(x: geometry.coreOriginX - VoiceBarPresentation.transcribingSpinnerCoreInset - 10,
+                                    y: geometry.topHeight / 2)
+        XCTAssertFalse(hits[0].contains(spinnerCenter), "the outer decorative spinner must never receive a mic click")
+        XCTAssertTrue(VoiceBarPresentation.transcribingCaretNextToCore)
+        XCTAssertEqual(VoiceBarPresentation.transcribingMicrophoneCoreInset,
+                       VoiceBarNotchContract.launcherLeadingContentInset, "the selected caret/mic is nearest the core")
+        XCTAssertEqual(VoiceBarPresentation.transcribingSpinnerCoreInset - VoiceBarPresentation.transcribingMicrophoneCoreInset,
+                       26, "the decorative spinner is one 20 pt slot plus 6 pt spacing outside the microphone")
+        XCTAssertTrue(leadingCompactStatusBranch.contains("ProcessingSpinner(transcribing: notchAppearance)"))
         XCTAssertFalse(leadingCompactStatusBranch.contains("statusLabel"))
         XCTAssertFalse(leadingCompactStatusBranch.contains("WaveformView("))
         XCTAssertTrue(trailingBranch.contains("if showsRecordingMeterRow {\n            recordingMeterRow"))
-        XCTAssertTrue(trailingBranch.contains("case .compactStatus: state.mode == .transcribing"))
+        XCTAssertTrue(trailingBranch.contains("case .compactStatus: false"))
         XCTAssertFalse(trailingBranch.contains("notchWaveform(style:"))
-        let compactTranscribing = try XCTUnwrap(compact.components(separatedBy: "case .transcribing, .recording:")
+        let compactTranscribing = try XCTUnwrap(compact.components(separatedBy: "case .transcribing:")
             .dropFirst().first).components(separatedBy: "case .speaking:")[0]
-        XCTAssertFalse(compactTranscribing.contains("historyButton"))
-        XCTAssertFalse(compactTranscribing.contains("settingsButton"))
+        XCTAssertTrue(compactTranscribing.contains("historyButton"))
+        XCTAssertTrue(compactTranscribing.contains("settingsButton"))
         XCTAssertTrue(source.contains("private var notchWaveform"))
         XCTAssertTrue(source.contains("VoiceBarNotchWaveform("))
     }

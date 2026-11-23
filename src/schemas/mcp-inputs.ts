@@ -59,6 +59,12 @@ const voiceAskArchiveId = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[a-f0-9]{8}$/);
 
+/** Read-only retained Ask lookup. */
+export const VoiceAskResultsSchema = z.object({
+  archive_id: voiceAskArchiveId.optional(),
+  limit: z.number().int().min(1).max(20).default(5),
+}).strict();
+
 const voiceAskRetranscriptionSchema = z
   .object({
     retranscribe_archive_id: voiceAskArchiveId,

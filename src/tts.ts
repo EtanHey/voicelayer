@@ -90,10 +90,11 @@ import { SpeechWordTimeline } from "./tts/speech-words";
 import { isPlaybackSpeed, resolvePauseCursorMs } from "./playback/session";
 import { narrationSource, setNarrationSource } from "./narration/source";
 import { createNarrationSource } from "./narration/adapter";
-import { planUtterances, synthesizeBounded, type AssembleNarration } from "./narration/utterances";
+import { planUtterances, synthesizeBounded } from "./narration/utterances";
+import { NARRATION_MP3_BITRATE } from "./narration/engines";
 import type { NarrationAudio } from "./narration/source";
 import { ledgerAskBegin, ledgerAskCouldNotPark, ledgerAskRestore, ledgerRecorderExit, ledgerEnded, ledgerPaused, ledgerPlayerExited, ledgerPlayerStarted,
-  ledgerPreviousHold, ledgerPreviousReturn, ledgerReplayFromStart, ledgerResumed, ledgerSeek, ledgerStopAll, ledgerStopped, ledgerWord, currentPlaybackSpeed,
+  ledgerPreviousHold, ledgerPreviousReturn, ledgerReplayFromStart, ledgerResumed, ledgerSeek, ledgerPausedSeek, ledgerStopAll, ledgerStopped, ledgerWord, currentPlaybackSpeed,
   setLedgerPlaybackSpeed, setPreviousReadProbe } from "./playback/ledger";
 import { startCloneTiming } from "./tts/clone-timing";
 import { combineHistoryTimings, clipAlignedWordsToText, clipWordBoundariesToText, replayDisplayText } from "./tts/history-timings";
@@ -624,6 +625,9 @@ setNarrationSource(createNarrationSource({
   edge: (text, voice, rate, outFile, signal, retries, prosody) =>
     synthesizeEdgeChunk(text, voice, rate, outFile, EDGE_WORDS_SCRIPT, signal, retries, prosody),
   clone: (text, voice, signal) => synthesizeCloned(text, voice, signal),
+  // T28: long cloned requests are split under the clone's reference-length wall and joined here.
+  assemble: (parts, outFile, signal) => assembleNarration(parts, outFile, signal, NARRATION_MP3_BITRATE.clone),
+  dispose: file => { try { unlinkSync(file); } catch {} },
 }));
 
 /** An edge voice through the narration source, in the chunk shape the readers use. */
@@ -635,7 +639,8 @@ async function narrateEdge(text: string, voice: string, rate: string, outFile: s
 }
 
 /** Utterance audio and silences joined in order, resampled to one 24 kHz mono stream. */
-const assembleNarration: AssembleNarration = async (parts, outFile, signal) => {
+export async function assembleNarration(parts: Array<{ file: string } | { silenceMs: number }>, outFile: string,
+  signal: AbortSignal | undefined, mp3Bitrate: string): Promise<void> {
   const argv = ["ffmpeg", "-nostdin", "-y"];
   const chains: string[] = [];
   parts.forEach((part, index) => {
@@ -645,10 +650,10 @@ const assembleNarration: AssembleNarration = async (parts, outFile, signal) => {
   });
   const inputs = parts.map((_, index) => `[a${index}]`).join("");
   argv.push("-filter_complex", `${chains.join(";")};${inputs}concat=n=${parts.length}:v=0:a=1[out]`,
-    "-map", "[out]", "-ac", "1", "-ar", "24000", "-b:a", "48k", outFile);
+    "-map", "[out]", "-ac", "1", "-ar", "24000", "-b:a", mp3Bitrate, outFile);
   await runAudioCommand(argv, signal);
   if (!existsSync(outFile) || statSync(outFile).size === 0) throw new Error("assembled narration is empty");
-};
+}
 
 /**
  * Lane B: voice_ask narration as bounded utterances with pauses, through the one NarrationSource (lead,
@@ -659,7 +664,8 @@ async function narrateBounded(engine: "edge" | "clone", text: string, voice: str
   signal?: AbortSignal): Promise<NarrationAudio | null> {
   try {
     return await synthesizeBounded({ text, engine, voice, rate, outFile, signal }, {
-      source: narrationSource(), assemble: assembleNarration,
+      source: narrationSource(),
+      assemble: (parts, out, abort) => assembleNarration(parts, out, abort, NARRATION_MP3_BITRATE[engine]),
       probeMs: file => probeAudioDurationMs(file) ?? 0,
       dispose: file => { try { unlinkSync(file); } catch {} try { unlinkSync(file.replace(".mp3", ".meta.ndjson")); } catch {} },
     });
@@ -1052,6 +1058,8 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
   wordBoundaries?: WordBoundary[];
   /** Timings already measured for this file (replay, or a re-played chunk); broadcast at start. */
   preparedAmplitude?: PlaybackAmplitudeExtraction;
+  /** Full-file samples shared by replacement players and retained readback for this chunk. */
+  amplitudeCache?: { envelope?: PlaybackAmplitudeEnvelope };
   alignedWords?: AlignedWordBoundary[];
   cloneProjection?: ReturnType<typeof projectSpeakableText>;
   prosodyIdentity?: string;
@@ -1135,6 +1143,8 @@ interface ParkedPlayback {
   ready: boolean;
   failed: boolean;
   resumeRequested: boolean;
+  /** A long read's silent cursor; its retained chunk is selected only when Play is requested. */
+  wordSeek?: { offsetMs: number; word: number; resume(): SeekResult };
 }
 type ControlScope = { id?: string; generation?: number };
 
@@ -1147,6 +1157,9 @@ interface ActivePlayback {
   rate: number;
   watchdog?: ReturnType<typeof setTimeout>;
   watchdogTimedOut?: boolean;
+  /** T17: wall time this player's audio needs at its rate, and when it was spawned (overrun diagnostics). */
+  audioWallMs?: number;
+  spawnedAt?: number;
   timing?: ReturnType<typeof startCloneTiming>;
 }
 
@@ -1197,7 +1210,18 @@ const LOW_PRIORITY_TTL_MS = 10_000;
 const POSITION_HEARTBEAT_MS = 250;
 const NORMAL_PRIORITY_TTL_MS = 30_000;
 // Allow player startup/teardown without mistaking synthesis or decoder time for playback.
-const PLAYER_WATCHDOG_MARGIN_MS = 5_000;
+// T17 (M4, 2026-11-18): under host starvation (clone synthesis 30x and waveform decode 50x slower than normal,
+// mem_pressure=warning) a healthy afplay outlived its 4266 ms of audio by more than a fixed 5 s and was SIGKILLed,
+// ending the read. Its startup and the daemon noticing its exit both stretch with load, so the bound is generous:
+// twice the remaining audio plus 30 s. A truly stuck player is still killed; a slow one never is.
+const PLAYER_WATCHDOG_MARGIN_MS = 30_000;
+const PLAYER_WATCHDOG_AUDIO_FACTOR = 2;
+// The old 5 s bound survives only as a diagnostic: a player exiting later than this past its audio is logged.
+const PLAYER_OVERRUN_WARN_MS = 5_000;
+// A player told to stop has no audio left to play; one ignoring SIGTERM this long is escalated to SIGKILL.
+const PLAYER_TERM_ESCALATION_MS = 5_000;
+// An expired deadline waits this long before the kill, so an exit the loop has not processed yet wins.
+const PLAYER_WATCHDOG_CONFIRM_MS = 250;
 let playbackIdCounter = 0;
 
 function nextPlaybackId(): string {
@@ -1424,7 +1448,7 @@ class PlaybackQueueManager {
       audioFile,
       sliceFile: metadata?.seekSliceFile,
       skipAmplitudeDecode: metadata?.isSeek,
-      metadata: metadata ? { ...metadata } : undefined,
+      metadata: metadata ? { ...metadata, amplitudeCache: metadata.amplitudeCache ?? {} } : undefined,
       priority,
       enqueuedAt: Date.now(),
       expiresAt: Date.now() + ttlForPriority(priority),
@@ -1635,7 +1659,8 @@ class PlaybackQueueManager {
 
   /** Quiesce the owned player (never SIGSTOP) and keep the job, cursor and audio for Resume. */
   pause(scope: ControlScope, elapsedMs?: number, owner: PlaybackPauseOwner = "user"): SeekResult {
-    const globalOffset = (job: PlaybackJob) => (job.metadata?.longRead?.chunk_start_ms ?? 0) + (job.metadata?.localOffsetMs ?? 0);
+    const globalOffset = (job: PlaybackJob) => this.parked?.wordSeek?.offsetMs ??
+      (job.metadata?.longRead?.chunk_start_ms ?? 0) + (job.metadata?.localOffsetMs ?? 0);
     const preparingScope = f5CaptureActive && this.parked?.owner === "f5" && owner === "user" &&
       scope.id !== undefined && scope.id === this.parked.job.metadata?.longRead?.id &&
       this.parked.job.metadata.longRead.chunk_index === 0;
@@ -1738,9 +1763,14 @@ class PlaybackQueueManager {
       : { outcome: "noop", reason: "not paused" };
     if (this.isStale(parked.job, scope)) return staleControl(staleIdentity(parked.job));
     if (f5CaptureActive || (getEffectiveRecordingState() !== "idle" && !this.isProcessingRead(parked.job.wordTimeline.utteranceId)) || (this.captureAdmission && !this.ownsPausablePrompt(parked.job) && !this.isProcessingRead(parked.job.wordTimeline.utteranceId))) return { outcome: "reject", reason: "busy" };
-    const offset_ms = (parked.job.metadata?.longRead?.chunk_start_ms ?? 0) + parked.offsetMs;
+    const offset_ms = parked.wordSeek?.offsetMs ?? (parked.job.metadata?.longRead?.chunk_start_ms ?? 0) + parked.offsetMs;
     if (parked.resumeRequested) return { outcome: "noop", reason: "resuming", offset_ms };
     parked.resumeRequested = true;
+    if (parked.wordSeek) {
+      const result = parked.wordSeek.resume();
+      if (result.outcome !== "accept") parked.resumeRequested = false;
+      return result;
+    }
     if (parked.ready) this.releaseParked(parked);
     else if (parked.failed) { parked.failed = false; this.prepareParked(parked); }
     return { outcome: "accept", offset_ms };
@@ -1755,7 +1785,7 @@ class PlaybackQueueManager {
         if (!this.holds(parked) || job.completed) { disposeSeekSlice(slice); return; }
         job.sliceFile = slice;
         parked.ready = true;
-        if (parked.resumeRequested) this.releaseParked(parked);
+        if (parked.resumeRequested && !parked.wordSeek) this.releaseParked(parked);
       } catch (error) {
         if (!this.holds(parked)) return;
         parked.failed = true;
@@ -1802,17 +1832,20 @@ class PlaybackQueueManager {
   }
 
   private broadcastPlaybackState(job: PlaybackJob, state: PlaybackStateEvent["state"]): void {
-    const local = job.metadata?.localOffsetMs ?? 0;
+    const sought = this.parked?.job === job ? this.parked.wordSeek : undefined;
+    const location = sought ? job.wordTimeline.positionOf(sought.word) : undefined;
+    const local = location?.localOffsetMs ?? job.metadata?.localOffsetMs ?? 0;
     const { word_index, word_count } = buildPlaybackOutcome(job, "interrupted", undefined, local);
     const duration = job.metadata?.getUtteranceDurationMs?.() ?? job.metadata?.utteranceDurationMs ?? job.metadata?.durationMs;
     publishPlaybackState({ type: "playback_state", state, playback_id: job.id, generation: job.lifecycle.generation,
-      offset_ms: (job.metadata?.longRead?.chunk_start_ms ?? 0) + local, chunk_offset_ms: local,
+      offset_ms: sought?.offsetMs ?? (job.metadata?.longRead?.chunk_start_ms ?? 0) + local, chunk_offset_ms: local,
       ...(state === "paused" ? { pause_owner: this.parked?.owner ?? "user" } : {}),
       ...(duration !== undefined ? { duration_ms: duration } : {}),
       // T1: where this player's audio ends, from its long_read.chunk_start_ms (as on its speaking edge).
       ...(job.metadata?.durationMs && job.metadata.durationMs > 0 ? { chunk_duration_ms: job.metadata.durationMs } : {}),
-      ...(word_count !== undefined ? { word_index: job.pausedWordIndex ?? word_index ?? 0, word_count } : {}),
-      ...(job.metadata?.longRead ? { long_read: job.metadata.longRead } : {}) },
+      ...(word_count !== undefined ? { word_index: sought?.word ?? job.pausedWordIndex ?? word_index ?? 0, word_count } : {}),
+      ...(job.metadata?.longRead ? { long_read: { ...job.metadata.longRead,
+        ...(location ? { chunk_index: location.chunkIndex, chunk_start_ms: location.chunkStartMs } : {}) } } : {}) },
       state === "paused" ? this.parked?.owner ?? "user" : job.resumeOwner ?? "user");
   }
 
@@ -1910,6 +1943,45 @@ class PlaybackQueueManager {
     return { outcome: "accept", offset_ms: offset, clamped: offsetMs > duration };
   }
 
+  seekPausedWord(utteranceId: string, wordIndex: number, commandId?: string,
+    longRead?: { seek(offsetMs: number): SeekResult; cancelPendingSeek?(): void }): SeekResult {
+    const parked = this.parked;
+    if (!parked || parked.job.wordTimeline.utteranceId !== utteranceId) return { outcome: "reject", reason: "stale utterance" };
+    if (f5CaptureActive || this.captureAdmission) return { outcome: "reject", reason: "busy" };
+    const { job } = parked;
+    return job.wordTimeline.seek(wordIndex, offset => {
+      if (longRead) {
+        longRead.cancelPendingSeek?.();
+        parked.wordSeek = { offsetMs: offset, word: wordIndex, resume: () => longRead.seek(offset) };
+        parked.resumeRequested = false;
+        parked.owner = "user";
+        job.lifecycle.generation++;
+        ledgerPausedSeek(sessionIdOf(job), wordIndex, offset);
+        this.broadcastPlaybackState(job, "paused");
+      } else {
+        parked.controller.abort();
+        job.pausedWordIndex = wordIndex;
+        ledgerPausedSeek(sessionIdOf(job), wordIndex, offset);
+        this.park(job, offset, "user");
+      }
+      return { outcome: "accept", offset_ms: offset };
+    }, commandId);
+  }
+
+  failPausedWordSeek(id: string): void {
+    const parked = this.parked;
+    if (!parked?.wordSeek || sessionIdOf(parked.job) !== id) return;
+    parked.resumeRequested = false;
+    this.broadcastPlaybackState(parked.job, "paused");
+  }
+
+  commitPausedWordSeek(id: string, offsetMs: number): void {
+    const parked = this.parked;
+    if (!parked?.resumeRequested || parked.wordSeek?.offsetMs !== offsetMs || sessionIdOf(parked.job) !== id) return;
+    ledgerResumed(sessionIdOf(parked.job));
+    this.broadcastPlaybackState(parked.job, "resumed");
+  }
+
   seekWord(utteranceId: string, wordIndex: number, commandId?: string): SeekResult {
     const job = this.current?.job ?? this.restartAfterTermination ?? this.preparing?.job;
     if (!job || job.completed || job.wordTimeline.utteranceId !== utteranceId) return { outcome: "reject", reason: "stale utterance" };
@@ -1967,7 +2039,7 @@ class PlaybackQueueManager {
       parked.job.onParkedChange?.(false);
       this.askHeld = { parked, from: "paused" };
       this.emitQueueSnapshot(); this.resolveIfIdle(); this.processNext();
-      return { held: true, from: "paused", sessionId: sessionIdOf(parked.job), word: globalWord(parked.job, parked.job.pausedWordIndex ?? 0) };
+      return { held: true, from: "paused", sessionId: sessionIdOf(parked.job), word: parked.wordSeek?.word ?? globalWord(parked.job, parked.job.pausedWordIndex ?? 0) };
     }
     if (this.captureAdmission) return { held: false };
     // Paused-ask stack (D1/D2): a resumed decode or a seek's slice can sit in the queue as a pending job of the read;
@@ -2220,9 +2292,15 @@ class PlaybackQueueManager {
       this.processNext();
       return;
     }
-    if (playbackAmplitude) next.decodedAmplitude = playbackAmplitude;
-    next.playbackAmplitude = playbackAmplitude ?? (next.resuming
-      ? envelopeFromOffset(next.decodedAmplitude, next.metadata?.localOffsetMs ?? 0) : undefined);
+    if (playbackAmplitude) {
+      next.decodedAmplitude = playbackAmplitude;
+      if (next.metadata?.amplitudeCache) next.metadata.amplitudeCache.envelope = playbackAmplitude;
+    }
+    // Every replacement player starts its envelope at its own local offset, including Seek/Replay.
+    next.playbackAmplitude = envelopeFromOffset(
+      playbackAmplitude ?? next.metadata?.amplitudeCache?.envelope ?? next.decodedAmplitude,
+      next.metadata?.localOffsetMs ?? 0,
+    );
     const rate = currentPlaybackSpeed();
     let proc: ReturnType<typeof Bun.spawn>;
     try {
@@ -2359,6 +2437,11 @@ class PlaybackQueueManager {
     if (this.current?.proc !== proc || this.current.job !== job) return;
     this.current.timing?.cancel();
     clearTimeout(this.current.watchdog);
+    const { audioWallMs, spawnedAt } = this.current;
+    const overrunMs = audioWallMs !== undefined && spawnedAt !== undefined ? Date.now() - spawnedAt - audioWallMs : 0;
+    if (overrunMs > PLAYER_OVERRUN_WARN_MS) {
+      console.warn(`[voicelayer] Playback overrun: ${job.id} generation ${job.lifecycle.generation} exited ${Math.round(overrunMs)}ms after its ${Math.round(audioWallMs!)}ms of audio (host load?)`);
+    }
     if (this.seekPreparation?.job === job) this.cancelSeekPreparation();
     const elapsedMs = playerClockMs(this.current);
     this.stopProgressTimer();
@@ -2581,45 +2664,67 @@ class PlaybackQueueManager {
     return Math.max(0, Math.min(1, elapsedMs / durationMs));
   }
 
+  /** Each player is armed once at its own spawn, for its own offset and rate: a seek, Replay, Resume or speed change
+   * spawns a new player with a fresh budget, and terminating one re-arms it for SIGTERM escalation. */
   private armPlayerWatchdog(active: ActivePlayback, durationMs: number | null): void {
     if (!durationMs || !Number.isFinite(durationMs) || durationMs <= 0) return;
     // Wall time to the end is the remaining audio divided by the speed (0.75× takes longer).
     const remainingMs = Math.max(0, durationMs - (active.job.metadata?.localOffsetMs ?? 0)) / active.rate;
-    const budgetMs = remainingMs + PLAYER_WATCHDOG_MARGIN_MS;
+    active.audioWallMs = remainingMs;
+    active.spawnedAt = Date.now();
+    const budgetMs = remainingMs * PLAYER_WATCHDOG_AUDIO_FACTOR + PLAYER_WATCHDOG_MARGIN_MS;
+    this.armWatchdog(active, budgetMs, `outlived its ${Math.round(remainingMs)}ms of audio by ${Math.round(budgetMs - remainingMs)}ms`);
+  }
+
+  private armWatchdog(active: ActivePlayback, budgetMs: number, reason: string): void {
+    clearTimeout(active.watchdog);
+    active.watchdog = undefined;
     // Node/Bun overflow very long timers to 1 ms; never turn that into an early kill.
     if (!Number.isFinite(budgetMs) || budgetMs > 2_147_483_647) return;
-    const generation = active.job.lifecycle.generation;
+    const owns = () => !active.watchdogTimedOut && (this.current === active || this.terminating.get(active.proc.pid) === active);
     active.watchdog = setTimeout(() => {
-      if (active.watchdogTimedOut || (this.current !== active && this.terminating.get(active.proc.pid) !== active)) return;
-      active.watchdogTimedOut = true;
-      if (this.current === active) {
-        if (this.seekPreparation?.job === active.job) this.cancelSeekPreparation();
-        this.current = null;
-        this.stopProgressTimer();
-        this.terminate(active, "SIGKILL");
-        completeJob(active.job, buildPlaybackOutcome(active.job, "failed", "player-error", playerClockMs(active)));
-      } else {
-        // A cancelled/replayed player can ignore SIGTERM. Keep its reap fence held.
-        try { active.proc.kill("SIGKILL"); } catch {}
-      }
-      // A seek decoder can outlive the player; only the terminal work barrier
-      // proves quiet. A continuing Replay retains its normal completion edge.
-      if (active.job.completed) void active.job.lifecycle.playerExited.then(
-        () => broadcastPlaybackIdleIfSpeakerClear(), () => {},
-      );
-      const message = `Playback watchdog: ${active.job.id} generation ${generation} exceeded ${remainingMs}ms + ${PLAYER_WATCHDOG_MARGIN_MS}ms margin; forcing SIGKILL`;
-      console.warn(`[voicelayer] ${message}`);
-      broadcast({ type: "error", source: "playback", message, recoverable: true });
-      this.emitQueueSnapshot();
-      this.resolveIfIdle();
-      this.processNext();
+      if (!owns()) return;
+      // A player that exited while the daemon was busy has an exit event still queued behind this timer.
+      // Give the loop one more turn to deliver it (finish/finishTermination clear this timer) before killing.
+      active.watchdog = setTimeout(() => this.watchdogExpired(active, reason, owns), PLAYER_WATCHDOG_CONFIRM_MS);
     }, budgetMs);
+  }
+
+  private watchdogExpired(active: ActivePlayback, reason: string, owns: () => boolean): void {
+    if (!owns()) return;
+    const generation = active.job.lifecycle.generation;
+    active.watchdogTimedOut = true;
+    if (this.current === active) {
+      if (this.seekPreparation?.job === active.job) this.cancelSeekPreparation();
+      this.current = null;
+      this.stopProgressTimer();
+      this.terminate(active, "SIGKILL");
+      completeJob(active.job, buildPlaybackOutcome(active.job, "failed", "player-error", playerClockMs(active)));
+    } else {
+      // A cancelled/replayed player can ignore SIGTERM. Keep its reap fence held.
+      try { active.proc.kill("SIGKILL"); } catch {}
+    }
+    // A seek decoder can outlive the player; only the terminal work barrier
+    // proves quiet. A continuing Replay retains its normal completion edge.
+    if (active.job.completed) void active.job.lifecycle.playerExited.then(
+      () => broadcastPlaybackIdleIfSpeakerClear(), () => {},
+    );
+    const message = `Playback watchdog: ${active.job.id} generation ${generation} ${reason}; forcing SIGKILL`;
+    console.warn(`[voicelayer] ${message}`);
+    broadcast({ type: "error", source: "playback", message, recoverable: true });
+    this.emitQueueSnapshot();
+    this.resolveIfIdle();
+    this.processNext();
   }
 
   private terminate(active: ActivePlayback, signal: "SIGTERM" | "SIGKILL" = "SIGTERM"): void {
     active.timing?.cancel();
     const pid = active.proc.pid;
     this.terminating.set(pid, active);
+    // A stopped player has no audio left: its old playing budget no longer applies, only SIGTERM escalation.
+    if (signal === "SIGTERM" && !active.watchdogTimedOut) {
+      this.armWatchdog(active, PLAYER_TERM_ESCALATION_MS, `ignored SIGTERM for ${PLAYER_TERM_ESCALATION_MS}ms`);
+    }
     try {
       active.proc.kill(signal);
     } catch {}
@@ -3192,7 +3297,7 @@ export function resumePlayback(scope: { id?: string; generation?: number } = {})
 export function seekPlayback(offsetMs: number, scope: "current" | "readback" = "current", readbackID?: string): SeekResult {
   if (!Number.isFinite(offsetMs) || offsetMs < 0) return { outcome: "reject", reason: "invalid offset" };
   if (getEffectiveRecordingState() !== "idle") return { outcome: "reject", reason: "busy" };
-  // Paused seek (silent cursor move) belongs to P12; never restart a parked item here.
+  // The offset scrubber stays disabled while paused; word clicks use seekPausedWord.
   if (isPlaybackPaused()) return { outcome: "reject", reason: "paused" };
   if (scope === "readback") {
     if (getPlaybackQueueDepth() > 0 || activeLongRead || hasPendingSpeechPreparation() || hasActiveVoiceOperation()) return { outcome: "reject", reason: "busy" };
@@ -3211,7 +3316,10 @@ export function seekPlayback(offsetMs: number, scope: "current" | "readback" = "
 export function seekSpeechWord(utteranceId: string, wordIndex: number, commandId?: string): SeekResult {
   if (!Number.isSafeInteger(wordIndex) || wordIndex < 0) return { outcome: "reject", reason: "invalid word index" };
   if (getEffectiveRecordingState() !== "idle") return { outcome: "reject", reason: "busy" };
-  if (isPlaybackPaused()) return { outcome: "reject", reason: "paused" };
+  if (isPlaybackPaused()) {
+    return playbackQueueManager.seekPausedWord(utteranceId, wordIndex, commandId,
+      activeLongRead?.wordTimeline.utteranceId === utteranceId ? activeLongRead.seek : undefined);
+  }
   if (activeLongRead) {
     if (activeLongRead.controller.signal.aborted || activeLongRead.wordTimeline.utteranceId !== utteranceId)
       return { outcome: "reject", reason: "stale utterance" };
@@ -3252,8 +3360,14 @@ function replayReadback(offsetMs: number, readbackID?: string): SeekResult {
     canReplay: chunk => existsSync(chunk.audioFile),
     prepareSeek: (chunk, offset, signal) => prepareSeekSlice(chunk.audioFile, offset, signal),
     disposeSeek: disposeSeekSlice,
-    seekFailed: error => broadcast({ type: "error", source: "seek", message: String(error), recoverable: true }),
-    seekCommitted: offset => ledgerSeek(id, handle.wordTimeline.wordAt(offset) ?? 0),
+    seekFailed: error => {
+      playbackQueueManager.failPausedWordSeek(id);
+      broadcast({ type: "error", source: "seek", message: String(error), recoverable: true });
+    },
+    seekCommitted: offset => {
+      playbackQueueManager.commitPausedWordSeek(id, offset);
+      ledgerSeek(id, handle.wordTimeline.wordAt(offset) ?? 0);
+    },
     play: (chunk, _text, info, position) => {
       let resolveStarted!: (value: boolean) => void;
       const started = new Promise<boolean>(resolve => { resolveStarted = resolve; });
@@ -3704,6 +3818,7 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
   const chunkVoices = new Map<string, string>();
   const chunkEngines = new Map<string, string>();
   const chunkAmplitudes = new Map<string, PlaybackAmplitudeExtraction>();
+  const chunkAmplitudeCaches = new Map<string, NonNullable<PlaybackMetadata["amplitudeCache"]>>();
   const cloneProjections = new Map<string, ReturnType<typeof projectSpeakableText>>();
   const chunkAlignedWords = new Map<string, AlignedWordBoundary[]>();
   // Swift routes Escape only in active modes. Actual playback resets this clock/text.
@@ -3727,8 +3842,14 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
       prepareSeek: (chunk, offset, seekSignal) => offset < chunk.durationMs
         ? prepareSeekSlice(chunk.audioFile, offset, seekSignal) : Promise.resolve(undefined),
       disposeSeek: disposeSeekSlice,
-      seekFailed: (error) => broadcast({ type: "error", source: "seek", message: error instanceof Error ? error.message : String(error), recoverable: true }),
-      seekCommitted: offset => ledgerSeek(id, handle.wordTimeline.wordAt(offset) ?? 0),
+      seekFailed: error => {
+        playbackQueueManager.failPausedWordSeek(id);
+        broadcast({ type: "error", source: "seek", message: error instanceof Error ? error.message : String(error), recoverable: true });
+      },
+      seekCommitted: offset => {
+        playbackQueueManager.commitPausedWordSeek(id, offset);
+        ledgerSeek(id, handle.wordTimeline.wordAt(offset) ?? 0);
+      },
       onDuration: (totalMs, final) => {
         if (final) resolveSynthesized();
         broadcast({ type: "playback_duration", long_read_id: id, duration_ms: totalMs, final });
@@ -3750,12 +3871,15 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
         if (result.projection) cloneProjections.set(audioFile, result.projection);
         if (!signal.aborted && activeLongRead === handle) broadcast(handle.wordTimeline.update(index, displayChunk, result.chunk.durationMs,
           displayTokenBoundaries(displayChunk, result.chunk.wordBoundaries)));
+        const amplitudeCache: NonNullable<PlaybackMetadata["amplitudeCache"]> = {};
+        chunkAmplitudeCaches.set(audioFile, amplitudeCache);
         const synthesizedAt = Date.now();
         if (index > 0) {
           const decode = startPlaybackAmplitudeEnvelopeExtraction(audioFile);
           signal.addEventListener("abort", decode.cancel, { once: true });
           chunkAmplitudes.set(audioFile, decode);
-          void decode.result.then(() => {
+          void decode.result.then(envelope => {
+            amplitudeCache.envelope = envelope;
             signal.removeEventListener("abort", decode.cancel);
             console.error(`[tts] chunk=${index} chars=${displayChunk.length} engine=${result.engine} synthesis_ms=${synthesizedAt - synthesisStarted} waveform_ms=${Date.now() - synthesizedAt}`);
           });
@@ -3786,6 +3910,7 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
           longRead: { ...info, ...(displays[info.chunk_index] ? { display: displays[info.chunk_index] } : {}) }, speechIdentity,
           wordBoundaries: chunk.wordBoundaries, priority: "normal",
           preparedAmplitude: chunkAmplitudes.get(chunk.audioFile),
+          amplitudeCache: chunkAmplitudeCaches.get(chunk.audioFile),
           cloneProjection: cloneProjections.get(chunk.audioFile),
           prosodyIdentity: prosodyPlan?.renderIdentity,
           alignedWords: chunkAlignedWords.get(chunk.audioFile),
@@ -3848,7 +3973,7 @@ function speakLongReadAdmitted(text: string, profile: LongReadProfile, receivedA
         if (index === 0) await prosodyRead?.settleTail();
         const decode = chunkAmplitudes.get(chunk.audioFile);
         decode?.cancel(); await decode?.result;
-        chunkAmplitudes.delete(chunk.audioFile); cloneProjections.delete(chunk.audioFile);
+        chunkAmplitudes.delete(chunk.audioFile); chunkAmplitudeCaches.delete(chunk.audioFile); cloneProjections.delete(chunk.audioFile);
         chunkAlignedWords.delete(chunk.audioFile); chunkEngines.delete(chunk.audioFile); chunkVoices.delete(chunk.audioFile);
         try { unlinkSpeechAudio(chunk.audioFile); } catch {}
       },

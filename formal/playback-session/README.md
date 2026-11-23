@@ -5,7 +5,7 @@ teleprompter. `src/playback/session.ts` implements the same states, events and i
 `src/playback/ledger.ts` is the daemon's single ledger, fed by the player driver in `src/tts.ts`.
 
 States: `queued`, `preparing`, `playing`, `paused`, `seeking`, `parked` (by an ask), `ended`.
-Events: start, ready, word, teleprompter sync, end, reap, pause, resume, seek, seek done, Esc,
+Events: start, ready, word, teleprompter sync, end, reap, pause, resume, seek, paused seek, seek done, Esc,
 previous read, ask preempt, prompt start/end, mic open, capture end, ask abort, recorder exit,
 ask restore, ask release, stop.
 
@@ -17,7 +17,7 @@ in the window (the next queued read waits for the release), and a second ask is 
 capture-owned before touching the read). Pause, resume and Esc work on the restored read in the window. Seek does not: `seekPlayback` and `seekSpeechWord` refuse any non-idle recording state, transcribing included, so the model enables Seek only with no ask.
 
 Positions are word indices held by the session. `mark` is the ground truth (the word heard when
-the read left the speaker); `pausedAt` is what the engine stored; a resume must land on `mark`.
+the read left the speaker, or the word explicitly chosen while paused); `pausedAt` is what the engine stored; a resume must land on `mark`.
 
 | Invariant | Bug it prevents | Mutant config(s) |
 | --- | --- | --- |

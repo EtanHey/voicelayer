@@ -36,6 +36,8 @@ import { planProsody } from "../tts/prosody";
 import { projectSpeakableText } from "../speakable-text";
 import { PreparedReadStart } from "../tts/selection-read-preparation";
 import { playbackSessionViolations } from "../playback/ledger";
+import { narrationSource, setNarrationSource, type NarrationSource } from "../narration/source";
+import { createEngineNarrationSource, splitClonePieces, CLONE_PIECE_MAX_WORDS } from "../narration/engines";
 
 function deferred<T>() { let resolve!: (v: T) => void, reject!: (e: Error) => void; const promise = new Promise<T>((r, fail) => { resolve = r; reject = fail; }); return { promise, resolve, reject }; }
 const text = Array.from({ length: 80 }, (_, i) => `Sentence ${i} has enough words to fill the next chunk.`).join(" ");
@@ -69,8 +71,18 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   let clockMs: number;
   let releaseAlignments: (() => void)[];
 
+  let realNarration: NarrationSource | undefined;
+  let assemblies: string[][] = [];
   beforeEach(() => {
-    modelReplay = false;
+    // These fixtures prove the chunk lifecycle with one synthesizeCloned call per chunk. T28 splits a cloned chunk
+    // over 24 words into pieces inside the engine adapter; that split is proven in clone-piece-bound.test.ts and in
+    // "T28 a cloned read" below, which use the real source. Here clone requests go whole, as before T28.
+    const real = narrationSource();
+    const whole = createEngineNarrationSource({ edge: () => { throw new Error("unused"); },
+      clone: (text, voice, signal) => qwen.synthesizeCloned(text, voice, signal) });
+    realNarration = setNarrationSource({ id: real.id,
+      synthesize: request => request.engine === "clone" ? whole.synthesize(request) : real.synthesize(request) });
+    modelReplay = false; assemblies = [];
     synths = []; players = []; events = []; handles = []; historyInputs = []; spies = [];
     holdFirstSynth = false; holdSynth = false; autoPlay = false; holdPlayerExit = false; holdHistory = false; holdDecoder = false;
     failHistory = false; failPlayerSpawn = false; synthLatencyMs = 0;
@@ -104,6 +116,11 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         }
         return { pid: 71000 + synths.length, exited: exit.promise, kill: () => { item.killed = true; exit.resolve(143); } };
       }
+      // T28: a cloned chunk over 24 words is synthesized as pieces and joined by one assembly ffmpeg (a resolved path).
+      if (argv.includes("-filter_complex")) {
+        assemblies.push(argv); writeFileSync(argv.at(-1)!, "assembled clone audio");
+        return { pid: 74000, exited: Promise.resolve(0), kill() {} };
+      }
       if (argv[0] === "ffmpeg") {
         if (argv.includes("-af")) writeFileSync(argv.at(-1)!, "adjusted audio");
         if (argv.includes("-ss")) writeFileSync(argv.at(-1)!, "trimmed audio");
@@ -135,9 +152,35 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     await flushSpeechArchives();
     await settleRecordingJobs();
     for (const spy of spies) spy.mockRestore(); Bun.spawn = originalSpawn; Bun.spawnSync = originalSpawnSync;
+    if (realNarration) setNarrationSource(realNarration);
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
   });
   const start = (engine: "edge" | "clone" = "edge", readText = text, identity: Parameters<typeof speakLongRead>[3] = {}) => { const h = speakLongRead(readText, { engine, voice: "fixture", rate: "+0%" }, Date.now(), identity); handles.push(h); return h; };
+
+  it("T28 a cloned read reaches Qwen3 in pieces of at most 24 words; the cursor still sees every word in order", async () => {
+    if (realNarration) setNarrationSource(realNarration);
+    const pieces: string[] = [];
+    spies.push(spyOn(qwen, "synthesizeCloned").mockImplementation(async part => { pieces.push(part); return Buffer.from("clone piece"); }));
+    const timings: import("../socket-protocol").SpeechWordsEvent[] = [];
+    spies.push(spyOn(socket, "broadcast").mockImplementation(event => {
+      events.push(event); if (event.type === "speech_words") timings.push(event);
+    }));
+    autoPlay = true;
+    const h = start("clone");
+    await h.done;
+    const words = (value: string) => value.split(/\s+/).filter(Boolean);
+    const chunks = chunkTextForLongRead(text, "clone");
+    expect(chunks.some(chunk => words(chunk).length > CLONE_PIECE_MAX_WORDS)).toBe(true);
+    expect(pieces.length).toBeGreaterThan(chunks.length);
+    for (const piece of pieces) expect(words(piece).length).toBeLessThanOrEqual(CLONE_PIECE_MAX_WORDS);
+    expect(pieces.flatMap(words)).toEqual(words(text));
+    expect(pieces).toEqual(chunks.flatMap(chunk => splitClonePieces(chunk)));
+    expect(assemblies.length).toBe(chunks.filter(chunk => words(chunk).length > CLONE_PIECE_MAX_WORDS).length);
+    // The word-index cursor: each chunk's timings start where the previous chunk's words end, through the last word.
+    const byOffset = [...new Map(timings.filter(t => t.utteranceId === h.id).map(t => [t.wordOffset, t.words.length])).entries()];
+    expect(byOffset.map(([offset]) => offset)).toEqual(chunks.map((_, i) => chunks.slice(0, i).flatMap(words).length));
+    expect(byOffset.at(-1)![0] + byOffset.at(-1)![1]).toBe(words(text).length);
+  });
 
   it.each(["edge", "clone"] as const)("U5 %s publishes global word indices and seeks across synthesized chunks", async engine => {
     if (engine === "clone") spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("silent clone fixture")));
@@ -1377,8 +1420,9 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       jest.advanceTimersByTime(500); clockMs += 500;
       expect(handleSocketCommand({ cmd: "replay" }).outcome).toBe("accept"); await playerBarrier.at(1);
       expect(players[0].signals).toEqual(["SIGTERM"]);
-      jest.advanceTimersByTime(5500); clockMs += 5500; await fixtureCheckpoint();
-      expect(players[1].signals).toEqual([]); // Original player's 6000ms deadline has passed.
+      // The original player's deadline (2 x 1000 ms + 30 s + 250 ms confirmation from t=0) passes first.
+      jest.advanceTimersByTime(31_750); clockMs += 31_750; await fixtureCheckpoint();
+      expect(players[1].signals).toEqual([]);
       jest.advanceTimersByTime(499); clockMs += 499; await fixtureCheckpoint();
       expect(players[1].signals).toEqual([]);
       jest.advanceTimersByTime(1); clockMs += 1; await fixtureCheckpoint();
@@ -1386,6 +1430,50 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       expect(await h.completion).toMatchObject({ error: "Speech playback failed: player-error" });
       expect(events.filter(e => e.type === "error" && /watchdog/.test(e.message))).toHaveLength(1);
     } finally { jest.useRealTimers(); }
+  });
+
+  // T17 (M4 2026-11-18 07:17Z, VoiceBar 2.4.3): three Replays, word-click seeks, then the next chunk played on its own
+  // from zero while clone synthesis and waveform decode ran 30-50x slower than normal. That healthy player outlived its
+  // audio by more than the old fixed 5 s margin, was SIGKILLed, and the read died.
+  it("T17 FX-3 the owner's replay-then-seek sequence never kills the next chunk's slow but healthy player", async () => {
+    jest.useFakeTimers();
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const tick = async (ms: number) => { jest.advanceTimersByTime(ms); clockMs += ms; await fixtureCheckpoint(); };
+    const playing = () => events.filter(e => e.state === "speaking" && !e.long_read?.preparing).at(-1);
+    try {
+      const h = start(); await playerBarrier.at(0);
+      players[0].exit.resolve(0); await playerBarrier.at(1); await synthBarrier.at(2);
+      let next = 2;
+      for (let i = 0; i < 3; i++) {
+        await tick(700);
+        expect(handleSocketCommand({ cmd: "replay" }).outcome).toBe("accept");
+        await playerBarrier.at(next++);
+        expect(playing()).toMatchObject({ playback_offset_ms: 0, long_read: { id: h.id, chunk_index: 0 } });
+      }
+      // Forward into chunk 1, back into chunk 0, forward again: every seek is a new player with its own budget.
+      for (const offset of [1_250, 250, 1_500]) {
+        await tick(300);
+        expect(seekPlayback(offset)).toMatchObject({ outcome: "accept", offset_ms: offset });
+        await playerBarrier.at(next++);
+        expect(playing().playback_offset_ms).toBe(offset);
+      }
+      expect(players.slice(0, next - 1).every(player => !player.signals.includes("SIGKILL"))).toBe(true);
+      // The seeked chunk 1 player ends naturally; chunk 2 starts from its own zero.
+      players[next - 1].exit.resolve(0);
+      const slow = await playerBarrier.at(next++); await fixtureCheckpoint();
+      const edge = playing();
+      expect(edge.long_read.chunk_index).toBe(2);
+      const audioMs = edge.chunk_duration_ms;
+      expect(audioMs).toBeGreaterThan(0);
+      // Starved host: the player is still running 9 s past its audio plus the old 5 s margin, then exits on its own.
+      await tick(audioMs + 5_000 + 9_000);
+      expect(slow.signals).toEqual([]);
+      expect(events.some(e => e.type === "error" && /watchdog/.test(e.message))).toBe(false);
+      slow.exit.resolve(0); await playerBarrier.at(next);
+      expect(playing().long_read.chunk_index).toBe(3);
+      stopPlayback(); await h.done;
+      expect(await h.completion).not.toHaveProperty("error");
+    } finally { warn.mockRestore(); jest.useRealTimers(); }
   });
 
   it("REP1 explicitly rejects Replay before the prefix is synthesized", async () => {
@@ -1591,6 +1679,44 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       if (originalGate === undefined) delete process.env.VOICELAYER_UPDATE_GATE_PATH;
       else process.env.VOICELAYER_UPDATE_GATE_PATH = originalGate;
     }
+  });
+
+  it.each([false, true])("T32 paused word click crosses chunks and Play resumes there (immediate=%s)", async immediate => {
+    const h = start(); await playerBarrier.at(0);
+    players[0].exit.resolve(0); await playerBarrier.at(1); await synthBarrier.at(2);
+    expect(pausePlayback().outcome).toBe("accept");
+    await fixtureCheckpoint();
+    expect(tts.seekSpeechWord(h.id, 0, "paused-cross-chunk")).toMatchObject({ outcome: "accept", offset_ms: 0 });
+    expect(tts.isPlaybackPaused()).toBe(true);
+    expect(events.filter(e => e.type === "playback_state").at(-1)).toMatchObject({ state: "paused", offset_ms: 0, word_index: 0 });
+    expect(players).toHaveLength(2);
+    if (!immediate) await fixtureCheckpoint();
+    expect(tts.resumePlayback()).toMatchObject({ outcome: "accept", offset_ms: 0 });
+    await playerBarrier.at(2);
+    expect(events.filter(e => e.state === "speaking" && !e.long_read?.preparing).at(-1))
+      .toMatchObject({ playback_offset_ms: 0, long_read: { chunk_index: 0 } });
+    expect(playbackSessionViolations()).toEqual([]);
+    stopPlayback(); await h.done;
+  });
+
+  it("T32 a failed cross-chunk resume keeps the clicked cursor and Play can retry", async () => {
+    const h = start(); await playerBarrier.at(0);
+    players[0].exit.resolve(0); await playerBarrier.at(1); await synthBarrier.at(2);
+    pausePlayback(); await fixtureCheckpoint();
+    const clicked = tts.seekSpeechWord(h.id, 1, "retry-click");
+    expect(clicked.outcome).toBe("accept"); expect(clicked.offset_ms).toBeGreaterThan(0);
+    holdDecoder = true;
+    const conversionIndex = decoders.length;
+    expect(tts.resumePlayback().outcome).toBe("accept");
+    const conversion = await decoderBarrier.at(conversionIndex);
+    conversion.exit.resolve(1); await fixtureCheckpoint();
+    expect(events.filter(e => e.type === "error" && e.source === "seek")).not.toHaveLength(0);
+    expect(tts.isPlaybackPaused()).toBe(true); expect(players).toHaveLength(2);
+    holdDecoder = false;
+    expect(tts.resumePlayback()).toMatchObject({ outcome: "accept", offset_ms: clicked.offset_ms });
+    await playerBarrier.at(2);
+    expect(events.filter(e => e.state === "speaking" && !e.long_read?.preparing).at(-1).playback_offset_ms).toBe(clicked.offset_ms);
+    stopPlayback(); await h.done;
   });
 
   it("seeks across retained chunks through the real queue and converts global stop time", async () => {

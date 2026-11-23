@@ -161,6 +161,13 @@ export function ledgerPaused(id: string, word: number, owner: PauseOwner, offset
   after("pause");
 }
 
+export function ledgerPausedSeek(id: string, word: number, offsetMs: number): void {
+  // The word table validated this target; later timing can outgrow the player's original prefix.
+  engine.extend(id, word + 1);
+  pausedOffsets.set(id, offsetMs);
+  ledgerSeek(id, word);
+}
+
 export function ledgerResumed(id: string): number | undefined {
   const result = engine.resume(id);
   after("resume");
@@ -168,9 +175,9 @@ export function ledgerResumed(id: string): number | undefined {
 }
 
 /** A live seek or speed change committed: the playing player is replaced at read-global word `word` (model Seek; its
- * new player's start is SeekDone). A session that is not playing (preparing, paused) is left as it is. */
+ * new player's start is SeekDone). A paused session moves its stored cursor without starting a player; other states stay as they are. */
 export function ledgerSeek(id: string, word: number): void {
-  if (engine.get(id)?.state !== "playing") return;
+  if (engine.get(id)?.state !== "playing" && engine.get(id)?.state !== "paused") return;
   engine.seek(id, word);
   after("seek");
 }

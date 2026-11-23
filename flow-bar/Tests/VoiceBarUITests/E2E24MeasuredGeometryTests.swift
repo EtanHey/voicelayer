@@ -42,7 +42,15 @@ final class E2E24MeasuredGeometryTests: XCTestCase {
                 let screenOffset = physicalLeft - p.geometry.coreOriginX
                 if p.geometry.leadingWingWidth > 0 {
                     let leading = try XCTUnwrap(markers["leading"])
-                    XCTAssertGreaterThanOrEqual(physicalLeft - (leading.maxX + screenOffset), 8, "\(fixture) \(state) leading")
+                    let gap = physicalLeft - (leading.maxX + screenOffset)
+                    if state == "recording" {
+                        // AppKit rounds the marker's fractional slot to a device pixel. Glyph ink is inset within it.
+                        XCTAssertEqual(gap, 2.5, accuracy: 0.5)
+                        let bearing = try RecordingOpticalInsetTests.cancelInkBearing()
+                        XCTAssertGreaterThanOrEqual(gap + bearing, 8 - 0.5, "\(fixture) recording ink clearance")
+                    } else {
+                        XCTAssertGreaterThanOrEqual(gap, 8, "\(fixture) \(state) leading")
+                    }
                 }
                 if p.geometry.trailingWingWidth > 0 {
                     let trailing = try XCTUnwrap(markers["trailing"])

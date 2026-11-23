@@ -25,12 +25,18 @@ import { PACKAGE_VERSION } from "./version";
 import {
   handleVoiceSpeak,
   handleVoiceAsk,
+  handleVoiceAskResults,
 } from "./handlers";
-import { createVoiceToolContext } from "./mcp-notifications";
+import { AskDeliverySession, AskDeliveryStore, CALLER_META } from "./ask-delivery";
+import { randomBytes } from "node:crypto";
+import { handleMcpRequest } from "./mcp-handler";
 
 // --- Server setup ---
 
 const clientLifetime = new AbortController();
+const callerCapability = randomBytes(32).toString("hex");
+let outbox: AskDeliveryStore | undefined;
+const delivery = new AskDeliverySession(() => outbox ??= new AskDeliveryStore());
 const server = new Server(
   {
     name: "voicelayer",
@@ -39,7 +45,8 @@ const server = new Server(
   {
     capabilities: { tools: {}, logging: {} },
     instructions:
-      "Voice I/O layer for Claude Code. 2 tools:\n" +
+      "Voice I/O layer for Claude Code. 3 tools:\n" +
+      "- voice_ask_results: read retained Ask answers, newest or by archive_id, plus asks still open; never opens the microphone.\n" +
       "- voice_speak(message): TTS. mode is auto-detected (announce=short update, brief=long explanation, consult=checkpoint question, think=silent log). Override with mode param.\n" +
       `- voice_ask(message): BLOCKING. Waits for any playing voice_speak audio to finish, then speaks question, records mic, returns transcription. Session booking prevents mic conflicts. Stop: touch ${STOP_FILE} OR 2.5s silence (thoughtful default).\n` +
       "  Captured audio is always kept. If a result includes an archive path, use VoiceBar History → Re-transcribe and do not ask the user to repeat.\n" +
@@ -58,42 +65,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 // --- Tool dispatch ---
 
 server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
-  const { name, arguments: args } = request.params;
-  const progressToken = request.params._meta?.progressToken;
-  const context = createVoiceToolContext(progressToken, (notification) => {
-    if (notification.method === "notifications/message") {
-      return server.sendLoggingMessage(
-        notification.params as LoggingMessageNotification["params"],
-        extra.sessionId,
-      );
-    }
-    return extra.sendNotification(notification);
-  }, "stdio");
-  context.disconnectSignal = clientLifetime.signal;
-
+  const onCancel = () => delivery.cancel(extra.requestId);
+  extra.signal.addEventListener("abort", onCancel, { once: true });
+  if (extra.signal.aborted) onCancel();
   try {
-    switch (name) {
-      case "voice_speak":
-        return await handleVoiceSpeak(args, context);
-      case "voice_ask":
-        return await handleVoiceAsk(args, context);
-      default:
-        return {
-          content: [{ type: "text" as const, text: `Unknown tool: ${name}` }],
-          isError: true,
-        };
-    }
-  } catch (err: unknown) {
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: `Error in ${name}: ${err instanceof Error ? err.message : String(err)}`,
-        },
-      ],
-      isError: true,
-    };
-  }
+    const response = await handleMcpRequest({ ...request, jsonrpc: "2.0", id: extra.requestId,
+      params: { ...request.params, _meta: { ...request.params._meta, [CALLER_META]: callerCapability } } }, {
+      async executeTool(name, args, context) {
+        if (name === "voice_ask") return handleVoiceAsk(args, context);
+        if (name === "voice_speak") return handleVoiceSpeak(args, context);
+        return handleVoiceAskResults(args);
+      },
+    }, {
+      delivery, connection: "stdio", disconnectSignal: clientLifetime.signal,
+      sendNotification(notification) {
+        if (notification.method === "notifications/message") return server.sendLoggingMessage(notification.params as LoggingMessageNotification["params"], extra.sessionId);
+        return extra.sendNotification(notification);
+      },
+    });
+    if (!response?.result) throw new Error("Voice call interrupted; retained delivery remains recoverable on the next call.");
+    return response.result;
+  } finally { extra.signal.removeEventListener("abort", onCancel); }
 });
 
 // --- Startup ---
@@ -114,6 +106,11 @@ async function main() {
   connectToBar(undefined, { role: "mcp-server", acceptsCommands: false });
 
   const transport = new StdioServerTransport();
+  const send = transport.send.bind(transport);
+  transport.send = async message => {
+    if ("id" in message && !("method" in message)) delivery.writeAttempt(message.id);
+    return send(message);
+  };
   await server.connect(transport);
 
   // Bootstrap only after connection setup; even its first lock attempt stays off the pre-connect path.
@@ -134,6 +131,7 @@ async function shutdown(code: number): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   clientLifetime.abort();
+  delivery.disconnect();
   stopPlayback();
   try { await awaitCurrentPlayback(); }
   catch { console.error("[speech] shutdown playback settlement incomplete"); }

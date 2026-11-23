@@ -89,12 +89,13 @@ final class NotchShellCentredTests: XCTestCase {
     /// 2.3 U2 (M4/M5): the mic and its chevron share the left wing, which is the fixed two-control wing; the 2026-09-30
     /// "the mic's wing hugs the mic" ruling is superseded by the fixed 73 + 73 pt wings.
     func testTheMicAndChevronWingIsTheFixedWingInTheLauncherAndWithHistoryOpen() {
-        let micAndChevron = VoiceBarNotchContract.compactContentFitWingWidth(
-            contentWidth: 2 * VoiceBarNotchContract.material.compactControlSize
-                + VoiceBarNotchContract.material.compactControlSpacing
-        )
-        XCTAssertEqual(micAndChevron, 73.5)
-        XCTAssertEqual(VoiceBarNotchContract.fixedWingWidth, micAndChevron)
+        // Owner r2: the mic + chevron row starts 10 pt from the notch (the chevron's ink on the 16.5 pt left-side rule),
+        // so the left wing is 70 pt; the right wing keeps the fixed 73.5 pt.
+        let micAndChevron = VoiceBarNotchContract.launcherLeadingContentInset
+            + 2 * VoiceBarNotchContract.material.compactControlSize
+            + VoiceBarNotchContract.material.compactControlSpacing + VoiceBarNotchContract.material.compactContentInset
+        XCTAssertEqual(micAndChevron, 70)
+        XCTAssertEqual(VoiceBarNotchContract.launcherLeadingWingWidth, micAndChevron)
         for (name, presentation) in [("hover", presentation()), ("History", presentation(history: true))] {
             let geometry = presentation.geometry
             XCTAssertEqual(geometry.leadingWingWidth, micAndChevron, "\(name): the mic + chevron wing")
@@ -113,10 +114,11 @@ final class NotchShellCentredTests: XCTestCase {
             contentWidth: 2 * material.compactControlSize + material.compactControlSpacing
         )
         let expected: [(VoiceBarNotchVisualState, CGFloat)] = [
-            (.hoverLauncher, twoControls), // the mic + chevron (2.3 U2)
-            (.history, twoControls), // the mic + chevron (2.3 U2)
+            // Owner r2: the mic + chevron row sits 3.5 pt nearer the notch, so its wing is 3.5 pt narrower.
+            (.hoverLauncher, twoControls - 3.5), // the mic + chevron (2.3 U2)
+            (.history, twoControls - 3.5), // the mic + chevron (2.3 U2)
             (.compactStatus, oneControl), // the status indicator (transcribing, transcript shown)
-            (.recording, twoControls), // cancel + stop
+            (.recording, 88.5), // Stop, reserved Pause/Lock, Cancel
         ]
         for (state, width) in expected {
             XCTAssertEqual(VoiceBarNotchContract.geometry(for: state).leadingWingWidth, width, "\(state)")
@@ -131,7 +133,8 @@ final class NotchShellCentredTests: XCTestCase {
         _ presentation: VoiceBarNotchPresentation, controlCount: Int
     ) -> CGFloat {
         let material = VoiceBarNotchContract.material
-        let slot = material.wingContentLayout(for: .leading, state: presentation.visualState)
+        let slot = material.wingContentLayout(for: .leading, state: presentation.visualState,
+                                              leadingWingWidth: presentation.geometry.leadingWingWidth)
         let wing = VoiceBarNotchShapeLayout(geometry: presentation.geometry).leadingWingRect
         let rowWidth = CGFloat(controlCount) * material.compactControlSize
             + CGFloat(controlCount - 1) * material.compactControlSpacing
@@ -153,7 +156,8 @@ final class NotchShellCentredTests: XCTestCase {
         let rects = VoiceBarNotchHitRegion(geometry: geometry, configuration: .fallback(for: hover)).rects
         // From the core outward: the chevron 13.5 pt off the core, then the mic one 6 pt gap further out.
         let chevronRect = rects[0], micRect = rects[1]
-        XCTAssertEqual(chevronRect.maxX, geometry.coreOriginX - VoiceBarNotchContract.compactCoreContentInset)
+        // Owner r2: the chevron 10 pt off the core (its ink on the 16.5 pt rule).
+        XCTAssertEqual(chevronRect.maxX, geometry.coreOriginX - VoiceBarNotchContract.launcherLeadingContentInset)
         XCTAssertEqual(micRect.maxX, chevronRect.minX - material.compactControlSpacing)
         XCTAssertEqual(micRect.width, material.compactControlSize)
         for (name, presentation) in [("hover", hover), ("History", presentation(history: true))] {
@@ -186,19 +190,22 @@ final class NotchShellCentredTests: XCTestCase {
         let states: [(String, VoiceBarNotchPresentation, Int)] = [
             ("hover", resolve(VoiceBarNotchOperationalInput(mode: .idle, isHovered: true)), 2),
             ("History", presentation(history: true), 2),
-            ("recording", resolve(VoiceBarNotchOperationalInput(mode: .recording)), 2),
+            ("recording", resolve(VoiceBarNotchOperationalInput(mode: .recording)), 3),
             ("recording + hold lock",
              resolve(VoiceBarNotchOperationalInput(mode: .recording, showsRecordingHold: true)), 3),
-            ("transcribing", resolve(VoiceBarNotchOperationalInput(mode: .transcribing)), 1),
+            ("transcribing", resolve(VoiceBarNotchOperationalInput(mode: .transcribing)), 2),
             ("transcript shown",
              resolve(VoiceBarNotchOperationalInput(mode: .idle, confirmationText: "Pasted", statusText: "Pasted")), 1),
         ]
-        let expected = -(VoiceBarNotchContract.compactCoreContentInset
+        // Owner r2: the launcher's row (hover, History, transcribing) starts 10 pt from the core, so the chevron's ink
+        // sits on the 16.5 pt left-side rule; a lone status glyph keeps 13.5 pt.
+        let expected = -(VoiceBarNotchContract.launcherLeadingContentInset
             + VoiceBarNotchContract.material.compactControlSize / 2)
-        XCTAssertEqual(expected, -23.5)
+        XCTAssertEqual(expected, -20)
         for (name, presentation, controlCount) in states {
             XCTAssertEqual(
-                drawnCoreSideLeadingControlMidX(presentation, controlCount: controlCount), expected,
+                drawnCoreSideLeadingControlMidX(presentation, controlCount: controlCount),
+                name.hasPrefix("recording") ? -12.5 : name == "transcript shown" ? -23.5 : expected,
                 accuracy: 0.001, "\(name): the core-side control moved"
             )
             // 2.3 U2: every state the 3-wings mock draws uses the fixed two-control wing; only a third control (the
@@ -207,12 +214,11 @@ final class NotchShellCentredTests: XCTestCase {
                 contentWidth: CGFloat(controlCount) * VoiceBarNotchContract.material.compactControlSize
                     + CGFloat(controlCount - 1) * VoiceBarNotchContract.material.compactControlSpacing
             )
-            // c9-P: transcribing keeps the recording band's wings (its meter keeps its frame).
+            // Recording reserves three left slots; each wing uses its own content and insets.
             XCTAssertEqual(
                 presentation.geometry.leadingWingWidth,
-                name.hasPrefix("recording") || name == "transcribing"
-                    ? max(VoiceBarNotchContract.recordingTrailingWingWidth, fit)
-                    : name == "transcript shown" ? fit : max(VoiceBarNotchContract.fixedWingWidth, fit),
+                name.hasPrefix("recording") ? 88.5 : name == "transcript shown" ? fit
+                    : VoiceBarNotchContract.launcherLeadingWingWidth,
                 "\(name): the leading wing is not the fixed wing for its \(controlCount) control(s)"
             )
         }
@@ -257,7 +263,7 @@ final class NotchShellCentredTests: XCTestCase {
         XCTAssertEqual(layout.leadingWingRect.minX, body.minX, "flush on the left")
         XCTAssertEqual(layout.trailingWingRect.maxX, body.maxX, "flush on the right")
         // 2.3 U2 × U4: the wings keep the launcher's slots, now the fixed 73.5 pt mic + chevron wing.
-        XCTAssertEqual(history.geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth,
+        XCTAssertEqual(history.geometry.leadingWingWidth, VoiceBarNotchContract.launcherLeadingWingWidth,
                        "the mic and chevron keep their slots")
 
         let glass = VoiceBarNotchHistoryMorphShape(morph: morph, coreAnchorX: nil)

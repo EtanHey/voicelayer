@@ -1,4 +1,7 @@
 import { registerAskPrompt } from "./ask-prompt-interruption";
+export { handleVoiceAskResults } from "./ask-results";
+import { atomicWriteFile } from "./recordings-archive-fs";
+import { OpenAskHandle } from "./open-ask";
 import { claimVoiceCall, recordNoAnswer, STILL_AWAY, userVoicePresent } from "./voice-away-policy";
 import { voiceAskNoAnswerSeconds } from "./voice-ask-no-answer";
 import { formatVoiceAskTurnResult, type VoiceAskTurnOutcome, type VoiceAskTimeoutStage, type McpTextResult } from "./voice-turn-result";
@@ -786,9 +789,14 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
   let unclassifiedAnswer = false;
   let captureArchivePath: string | null = null;
   let promptAttempted = false;
+  // voice_ask_results sees this ask from its prompt until the flow ends; refusals return before it opens.
+  const openAsk = new OpenAskHandle();
   const progressHeartbeat = context
     ? new VoiceAskProgressHeartbeat(context)
     : null;
+  // A disconnected client has nobody left to keep alive.
+  const stopHeartbeatOnDisconnect = (): void => progressHeartbeat?.stop();
+  context?.disconnectSignal?.addEventListener("abort", stopHeartbeatOnDisconnect, { once: true });
   let timer: ReturnType<typeof setTimeout> | undefined;
   let timeoutSettled = false;
   let captureActive = false;
@@ -818,6 +826,8 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     );
     const result: VoiceAskTurnOutcome = { kind: "hard-timeout", stage, timeoutMs, recovery: recovery ?? null };
     if (beforeCaptureExpired) abandonedBeforeCapture.resolve(result);
+    // The bounded response is not the flow's final result; Ask delivery finalizes from the flow.
+    context?.askDelivery?.timedOut();
     resolveTimeout(result);
   };
   const armTimeout = (
@@ -899,6 +909,9 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     // exit (or its end) restores the read.
     readHold ??= holdReadForAsk();
     if (readHold.refused) return { kind: "capture-owned" };
+    // An MCP client's idle limit resets only on a response or progress frame: beat from the first moment,
+    // not only once the microphone opens (earlier playback and the spoken question may each take minutes).
+    progressHeartbeat?.start("waiting");
     await awaitCurrentPlayback({ forCaptureAdmission: true });
     if (timeoutSettled || inputAbortController.signal.aborted) {
       return { kind: "ended-before-capture" };
@@ -926,6 +939,8 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     armTimeout(promptBudgetRemaining, "prompt");
     const voiceName = validated.voice;
     promptAttempted = true;
+    openAsk.phase("speaking", validated.message);
+    progressHeartbeat?.setStage("speaking");
     let speech: Awaited<ReturnType<typeof speak>>;
     try {
       speech = await speak(validated.message, {
@@ -993,6 +1008,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
       caller: "mcp.voice_ask",
     });
     captureAllowsHold = !pushToEnd;
+    openAsk.phase("listening", voiceAskArtifacts.agentTranscript);
     progressHeartbeat?.start("recording");
     const response = await waitForInput(
       timeoutSeconds * 1000,
@@ -1028,6 +1044,9 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
         } : {}),
         onArchiveCreated: (archivePath) => {
           captureArchivePath = archivePath;
+          openAsk.archive(basename(archivePath));
+          context?.askDelivery?.archive(basename(archivePath));
+          console.error(`[voicelayer] voice_ask archive_id=${basename(archivePath)}`);
         },
         onCaptureEnd: (transcribedDurationMs) => {
           ledgerCaptureEnd("answer");
@@ -1036,6 +1055,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
           armTimeout(voiceAskReturnTimeoutMs(transcribedDurationMs), "return");
         },
         onPhaseChange: (phase) => {
+          openAsk.phase(phase);
           progressHeartbeat?.setStage(phase);
           // Capture-end r2: the input phase follows bounded recorder-exit settlement. Once its transcribing state is
           // published, the read this ask parked takes the speaker back (idempotent; the ask's end is the fallback).
@@ -1053,18 +1073,23 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     );
 
     if (response === null) {
+      if ((noAnswer || noSpeech) && !unclassifiedAnswer && captureArchivePath) {
+        try { atomicWriteFile(join(captureArchivePath, "ask-result.json"), JSON.stringify({ status: "away" })); }
+        catch { console.error("[voicelayer] Ask away receipt could not be saved"); }
+      }
       const recovery = recoveryOptions();
       const promptPlayback = speech.playbackOutcome;
       if (unclassifiedAnswer && recovery) return { kind: "retained", recovery: { ...recovery,
         reason: "Speech could not be ruled out: VAD classification stalled. The complete recording was kept." }, promptPlayback };
       if (noAnswer && recovery) return recordNoAnswer(context)
         ? { kind: "no-answer", timeoutSeconds, recovery, promptPlayback }
-        : { kind: "away" };
+        : { kind: "away", archiveId: recovery.archiveId };
       if (noSpeech) return { kind: "no-speech", recovery: recovery ?? null, promptPlayback };
       if (recovery) return { kind: "retained", recovery, promptPlayback };
       return { kind: "no-input", timeoutSeconds, pushToEnd, promptPlayback };
     }
 
+    context?.askDelivery?.answer(response);
     return { kind: "answered", transcript: response,
       archiveId: captureArchivePath ? basename(captureArchivePath) : null,
       promptPlayback: speech.playbackOutcome };
@@ -1099,6 +1124,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
       });
       broadcast({ type: "state", state: "idle", source: "playback", next_state: "recording", ask_cancelled_for_dictation: true });
     }
+    openAsk.end(); // Every flow end (answer, away, cancel, error, abandoned prompt) closes the record first.
     await promptTimeoutCleanup;
     captureAdmission?.release();
     // Lane B: the capture is over and its admission released: restore the parked read if its recorder exit did
@@ -1112,6 +1138,12 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     await Promise.all(promptPlayers.map(handle => handle.playerExited));
     await settleSpeechArchivesForUpdate(archiveContext);
   };
+  // A bounded handler return is not the completion of retained background STT.
+  if (context?.askDelivery) {
+    const settled = flowPromise.then(formatVoiceAskTurnResult);
+    settled.catch(() => {}); // The handler's own catch reports this rejection.
+    context.askDelivery.defer(settled);
+  }
   holdVoiceAdmission(flowPromise.then(confirmedTeardown, confirmedTeardown));
   operationLifecycle?.deferReleaseUntil(Promise.race([flowPromise, abandonedBeforeCapture.promise]));
   try {
@@ -1150,6 +1182,7 @@ async function runVoiceAskTurnAdmitted({ args, context, operationLifecycle, arch
     return { kind: "failed", message };
   } finally {
     context?.disconnectSignal?.removeEventListener("abort", onDisconnect);
+    context?.disconnectSignal?.removeEventListener("abort", stopHeartbeatOnDisconnect);
     progressHeartbeat?.stop();
   }
 }

@@ -31,18 +31,27 @@ final class VoiceBarNotchMotionTests: XCTestCase {
         XCTAssertTrue(plan.preservesFixedCore)
     }
 
-    /// 2.3 U2: recording and the launcher share the fixed 73 + 73 pt outline, so leaving recording no longer
-    /// contracts the surface and is not a closing motion: the controls swap inside an unchanged shell.
     func testRecordingToHoverLauncherKeepsTheOutlineAndIsNotAClosingMotion() {
+        let recording = VoiceBarNotchContract.geometry(for: .recording)
+        let launcher = VoiceBarNotchContract.geometry(for: .hoverLauncher)
         let plan = VoiceBarNotchMotionPlan.resolve(
             from: .recording,
             to: .hoverLauncher,
             reducedMotion: false
         )
-        XCTAssertEqual(VoiceBarNotchContract.geometry(for: .recording).topWidth,
-                       VoiceBarNotchContract.geometry(for: .hoverLauncher).topWidth)
+        XCTAssertEqual(recording.leadingWingWidth, 88.5)
+        XCTAssertEqual(recording.trailingWingWidth, 102)
+        XCTAssertLessThan(launcher.topWidth, recording.topWidth)
         XCTAssertEqual(plan.steps.map(\.component), [.wings, .panel, .content])
         XCTAssertTrue(plan.steps.allSatisfy(\.targetVisible))
+        XCTAssertTrue(plan.preservesFixedCore)
+        XCTAssertEqual(plan.fixedCoreTranslation, .zero)
+        let shell = VoiceBarNotchShellTransition.resolve(from: recording, to: launcher, visualState: .hoverLauncher)
+        XCTAssertEqual(shell.delay, 0)
+        XCTAssertEqual(shell.revealProgress, 1)
+        var coordinator = VoiceBarNotchMotionCoordinator(initialState: .recording)
+        _ = coordinator.replaceTarget(with: .hoverLauncher, reducedMotion: false)
+        XCTAssertEqual(coordinator.shellCount, 1)
     }
 
     func testFixedCoreNeverAppearsInAnAnimatedComponent() {

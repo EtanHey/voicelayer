@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-VoiceLayer exposes exactly 2 tools. Both include [MCP ToolAnnotations](https://spec.modelcontextprotocol.io/specification/2025-03-26/server/tools/#annotations).
+VoiceLayer exposes exactly 3 tools. All include [MCP ToolAnnotations](https://spec.modelcontextprotocol.io/specification/2025-03-26/server/tools/#annotations).
 
 ## voice_speak
 
@@ -97,3 +97,7 @@ Tools never throw exceptions — all errors are caught and returned as structure
 | voice_speak (TTS modes) | `python3` + `edge-tts`, audio player |
 | voice_ask | All of the above + `sox`, STT backend (whisper.cpp or Wispr) |
 | voice_speak (think mode) | None (file system only) |
+
+### voice_ask_results
+
+Read retained Ask answers, newest first: `voice_ask_results({limit: 5})` (max 20), or one with `{archive_id: "<Ask ID>"}`. Returns id, asked_at, an 80-character question preview, the unmodified answer, and answered/away/needs-retranscribe status. Missing IDs and IDs from spoken questions return an empty list with "No Ask answer exists for this archive ID." Older silent archives without an explicit away receipt conservatively need retranscription. An unfinished transcription can also temporarily show needs-retranscribe; this read-only lookup never starts retranscription. The tool never speaks, captures or retranscribes. An Ask logs its ID when capture is retained, before transcription; retained-result text carries that ID. Pre-allocation refusals keep their existing result envelope and have no archive ID. For explicit retranscription, use `voice_ask({retranscribe_archive_id: "<Ask ID>"})`.

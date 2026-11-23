@@ -51,7 +51,7 @@ final class TeleprompterAWiringTests: XCTestCase {
         XCTAssertEqual(sent.count, 1, "a stale utterance or a bad index sends nothing")
     }
 
-    func testNoWordSeekWhilePaused() {
+    func testT32WordClickWhilePausedSendsSeekAndKeepsPause() {
         let state = VoiceState()
         state.isConnected = true
         var sent: [[String: Any]] = []
@@ -60,7 +60,40 @@ final class TeleprompterAWiringTests: XCTestCase {
         state.handleEvent(["type": "playback_state", "state": "paused", "playback_id": "p-u1", "generation": 2,
                            "offset_ms": 300, "chunk_offset_ms": 300, "duration_ms": 4000])
         XCTAssertTrue(state.isPlaybackPaused)
+        state.handleEvent(words("u1", offset: 0, [("Hello", 100, 300), ("world", 600, 850)]))
+        state.seekSpeechWord(utteranceID: "u1", wordIndex: 1)
+        XCTAssertEqual(sent.last?["cmd"] as? String, "speech_seek")
+        XCTAssertEqual(sent.last?["wordIndex"] as? Int, 1)
+        state.handleEvent(["type": "playback_state", "state": "paused", "playback_id": "p-u1", "generation": 3,
+                           "offset_ms": 600, "chunk_offset_ms": 600, "duration_ms": 4000])
+        XCTAssertTrue(state.isPlaybackPaused)
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), 600)
+        XCTAssertEqual(TeleprompterPlaybackScrubBar(state: state).notice, "Paused. Click a word to jump")
+        state.togglePlaybackPause()
+        XCTAssertEqual(sent.last?["cmd"] as? String, "resume")
+        // The cross-chunk resume commits before retiring its old chunk, preserving the read on screen.
+        state.handleEvent(["type": "playback_state", "state": "resumed", "playback_id": "p-u1", "generation": 3])
+        state.handleEvent(["type": "playback_outcome", "playback_id": "p-u1", "status": "interrupted"])
+        state.handleEvent(["type": "state", "state": "speaking", "utteranceId": "u1", "text": "Hello world",
+                           "duration_ms": 4000, "playback_id": "p-new", "generation": 1,
+                           "playback_offset_ms": 600, "reanchor": "seek"])
+        XCTAssertEqual(state.mode, .speaking)
+        XCTAssertFalse(state.isPlaybackPaused)
+        XCTAssertGreaterThanOrEqual(state.playbackElapsedMilliseconds(), 600)
+    }
+    func testT32UntimedPausedWordWaitsForItsOwnTiming() {
+        let state = VoiceState()
+        state.isConnected = true
+        var sent: [[String: Any]] = []
+        state.sendCommand = { sent.append($0) }
+        speaking(state, utterance: "u1", text: "Hello world")
+        state.handleEvent(["type": "playback_state", "state": "paused", "playback_id": "p-u1", "generation": 2,
+                           "offset_ms": 300, "duration_ms": 4000])
         state.seekSpeechWord(utteranceID: "u1", wordIndex: 1)
         XCTAssertTrue(sent.isEmpty)
+        state.handleEvent(words("u1", offset: 0, [("Hello", 100, 300), ("world", 600, 850)]))
+        XCTAssertEqual(sent.last?["cmd"] as? String, "speech_seek")
+        XCTAssertTrue(state.isPlaybackPaused)
     }
+
 }

@@ -243,12 +243,12 @@ final class AppLifecycleTests: XCTestCase {
             )
         )
 
-        // C7-W: the recording row sits out from the core by the wing's spare width (flat display: 102 - 14 - 72).
+        // Recording reserves three left slots; each wing uses its own content and insets.
         let recordingCoreInset = VoiceBarPresentation.recordingLeadingCoreInset(
             wingWidth: VoiceBarPresentation.recordingWingWidth(
                 showsThirdControl: true, showsEarlierTakeProcessing: false, visibleCoreOcclusionInset: 0),
             showsEarlierTakeProcessing: false)
-        XCTAssertEqual(recordingCoreInset, 16)
+        XCTAssertEqual(recordingCoreInset, 2.5)
         state.mode = .recording
         state.recordingMode = "ptt"
         // Recording pause: Stop · Pause · ✕, so Stop stays inside the hit region on a PTT take.
@@ -259,7 +259,7 @@ final class AppLifecycleTests: XCTestCase {
         state.recordingMode = nil
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .recording),
-            VoiceBarNotchInteractionConfiguration(leadingControlCount: 2, leadingCoreInset: recordingCoreInset)
+            VoiceBarNotchInteractionConfiguration(leadingControlCount: 2, leadingCoreInset: recordingCoreInset, leadingControlSlotIndices: [0, 2])
         )
         state.recordingMode = "vad"
         XCTAssertEqual(
@@ -270,8 +270,9 @@ final class AppLifecycleTests: XCTestCase {
         state.mode = .transcribing
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus),
-            // 0510 N9: the microphone control stays live. c9-P: the right wing is the rippling meter, no controls.
-            VoiceBarNotchInteractionConfiguration(leadingControlCount: 1)
+            // The approved microphone reorder moves its live hit slot outside the spinner; the meter has no controls.
+            VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 1, trailingControlCountFromCore: 2, leadingCoreInset: VoiceBarPresentation.transcribingMicrophoneCoreInset)
         )
         // 0510 R3: a drawer open while recording keeps the recording wing's controls live, over a live drawer body.
         state.mode = .recording
@@ -279,7 +280,7 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .history, bandState: .recording),
             VoiceBarNotchInteractionConfiguration(leadingControlCount: 2, lowerSurfaceIsInteractive: true,
-                                                  leadingCoreInset: recordingCoreInset)
+                                                  leadingCoreInset: recordingCoreInset, leadingControlSlotIndices: [0, 2])
         )
         state.recordingMode = "ptt"
         XCTAssertEqual(

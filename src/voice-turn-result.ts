@@ -7,7 +7,7 @@ type Recovery = NonNullable<NonNullable<Parameters<typeof formatAsk>[1]>["recove
 type PromptPlayback = PlaybackOutcomeEvent | undefined;
 export type VoiceAskTurnOutcome =
   | { kind: "dictation-started"; archiveId: string | null }
-  | { kind: "away" }
+  | { kind: "away"; archiveId?: string }
   | { kind: "answered"; transcript: string; archiveId: string | null; promptPlayback: PromptPlayback }
   | { kind: "no-answer"; timeoutSeconds: number; recovery: Recovery; promptPlayback: PromptPlayback }
   | { kind: "no-speech"; recovery: Recovery | null; promptPlayback: PromptPlayback }
@@ -43,7 +43,7 @@ export function formatVoiceAskTurnResult(outcome: VoiceAskTurnOutcome): McpTextR
         ...(outcome.archiveId ? { archiveId: outcome.archiveId } : {}),
         promptPlayback: outcome.promptPlayback,
       }));
-    case "away": return textResult(STILL_AWAY);
+    case "away": return textResult(outcome.archiveId ? `${STILL_AWAY} (archive ${outcome.archiveId})` : STILL_AWAY);
     case "no-answer":
       return textResult(`No answer within ${outcome.timeoutSeconds === 120 ? "2 minutes" : `${outcome.timeoutSeconds} seconds`}; recording kept at ${outcome.recovery.audioPath} (archive ${outcome.recovery.archiveId}). You may make ONE follow-up voice_speak or voice_ask, then continue as if the user is away; do not keep asking.`);
     case "no-speech":

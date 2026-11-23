@@ -39,10 +39,12 @@ finally:assert lock.read_bytes()==before`);
   expect(result.exit).toBe(mode === "idle" || mode === "qa" ? 0 : 1);
   if (mode === "dead") expect(result.error).toContain("REFUSED: lifetime booking owner exited");
 });
-test.skipIf(process.platform !== "darwin")("Apple parser accepts the installed template comment without rewriting it", () => {
+test.skipIf(process.platform !== "darwin")("Apple parser accepts a legacy malformed comment without rewriting it", () => {
   const result = python(`g['HOME']=root/'apple-plist-home'
 path=g['HOME']/'Library/LaunchAgents/com.voicelayer.voicebar.plist';path.parent.mkdir(parents=True,exist_ok=True)
 raw=(g['B']['ROOT']/'launchd/com.voicelayer.voicebar.plist').read_bytes().replace(b'__VOICEBAR_LOG_DIR__',str(g['HOME']/'Library/Logs/voicelayer').encode())
+# Preserve the legacy malformed fixture independently of the corrected template.
+raw=raw.replace(b'mode 600; /tmp',b'mode 600 -- /tmp')
 assert b'mode 600 -- /tmp' in raw;path.write_bytes(raw)
 if 'read_plist' in g['B']:g['read_plist']=g['B']['read_plist']
 output=chr(10).join(key+' = '+value for key,value in {'path':str(path),'program':str(g['RESIDENT']/'Contents/MacOS/VoiceBar'),'stdout path':str(g['HOME']/'Library/Logs/voicelayer/voicebar.log'),'stderr path':str(g['HOME']/'Library/Logs/voicelayer/voicebar-err.log')}.items())

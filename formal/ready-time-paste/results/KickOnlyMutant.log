@@ -1,0 +1,8 @@
+{
+  "role": "mutant",
+  "kind": "invariant",
+  "target": "RelaunchedTargetRecovered",
+  "status": "EXPECTED_FAIL",
+  "generated": 812,
+  "distinct": 532
+}

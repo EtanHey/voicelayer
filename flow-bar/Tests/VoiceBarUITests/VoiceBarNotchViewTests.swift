@@ -153,7 +153,8 @@ final class VoiceBarNotchViewTests: XCTestCase {
 
         XCTAssertFalse(container.contains("if presentation.visualState != .idle"))
         XCTAssertTrue(container.contains("morphingNotchSurface"))
-        XCTAssertTrue(container.contains("presentation.visualState == .idle ? 0 : 1"))
+        // Owner r2: a band closing to hidden keeps its glass until the close lands, then hides as before.
+        XCTAssertTrue(container.contains("presentation.visualState == .idle && closing.band == nil ? 0 : 1"))
         let picker = try bracedScope(after: "private var notchSurface", in: source)
         XCTAssertTrue(picker.contains("VoiceBarNotchContinuousShape"))
         XCTAssertTrue(picker.contains("VoiceBarNotchHistoryMorphShape"))
@@ -199,7 +200,8 @@ final class VoiceBarNotchViewTests: XCTestCase {
         // draws either, so the material, mask and hit shape stay single.
         let surface = try bracedScope(after: "private func notchSurface(shape:", in: source)
         let geometryChange = try bracedScope(after: ".onChange(of: presentation.geometry)", in: source)
-        let transaction = try bracedScope(after: "withAnimation(shellAnimation.delay(transition.delay))", in: geometryChange)
+        // Owner r2: the transaction gained a completion argument; the marker stops before it.
+        let transaction = try bracedScope(after: "withAnimation(shellAnimation.delay(transition.delay)", in: geometryChange)
 
         XCTAssertTrue(source.contains("@State private var surfaceRevealProgress"))
         XCTAssertFalse(source.contains(".task(id: presentation.visualState)"))

@@ -24,7 +24,8 @@ final class NotchShowPreparationTests: XCTestCase {
         XCTAssertTrue(bar.contains(".id(presentationModel?.presentationGeneration ?? 0)"))
         XCTAssertTrue(shell.contains("_renderedGeometry = State(initialValue: presentation.geometry)"))
         // The existing hover morph still uses the same geometry transaction and spring.
-        XCTAssertTrue(shell.contains("withAnimation(shellAnimation.delay(transition.delay))"))
+        // Owner r2: the same transaction gained a completion (a band closing to hidden keeps its icons until it lands).
+        XCTAssertTrue(shell.contains("withAnimation(shellAnimation.delay(transition.delay), completionCriteria:"))
         XCTAssertTrue(app.contains("notchPresentationModel.setHovered(hovering)"))
     }
     @MainActor func testShowPublishesResolvedTargetsAtFirstPresentation() throws {

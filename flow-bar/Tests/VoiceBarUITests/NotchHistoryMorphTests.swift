@@ -349,6 +349,51 @@ final class NotchHistoryMorphTests: XCTestCase {
         }
     }
 
+    /// VB-009: displacement absorbed by the no-jump handoff still has a real release speed.
+    func testVB009ShortFlickKeepsVelocityInsideTheHandoffAllowance() throws {
+        for distance: CGFloat in [6, 8, 10] {
+            for direction: CGFloat in [-1, 1] {
+                var pull = NotchHistoryPull()
+                let initial: CGFloat = direction > 0 ? 0 : 1
+                pull.press(y: 16, progress: initial, time: 0)
+                let shown = try XCTUnwrap(pull.move(y: 16 + direction * distance,
+                    time: 0.01, range: 348, seed: initial))
+                if distance <= NotchHistoryMorph.handoffAllowance {
+                    XCTAssertEqual(shown, initial, accuracy: 1e-9, "handoff must still have no jump")
+                }
+                guard case let .settle(open, speed) = pull.release(progress: shown) else {
+                    return XCTFail("a short flick must release exactly once as a pull")
+                }
+                print("VB009_STEP distance=\(distance) direction=\(direction) t=0.01 shown=\(shown) speed=\(speed) open=\(open)")
+                let flight = NotchHistorySpringFlight(from: shown, to: open ? 1 : 0,
+                    velocity: speed, start: 0,
+                    response: open ? NotchHistoryMorph.openResponse : NotchHistoryMorph.closeResponse,
+                    dampingFraction: open ? NotchHistoryMorph.openDampingFraction : NotchHistoryMorph.closeDampingFraction)
+                for frame in 0 ... 30 {
+                    let t = Double(frame) / 60
+                    print("VB009_FRAME distance=\(distance) direction=\(direction) frame=\(frame) t=\(t) progress=\(flight.value(at: t))")
+                }
+                XCTAssertEqual(open, direction > 0, "a short flick must follow its direction")
+                XCTAssertGreaterThan(speed * Double(direction), NotchHistoryMorph.flickVelocity)
+                XCTAssertEqual(pull.release(progress: shown), .none, "no duplicate release")
+            }
+        }
+    }
+
+    func testVB009SlowShortPullAndCancellationDoNotBecomeFlicks() throws {
+        for cancelled in [false, true] {
+            var pull = NotchHistoryPull()
+            pull.press(y: 16, progress: 0, time: 0)
+            let shown = try XCTUnwrap(pull.move(y: 22, time: cancelled ? 0.01 : 1,
+                                              range: 348, seed: 0))
+            guard case let .settle(open, speed) = pull.release(progress: shown, cancelled: cancelled) else {
+                return XCTFail("expected settle")
+            }
+            XCTAssertFalse(open)
+            if cancelled { XCTAssertEqual(speed, 0) }
+        }
+    }
+
     // MARK: V6 extend handle
 
     func testTheHandleTakesPressesOnlyInItsBandOnTheOpenPanel() {
@@ -444,6 +489,34 @@ final class NotchHistoryMorphTests: XCTestCase {
                        "the handle's spring animates the shell's height")
         morph.progress = 0
         XCTAssertEqual(morph.geometry(at: 0).lowerSurfaceHeight, closed.lowerSurfaceHeight)
+    }
+
+    /// CodeRabbit on #936: an armed over-pull adds up to 16 pt below the rows for the release hint. With eight rows
+    /// and two lines of feedback the drawer already fills History's window, so the shell grew past it and the window
+    /// cut its lower 16 pt off. The overshoot now stops at the window, and the hint loses its offset there.
+    func testTheArmedOverPullNeverGrowsTheShellPastTheDrawerWindow() {
+        let model = VoiceBarNotchPresentationModel()
+        model.setHistoryPanelOpen(true)
+        let open = model.presentation.geometry
+        let cap = NotchHistoryMorph.historyCanvasLowerSurfaceHeight
+        // The tallest case BarView builds: eight rows plus feedback, clamped to the window (`historyMorphInput`).
+        let tallest = cap
+        XCTAssertGreaterThan(NotchHistoryMorph.lowerSurfaceHeight(rows: CGFloat(NotchHistoryMorph.maximumRows))
+                             + 2 * VoiceBarNotchFeedback.maximumTextHeight + 20, cap,
+                             "fixture: eight rows and two full feedback notes reach the drawer window")
+        let morph = VoiceBarNotchHistoryMorphInput(progress: 1, closed: VoiceBarNotchContract.geometry(for: .hoverLauncher),
+                                                   open: open, openLowerSurfaceHeight: tallest)
+        let armed = NotchHistoryMorph.rubberBand(NotchHistoryMorph.settingsPullThreshold)
+        for p in [1.0, 1.05, (1 + armed) / 2, armed, armed + 0.2] as [CGFloat] {
+            let shell = morph.geometry(at: p).lowerSurfaceHeight
+            XCTAssertLessThanOrEqual(shell, cap, "p=\(p): the shell (\(shell) pt) stays inside the \(cap) pt window")
+            XCTAssertEqual(max(0, shell - morph.openLowerSurfaceHeight) / 2, 0,
+                           "p=\(p): with no room left the release hint keeps no offset")
+        }
+        // Short of the window the hint still gets its room: six rows, no feedback.
+        let short = VoiceBarNotchHistoryMorphInput(progress: 1, closed: VoiceBarNotchContract.geometry(for: .hoverLauncher),
+                                                   open: open)
+        XCTAssertEqual(short.geometry(at: armed + 0.2).lowerSurfaceHeight, short.openLowerSurfaceHeight + 16, accuracy: 0.01)
     }
 
     // MARK: V12 clipped rows, row click

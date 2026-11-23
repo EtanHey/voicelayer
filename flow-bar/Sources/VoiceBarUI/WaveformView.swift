@@ -369,7 +369,7 @@ public struct VoiceBarNotchWaveform: View {
             // c9-P: while transcribing, the drive colour is the red the meter is handing over from.
             color: mode == .transcribing
                 ? Theme.recordingColor
-                : Self.waveformColor(mode: mode, isCaptureLive: isCaptureLive, isPlaybackEnded: isPlaybackEnded),
+                : Self.waveformColor(mode: mode, isCaptureLive: isCaptureLive, isPlaybackEnded: isPlaybackEnded, appearance: notchAppearance),
             processingColor: Theme.processingRippleColor(for: notchAppearance),
             isListening: mode == .recording && isListening,
             isProcessing: mode == .transcribing,
@@ -380,11 +380,12 @@ public struct VoiceBarNotchWaveform: View {
     }
 
     /// Red is reserved for a capture that actually exists.
-    public static func waveformColor(mode: VoiceMode, isCaptureLive: Bool, isPlaybackEnded: Bool = false) -> Color {
+    public static func waveformColor(mode: VoiceMode, isCaptureLive: Bool, isPlaybackEnded: Bool = false,
+                                     appearance: VoiceBarNotchAppearance = .dark) -> Color {
         if isPlaybackEnded, mode == .idle { return Theme.speakingColor.opacity(0.45) }
         return switch mode {
         case .recording:
-            isCaptureLive ? Theme.recordingColor : Theme.captureBootingColor
+            isCaptureLive ? Theme.recordingColor : Theme.captureBootingColor(for: appearance)
         case .transcribing:
             // c9-P: the ripple's lifted processing blue (contrast on the M4 glass); the transcribing spinner shares it.
             Theme.processingRippleColor

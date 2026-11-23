@@ -1371,6 +1371,13 @@ public final class VoiceState {
 
     public var focusedTargetEligibilityProvider: () -> DictationFocusedTargetEligibility? = { nil }
 
+    /// Asks a Chromium-family target whose accessibility tree is off (a relaunched Electron app) to turn
+    /// it on. Called once at record start and must return at once: the take never waits for it.
+    public var dictationFocusRecoveryKick: (() -> Void)?
+    /// Called only when the ready-time capture found no target. It recovers off the main thread, then
+    /// calls back once on main; the capture then runs once more with every rule.
+    public var readyFocusRecovery: ((@escaping () -> Void) -> Void)?
+
     /// Clipboard operations share the board injected at initialization.
     public var pasteboardWriter: (String) -> Void
     public var pasteboardStringProvider: () -> String?
@@ -2751,7 +2758,7 @@ public final class VoiceState {
 
     /// Playback-only: a word click names the utterance it was drawn from, never the latest one.
     public func seekSpeechWord(utteranceID: String, wordIndex: Int) {
-        guard mode == .speaking, !isPlaybackPaused, speechWords?.utteranceID == utteranceID, wordIndex >= 0 else { return }
+        guard mode == .speaking, speechWords?.utteranceID == utteranceID, wordIndex >= 0 else { return }
         // C7 L3 V09: a long read is timed chunk by chunk as it synthesizes, and the daemon refuses a word it has not
         // timed yet. A click on such a word of the read on screen (C4 F3: also before the first chunk) waits for its
         // timing. C4 F1: it waits only `pendingSpeechSeekWindow`; a timing that arrives later never moves the voice.
@@ -2817,7 +2824,7 @@ public final class VoiceState {
     /// Anything else drops it.
     private func firePendingSpeechSeekIfTimed() {
         guard let pending = pendingSpeechSeek else { return }
-        guard pending.readEpoch == logicalReadEpoch, mode == .speaking, !isPlaybackPaused,
+        guard pending.readEpoch == logicalReadEpoch, mode == .speaking,
               playbackAmplitudeClock() - pending.clickedAt <= Self.pendingSpeechSeekWindow,
               let table = speechWords, table.utteranceID == pending.utteranceID else {
             pendingSpeechSeek = nil
@@ -3463,6 +3470,7 @@ public final class VoiceState {
         if front?.bundleIdentifier != Bundle.main.bundleIdentifier {
             frontmostAppOnRecordStart = front
             recordStartInsertionHandler = captureDictationInsertionHandler()
+            dictationFocusRecoveryKick?()
         } else {
             frontmostAppOnRecordStart = nil
             recordStartInsertionHandler = nil
@@ -5435,9 +5443,31 @@ public final class VoiceState {
         return true
     }
 
-    private func pasteIntoReadyFocus(_ text: String, operationID: UUID?) {
+    private func pasteIntoReadyFocus(_ text: String, operationID: UUID?, recoversFocus: Bool = true) {
         let app = frontmostAppProvider()
         let eligibility = focusedTargetEligibilityProvider()
+        if eligibility == nil, recoversFocus, let app, !secureInputEnabledProvider(),
+           let readyFocusRecovery {
+            // Recovery may finish after a focus switch, timeout, or process relaunch. Pin values now:
+            // NSRunningApplication itself can outlive its process, and PID alone can be reused.
+            let readyPID = app.processIdentifier
+            let readyBundle = app.bundleIdentifier
+            let readyLaunch = app.launchDate
+            readyFocusRecovery { [weak self] in
+                guard let self else { return }
+                if let operationID, self.ownedPasteOperations[operationID] == nil { return }
+                guard let current = self.frontmostAppProvider(),
+                      current.processIdentifier == readyPID,
+                      current.bundleIdentifier == readyBundle,
+                      current.launchDate == readyLaunch else {
+                    self.finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID,
+                        refusalNote: "Not pasted: target app changed; kept in History")
+                    return
+                }
+                self.pasteIntoReadyFocus(text, operationID: operationID, recoversFocus: false)
+            }
+            return
+        }
         guard !secureInputEnabledProvider(), eligibility?.isSecure != true else {
             finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID,
                 refusalNote: "Not pasted: secure input; kept in History")

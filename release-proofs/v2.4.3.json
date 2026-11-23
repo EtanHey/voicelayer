@@ -1,0 +1,28 @@
+{
+  "schema": "voicelayer.t3-optf5-proof.v2",
+  "receipt": "release",
+  "bundleSha256": "949b044726afd5e8ed5c19f476314730a8d18e4ed84cf4a8ce26ad13f2b193c9",
+  "evidence": {
+    "captureLineSha256": "afa0a428e93a82ec6f70b4407c6e8757120d54a140729267e0d8dbdca2a55053",
+    "speakLineSha256": "de72711e92f15ac7c6e0baa7764fc7d3cedd1967d5b121f4562595a6aca39115",
+    "historyEntrySha256": "d6a816973061f0b949e3cd220cfc24349d8c374faed455311e39dc9de7dbd14b"
+  },
+  "gitCommit": "ec1f2fada359fdfe539d7d0406ccc582d1106867",
+  "buildTimeUTC": "2026-11-17T04:17:38Z",
+  "t3Build": "T3 Code (Nightly) 0.1.10-nightly.20261116.4800 (0.1.10-nightly.20261116.4800)",
+  "timestamp": "2026-11-17T04:51:24.883Z",
+  "expectedTextSha256": "6c1368024f4a10cae34e7faf73b8fab0286fe92d16712bd5a28d8eae9635e69c",
+  "historyTextSha256": "6c1368024f4a10cae34e7faf73b8fab0286fe92d16712bd5a28d8eae9635e69c",
+  "speakTextCommandId": "A55779C2-1A3A-4B1E-9602-DD639B29B363",
+  "readError": false,
+  "machine": {
+    "model": "MacBookPro18,3",
+    "chip": "Apple M1 Pro"
+  },
+  "release": {
+    "version": "2.4.3",
+    "gitCommit": "ec1f2fada359fdfe539d7d0406ccc582d1106867",
+    "buildTimeUTC": "2026-11-17T04:17:38Z",
+    "bundleSha256": "949b044726afd5e8ed5c19f476314730a8d18e4ed84cf4a8ce26ad13f2b193c9"
+  }
+}

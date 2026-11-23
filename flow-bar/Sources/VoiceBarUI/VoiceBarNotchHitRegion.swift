@@ -3,6 +3,8 @@ import SwiftUI
 
 public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
     public let leadingControlCount: Int
+    /// Sparse recording slots while Pause is reserved but not yet mounted.
+    public let leadingControlSlotIndices: [Int]?
     public let trailingControlCountFromCore: Int
     public let trailingControlCountFromOuter: Int
     public let trailingOuterInset: CGFloat
@@ -28,9 +30,11 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
         leadingOutermostControlWidth: CGFloat? = nil,
         lowerTerminalControl: Bool = false,
         lowerControlBottomInset: CGFloat = 14,
-        leadingCoreInset: CGFloat = VoiceBarNotchContract.compactCoreContentInset
+        leadingCoreInset: CGFloat = VoiceBarNotchContract.compactCoreContentInset,
+        leadingControlSlotIndices: [Int]? = nil
     ) {
         self.leadingControlCount = max(0, leadingControlCount)
+        self.leadingControlSlotIndices = leadingControlSlotIndices
         self.trailingControlCountFromCore = max(0, trailingControlCountFromCore)
         self.trailingControlCountFromOuter = max(0, trailingControlCountFromOuter)
         self.trailingOuterInset = max(0, trailingOuterInset)
@@ -47,10 +51,28 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
     public static let historyPanel = VoiceBarNotchInteractionConfiguration(
         leadingControlCount: 2,
         trailingControlCountFromCore: 2,
-        lowerSurfaceIsInteractive: true
+        lowerSurfaceIsInteractive: true,
+        leadingCoreInset: VoiceBarNotchContract.launcherLeadingContentInset
     )
 
     public static let none = VoiceBarNotchInteractionConfiguration()
+
+    /// Owner r2: the left hit slots follow the painted row. A configuration left at the compact default inset over a
+    /// left wing that is the launcher's (the resident app builds the launcher's and an idle notice's that way) takes
+    /// the launcher's inset, where the mic and chevron are drawn. Recording and explicit insets are kept.
+    func followingLeadingRow(of presentation: VoiceBarNotchPresentation) -> Self {
+        guard presentation.bandState != .recording, leadingControlCount > 0,
+              abs(leadingCoreInset - VoiceBarNotchContract.compactCoreContentInset) < 0.01 else { return self }
+        let painted = VoiceBarNotchContract.leadingCoreContentInset(leadingWingWidth: presentation.geometry.leadingWingWidth)
+        guard painted != leadingCoreInset else { return self }
+        return VoiceBarNotchInteractionConfiguration(
+            leadingControlCount: leadingControlCount, trailingControlCountFromCore: trailingControlCountFromCore,
+            trailingControlCountFromOuter: trailingControlCountFromOuter, trailingOuterInset: trailingOuterInset,
+            lowerControlCount: lowerControlCount, lowerSurfaceIsInteractive: lowerSurfaceIsInteractive,
+            leadingOutermostControlWidth: leadingOutermostControlWidth, lowerTerminalControl: lowerTerminalControl,
+            lowerControlBottomInset: lowerControlBottomInset, leadingCoreInset: painted,
+            leadingControlSlotIndices: leadingControlSlotIndices)
+    }
 
     /// The same band controls over a live drawer body (0510 R3: a drawer under the recording or status wings).
     public var withInteractiveLowerSurface: Self {
@@ -58,7 +80,7 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
             leadingControlCount: leadingControlCount, trailingControlCountFromCore: trailingControlCountFromCore,
             trailingControlCountFromOuter: trailingControlCountFromOuter, trailingOuterInset: trailingOuterInset,
             lowerControlCount: lowerControlCount, lowerSurfaceIsInteractive: true,
-            leadingCoreInset: leadingCoreInset
+            leadingCoreInset: leadingCoreInset, leadingControlSlotIndices: leadingControlSlotIndices
         )
     }
 
@@ -74,19 +96,22 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
         case .hoverLauncher:
             VoiceBarNotchInteractionConfiguration(
                 leadingControlCount: 2,
-                trailingControlCountFromCore: 2
+                trailingControlCountFromCore: 2,
+                leadingCoreInset: VoiceBarNotchContract.launcherLeadingContentInset
             )
         case .recording:
-            VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 2
-            )
+            VoiceBarNotchInteractionConfiguration(leadingControlCount: 2,
+                leadingCoreInset: presentation.visibleCoreOcclusionInset + VoiceBarNotchContract.recordingLeadingContentInset,
+                leadingControlSlotIndices: [0, 2])
         case .compactStatus:
             .none
         case .teleprompter:
             VoiceBarNotchInteractionConfiguration(lowerControlCount: 1)
         case .history:
             presentation.bandState == .recording
-                ? VoiceBarNotchInteractionConfiguration(leadingControlCount: 2).withInteractiveLowerSurface
+                ? VoiceBarNotchInteractionConfiguration(leadingControlCount: 2,
+                    leadingCoreInset: presentation.visibleCoreOcclusionInset + VoiceBarNotchContract.recordingLeadingContentInset,
+                    leadingControlSlotIndices: [0, 2]).withInteractiveLowerSurface
                 : presentation.bandState == .compactStatus
                 ? VoiceBarNotchInteractionConfiguration.none.withInteractiveLowerSurface
                 : .historyPanel
@@ -107,8 +132,9 @@ public struct VoiceBarNotchHitRegion: Equatable {
         let topY = geometry.lowerSurfaceHeight + ((geometry.topHeight - size) / 2)
         var rects: [CGRect] = []
 
-        for index in 0 ..< configuration.leadingControlCount {
-            let isOutermost = index == configuration.leadingControlCount - 1
+        let leadingSlots = configuration.leadingControlSlotIndices ?? Array(0 ..< configuration.leadingControlCount)
+        for index in leadingSlots {
+            let isOutermost = index == leadingSlots.last
             let width = isOutermost ? max(size, configuration.leadingOutermostControlWidth ?? size) : size
             rects.append(
                 CGRect(

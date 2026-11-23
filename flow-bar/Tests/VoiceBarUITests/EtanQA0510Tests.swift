@@ -173,7 +173,7 @@ final class EtanQA0510Tests: XCTestCase {
         input.showsIdleMicrophoneControl = true
         let typed = VoiceBarPresentation.notchPresentation(from: input)
         XCTAssertEqual(typed.visualState, .compactStatus)
-        XCTAssertEqual(typed.geometry.leadingWingWidth, VoiceBarNotchContract.fixedWingWidth,
+        XCTAssertEqual(typed.geometry.leadingWingWidth, VoiceBarNotchContract.launcherLeadingWingWidth,
                        "[N9] Typed's left wing holds the mic and its control, like the launcher's")
         state.mode = .recording
         XCTAssertFalse(VoiceBarPresentation.showsIdleMicrophoneControl(for: state))
@@ -223,7 +223,7 @@ final class EtanQA0510Tests: XCTestCase {
         XCTAssertLessThanOrEqual(offset, 1, "[0449 E1] the painted centres align")
     }
 
-    func test0449RecordingWingsPaintEqualSpaceAroundTheNotch() throws {
+    func test0449RecordingWingsPaintTheirReservedContentWidths() throws {
         for hold in [false, true] {
             for inset: CGFloat in [0, 8.5] {
                 let p = VoiceBarPresentation.notchPresentation(from: .init(
@@ -244,7 +244,8 @@ final class EtanQA0510Tests: XCTestCase {
                 let l = g.coreOriginX - CGFloat(left) / 2
                 let r = CGFloat(right + 1) / 2 - g.coreOriginX - g.coreWidth
                 print("[0449 E2] hold=\(hold) inset=\(inset) left=\(l) right=\(r)")
-                XCTAssertEqual(l, r, accuracy: 2, "[0449 E2] equal space either side of the notch")
+                XCTAssertEqual(l, 88.5 + inset, accuracy: 2, "three reserved controls with calibrated inset")
+                XCTAssertEqual(r, 102 + inset, accuracy: 2, "timer/meter with calibrated inset")
             }
         }
     }

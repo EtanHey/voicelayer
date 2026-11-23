@@ -78,7 +78,7 @@ import {
   startParentProcessWatchdog,
   type ParentProcessWatchdog,
 } from "./daemon-parent-watchdog";
-import { handleVoiceSpeak, handleVoiceAsk } from "./handlers";
+import { handleVoiceSpeak, handleVoiceAsk, handleVoiceAskResults } from "./handlers";
 import type { VoiceToolContext } from "./mcp-notifications";
 import {
   startDaemonHeartbeat,
@@ -99,6 +99,7 @@ const toolDispatch: Record<
 > = {
   voice_speak: handleVoiceSpeak,
   voice_ask: handleVoiceAsk,
+  voice_ask_results: handleVoiceAskResults,
 };
 
 // --- Startup ---

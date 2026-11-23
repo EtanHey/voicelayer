@@ -165,7 +165,8 @@ public struct VoiceBarNotchMotionPlan: Equatable, Sendable {
     ) -> VoiceBarNotchMotionPlan {
         let steps: [VoiceBarNotchMotionStep] = if source == destination {
             []
-        } else if surfaceExtent(destination) >= surfaceExtent(source) {
+        } else if (source == .recording && destination != .idle)
+            || surfaceExtent(destination) >= surfaceExtent(source) {
             openingSteps(reducedMotion: reducedMotion)
         } else {
             closingSteps(reducedMotion: reducedMotion)

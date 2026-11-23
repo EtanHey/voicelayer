@@ -253,7 +253,7 @@ final class WingLayoutX4Tests: XCTestCase {
                 .frame(width: WaveformLayout.viewportWidth, alignment: .trailing)
         } stop: {
             VoiceBarPillControlButton(icon: "stop.fill", optics: .resolve(for: "stop.fill"), foreground: .white,
-                                      halo: .clear, isSelected: false, isDestructive: true,
+                                      isSelected: false, isDestructive: true,
                                       accessibilityLabel: "Stop speaking", accessibilityHint: "", action: {})
         }
         .padding(.leading, inset)
@@ -297,8 +297,13 @@ final class WingLayoutX4Tests: XCTestCase {
             for fixture in Fixture.allCases {
                 let g = presentation(fixture, inset: inset).geometry
                 print("[X4-2] \(fixture.rawValue) inset=\(inset): wings L/R=\(g.leadingWingWidth)/\(g.trailingWingWidth)")
-                XCTAssertEqual(g.leadingWingWidth, g.trailingWingWidth, accuracy: 0.5,
-                               "[X4-2] \(fixture.rawValue) inset \(inset): equal wings about the notch")
+                if fixture == .recordingPTT || fixture == .recordingVAD {
+                    XCTAssertEqual(g.leadingWingWidth, 88.5 + inset, accuracy: 0.5, "reserved recording controls")
+                    XCTAssertEqual(g.trailingWingWidth, 102 + inset, accuracy: 0.5, "independent timer/meter payload")
+                } else {
+                    XCTAssertEqual(g.leadingWingWidth, g.trailingWingWidth, accuracy: 0.5,
+                                   "non-recording wings retain their existing symmetry")
+                }
                 XCTAssertLessThanOrEqual(g.trailingWingWidth, VoiceBarNotchContract.morphCanvasWingCapacity,
                                          "\(fixture.rawValue): inside the morph canvas")
             }
@@ -449,7 +454,7 @@ final class WingLayoutX4Tests: XCTestCase {
                   "open gutters L/R=\(leftGutter)/\(rightGutter)")
             XCTAssertEqual(open.stop.minX, closed.stop.minX, accuracy: 0.25, "Stop holds still")
             XCTAssertEqual(open.time.minX, closed.time.minX, accuracy: 0.25, "the time holds still")
-            XCTAssertEqual(leftGutter, rightGutter, accuracy: 0.5, "[C7-W-2] inset \(inset): equal gutters when open")
+            XCTAssertEqual(leftGutter - rightGutter, 13.5, accuracy: 0.5, "independent recording payloads differ by 13.5 pt; opening must preserve that")
         }
     }
 
@@ -540,7 +545,7 @@ final class WingLayoutX4Tests: XCTestCase {
                 let region = VoiceBarNotchHitRegion(geometry: canvas, configuration: .init(
                     leadingControlCount: 3,
                     leadingCoreInset: VoiceBarPresentation.recordingLeadingCoreInset(
-                        wingWidth: g.leadingWingWidth, showsEarlierTakeProcessing: false)))
+                        wingWidth: g.leadingWingWidth, showsEarlierTakeProcessing: false, visibleCoreOcclusionInset: inset)))
                 let originX = b.left // the geometry's x = 0 on the 540 pt canvas
                 let xs = region.rects.map { $0.minX + originX }.sorted()
                 XCTAssertEqual(xs.first ?? -1, b.stop.minX, accuracy: 0.5, "\(fixture.rawValue) \(inset): Stop's hit rect")
@@ -578,7 +583,7 @@ final class WingLayoutX4Tests: XCTestCase {
                     try XCTUnwrap(tooltipFrame($0, in: host), "\($0) is drawn").minX
                 }
                 let timeMinX = try XCTUnwrap(tooltipFrame(Self.microphone, in: host)).minX
-                let half = drawerOpen ? NotchHistoryMorph.bodyWidth / 2 : g.coreWidth / 2 + g.trailingWingWidth
+                let shell = Self.compositeShell(g, drawerOpen: drawerOpen)
                 let fill = Color(red: 22.0 / 255, green: 22.0 / 255, blue: 24.0 / 255)
                 let bandHeight = VoiceBarNotchContract.topHeight
                 let icons = ["stop.fill", "mic.fill", "xmark"]
@@ -586,8 +591,8 @@ final class WingLayoutX4Tests: XCTestCase {
                     Color(red: 0.55, green: 0.6, blue: 0.68)
                     UnevenRoundedRectangle(bottomLeadingRadius: 15, bottomTrailingRadius: 15)
                         .fill(fill)
-                        .frame(width: 2 * half, height: drawerOpen ? bandHeight + 70 : bandHeight)
-                        .offset(x: 270 - half)
+                        .frame(width: shell.width, height: drawerOpen ? bandHeight + 70 : bandHeight)
+                        .offset(x: shell.minX)
                     // The physical notch: the drawn core less the points the glass hides on each side.
                     UnevenRoundedRectangle(bottomLeadingRadius: 7, bottomTrailingRadius: 7)
                         .fill(Color.black)
@@ -595,7 +600,7 @@ final class WingLayoutX4Tests: XCTestCase {
                         .offset(x: 270 - g.coreWidth / 2 - inset)
                     ForEach(0 ..< 3, id: \.self) { index in
                         VoiceBarPillControlButton(icon: icons[index], optics: .resolve(for: icons[index]),
-                                                  foreground: .white, halo: .clear, isSelected: false,
+                                                  foreground: .white, isSelected: false,
                                                   isDestructive: index == 0, accessibilityLabel: icons[index],
                                                   accessibilityHint: "", action: {})
                             .frame(width: size, height: bandHeight)
@@ -615,6 +620,29 @@ final class WingLayoutX4Tests: XCTestCase {
                     to: URL(fileURLWithPath: directory)
                         .appendingPathComponent("band-\(drawerOpen ? "open" : "closed")-\(name).png"))
             }
+        }
+    }
+
+    /// The composite picture's shell, left edge and width on the 540 pt canvas (core centred at 270): the open drawer's
+    /// 420 pt panel, or the closed band from its left wing to its right wing.
+    static func compositeShell(_ g: VoiceBarNotchGeometry, drawerOpen: Bool) -> (minX: CGFloat, width: CGFloat) {
+        if drawerOpen { return (270 - NotchHistoryMorph.bodyWidth / 2, NotchHistoryMorph.bodyWidth) }
+        return (270 - g.coreWidth / 2 - g.leadingWingWidth, g.leadingWingWidth + g.coreWidth + g.trailingWingWidth)
+    }
+
+    /// CodeRabbit on #936: with unequal recording wings the closed composite shell was drawn from the right wing on
+    /// both sides, 13.5 pt too far left. It spans the band the BarView draws.
+    func testC7WClosedCompositeShellSpansBothWings() throws {
+        for inset: CGFloat in [0, 8.5] {
+            let g = presentation(.recordingPTT, inset: inset).geometry
+            XCTAssertNotEqual(g.leadingWingWidth, g.trailingWingWidth, "fixture: the recording wings are unequal")
+            let b = try band(.recordingPTT, inset: inset)
+            let closed = Self.compositeShell(g, drawerOpen: false)
+            XCTAssertEqual(closed.minX, b.left, accuracy: 0.01, "inset \(inset): the shell starts at the left wing")
+            XCTAssertEqual(closed.minX + closed.width, b.right, accuracy: 0.01, "inset \(inset): and ends at the right wing")
+            let open = Self.compositeShell(g, drawerOpen: true)
+            XCTAssertEqual(open.minX, 270 - NotchHistoryMorph.bodyWidth / 2)
+            XCTAssertEqual(open.width, NotchHistoryMorph.bodyWidth)
         }
     }
 

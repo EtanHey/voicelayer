@@ -57,6 +57,7 @@ public struct VoiceBarPanelLayout: Equatable {
         shadowOutsets: VoiceBarNotchShadowOutsets = .material
     ) -> VoiceBarPanelLayout {
         let interactionConfiguration = interactionConfiguration.includingFeedback(for: presentation)
+            .followingLeadingRow(of: presentation)
         let geometry = presentation.geometry
         let canvasGeometry = canvasGeometry ?? geometry
         let contentOffsetX = canvasGeometry.coreOriginX - geometry.coreOriginX
@@ -112,7 +113,8 @@ public struct VoiceBarPanelLayout: Equatable {
                 trailingControlCountFromOuter: interactionConfiguration.trailingControlCountFromOuter,
                 trailingOuterInset: interactionConfiguration.trailingOuterInset,
                 lowerControlCount: interactionConfiguration.lowerControlCount,
-                leadingCoreInset: interactionConfiguration.leadingCoreInset
+                leadingCoreInset: interactionConfiguration.leadingCoreInset,
+                leadingControlSlotIndices: interactionConfiguration.leadingControlSlotIndices
             )),
             visibleRegion: visibleRegion,
             localHoverCoreRect: localHoverCoreRect

@@ -106,7 +106,7 @@ describe("handleConverse resilience — P0-2", () => {
     const second = await handleVoiceAsk({ message: "Are you there?" }, nextContext());
     const third = await handleVoiceAsk({ message: "Again?" }, nextContext());
     expect([first, second, third].map(r => r.content[0].text).join(" ").match(/ONE follow-up/g)).toHaveLength(1);
-    expect(second.content[0].text).toBe(STILL_AWAY);
+    expect(second.content[0].text).toBe(`${STILL_AWAY} (archive paired)`);
     expect(third.content[0].text).toBe(STILL_AWAY);
     expect(speakSpy).toHaveBeenCalledTimes(2); expect(waitSpy).toHaveBeenCalledTimes(2);
     const other = await handleVoiceAsk({ message: "Other session" }, createVoiceToolContext(undefined));
@@ -129,7 +129,7 @@ describe("handleConverse resilience — P0-2", () => {
     const second = await handleVoiceAsk({ message: "Follow up?" }, context);
     expect(second.content[0].text).toContain(speechOnly ? "ONE follow-up" : "I'm here");
     const third = await handleVoiceAsk({ message: "Next?" }, context);
-    expect(third.content[0].text).toEqual(speechOnly ? STILL_AWAY : expect.stringContaining("ONE follow-up"));
+    expect(third.content[0].text).toEqual(speechOnly ? `${STILL_AWAY} (archive paired)` : expect.stringContaining("ONE follow-up"));
   });
 
   it("voice_ask preempts unload maintenance and reaches capture", async () => {
@@ -1054,7 +1054,7 @@ describe("handleConverse resilience — P0-2", () => {
           timeout_seconds: 5,
         },
         {
-          heartbeatIntervalMs: 10,
+          heartbeatIntervalMs: 1_000,
           emit: (event: unknown) => events.push(event),
         },
       );
@@ -1067,15 +1067,21 @@ describe("handleConverse resilience — P0-2", () => {
       const result = await pending;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("Hard timeout");
+      // The heartbeat now runs while the prompt is spoken, but only with pre-recording stages.
+      const framesAtTimeout = events.length;
+      expect(framesAtTimeout).toBeGreaterThan(0);
+      expect(
+        (events as Array<{ stage: string }>).every((e) => e.stage === "waiting" || e.stage === "speaking"),
+      ).toBe(true);
 
       finishPrompt(capturedPrompt());
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
-      jest.advanceTimersByTime(100);
+      jest.advanceTimersByTime(10_000);
 
       expect(waitSpy).not.toHaveBeenCalled();
-      expect(events).toEqual([]);
+      expect(events.length).toBe(framesAtTimeout);
       expect(jest.getTimerCount()).toBe(0);
     } finally {
       jest.useRealTimers();

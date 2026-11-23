@@ -92,15 +92,19 @@ export function applyRules(text: string, config?: RulesConfig): string {
   if (!disabled?.has("numbers") && !disabled?.has("aliases") && config?.aliases) {
     const normalizedAliases: Record<string, string> = {};
     const originalSources = new Map<string, string>();
-    const normalizeVariant = (source: string) => applyNumberFormatting(source).replace(
+    const normalizeVariant = (source: string, years = true) => applyNumberFormatting(source, { years }).replace(
       /\b(\d+)[ \t]+point[ \t]+(\d+)\b/gi, "$1.$2");
+    // A source like "twenty twenty six" normalizes to a year when it stands alone, but the same words mid-sentence
+    // without a year cue stay split ("20 26"); keep both forms so the alias matches either way.
+    const variants = (source: string) => [...new Set([normalizeVariant(source), normalizeVariant(source, false)])];
     for (const [from, to] of Object.entries(config.aliases)) {
-      const normalized = normalizeVariant(from);
-      normalizedAliases[normalized] = to;
-      originalSources.set(normalized, from);
+      for (const normalized of variants(from)) {
+        normalizedAliases[normalized] = to;
+        originalSources.set(normalized, from);
+      }
     }
     const normalizeSources = (sources?: ReadonlySet<string>) => new Set(
-      [...(sources ?? [])].map(normalizeVariant));
+      [...(sources ?? [])].flatMap(variants));
     result = applyAliases(result, normalizedAliases,
       normalizeSources(config.hebrewLatinAliasSources),
       config.shouldApplyAlias ? (source, text) => config.shouldApplyAlias!(originalSources.get(source) ?? source, text) : undefined,
@@ -198,6 +202,31 @@ const AGGRESSIVE_FILLER_PATTERNS: RegExp[] = [
 
 function removeFillers(text: string, aggressive: boolean): string {
   let result = text;
+  const protectedTokens: string[] = [];
+  if (!aggressive) {
+    // Protect only paired quotes within one sentence; elisions open no span.
+    const quoted = new Set<number>();
+    const spans = /"[^".!?\n]*"|“[^”.!?\n]*”|‘[^’.!?\n]*’|'(?!\d|cause\b)[^'.!?\n]*'/giu;
+    for (const match of result.matchAll(spans)) {
+      if (match[0][0] === "'" && /\p{L}/u.test(result[match.index! - 1] ?? "")) continue;
+      for (let i = match.index!; i < match.index! + match[0].length; i++) quoted.add(i);
+    }
+    result = result.replace(/(?<![\p{L}\p{N}-])(?:um|uh|er)(?![\p{L}\p{N}-])/giu, (word, start: number) => {
+      const tail = text.slice(start + word.length);
+      const before = text.slice(0, start);
+      const repeated = /(?:um|uh|er)\s+$/iu.test(before) || /^\s+(?:um|uh|er)\b/iu.test(tail);
+      const nextWord = /^\s+(\p{Lu}\p{L}*)/u.exec(tail)?.[1];
+      const midSentence = /[\p{L},]\s*$/u.test(before) && !/\n\s*$/u.test(before);
+      const name = /^(?:Um|Uh|Er)$/.test(word) && !!nextWord && nextWord !== "I" &&
+        midSentence;
+      const keep = /^(?:UM|UH|ER)$/.test(word) || quoted.has(start) || name || /^\.?\d/u.test(tail) ||
+        (word === "Er" && !/^\s*,/u.test(tail) && !repeated);
+      if (!keep) return word;
+      protectedTokens.push(word);
+      return "\uE000" + (protectedTokens.length - 1) + "\uE001";
+    });
+  }
+  if (!aggressive) result = result.replace(/,\s*[Ee]r\s*,/g, ",");
   const patterns = aggressive
     ? [...DISFLUENCY_PATTERNS, ...AGGRESSIVE_FILLER_PATTERNS]
     : DISFLUENCY_PATTERNS;
@@ -216,7 +245,7 @@ function removeFillers(text: string, aggressive: boolean): string {
   for (const pattern of patterns) {
     result = result.replace(pattern, match => (isAcronym(match) ? match : " "));
   }
-  return result.replace(/  +/g, " ").trim();
+  return result.replace(/\uE000(\d+)\uE001/g, (_, index) => protectedTokens[Number(index)]!).replace(/  +/g, " ").trim();
 }
 
 // --- Stage 2: Spoken punctuation ---
@@ -719,6 +748,11 @@ function markNounArticleBefore(
  * must be left verbatim.
  */
 function isLayoutNoun(text: string, start: number, end: number, decoderPunctuation = false): boolean {
+  if (/^new line$/iu.test(text.slice(start, end))) {
+    const prefix = text.slice(0, start);
+    if (/^[\s.]*$/u.test(text.slice(end))) return true;
+    if (/\b(?:a|an|its|his|her|each)(?:\s+(?:final|extra|trailing|leading|blank|empty|additional|unwanted|unexpected|missing|duplicate|accidental)){0,2}\s*$/iu.test(prefix)) return true;
+  }
   const quote = /(["'“‘])[ \t]*$/u.exec(text.slice(0, start))?.[1];
   if (quote && text.slice(end).trimStart().startsWith(({ '"': '"', "'": "'", "“": "”", "‘": "’" } as Record<string, string>)[quote])) return true;
   const clause = text.slice(0, start).replace(/\.{2,}|…/gu, " ")
@@ -1129,10 +1163,10 @@ function parseNumberWords(words: string[]): number | null {
 // number ("one thousand\ntwo hundred" -> "1200"). Splitting on the newlines
 // first keeps them, and the horizontal-whitespace tokeniser below still merges
 // number words across spaces and tabs within a line.
-function applyNumberFormatting(text: string): string {
+function applyNumberFormatting(text: string, options: { years?: boolean } = {}): string {
   return text
     .split(/(\n)/)
-    .map((part) => (part === "\n" ? part : formatNumbersInLine(part)))
+    .map((part) => (part === "\n" ? part : formatNumbersInLine(part, options)))
     .join("");
 }
 
@@ -1162,7 +1196,70 @@ export function isProseOne(words: string[], index: number): boolean {
     /^(?:|now|instead|please|too|as|that|which|with|for)$/u.test(after);
 }
 
-function formatNumbersInLine(text: string): string {
+// Two-pair years need contextual evidence, even in lists. Quantity/plural
+// followers veto each candidate before evidence propagates to list siblings.
+function formatSpokenYears(text: string): string {
+  const tens = "(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)";
+  const unit = "(?:one|two|three|four|five|six|seven|eight|nine)";
+  const teen = "(?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)";
+  const year = new RegExp(`\\b(nineteen|twenty)[ \\t]+(${tens}(?:(?:[ \\t]+|-)${unit})?|${teen}|oh[ \\t]+${unit})\\b`, "gi");
+  const temporal = /\b(?:in|since|of|late|early|during|by|before|after|from|until|to|through|for|year|years|the|mid|between|around|january|february|march|april|may|june|july|august|september|october|november|december)[ \t]+$/i;
+  // A complete hyphenated cardinal ("twenty-six") is a numeric neighbour too, as the number formatter reads it.
+  const numeric = (word: string) => NUMBER_WORDS.has(word.toLowerCase()) || /^(?:oh|point|\d+)$/i.test(word) ||
+    new RegExp(`^${tens}-${unit}$`, "i").test(word);
+  const nonPlural = new Set("was is has as its his this thus plus versus yes us always perhaps unless whereas across besides".split(" "));
+  // Singular/irregular units need an explicit guard; regular plurals are caught
+  // by their final s. Prefer a missed year modifier over an invented quantity.
+  const quantity = /^(?:%|per|percent|percentage|minute|second|hour|day|week|month|year|time|person|people|item|thing|point|dollar|shekel|euro|pound|buck|k|grand|foot|feet|inch|child|children|man|men|woman|women|mile|meter|metre|kilometer|kilometre|gram|kilogram|liter|litre|degree|cent|yen)$/i;
+  const candidates = Array.from(text.matchAll(year), match => {
+    const start = match.index!;
+    const end = start + match[0].length;
+    const before = text.slice(0, start);
+    const after = text.slice(end);
+    const previous = /([^ \t]+)[ \t]+$/.exec(before)?.[1] ?? "";
+    const next = /^(?:[ \t]+|(?=%))(%|[a-z]+(?:-[a-z]+)*|\d+)/i.exec(after)?.[1]?.toLowerCase() ?? "";
+    const valid = !numeric(previous) && !numeric(next) && !/[\w`-]$/.test(before) &&
+      !/^(?:[\w-]|\.{2,}|…)/u.test(after) && !quantity.test(next) &&
+      !(next.endsWith("s") && !nonPlural.has(next));
+    const standalone = !before.trim() && /^[,.!?;:]?$/.test(after.trim());
+    const sentenceStart = /(?:^|[.!?])[ \t]*$/.test(before) &&
+      /^(?:[,\.]|[ \t]+(?:was|is|will|had)\b)/i.test(after);
+    const words = match[2].toLowerCase().split(/[ \t-]+/);
+    const suffix = words[0] === "oh" ? WORD_TO_NUMBER[words[1]] : parseNumberWords(words)!;
+    return { start, end, valid, qualifies: valid && (standalone || temporal.test(before) || sentenceStart),
+      value: String(WORD_TO_NUMBER[match[1].toLowerCase()] * 100 + suffix) };
+  });
+  // Qualify whole connected lists, not just the siblings following a cue.
+  // Invalid siblings break the chain and can never borrow year evidence.
+  const listGap = /^[ \t]*(?:,[ \t]*(?:(?:not|and|or|with|to|through|versus)[ \t]+)?|(?:not|and|or|with|to|through|versus)[ \t]+)$/i;
+  for (let first = 0; first < candidates.length;) {
+    let end = first + 1;
+    while (end < candidates.length && candidates[end - 1].valid && candidates[end].valid &&
+      listGap.test(text.slice(candidates[end - 1].end, candidates[end].start))) end++;
+    const qualifies = candidates.slice(first, end).some(candidate => candidate.qualifies);
+    for (let i = first; i < end; i++) candidates[i].qualifies = qualifies && candidates[i].valid;
+    first = end;
+  }
+  let cursor = 0;
+  let result = "";
+  for (const candidate of candidates) {
+    result += text.slice(cursor, candidate.start) + (candidate.qualifies ? candidate.value : text.slice(candidate.start, candidate.end));
+    cursor = candidate.end;
+  }
+  return result + text.slice(cursor);
+}
+
+/** Code spans stay untouched but keep their place: each is masked as one opaque word, so text after a span is
+ * never read as a new standalone line. */
+function formatSpokenYearsAroundCode(text: string): string {
+  const spans: string[] = [];
+  const masked = text.replace(/`[^`]*`/g, span => `\uE010${String.fromCharCode(0xE200 + spans.push(span) - 1)}\uE011`);
+  if (spans.length > 0x0DFF) return text;
+  return formatSpokenYears(masked).replace(/\uE010([\uE200-\uEFFF])\uE011/g, (_, i: string) => spans[i.charCodeAt(0) - 0xE200]);
+}
+
+function formatNumbersInLine(text: string, options: { years?: boolean } = {}): string {
+  if (options.years !== false) text = formatSpokenYearsAroundCode(text);
   const cardinal = [...NUMBER_WORDS].join("|");
   const digit = "zero|one|two|three|four|five|six|seven|eight|nine";
   const decimal = new RegExp(`\\b((?:${cardinal})(?:[ \\t]+(?:${cardinal}))*)[ \\t]+point[ \\t]+((?:${digit})(?:[ \\t]+(?:${digit}))*)\\b`, "gi");

@@ -142,7 +142,7 @@ public struct TeleprompterAView: View {
         HStack(spacing: 0) {
             ForEach(Array(model.lines[line]), id: \.self) { word in
                 let layout = model.layouts[word]
-                let target = isPaused ? nil : model.seekTarget(for: word, table: speechWords)
+                let target = model.seekTarget(for: word, table: speechWords, isPaused: isPaused)
                 let ink = palette.primary.color.opacity(TeleprompterA.tier(group: layout.highlightGroup,
                                                                              focusGroup: focusGroup).opacity)
                 HStack(spacing: 0) {
