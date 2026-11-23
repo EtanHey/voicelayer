@@ -47,15 +47,18 @@ extension SettingsRow where Lead == EmptyView {
 /// The small status capsule a row can carry ("Used for dictation", "Recommended").
 struct SettingsPill: View {
     let text: String
-    var tint: Color = .accentColor
+    /// nil: the notch palette's neutral pill (2.4.6 track T: no system accent on the glass).
+    var tint: Color? = nil
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        let ink = NotchPaneInk(colorScheme: colorScheme)
         Text(text)
             .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(.primary)
+            .foregroundStyle(ink.primary)
             .padding(.horizontal, 8)
             .padding(.vertical, 2)
-            .background(Capsule().fill(tint.opacity(0.18)))
+            .background(Capsule().fill((tint ?? ink.primary).opacity(0.18)))
             .fixedSize()
     }
 }

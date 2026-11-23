@@ -192,7 +192,7 @@ public struct RecognizerPickerView: View {
                                               lineLimit: nil)
                                 .foregroundStyle(ink.primary)
                             if engine == .parakeet {
-                                SettingsPill(text: "Recommended", tint: ink.primary)
+                                SettingsPill(text: "Recommended")
                                     .accessibilityIdentifier("recognizer-recommended")
                             }
                         }

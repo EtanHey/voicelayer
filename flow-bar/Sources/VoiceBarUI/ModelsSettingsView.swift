@@ -289,7 +289,7 @@ public struct ModelsSettingsView: View {
         let disabled = row.lockedReason != nil || busyReason != nil || onToggleProcessing == nil
             || processingPending[row.key] != nil
         return SettingsRow(title: row.key.title, description: row.line,
-                           titleBadge: row.experimental ? SettingsPill(text: "Experimental", tint: ink.primary) : nil) {
+                           titleBadge: row.experimental ? SettingsPill(text: "Experimental") : nil) {
             Toggle(row.key.title, isOn: Binding(
                 get: { processingPending[row.key] ?? row.isOn },
                 set: { onToggleProcessing?(row.key, $0) }
@@ -297,6 +297,8 @@ public struct ModelsSettingsView: View {
             .labelsHidden().toggleStyle(.switch)
             .disabled(disabled)
             .accessibilityIdentifier("models-processing-\(row.key.rawValue)")
+            // The painted line is short; VoiceOver hears the whole explanation, not only the hover.
+            .accessibilityHint(row.tooltip)
             // Etan (QA 2026-11-11, shot 5): why it is locked shows on hover of the switch, never in the text.
             .settingsLockedReason(disabled ? row.lockedReason ?? busyReason : nil)
         }
@@ -361,6 +363,7 @@ public struct ModelsSettingsView: View {
                 .labelsHidden().toggleStyle(.switch)
                 .disabled(row.disabled)
                 .accessibilityIdentifier("recognizer-unload-when-idle")
+                .accessibilityHint(row.tooltip)
                 .settingsLockedReason(row.lockedReason)
         }
         // Matches the Processing rows: a locked switch is muted whole, keeping its real value.

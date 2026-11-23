@@ -1516,7 +1516,9 @@ public struct SettingsView: View {
                 .animation(.easeOut(duration: 0.12), value: isHovered)
             }
         }
-        .opacity(row.isConnected ? 1 : 0.55)
+        // 2.4.6 track T: a disconnected microphone reads at the palette's note tier instead of a 0.55 opacity, which
+        // measured 3.17:1 (title) and 2.00:1 (status) on the darkest light glass (rgb 185), under the 4.5:1 floor.
+        .foregroundStyle(row.isConnected ? NotchInk.primary : NotchInk.note)
         .onHover { hovering in
             if hovering { hoveredMicrophoneIndex = index } else if hoveredMicrophoneIndex == index { hoveredMicrophoneIndex = nil }
         }

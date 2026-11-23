@@ -204,3 +204,18 @@ final class RecognizerRowOneLineTests: XCTestCase {
                        "Slower. Handles Hebrew and mixed languages. On disk · 1.62 GB.")
     }
 }
+
+/// Lead (23 Nov): a hover-only explanation is fine only if VoiceOver reads it too.
+final class TrackTVoiceOverDetailTests: XCTestCase {
+    func testEveryShortenedRowGivesVoiceOverTheFullText() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/VoiceBarUI")
+        let models = try String(contentsOf: root.appendingPathComponent("ModelsSettingsView.swift"), encoding: .utf8)
+        XCTAssertEqual(models.components(separatedBy: ".accessibilityHint(row.tooltip)").count - 1, 2,
+                       "Processing rows and Unload when idle")
+        let picker = try String(contentsOf: root.appendingPathComponent("RecognizerPickerView.swift"), encoding: .utf8)
+        XCTAssertTrue(picker.contains(".accessibilityHint(Self.rowDetail(state, engine))"))
+        let settings = try String(contentsOf: root.appendingPathComponent("SettingsView.swift"), encoding: .utf8)
+        XCTAssertTrue(settings.contains(".accessibilityLabel(SettingsGeneralCopy.microphoneNoteDetail)"))
+    }
+}

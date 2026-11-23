@@ -33,8 +33,26 @@ final class TranscriptionNotchTrackTShotsTests: XCTestCase {
             openAtLogin: SettingsToggleInput(isOn: { true }, set: { _ in }),
             mouseSideButtons: SettingsToggleInput(isOn: { true }, set: { _ in }),
             initialTab: tab,
-            initialAdvancedExpanded: false, installedVersion: .init(version: "2.4.0", commit: "8e1d535")
+            initialAdvancedExpanded: false, installedVersion: .init(version: "2.4.6", commit: "abc1234")
         )
+    }
+
+    private final class NoLauncher: VoiceBarUpdateLaunching, @unchecked Sendable {
+        var isAvailable = true
+        func launch() throws {}
+    }
+
+    /// An invented, up-to-date 2.4.6 build: the footer as a normal user sees it (lead, 23 Nov: these pictures go on
+    /// Etan's page).
+    static func updates() async -> NotchUpdateController {
+        let controller = NotchUpdateController(
+            installed: .init(version: "2.4.6", commit: "abc1234"),
+            describe: VoiceBarGitDescribe(releaseVersion: "2.4.6", commitsAhead: 0),
+            check: VoiceBarVersionCheck(fetch: { "cask \"voicebar\" do\n  version \"2.4.6\"\nend\n" }),
+            launcher: NoLauncher(), isDictating: { false }
+        )
+        await controller.checkForUpdates()
+        return controller
     }
 
     static func drawer(_ tab: SettingsTab, _ appearance: VoiceBarNotchAppearance,
@@ -90,7 +108,7 @@ final class TranscriptionNotchTrackTShotsTests: XCTestCase {
     }
 
     func testRenderTrackTScenarios() async throws {
-        let updates = await SettingsDrawerLaneSSnapshotTests.updates()
+        let updates = await Self.updates()
         for appearance in [VoiceBarNotchAppearance.dark, .light] {
             for (name, view, height) in Self.scenes(appearance, updates: updates) {
                 try Self.render(view, appearance: appearance, name: name, height: height)
@@ -111,7 +129,7 @@ final class TranscriptionNotchTrackTShotsTests: XCTestCase {
         let references = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .appendingPathComponent("Snapshots/ui-transcription")
         try FileManager.default.createDirectory(at: references, withIntermediateDirectories: true)
-        let updates = await SettingsDrawerLaneSSnapshotTests.updates()
+        let updates = await Self.updates()
         for appearance in [VoiceBarNotchAppearance.dark, .light] {
             for (id, view, height) in Self.scenes(appearance, updates: updates) where !id.contains("-full-") {
                 let actual = try Self.render(view, appearance: appearance, name: "golden-\(id)", height: height)
