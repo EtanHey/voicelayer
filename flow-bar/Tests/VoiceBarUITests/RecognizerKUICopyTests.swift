@@ -213,8 +213,9 @@ final class RecognizerKUICopyTests: XCTestCase {
         let row = try XCTUnwrap(ModelsSettingsView.unloadWhenIdleRow(for: s))
         // U3a (SPEC 2.3): the title is plain; the saving moves into the description.
         XCTAssertEqual(row.title, "Unload when idle")
-        XCTAssertEqual(row.captionLines, ["Frees about 2.5 GB of memory after 10 min without dictation. "
-            + "The next dictation loads Parakeet again, which adds a few seconds."], "from the reported 2.51 GB")
+        XCTAssertEqual(row.captionLines, ["Frees about 2.5 GB of memory after 10 min idle."], "from the reported 2.51 GB")
+        XCTAssertEqual(row.detail, "The next dictation loads Parakeet again, which adds a few seconds.",
+                       "2.4.6 track T: the load cost moves to the row's hover")
         let bigger = try Self.state(Self.payload(unloadWhenIdle: false, parakeetBytes: 3_100_000_000))
         XCTAssertTrue(try XCTUnwrap(ModelsSettingsView.unloadWhenIdleRow(for: bigger)).line.hasPrefix("Frees about 3 GB "),
                       "the size follows the model")

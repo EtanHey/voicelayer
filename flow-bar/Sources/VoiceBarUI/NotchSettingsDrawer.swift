@@ -271,7 +271,8 @@ struct NotchSettingsVersionRow: View {
             Text(updates.buildLine)
                 .font(.system(size: NotchSettingsDrawerPresentation.detailFontSize))
                 .monospacedDigit()
-                .foregroundStyle(palette.tertiary.color)
+                // 2.4.6 track T: footer notes take the teleprompter's read-tier ink, like every note on the glass.
+                .foregroundStyle(NotchPaneInk(appearance).note)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
                 .accessibilityIdentifier("notch-settings-build-line")
@@ -282,7 +283,7 @@ struct NotchSettingsVersionRow: View {
                     }
                     Text(status)
                         .font(.system(size: NotchSettingsDrawerPresentation.detailFontSize))
-                        .foregroundStyle(palette.secondary.color)
+                        .foregroundStyle(NotchPaneInk(appearance).note)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
