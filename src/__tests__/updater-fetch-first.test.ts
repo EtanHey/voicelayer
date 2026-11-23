@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test';
-import { mkdtempSync, writeFileSync, chmodSync, readFileSync, rmSync } from 'fs';
+import { mkdirSync, mkdtempSync, writeFileSync, chmodSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { bundleFixtureRoot } from './setup/bundle-fixtures';
 
@@ -56,9 +56,10 @@ test('changed offer after prefetch refuses before mutation', () => {
   expect(r.exitCode).not.toBe(0); expect(r.stdout.toString()).not.toContain('install');
 });
 test('unreadable existing app refuses before gate', () => {
-  const body = `source "$1"; VOICEBAR_CANONICAL_APP="$2"; bcs_preflight_tap_refresh() { :; }; updater_offer_identity() { echo fixture; }; bcs_tap_repo_path() { echo /stub; }; bcs_tap_offered_version() { echo 2.4.1; }; bcs_app_bundle_version() { :; }; preflight_brew() { :; }; preflight_cask_download`;
+  const body = `source "$1"; VOICEBAR_CANONICAL_APP="$2"; updater_validate_offer_freshness() { :; }; bcs_preflight_tap_refresh() { :; }; updater_offer_identity() { echo fixture; }; bcs_tap_repo_path() { echo /stub; }; bcs_tap_offered_version() { echo 2.4.1; }; bcs_app_bundle_version() { :; }; preflight_brew() { :; }; preflight_cask_download`;
   const r = Bun.spawnSync(['bash','-c',body,'_',script,import.meta.dir], {env: {...process.env}, stdout:'pipe',stderr:'pipe'});
   expect(r.exitCode).not.toBe(0);
+  expect(r.stderr.toString()).toContain('Cannot read installed VoiceBar version');
 });
 
 function shell(body: string) {
@@ -135,5 +136,17 @@ test('missing offer file reports a clear refusal without traceback', () => {
     expect(r.exitCode).not.toBe(0);
     expect(r.stderr.toString()).toContain('Offer file missing:');
     expect(r.stderr.toString()).not.toContain('Traceback');
+  } finally { rmSync(root, {recursive:true, force:true}); }
+});
+
+test('offer fingerprint reads formula from its own tap', () => {
+  const root = mkdtempSync(join(bundleFixtureRoot(), 'separate-taps-'));
+  try {
+    for (const dir of ['cask/Casks', 'formula/Formula']) mkdirSync(join(root, dir), {recursive:true});
+    writeFileSync(join(root, 'cask/Casks/voicebar.rb'), 'sha256 "aaa"');
+    writeFileSync(join(root, 'formula/Formula/voicelayer.rb'), 'sha256 "bbb"');
+    const r = shell(`VOICEBAR_FORMULA_NAME=other/tools/voicelayer; bcs_tap_repo_path() { if [ "$1" = other/tools ]; then echo "${root}/formula"; else echo "${root}/cask"; fi; }; updater_offer_identity`);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout.toString().trim()).toMatch(/^[a-f0-9]{64}:[a-f0-9]{64}$/);
   } finally { rmSync(root, {recursive:true, force:true}); }
 });

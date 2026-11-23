@@ -501,6 +501,10 @@ it("F5 aborts only Ask synthesis and admits dictation before the 2 second record
     const result = await pending;
     expect(result?.isError).not.toBe(true);
     expect(result?.content[0].text).toContain("the user started a dictation; ask cancelled");
+    synthesis.resolve(null);
+    await flush();
+    expect(players.values).toHaveLength(0);
+    expect(capture).toHaveBeenCalledTimes(1);
   } finally {
     releasedSynthesis = true;
     synthesis.resolve(null);
@@ -537,4 +541,58 @@ for (const refusal of ["mic-disabled", "foreign-booking"] as const) it(`F5 ${ref
     await flush();
   }
   expect((await pending)?.content[0].text).toContain("fixture answer");
+});
+
+// Models the timed-out flow retaining its prompt after its lifecycle release.
+it("timed-out registered prompt refuses F5 within a bound without redispatch", async () => {
+  const { registerAskPrompt } = await import("../ask-prompt-interruption");
+  let attempts = 0;
+  const unregister = registerAskPrompt(() => {
+    attempts++;
+    // Fail safely on the old recursion instead of starving the test runner.
+    if (attempts > 1) unregister();
+  }, Promise.resolve());
+  capture.mockImplementation(() => finishSyntheticCapture(async () => "words"));
+  try {
+    const ack = await handleSocketCommand({ cmd: "record", id: "expired", take_id: "expired-take" });
+    expect(ack).toMatchObject({ outcome: "reject", reason: "busy" });
+    expect(attempts).toBe(1);
+    expect(capture).not.toHaveBeenCalled();
+  } finally { unregister(); }
+});
+
+it("deferred Ask delivery reports dictation started after F5", async () => {
+  let delivery: Promise<{ content: { text: string }[] }> | undefined;
+  pending = handleVoiceAsk({ message: question, timeout_seconds: 5 }, { emit() {}, askDelivery: {
+    archive() {}, answer() {}, timedOut() {}, defer(result) { delivery = result; },
+  } });
+  const player = await players.at(0);
+  capture.mockImplementation(() => finishSyntheticCapture(async () => "words"));
+  const record = handleSocketCommand({ cmd: "record", id: "deferred", take_id: "deferred-take" });
+  await flush();
+  expect(capture).not.toHaveBeenCalled();
+  player.exit.resolve(143);
+  await record;
+  await pending;
+  expect((await delivery)?.content[0].text).toContain("the user started a dictation; ask cancelled");
+});
+
+it("F5 returns busy when an Ask player never confirms exit before the ack bound", async () => {
+  const { player } = await startAsk();
+  jest.advanceTimersByTime(180_000);
+  await flush();
+  jest.advanceTimersByTime(5_000);
+  await flush();
+  expect((await pending)?.isError).toBe(true);
+  let ack: unknown;
+  const record = Promise.resolve(handleSocketCommand({ cmd: "record", id: "unconfirmed", take_id: "unconfirmed-take" }))
+    .then(value => { ack = value; });
+  await flush();
+  jest.advanceTimersByTime(2000);
+  await flush();
+  try {
+    expect(ack).toMatchObject({ outcome: "reject", reason: "busy" });
+    expect(capture).not.toHaveBeenCalled();
+    expect(hasScopedCapture(null)).toBe(false);
+  } finally { player.exit.resolve(143); await record; await pending; }
 });
