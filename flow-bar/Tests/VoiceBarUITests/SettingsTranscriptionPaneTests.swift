@@ -196,8 +196,8 @@ final class RecognizerRowOneLineTests: XCTestCase {
             parakeetAvailable: true, parakeetAssetsPresent: true, whisperAssetsPresent: true,
             diskBytes: [.parakeet: 2_509_000_000, .whisper: 1_620_000_000], downloads: [:],
             idleUnloadSeconds: 300, unloadWhenIdle: RecognizerUnloadWhenIdle(effective: false))
-        XCTAssertEqual(RecognizerPickerView.rowLine(state, .parakeet), "English · Loaded · 2.51 GB")
-        XCTAssertEqual(RecognizerPickerView.rowLine(state, .whisper), "Hebrew and mixed · On disk · 1.62 GB")
+        XCTAssertEqual(RecognizerPickerView.rowLine(state, .parakeet), "English · fastest · Loaded · 2.51 GB")
+        XCTAssertEqual(RecognizerPickerView.rowLine(state, .whisper), "Hebrew and mixed · slower · On disk · 1.62 GB")
         XCTAssertEqual(RecognizerPickerView.rowDetail(state, .parakeet),
                        "Fastest on this Mac. English. Loaded · 2.51 GB. Stays loaded between dictations.")
         XCTAssertEqual(RecognizerPickerView.rowDetail(state, .whisper),
@@ -217,5 +217,37 @@ final class TrackTVoiceOverDetailTests: XCTestCase {
         XCTAssertTrue(picker.contains(".accessibilityHint(Self.rowDetail(state, engine))"))
         let settings = try String(contentsOf: root.appendingPathComponent("SettingsView.swift"), encoding: .utf8)
         XCTAssertTrue(settings.contains(".accessibilityLabel(SettingsGeneralCopy.microphoneNoteDetail)"))
+    }
+}
+
+/// Review rev-T (23 Nov): no stock system button or semantic ink left on the Transcription/General glass controls.
+final class TrackTNotchControlsTests: XCTestCase {
+    func testRecognizerAndMicrophoneControlsAreNotchCapsules() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/VoiceBarUI")
+        let picker = try String(contentsOf: root.appendingPathComponent("RecognizerPickerView.swift"), encoding: .utf8)
+        for stock in ["Button(engine == .whisper", "Button(\"OK\")", "Button(\"Cancel\")", "role: .destructive", ".tint("] {
+            XCTAssertFalse(picker.contains(stock), stock)
+        }
+        XCTAssertTrue(picker.contains("palette: ink.palette, ink: ink.error"), "Delete is the palette errorText capsule")
+        let settings = try String(contentsOf: root.appendingPathComponent("SettingsView.swift"), encoding: .utf8)
+        // The visible control is the notch capsule; VoiceOver keeps "Make default" as a named accessibility action.
+        XCTAssertTrue(settings.contains("NotchDrawerButton(title: \"Make default\""))
+        XCTAssertFalse(settings.contains("Button(\"Make default\") {\n                    makeMicrophoneDefault"))
+        XCTAssertTrue(settings.contains("Image(systemName: \"line.3.horizontal\")\n                .foregroundStyle(NotchInk.note)"))
+    }
+}
+
+/// Design review P3-4: a disabled Load/Unload must read dimmer than an enabled one, now that its ink is fixed.
+final class TrackTResidencyButtonDimmingTests: XCTestCase {
+    func testDisabledLoadUnloadIsVisiblyDimmer() throws {
+        XCTAssertEqual(RecognizerPickerView.residencyOpacity(isEnabled: true), 1)
+        XCTAssertLessThanOrEqual(RecognizerPickerView.residencyOpacity(isEnabled: false), 0.5)
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/VoiceBarUI/RecognizerPickerView.swift"), encoding: .utf8)
+        XCTAssertTrue(source.contains(".foregroundStyle(ink.note.opacity(Self.residencyOpacity(isEnabled: canChangeResidency)))"),
+                      "the dimming is applied to the button the user sees")
+        XCTAssertTrue(source.contains(".disabled(!canChangeResidency)"), "the same rule disables it")
     }
 }

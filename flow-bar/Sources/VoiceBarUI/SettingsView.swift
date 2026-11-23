@@ -1495,7 +1495,7 @@ public struct SettingsView: View {
                                   badge: isUsed ? SettingsMicrophoneRowPresentation.usedBadge : nil,
                                   controlsFollowStatus: true, lead: {
             Image(systemName: "line.3.horizontal")
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(NotchInk.note)
                 .opacity(row.canPrioritize ? 1 : 0)
                 .accessibilityHidden(true)
         }) {
@@ -1503,10 +1503,11 @@ public struct SettingsView: View {
             // disconnected one, and promoting it keeps it first when that one reconnects.
             if SettingsMicrophoneRowPresentation.offersMakeDefault(row, at: index) {
                 // Hover reveals it in space it always holds; VoiceOver and the keyboard keep the named action below.
-                Button("Make default") {
+                // 2.4.6 track T (review rev-T): the notch capsule instead of a stock system button on the glass.
+                NotchDrawerButton(title: "Make default", palette: NotchPaneInk(colorScheme: colorScheme).palette,
+                                  isEnabled: microphoneEditReason == nil) {
                     makeMicrophoneDefault(at: index)
                 }
-                .controlSize(.small)
                 .background(GeometryReader { proxy in
                     Color.clear.preference(key: SettingsControlFrameKey.self,
                         value: ["microphone-default-\(index)": proxy.frame(in: .global)])

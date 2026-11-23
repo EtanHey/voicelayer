@@ -36,8 +36,12 @@ public struct RecognizerPickerView: View {
     /// 2.4.6 track T (Etan, 23 Nov: "transcriptions ... is a little loaded with a lot of text"): the row says what it is
     /// in one short line, the language and the status; the full blurb and the auto-load line move to the row's tooltip.
     static func shortBlurb(_ engine: RecognizerPickerEngine) -> String {
-        engine == .parakeet ? "English" : "Hebrew and mixed"
+        // Design review P3-5: the speed trade-off stays on the painted line.
+        engine == .parakeet ? "English · fastest" : "Hebrew and mixed · slower"
     }
+
+    /// Design review P3-4: Load/Unload has palette ink, so a disabled one dims explicitly (the drawer capsule's 0.45).
+    static func residencyOpacity(isEnabled: Bool) -> Double { isEnabled ? 1 : 0.45 }
 
     static func rowLine(_ state: RecognizerPickerState, _ engine: RecognizerPickerEngine) -> String {
         shortBlurb(engine) + " · " + subtitle(state, engine)
@@ -109,8 +113,12 @@ public struct RecognizerPickerView: View {
                     .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("recognizer-picker-explanation")
             }
             if let engine = state.retryEngine {
-                Button(engine == .whisper ? "Retry Whisper" : "Retry Parakeet") { state.select(engine, send: onSelect) }
-                    .disabled(state.isSelectionDisabled || onSelect == nil).accessibilityIdentifier("recognizer-picker-retry")
+                // 2.4.6 track T (review rev-T): the notch's own capsule, never a stock system button on the glass.
+                NotchDrawerButton(title: engine == .whisper ? "Retry Whisper" : "Retry Parakeet", palette: ink.palette,
+                                  isEnabled: !(state.isSelectionDisabled || onSelect == nil)) {
+                    state.select(engine, send: onSelect)
+                }
+                .accessibilityIdentifier("recognizer-picker-retry")
             }
             if let confirmation = deleting { deleteConfirmation(confirmation) }
             if let blocked = blockedDelete {
@@ -118,7 +126,7 @@ public struct RecognizerPickerView: View {
                     Text(blocked.reason).font(.caption).foregroundStyle(ink.error)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 8)
-                    Button("OK") { blockedDelete = nil }.controlSize(.small)
+                    NotchDrawerButton(title: "OK", palette: ink.palette) { blockedDelete = nil }
                 }
                 .accessibilityIdentifier("recognizer-delete-blocked")
             }
@@ -142,9 +150,10 @@ public struct RecognizerPickerView: View {
             Text(Self.deleteMessage(state, engine)).font(.callout).foregroundStyle(ink.primary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
-            Button("Cancel") { deleting = nil }
-            Button(bytes > 0 ? "Delete \(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file))" : "Delete",
-                   role: .destructive) {
+            NotchDrawerButton(title: "Cancel", palette: ink.palette) { deleting = nil }
+            // The destructive capsule: palette errorText ink, as Dictionary's Delete (track D).
+            NotchDrawerButton(title: bytes > 0 ? "Delete \(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file))" : "Delete",
+                              palette: ink.palette, ink: ink.error) {
                 deleting = nil
                 // Eligibility is checked again now, against the current state, before anything is sent.
                 switch confirmation.outcome(in: state) {
@@ -157,7 +166,6 @@ public struct RecognizerPickerView: View {
                     onManage?(engine, action)
                 }
             }
-            .tint(ink.error)
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 6).fill(ink.error.opacity(0.10)))
@@ -233,9 +241,11 @@ public struct RecognizerPickerView: View {
         } else {
             if state.assetsPresent(for: engine) {
                 let residency = state.residencyAction(for: engine)
+                let canChangeResidency = onManage != nil && state.canManage(engine, action: residency)
                 Button(residency == .unload ? "Unload" : "Load") { onManage?(engine, residency) }
-                    .buttonStyle(.borderless).font(.callout).foregroundStyle(ink.note)
-                    .disabled(onManage == nil || !state.canManage(engine, action: residency))
+                    .buttonStyle(.borderless).font(.callout)
+                    .foregroundStyle(ink.note.opacity(Self.residencyOpacity(isEnabled: canChangeResidency)))
+                    .disabled(!canChangeResidency)
                     .help(residency == .unload ? "Unload from memory"
                         : state.selected == engine ? "Load into memory now"
                         : "Use \(engine.shortName): loads it and unloads \(engine.other.shortName)")
