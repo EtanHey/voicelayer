@@ -74,20 +74,32 @@ public struct DictionaryAddSheetView: View {
                     GridRow {
                         Text("Correct")
                             .gridColumnAlignment(.trailing)
-                        TextField("", text: $edit.correct, prompt: Text("Intended text").foregroundStyle(ink.note))
-                            .dictionaryTextField()
+                        TextField("", text: $edit.correct, prompt: dictionaryPrompt("Intended text"))
+                            .dictionaryTextField(placeholder: "Intended text", isEmpty: edit.correct.isEmpty)
                             .dictionaryFieldContainer()
                             .focused($focusedField, equals: .correct)
                             .accessibilityLabel("Correct spelling")
                     }
-                    GridRow {
+                    // Taste review P2: the misheard-spelling error belongs to that field, so it sits right under it, in
+                    // the field's own cell (the row aligns on the label's and the field's first baseline).
+                    GridRow(alignment: .firstTextBaseline) {
                         Text("Misheard as")
-                        TextField("", text: $edit.wrong, prompt: Text(edit.isEditing ? "Add a misheard spelling"
-                            : "Misheard text").foregroundStyle(ink.note))
-                            .dictionaryTextField()
-                            .dictionaryFieldContainer()
-                            .focused($focusedField, equals: .misheard)
-                            .accessibilityLabel("Misheard as")
+                        VStack(alignment: .leading, spacing: 5) {
+                            TextField("", text: $edit.wrong, prompt: dictionaryPrompt(edit.isEditing
+                                ? "Add a misheard spelling" : "Misheard text"))
+                                .dictionaryTextField(placeholder: edit.isEditing ? "Add a misheard spelling"
+                                    : "Misheard text", isEmpty: edit.wrong.isEmpty)
+                                .dictionaryFieldContainer()
+                                .focused($focusedField, equals: .misheard)
+                                .accessibilityLabel("Misheard as")
+                            if let warning {
+                                Label(warning, systemImage: "exclamationmark.circle")
+                                    .font(SettingsRowLabel.descriptionFont)
+                                    .foregroundStyle(ink.error)
+                                    .padding(.leading, 2)
+                                    .accessibilityLabel(warning)
+                            }
+                        }
                     }
                 }
                 .font(.system(size: 12))
@@ -112,13 +124,6 @@ public struct DictionaryAddSheetView: View {
                     .font(SettingsRowLabel.descriptionFont)
                     .foregroundStyle(ink.note)
                     .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if let warning {
-                Label(warning, systemImage: "exclamationmark.circle")
-                    .font(SettingsRowLabel.descriptionFont)
-                    .foregroundStyle(ink.error)
-                    .accessibilityLabel(warning)
             }
 
             if edit.isEditing, !edit.keptVariants.isEmpty {
@@ -208,7 +213,9 @@ public struct DictionaryAddSheetView: View {
         return edit.openingExisting(entry)
     }
 
+    /// The hint asks for a misheard spelling, so it goes once one is typed (taste review P2).
     static func showsExistingTermHint(for edit: DictionaryTermEdit, existingEntries: [STTDictionaryEntry]) -> Bool {
-        edit.openedExisting || edit.existingTerm(in: existingEntries) != nil
+        guard edit.trimmedWrong.isEmpty else { return false }
+        return edit.openedExisting || edit.existingTerm(in: existingEntries) != nil
     }
 }

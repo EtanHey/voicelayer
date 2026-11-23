@@ -197,6 +197,9 @@ final class DictionaryAddExistingTermTests: XCTestCase {
         XCTAssertFalse(DictionaryAddSheetView.showsExistingTermHint(
             for: DictionaryTermEdit(original: existing[1]), existingEntries: existing
         ), "editing via the pencil needs no hint")
+        XCTAssertFalse(DictionaryAddSheetView.showsExistingTermHint(
+            for: DictionaryTermEdit(correct: "quillo", wrong: "kwillo"), existingEntries: existing
+        ), "taste P2: once a misheard spelling is typed the hint has done its job")
     }
 
     /// Saving the opened term adds only the new misheard spelling to it: no second term, no rename.

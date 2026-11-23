@@ -556,7 +556,7 @@ final class SettingsViewContractTests: XCTestCase {
     func testDictionaryTextFieldsUseVisibleDictionaryFieldTreatment() throws {
         // Search in the tab, Correct and Misheard as in the one Add/Edit sheet (R4/D1).
         let source = try settingsViewSource() + uiSource(named: "DictionaryAddSheetView.swift")
-        let visibleFieldCount = source.components(separatedBy: ".dictionaryTextField()").count - 1
+        let visibleFieldCount = source.components(separatedBy: ".dictionaryTextField(placeholder:").count - 1
 
         XCTAssertGreaterThanOrEqual(visibleFieldCount, 3)
     }

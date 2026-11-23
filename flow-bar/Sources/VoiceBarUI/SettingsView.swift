@@ -2852,10 +2852,9 @@ public struct SettingsView: View {
                 .foregroundStyle(NotchInk.note)
             // The search is a plain TextField: normal macOS editing, Edit menu ⌘V, and P1's paste integration reach it
             // through `focusedEditorField == .search`. No paste path of its own.
-            // Track D: the placeholder reads at the rows' note tier, not the system's dimmer placeholder grey.
-            TextField("", text: $dictionarySearch,
-                      prompt: Text("Search terms and variants").foregroundStyle(NotchInk.note))
-                .dictionaryTextField()
+            // Track D: the placeholder reads at the rows' note tier (drawn by dictionaryTextField, see its note).
+            TextField("", text: $dictionarySearch, prompt: dictionaryPrompt("Search terms and variants"))
+                .dictionaryTextField(placeholder: "Search terms and variants", isEmpty: dictionarySearch == "")
                 .focused($focusedEditorField, equals: .search)
                 .onExitCommand { dictionarySearch = "" }
                 .accessibilityLabel("Search your dictionary")

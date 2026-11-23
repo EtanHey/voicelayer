@@ -1,6 +1,7 @@
 import AppKit
 import OffscreenTestSupport
 import SwiftUI
+import Vision
 @testable import VoiceBarUI
 import XCTest
 
@@ -170,5 +171,53 @@ final class DictionaryNotchTrackDShotsTests: XCTestCase {
         context.draw(try XCTUnwrap(image.cgImage), in: CGRect(x: 0, y: 0, width: image.pixelsWide, height: image.pixelsHigh))
         return Array(UnsafeBufferPointer(start: try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self),
                                          count: image.pixelsWide * image.pixelsHigh * 4))
+    }
+
+    /// Taste review P1 (6f45b985e): placeholders painted at primary ink, so empty fields looked filled. Each
+    /// placeholder's glyph cores must sit at the note tier: nearer note ink than primary ink, as composited over the
+    /// field well on the glass, in both appearances.
+    func testPlaceholdersPaintAtNoteInkNotPrimary() throws {
+        for appearance in [VoiceBarNotchAppearance.dark, .light] {
+            let suffix = appearance == .dark ? "dark" : "light"
+            let cases: [(String, AnyView, String)] = [
+                ("add-term", AnyView(Self.drawer(appearance, sheet: DictionaryTermEdit())), "intended text"),
+                ("add-term", AnyView(Self.drawer(appearance, sheet: DictionaryTermEdit())), "misheard text"),
+                ("dictionary", AnyView(Self.drawer(appearance, sheet: nil)), "search terms"),
+            ]
+            let palette = VoiceBarNotchContrastPalette.resolve(for: appearance)
+            let glass = appearance == .dark ? 0.16 : 0.86
+            // The well: palette primary at 8 % over the glass. Then a glyph at `alpha` of primary over the well.
+            let primaryGrey = (palette.primary.red + palette.primary.green + palette.primary.blue) / 3
+            let well = glass + (primaryGrey - glass) * palette.primary.alpha * 0.08
+            func ink(_ opacity: Double) -> Double { (well + (primaryGrey - well) * palette.primary.alpha * opacity) * 255 }
+            let note = ink(NotchPaneInk.noteOpacity(appearance)), primary = ink(1)
+            for (name, view, text) in cases {
+                let bitmap = try Self.render(view, appearance: appearance, name: "placeholder-\(name)-\(suffix)")
+                let box = try Self.ocrBox(bitmap, containing: text)
+                var extreme = appearance == .dark ? 0.0 : 255.0
+                for y in Int(box.minY) ..< Int(box.maxY) {
+                    for x in Int(box.minX) ..< Int(box.maxX) {
+                        guard let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { continue }
+                        let grey = (c.redComponent + c.greenComponent + c.blueComponent) / 3 * 255
+                        extreme = appearance == .dark ? max(extreme, grey) : min(extreme, grey)
+                    }
+                }
+                XCTAssertLessThan(abs(extreme - note), abs(extreme - primary),
+                                  "\(suffix) '\(text)' paints at \(extreme), note \(note), primary \(primary)")
+            }
+        }
+    }
+
+    /// The pixel box (bitmap coordinates, top-left origin) of the first OCR line containing `text`.
+    static func ocrBox(_ bitmap: NSBitmapImageRep, containing text: String) throws -> CGRect {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage), options: [:]).perform([request])
+        let hit = try XCTUnwrap((request.results ?? []).first {
+            $0.topCandidates(1).first?.string.lowercased().contains(text) == true
+        }, "OCR did not read '\(text)'")
+        let w = Double(bitmap.pixelsWide), h = Double(bitmap.pixelsHigh), b = hit.boundingBox
+        return CGRect(x: b.minX * w, y: (1 - b.maxY) * h, width: b.width * w, height: b.height * h)
     }
 }
