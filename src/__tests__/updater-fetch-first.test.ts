@@ -12,7 +12,7 @@ function exercise(offer: string, fail = false, dry = false) {
   writeFileSync(brew, `#!/bin/bash\nprintf '%s\n' "$*" >> "$CALLS"\n[[ "$1" != fetch || "$FAIL" != 1 ]]\n`);
   chmodSync(brew, 0o755);
   const body = `source "$1"
-print_plan() { :; }; validate_args() { :; }; ensure_command() { :; }
+updater_validate_offer_freshness() { :; }; print_plan() { :; }; validate_args() { :; }; ensure_command() { :; }
 detect_install_type() { echo git-checkout; }; voicebar_app_update_mode() { echo cask-sync; }
 updater_offer_identity() { echo fixture; }; bcs_tap_repo_path() { echo /stub/tap; }; bcs_preflight_tap_refresh() { :; }
 vl_update_gate() { echo gate >> "$CALLS"; bash -c 'echo "pin=\${VOICELAYER_UPDATE_PREFETCHED_CASK_VERSION:-unset}"' >> "$CALLS"; export VOICELAYER_INSTALL_OPERATION=stub; }
@@ -62,7 +62,7 @@ test('unreadable existing app refuses before gate', () => {
 });
 
 function shell(body: string) {
-  return Bun.spawnSync(['bash','-c', `source "$1"; ${body}`, '_', script], {env:{...process.env}, stdout:'pipe',stderr:'pipe'});
+  return Bun.spawnSync(['bash','-c', `source "$1"; updater_validate_offer_freshness() { :; }; ${body}`, '_', script], {env:{...process.env}, stdout:'pipe',stderr:'pipe'});
 }
 test('missing brew simulation succeeds', () => {
   const r = shell('bcs_brew_bin() { return 1; }; bcs_caller_simulates_commands() { return 0; }; preflight_cask_download');
@@ -106,12 +106,13 @@ test('same-version checksum changes invalidate the pinned offer', () => {
   } finally { rmSync(root, {recursive: true, force: true}); }
 });
 
- test('offer age refuses stale timestamp and accepts recent or unavailable timestamp', () => {
-   for (const [timestamp, code] of [['1', 1], [String(Math.floor(Date.now()/1000)), 0], ['', 0]] as const) {
-     const r = shell(`git() { echo '${timestamp}'; }; updater_validate_offer_age /fixture`);
-     expect(r.exitCode).toBe(code);
-   }
- });
+test('tap refresh freshness refuses behind or unavailable remote; quiet current tap proceeds', () => {
+  for (const [remote, code] of [['behind', 1], ['offline', 1], ['current', 0]] as const) {
+    const r = shell(`source "$1"; git() { case "$*" in *rev-parse*) echo current;; *ls-remote*) ${remote === 'offline' ? 'return 1' : `printf '${remote}\\trefs/heads/main\\n'`};; *log*) echo 1;; esac; }; updater_validate_offer_freshness /fixture`);
+    expect(r.exitCode).toBe(code);
+    if (code) expect(r.stderr.toString()).toContain('Tap refresh freshness');
+  }
+});
  test('formula checksum alone invalidates fingerprint', () => {
    const root = mkdtempSync(join(bundleFixtureRoot(), 'formula-pin-'));
    try {
@@ -124,3 +125,15 @@ test('same-version checksum changes invalidate the pinned offer', () => {
      expect(r.stderr.toString()).toContain('Tap offer moved');
    } finally { rmSync(root, {recursive:true, force:true}); }
  });
+
+test('missing offer file reports a clear refusal without traceback', () => {
+  const root = mkdtempSync(join(bundleFixtureRoot(), 'missing-offer-'));
+  try {
+    Bun.spawnSync(['mkdir', '-p', join(root, 'Casks')], {env:process.env});
+    writeFileSync(join(root, 'Casks/voicebar.rb'), 'sha256 "aaa"\n');
+    const r = shell(`bcs_tap_repo_path() { echo "${root}"; }; updater_offer_identity`);
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toContain('Offer file missing:');
+    expect(r.stderr.toString()).not.toContain('Traceback');
+  } finally { rmSync(root, {recursive:true, force:true}); }
+});

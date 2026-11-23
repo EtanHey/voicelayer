@@ -865,7 +865,10 @@ updater_offer_identity() {
 import hashlib, pathlib, sys
 parts = []
 for name in sys.argv[1:]:
-    data = pathlib.Path(name).read_bytes()
+    try:
+        data = pathlib.Path(name).read_bytes()
+    except FileNotFoundError:
+        raise SystemExit(f"Offer file missing: {name}")
     if b'sha256' not in data:
         raise SystemExit("Offer lacks checksum")
     parts.append(hashlib.sha256(data).hexdigest())
@@ -881,19 +884,17 @@ updater_validate_offer() {
     }
 }
 
-# Thirty days permits quiet releases while refusing a stale refreshed tap.
-updater_validate_offer_age() {
-    local timestamp now
-    timestamp="$(git -C "$1" log -1 --format=%ct 2>/dev/null)" || timestamp=""
-    if [[ ! "$timestamp" =~ ^[0-9]+$ ]]; then
-        log "Offer age check skipped: tap has no usable commit timestamp."
-        return 0
-    fi
-    now="$(date +%s)"
-    if (( now - timestamp > 2592000 )); then
-        err "Tap offer is older than 30 days; refusing update."
-        return 1
-    fi
+# Verify refresh freshness independently of release cadence.
+updater_validate_offer_freshness() {
+    local head remote
+    head="$(git -C "$1" rev-parse HEAD)" || { err "Tap refresh freshness: cannot read HEAD; refusing update."; return 1; }
+    remote="$(git -C "$1" ls-remote --exit-code origin "refs/heads/$VOICEBAR_CASK_TAP_BRANCH")" || {
+        err "Tap refresh freshness: remote unavailable; refusing update."; return 1;
+    }
+    remote="${remote%%[[:space:]]*}"
+    [[ -n "$head" && "$head" = "$remote" ]] || {
+        err "Tap refresh freshness: HEAD differs from remote; refusing update."; return 1;
+    }
 }
 
 preflight_cask_download() {
@@ -905,7 +906,7 @@ preflight_cask_download() {
     tap="$(bcs_cask_tap "$VOICEBAR_CASK_NAME")"
     bcs_preflight_tap_refresh "$tap" || { err "Tap refresh failed; refusing update before stopping VoiceBar."; return 1; }
     repo="$(bcs_tap_repo_path "$tap")" || { err "Cannot resolve tap $tap; refusing update before stopping VoiceBar."; return 1; }
-    updater_validate_offer_age "$repo" || return 1
+    updater_validate_offer_freshness "$repo" || return 1
     offered="$(bcs_tap_offered_version "$VOICEBAR_CASK_NAME")"
     installed="$(bcs_app_bundle_version "$VOICEBAR_CANONICAL_APP")"
     if [[ -z "$offered" ]]; then
