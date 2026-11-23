@@ -156,6 +156,7 @@ struct NotchSettingsDrawer: View {
     private func pane(_ tab: SettingsTab) -> some View {
         context.pane(tab, request?.tab == tab ? request : nil)
             .environment(\.colorScheme, appearance == .dark ? .dark : .light)
+            .environment(\.notchPaneInk, NotchPaneInk(appearance))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 

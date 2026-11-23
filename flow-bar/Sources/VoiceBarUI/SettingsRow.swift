@@ -67,6 +67,36 @@ enum SettingsMarkPalette {
     static let doneDark = SettingsPanePalette.RGB(0x32D74B)
     static let done = Color(nsColor: SettingsPanePalette.adaptive(light: doneLight, dark: doneDark,
                                                                   name: "VoiceBarSettingsDoneMark"))
+    /// The done green for a notch appearance (the drawer knows its appearance, not an NSAppearance).
+    static func color(done appearance: VoiceBarNotchAppearance) -> Color {
+        (appearance == .dark ? doneDark : doneLight).nsColor.swiftUIColor
+    }
+}
+
+private extension NSColor {
+    var swiftUIColor: Color { Color(nsColor: self) }
+}
+
+/// A pane's small action button. On the notch glass it is the drawer's own capsule (`NotchDrawerButton`, palette ink
+/// and fill); in the legacy Settings window it stays the system small button.
+struct SettingsPaneButton: View {
+    let title: String
+    var isEnabled = true
+    var prominent = false
+    let action: () -> Void
+    @Environment(\.notchPaneInk) private var notchInk
+
+    var body: some View {
+        if let notchInk {
+            NotchDrawerButton(title: title, palette: notchInk.palette, prominent: prominent, isEnabled: isEnabled,
+                              action: action)
+        } else {
+            Button(title, action: action)
+                .controlSize(.small)
+                .fixedSize()
+                .disabled(!isEnabled)
+        }
+    }
 }
 
 /// The leading mark of a setup step: done, on its way (loading or recovering by itself), or needing attention.
@@ -118,5 +148,46 @@ struct SettingsControlFrameKey: PreferenceKey {
     static let defaultValue: [String: CGRect] = [:]
     static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
         value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
+    }
+}
+
+/// A pane's short text field. On the notch glass it is the shared notch field well (palette fill and hairline, primary
+/// ink), never the system's text background; in the legacy Settings window it stays the rounded system field.
+struct SettingsPaneField: ViewModifier {
+    let width: CGFloat
+    @Environment(\.notchPaneInk) private var notchInk
+
+    func body(content: Content) -> some View {
+        if let notchInk {
+            // D's field well (`NotchFieldWell`, NotchPaneInk.swift) adds 8 pt either side.
+            content
+                .textFieldStyle(.plain)
+                .font(.system(size: 12.5))
+                .foregroundStyle(notchInk.primary)
+                .frame(width: width - 16)
+                .modifier(NotchFieldWell())
+        } else {
+            content
+                .textFieldStyle(.roundedBorder)
+                .frame(width: width)
+        }
+    }
+}
+
+extension View {
+    func settingsPaneField(width: CGFloat) -> some View { modifier(SettingsPaneField(width: width)) }
+}
+
+private struct NotchPaneInkKey: EnvironmentKey {
+    static let defaultValue: NotchPaneInk? = nil
+}
+
+extension EnvironmentValues {
+    /// Set by the notch Settings drawer on every pane it hosts (2.4.6 track S): shared row pieces (`SettingsRowLabel`,
+    /// `SettingsPaneButton`, `SettingsPaneField`) draw from it on the glass. Nil in the legacy Settings window, whose
+    /// rows keep their window ink and system controls.
+    var notchPaneInk: NotchPaneInk? {
+        get { self[NotchPaneInkKey.self] }
+        set { self[NotchPaneInkKey.self] = newValue }
     }
 }

@@ -23,7 +23,7 @@ final class SettingsRS5ThresholdHoverTests: XCTestCase {
                 return (text, result.boundingBox)
             }
             let reason = try XCTUnwrap(lines.first { $0.0.contains("voice session in progress") }, "\(lines)")
-            let title = try XCTUnwrap(lines.first { $0.0.contains("last reported cutoff") }, "\(lines)")
+            let title = try XCTUnwrap(lines.first { $0.0.contains("voice threshold") }, "\(lines)")
             // Vision uses a bottom-left origin: the bubble must finish above the first title line.
             XCTAssertGreaterThan(reason.1.minY, title.1.maxY, surface)
             let bubble = reason.1.insetBy(dx: -8 / width, dy: -5 / 1124)
