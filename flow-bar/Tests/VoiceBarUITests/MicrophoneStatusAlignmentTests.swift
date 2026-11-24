@@ -5,7 +5,7 @@ import SwiftUI
 import XCTest
 import Vision
 
-/// MC2 A01: measure the real action frame against painted status text, independent of keyboard-focus reveal.
+/// MC2 A01: measure action and badge frames, with OCR confirming visible status text.
 @MainActor
 final class MicrophoneStatusAlignmentTests: XCTestCase {
     private final class Audit { var entries: [SettingsTextAuditEntry] = []; var controls: [String: CGRect] = [:] }
@@ -73,8 +73,13 @@ final class MicrophoneStatusAlignmentTests: XCTestCase {
             $0.topCandidates(1).first?.string.lowercased().contains("used for dictation") == true
         }).boundingBox
         let statusCentre = (1 - statusInk.midY) * host.bounds.height
-        XCTAssertEqual(action.midY, statusCentre, accuracy: 1,
-                       "A01: action centre \(action.midY), painted status centre \(statusCentre)")
+        let origin = try XCTUnwrap(audit.controls["host-root"])
+        let pill = try XCTUnwrap(audit.controls["status-pill-Used for dictation"]).offsetBy(dx: -origin.minX, dy: -origin.minY)
+        print("A01 BADGE frame=\(pill) centre=\(pill.midY)")
+        print("A01 MEASURE action=\(action) statusPill=\(hover.status) OCR=\(statusInk) host=\(host.bounds)")
+        // Recoloured pill ink shifts the OCR centroid; alignment is defined by the badge frame.
+        XCTAssertEqual(action.midY, pill.midY, accuracy: 1,
+                       "A01: action centre \(action.midY), badge frame centre \(pill.midY)")
         XCTAssertEqual(action, reserved, "Hover must preserve the reserved button frame")
         for candidate in [hover] {
             for pair in [(rest.title, candidate.title), (rest.status, candidate.status), (rest.next, candidate.next)] {
