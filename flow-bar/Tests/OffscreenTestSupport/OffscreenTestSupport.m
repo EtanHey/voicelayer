@@ -5,6 +5,10 @@
 
 static BOOL installed;
 static id observer;
+static NSLock *beepLock;
+static NSMutableArray<NSString *> *beeps;
+static NSString *runningTest;
+static NSUInteger testBeepStart;
 static char compositorKey;
 static NSMutableArray<NSString *> *violations;
 
@@ -44,8 +48,25 @@ static void Prepare(NSWindow *window) {
 @interface VLOffscreenObserver : NSObject <XCTestObservation>
 @end
 @implementation VLOffscreenObserver
+- (void)testCaseWillStart:(XCTestCase *)testCase {
+    [beepLock lock]; runningTest = testCase.name; testBeepStart = beeps.count; [beepLock unlock];
+}
+- (void)testBundleDidFinish:(NSBundle *)bundle {
+    [beepLock lock];
+    NSArray *records = [beeps copy];
+    [beepLock unlock];
+    for (NSString *record in records) fprintf(stderr, "%s\n", record.UTF8String);
+    fprintf(stderr, "BEEP_AUDIT count=%lu\n", (unsigned long)records.count);
+}
+
 - (void)testCaseDidFinish:(id)testCase {
     void (^check)(void) = ^{
+        [beepLock lock];
+        NSArray *unexpected = [beeps subarrayWithRange:NSMakeRange(testBeepStart, beeps.count - testBeepStart)];
+        [beepLock unlock];
+        for (NSString *record in unexpected) {
+            [testCase recordFailureWithDescription:record inFile:@__FILE__ atLine:__LINE__ expected:YES];
+        }
         CheckIsolation();
         for (NSString *violation in violations) {
             [testCase recordFailureWithDescription:violation inFile:@__FILE__ atLine:__LINE__ expected:YES];
@@ -53,6 +74,18 @@ static void Prepare(NSWindow *window) {
         [violations removeAllObjects];
     };
     if (NSThread.isMainThread) check(); else dispatch_sync(dispatch_get_main_queue(), check);
+}
+@end
+
+@implementation NSResponder (VLBeepAudit)
+- (void)vl_noResponderFor:(SEL)eventSelector {
+    BOOL key = eventSelector == @selector(keyDown:) || eventSelector == @selector(keyUp:)
+        || eventSelector == @selector(performKeyEquivalent:) || eventSelector == @selector(flagsChanged:);
+    if (!key) { [self vl_noResponderFor:eventSelector]; return; }
+    [beepLock lock];
+    [beeps addObject:[NSString stringWithFormat:@"BEEP: %@ responder=%@ selector=%@",
+        runningTest ?: @"outside-test", NSStringFromClass(self.class), NSStringFromSelector(eventSelector)]];
+    [beepLock unlock];
 }
 @end
 
@@ -107,6 +140,8 @@ static void Prepare(NSWindow *window) {
         }
         Exchange(NSApplication.class, @selector(unhide:), @selector(vl_unhide:));
         violations = [NSMutableArray new];
+        beepLock = [NSLock new]; beeps = [NSMutableArray new];
+        Exchange(NSResponder.class, @selector(noResponderFor:), @selector(vl_noResponderFor:));
         for (NSNotificationName name in @[NSWindowDidBecomeKeyNotification, NSWindowDidMoveNotification,
                                            NSWindowDidResizeNotification, NSWindowDidChangeOcclusionStateNotification,
                                            NSApplicationDidBecomeActiveNotification]) {

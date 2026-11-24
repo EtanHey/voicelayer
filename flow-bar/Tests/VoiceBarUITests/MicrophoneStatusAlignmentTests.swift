@@ -73,6 +73,10 @@ final class MicrophoneStatusAlignmentTests: XCTestCase {
             $0.topCandidates(1).first?.string.lowercased().contains("used for dictation") == true
         }).boundingBox
         let statusCentre = (1 - statusInk.midY) * host.bounds.height
+        let origin = try XCTUnwrap(audit.controls["host-root"])
+        let pill = try XCTUnwrap(audit.controls["status-pill-Used for dictation"]).offsetBy(dx: -origin.minX, dy: -origin.minY)
+        print("A01 BADGE frame=\(pill) centre=\(pill.midY)")
+        print("A01 MEASURE action=\(action) statusPill=\(hover.status) OCR=\(statusInk) host=\(host.bounds)")
         XCTAssertEqual(action.midY, statusCentre, accuracy: 1,
                        "A01: action centre \(action.midY), painted status centre \(statusCentre)")
         XCTAssertEqual(action, reserved, "Hover must preserve the reserved button frame")
