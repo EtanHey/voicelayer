@@ -137,7 +137,9 @@ final class SettingsRS5Round2Tests: XCTestCase {
         XCTAssertEqual(SettingsGeneralCopy.dictationKeyDescription,
             "Hold to talk. Double-tap to keep recording hands-free; it stops after 10 minutes of silence.")
         XCTAssertEqual(SettingsGeneralCopy.diagnosticDescription, "Copies the build and recognizer facts for a bug report.")
-        XCTAssertEqual(SettingsGeneralCopy.microphoneNote,
+        // 2.4.6 track T: the painted note is one line; the full rule stays verbatim as its hover and VoiceOver label.
+        XCTAssertEqual(SettingsGeneralCopy.microphoneNote, "Drag to reorder. The first connected one is used.")
+        XCTAssertEqual(SettingsGeneralCopy.microphoneNoteDetail,
             "Drag to reorder. VoiceBar uses the first connected microphone. Disconnected ones keep their place.")
         XCTAssertEqual(VoiceBarHotkeyContract.singleTapDescription, "Stop recording or speech; cancel transcription")
         XCTAssertEqual(VoiceBarHotkeyContract.readClipboardDescription,

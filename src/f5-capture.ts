@@ -87,3 +87,21 @@ export function runBarCaptureWithPausedRead(id: string, record: (opened: () => v
     settleLoan(current);
   });
 }
+
+/** Preserve this F5's up/cancel edge while the Ask's owned player exits. No microphone is open yet. */
+export async function afterAskPromptExit<T>(id: string, ready: Promise<void>, start: () => T, scoped: boolean): Promise<Awaited<T>> {
+  if (opening.has(id)) throw new Error("Recording already in progress");
+  const pending: { control?: "stop" | "cancel"; physicalPress?: boolean; origin?: Record<string, unknown> } = {};
+  opening.set(id, pending);
+  if (scoped) scopedTakes.add(id);
+  try {
+    await ready;
+    opening.delete(id);
+    scopedTakes.delete(id);
+    const result = start(); // installs the F5 opening entry synchronously
+    if (pending.control) bufferOpeningCaptureControl(id, pending.control, pending.physicalPress, pending.origin);
+    return await result;
+  } finally {
+    if (opening.get(id) === pending) { opening.delete(id); scopedTakes.delete(id); }
+  }
+}

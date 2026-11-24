@@ -155,13 +155,15 @@ final class SettingsPolishS5Tests: XCTestCase {
     }
     func testBothProfilesExplainWhenChangesApply() throws {
         let lines = try Self.ocr(Self.render(Self.drawer(.speech)))
-        XCTAssertEqual(lines.filter { $0.contains("changes apply") }.count, 2, "Shared rule belongs to both profiles: \(lines)")
+        // 2.4.6 track S: the shared rule shows once, under the last profile (it was printed under each).
+        XCTAssertEqual(lines.filter { $0.contains("changes apply") }.count, 1, "Shared rule shows once: \(lines)")
     }
     func testSpeechKeepsCandidateFactsWithoutRepeatingTheSectionTitle() throws {
         let lines = try Self.ocr(Self.render(Self.drawer(.speech)))
-        XCTAssertEqual(lines.filter { $0.contains("voice profile threshold") }.count, 1)
-        XCTAssertTrue(lines.contains { $0.contains("last reported cutoff") })
-        XCTAssertTrue(lines.contains { $0.contains("first sound after") })
+        XCTAssertEqual(lines.filter { $0.contains("voice threshold") }.count, 1)
+        // The reported cutoff's provenance is behind the info glyph now (2.4.6 track S); the row keeps its purpose.
+        XCTAssertTrue(lines.contains { $0.contains("long voice over") }, "\(lines)")
+        XCTAssertTrue(lines.contains { $0.contains("first sound") })
         XCTAssertEqual(lines.filter { $0.contains("unavailable") }.count, 1)
     }
     func testLockedToggleHasVisibleStateAtRest() throws {

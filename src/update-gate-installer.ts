@@ -423,6 +423,11 @@ export async function runGatedInstall(command: string[], harnessParticipant?: In
           throw Error(`UNKNOWN: prepared participant recheck refused: ${lastStatus}`);
         }
         if (cancelled || bootstrap?.cancelled()) { cancelled = true; break; }
+        if (process.env.VOICELAYER_UPDATE_OFFER_SCRIPT) {
+          const check = Bun.spawn(["bash", process.env.VOICELAYER_UPDATE_OFFER_SCRIPT, "--validate-offer"],
+            { env: process.env, stdout: "inherit", stderr: "inherit" });
+          if (await waitPrecommit(check.exited) !== 0) throw Error("Tap offer moved; install refused before COMMIT");
+        }
         const commit = await transition({ kind: "COMMIT", lease });
         if (commit.kind !== "APPLIED") throw Error("UNKNOWN: commit refused; mutation not authorized");
         // Give late fail-open admissions a chance to publish fault/ledger evidence,

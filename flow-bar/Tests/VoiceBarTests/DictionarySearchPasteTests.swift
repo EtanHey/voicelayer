@@ -29,9 +29,19 @@ final class DictionarySearchPasteTests: XCTestCase {
         window.contentView = NSHostingView(rootView: settings)
         window.contentView?.layoutSubtreeIfNeeded()
         self.window = window
-        let field = try XCTUnwrap(Self.textFields(in: try XCTUnwrap(window.contentView)).first {
-            $0.isEditable && ($0.placeholderString ?? $0.placeholderAttributedString?.string) == "Search terms and variants"
-        }, "the Dictionary search is a real editable text field")
+        // Found by its accessibility label, the identifier as a second match: the field has no native placeholder
+        // (#968: macOS 26 painted a native prompt at primary ink, so the visible placeholder is the note-ink overlay
+        // only), and SwiftUI does not pass the identifier down to the AppKit field on macOS 26.
+        // If neither reaches AppKit, the search is the Dictionary pane's only editable field.
+        let editable = Self.textFields(in: try XCTUnwrap(window.contentView)).filter(\.isEditable)
+        let named = editable.first {
+            $0.accessibilityLabel() == "Search your dictionary"
+                || $0.accessibilityIdentifier() == DictionarySearchPresentation.searchFieldIdentifier
+        }
+        let field = try XCTUnwrap(named ?? (editable.count == 1 ? editable.first : nil),
+                                  "the Dictionary search is a real editable text field (\(editable.count) editable)")
+        XCTAssertEqual(field.placeholderString ?? field.placeholderAttributedString?.string ?? "", "",
+                       "no native placeholder paints under the note-ink overlay")
         XCTAssertTrue(window.makeFirstResponder(field))
         return try XCTUnwrap(window.firstResponder as? NSTextView, "focus lands in the field editor")
     }

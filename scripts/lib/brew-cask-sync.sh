@@ -430,7 +430,9 @@ bcs_sync_cask() {
     name="$(bcs_cask_name "$token")"
     tap="$(bcs_cask_tap "$token")"
 
-    bcs_tap_update "$tap" "$branch" || return 1
+    if [[ -z "${VOICELAYER_UPDATE_PINNED_OFFER:-}" ]]; then
+        bcs_tap_update "$tap" "$branch" || return 1
+    fi
 
     state="$(bcs_drift_state "$token" "$app_path")"
     app_version="$(bcs_app_bundle_version "$app_path")"

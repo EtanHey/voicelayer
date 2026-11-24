@@ -101,3 +101,6 @@ property needs explicit time (`now`, `lastClientApply`), sent/applied sequence n
 client's run loop. Such a property can only state the budget; no model can forbid macOS descheduling the main thread.
 
 Run: `bash formal/playback-session/check.sh` (recorded evidence in `results/`).
+
+## F5 during an Ask prompt
+`HandoffSpec` explores scoped prompt cancellation, physical player exit, capture/operation release, and dictation admission using the existing state vector. In this focused spec `notice` represents the operation reservation. Listening is covered by the original specification and is not interrupted. `DictationOwnsQuietVoice` rejects early microphone admission; `DictationEventuallyAdmitted` rejects keeping the Ask reservation forever after cancellation. The retained-reservation mutant deadlocks admission and must fail the temporal property; the early-exit mutant must fail the physical-exit invariant. This is bounded ordering evidence, not native microphone or UI proof.

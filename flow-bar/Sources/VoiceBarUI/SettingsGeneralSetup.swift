@@ -239,7 +239,9 @@ enum SettingsGeneralCopy {
     static let singleTapTitle = "Tap F5"
     static let readClipboardTitle = "Read clipboard aloud"
     static let diagnosticDescription = "Copies the build and recognizer facts for a bug report."
-    static let microphoneNote =
+    /// 2.4.6 track T: the note paints one line; the full rule is its tooltip and VoiceOver label.
+    static let microphoneNote = "Drag to reorder. The first connected one is used."
+    static let microphoneNoteDetail =
         "Drag to reorder. VoiceBar uses the first connected microphone. Disconnected ones keep their place."
 
     static func relayDescription(installed: Bool, listenerActive: Bool) -> String {

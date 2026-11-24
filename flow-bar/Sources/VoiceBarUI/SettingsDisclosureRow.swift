@@ -84,7 +84,7 @@ struct SettingsDisclosureHeader<Label: View>: View {
         HStack(spacing: 8) {
             Image(systemName: "chevron.right")
                 .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(NotchInk.note)
                 .frame(width: 12, height: 12)
                 .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 .opacity(isEnabled ? 1 : 0)

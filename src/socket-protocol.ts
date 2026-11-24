@@ -44,6 +44,8 @@ export interface RecordingJobsSnapshot {
 }
 
 export interface StateEvent extends RecordingJobIdentity, RecordingJobsSnapshot {
+  /** Owned Ask prompt has physically exited; F5 is about to take the microphone. */
+  ask_cancelled_for_dictation?: boolean;
   type: "state";
   /** Word-seek identity; stable across this utterance's chunks and seeks. */
   utteranceId?: string;

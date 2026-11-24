@@ -51,6 +51,9 @@ public struct ModelsSettingsView: View {
     private let language: SettingsChoiceInput?
     private let lastDictationNote: SettingsLastDictationNote?
     @State private var detailsExpanded = false
+    /// 2.4.6 track T: notes, warnings and errors on the notch glass take the shared notch palette's ink.
+    @Environment(\.colorScheme) private var colorScheme
+    private var ink: NotchPaneInk { NotchPaneInk(colorScheme: colorScheme) }
 
     public init(
         state: ModelsSettingsState,
@@ -92,7 +95,7 @@ public struct ModelsSettingsView: View {
                 Section {
                     HStack {
                         Label(degradation.hint, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(ink.error)
                         Spacer()
                         Button("Dismiss", action: onDismissDegradation)
                             .accessibilityLabel("Dismiss STT polish warning")
@@ -108,7 +111,7 @@ public struct ModelsSettingsView: View {
                 }
                 if let lastDictationNote {
                     Label(lastDictationNote.text(), systemImage: "info.circle")
-                        .font(SettingsRowLabel.descriptionFont).foregroundStyle(SettingsPanePalette.helper)
+                        .font(SettingsRowLabel.descriptionFont).foregroundStyle(ink.note)
                         .accessibilityIdentifier("recognizer-last-dictation")
                 }
                 // One shared reason above the controls it disables. The picker keeps
@@ -116,7 +119,7 @@ public struct ModelsSettingsView: View {
                 if state.availability == .available, let reason = Self.effortDisabledReason(for: state) {
                     Text(reason)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(ink.note)
                         .accessibilityIdentifier("models-busy-reason")
                 }
             }
@@ -139,13 +142,13 @@ public struct ModelsSettingsView: View {
                     }
                     Text("Applies to your next dictation.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(ink.note)
                     if let processingNotice {
-                        Text(processingNotice).font(.caption).foregroundStyle(.orange)
+                        Text(processingNotice).font(.caption).foregroundStyle(ink.error)
                     }
                 } else if let placeholder = Self.processingPlaceholder(for: state) {
                     Text(placeholder)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(ink.note)
                         .accessibilityIdentifier("models-polish-unavailable")
                 }
             }
@@ -153,7 +156,7 @@ public struct ModelsSettingsView: View {
             SettingsDisclosureRow("Recognizer details", isExpanded: $detailsExpanded) {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Self.detailFacts(state: state, recognizer: recognizerState), id: \.label) { row in
-                        LabeledContent(row.label) { Text(row.value).textSelection(.enabled) }
+                        LabeledContent(row.label) { Text(row.value).foregroundStyle(ink.note).textSelection(.enabled) }
                     }
                     recognizerNotes
                 }
@@ -161,16 +164,17 @@ public struct ModelsSettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .foregroundStyle(ink.primary)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("models-settings-form")
     }
 
     @ViewBuilder private var recognizerNotes: some View {
         if let note = Self.effortStatusNote(for: state) {
-            Text(note).font(.caption).foregroundStyle(.orange)
+            Text(note).font(.caption).foregroundStyle(ink.note)
         }
         if let notice {
-            Text(notice).font(.caption).foregroundStyle(.orange)
+            Text(notice).font(.caption).foregroundStyle(ink.error)
         }
     }
 
@@ -285,17 +289,21 @@ public struct ModelsSettingsView: View {
         let disabled = row.lockedReason != nil || busyReason != nil || onToggleProcessing == nil
             || processingPending[row.key] != nil
         return SettingsRow(title: row.key.title, description: row.line,
-                           titleBadge: row.experimental ? SettingsPill(text: "Experimental", tint: .orange) : nil) {
+                           titleBadge: row.experimental ? SettingsPill(text: "Experimental") : nil) {
             Toggle(row.key.title, isOn: Binding(
                 get: { processingPending[row.key] ?? row.isOn },
                 set: { onToggleProcessing?(row.key, $0) }
             ))
-            .labelsHidden().toggleStyle(.switch)
+            .labelsHidden().toggleStyle(.settingsSwitch)
             .disabled(disabled)
             .accessibilityIdentifier("models-processing-\(row.key.rawValue)")
+            // The painted line is short; VoiceOver hears the whole explanation, not only the hover.
+            .accessibilityHint(row.tooltip)
             // Etan (QA 2026-11-11, shot 5): why it is locked shows on hover of the switch, never in the text.
             .settingsLockedReason(disabled ? row.lockedReason ?? busyReason : nil)
         }
+        // 2.4.6 track T: the row paints one short line; the rest of the explanation is on hover.
+        .help(row.tooltip)
         // SwiftUI's default macOS Form toggle leaves a saved-on switch looking active.
         // Keep its saved value but mute the entire row when it cannot be used.
         .opacity(disabled ? 0.45 : 1)
@@ -311,6 +319,10 @@ public struct ModelsSettingsView: View {
         let line: String
         let lockedReason: String?
         let disabled: Bool
+        /// The rest of the explanation, on hover (2.4.6 track T: the row paints one line).
+        var detail: String? = nil
+
+        var tooltip: String { [line, detail].compactMap { $0 }.joined(separator: " ") }
 
         /// Same rule as the Processing rows: the explanation always shows; the lock's reason is on the switch's hover.
         var captionLines: [String] { [line] + (lockedReason.map { [$0] } ?? []) }
@@ -320,16 +332,17 @@ public struct ModelsSettingsView: View {
         guard let setting = recognizer.unloadWhenIdle else { return nil }
         let engine = RecognizerPickerEngine.parakeet
         let size = recognizer.assetsPresent(for: engine) ? recognizer.diskBytes[engine].flatMap(approximateSize) : nil
-        let idle = recognizer.idleUnloadSeconds.map { "after \(RecognizerPickerState.idleText($0)) without dictation" }
+        let idle = recognizer.idleUnloadSeconds.map { "after \(RecognizerPickerState.idleText($0)) idle" }
             ?? "when you are not dictating"
         return UnloadWhenIdleRow(
             title: "Unload when idle",
             isOn: recognizer.unloadWhenIdlePending ?? setting.effective,
             // The load cost is not measured on this Mac yet, so the copy says "a few seconds", never a number.
-            line: "Frees \(size.map { "about \($0) of " } ?? "")memory \(idle). The next dictation loads \(engine.shortName) again, which adds a few seconds.",
+            line: "Frees \(size.map { "about \($0) of " } ?? "")memory \(idle).",
             lockedReason: setting.lockedReason,
             disabled: setting.lockedReason != nil || recognizer.unloadWhenIdlePending != nil
-                || recognizer.selected == nil || !canChange)
+                || recognizer.selected == nil || !canChange,
+            detail: "The next dictation loads \(engine.shortName) again, which adds a few seconds.")
     }
 
     /// "~2.5 GB" from the reported 2.51 GB, to the nearest half gigabyte: the saving is approximate (memory, measured
@@ -347,12 +360,14 @@ public struct ModelsSettingsView: View {
     private func unloadWhenIdleToggle(_ row: UnloadWhenIdleRow) -> some View {
         SettingsRow(title: row.title, description: row.line) {
             Toggle(row.title, isOn: Binding(get: { row.isOn }, set: { onSetUnloadWhenIdle?($0) }))
-                .labelsHidden().toggleStyle(.switch)
+                .labelsHidden().toggleStyle(.settingsSwitch)
                 .disabled(row.disabled)
                 .accessibilityIdentifier("recognizer-unload-when-idle")
+                .accessibilityHint(row.tooltip)
                 .settingsLockedReason(row.lockedReason)
         }
         // Matches the Processing rows: a locked switch is muted whole, keeping its real value.
+        .help(row.tooltip)
         .opacity(row.lockedReason != nil ? 0.45 : 1)
         .settingsLockedReasonBubble()
         .padding(.top, 4)
@@ -365,6 +380,10 @@ public struct ModelsSettingsView: View {
         let experimental: Bool
         let isOn: Bool
         let lockedReason: String?
+        /// The rest of the explanation, on hover (2.4.6 track T: the row paints one short line).
+        var detail: String? = nil
+
+        var tooltip: String { [line, detail].compactMap { $0 }.joined(separator: " ") }
 
         /// C22: the explanation always shows; a lock adds its reason. The row paints only `line`; the reason shows
         /// on hover of the switch (Etan, QA 2026-11-11).
@@ -391,17 +410,19 @@ public struct ModelsSettingsView: View {
         return [
             ProcessingRow(
                 key: .modelPolish,
-                line: "Fixes punctuation and capitals. If polish would add or drop a word, VoiceBar keeps the raw text instead.",
+                line: "Fixes punctuation and capitals, never your words.",
                 experimental: false,
                 isOn: controls.modelPolish.effective == .on,
-                lockedReason: polishLock
+                lockedReason: polishLock,
+                detail: "If polish would add or drop a word, VoiceBar keeps the raw text instead."
             ),
             ProcessingRow(
                 key: .outroGate,
-                line: "Drops a “Thank you.” the recognizer invents in silence. Words you really said stay.",
+                line: "Drops a “Thank you.” invented in silence.",
                 experimental: false,
                 isOn: controls.outroGate.effective,
-                lockedReason: locked(.outroGate, controls.outroGate)
+                lockedReason: locked(.outroGate, controls.outroGate),
+                detail: "The recognizer sometimes invents one when you stop talking. Words you really said stay."
             ),
             ProcessingRow(
                 key: .smartChunks,

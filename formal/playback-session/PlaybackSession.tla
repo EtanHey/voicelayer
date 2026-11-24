@@ -447,4 +447,33 @@ EndedReplayNotShownRunning == retReplay # None => cOwner # retReplay
 \* A stopped or replaced session never starts a player.
 NoZombie == /\ \A r \in Reads : r \in players => st[r] = "playing"
             /\ (Prompt \in players => ask = "prompt")
-=============================================================================
+\* BUSY-ASK: focused prompt -> F5 handoff. notice is the operation reservation in this spec;
+\* ask is the capture admission, exiting is the physical player, mic is the F5 microphone.
+\* The ordinary Spec above still checks Ask listening unchanged. No queued dictation is modeled.
+RetainAskReservation == FALSE
+DictationBeforeExit == FALSE
+MutantTrue == TRUE
+HandoffFrozen == <<st, cur, pausedAt, mark, resumedAt, seekTo, tele, prep, parked, parkedFrom,
+                   recorder, prevHeld, optq, askFound, restoring, lost, clientVars>>
+HandoffStart == /\ ask = "none" /\ asks = 0
+                /\ ask' = "prompt" /\ asks' = 1 /\ players' = {Prompt} /\ notice' = TRUE
+                /\ UNCHANGED <<exiting, mic, HandoffFrozen>>
+HandoffF5 == /\ ask = "prompt"
+             /\ ask' = "closing" /\ players' = {} /\ exiting' = {Prompt}
+             /\ UNCHANGED <<notice, mic, asks, HandoffFrozen>>
+HandoffReap == /\ exiting # {} /\ exiting' = {}
+               /\ UNCHANGED <<ask, players, notice, mic, asks, HandoffFrozen>>
+HandoffRelease == /\ ask = "closing" /\ (Quiet \/ DictationBeforeExit)
+                  /\ ask' = "none" /\ notice' = RetainAskReservation
+                  /\ UNCHANGED <<players, exiting, mic, asks, HandoffFrozen>>
+HandoffAdmit == /\ asks = 1 /\ ask = "none" /\ ~notice /\ ~mic
+                /\ mic' = TRUE
+                /\ UNCHANGED <<ask, players, exiting, notice, asks, HandoffFrozen>>
+HandoffNext == HandoffStart \/ HandoffF5 \/ HandoffReap \/ HandoffRelease \/ HandoffAdmit
+HandoffSpec == Init /\ [][HandoffNext]_vars
+               /\ WF_vars(HandoffStart) /\ WF_vars(HandoffF5) /\ WF_vars(HandoffReap)
+               /\ WF_vars(HandoffRelease) /\ WF_vars(HandoffAdmit)
+DictationOwnsQuietVoice == mic => (Quiet /\ ask = "none" /\ ~notice)
+DictationEventuallyAdmitted == (ask = "closing") ~> mic
+
+====

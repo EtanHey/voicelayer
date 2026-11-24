@@ -2,6 +2,9 @@ import SwiftUI
 
 /// Settings › Dictionary search: "Add '<query>'" when nothing matches, and the Included terms sample.
 enum DictionarySearchPresentation {
+    /// The search field's accessibility identifier (tests find the field by it; it has no native placeholder).
+    static let searchFieldIdentifier = "dictionary-search-field"
+
     /// "Add '<query>'" when a loaded dictionary has no row for the search: the trimmed query, else nil.
     static func addSuggestion(search: String, loaded: Bool, personalMatches: Int, includedMatches: Int) -> String? {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)

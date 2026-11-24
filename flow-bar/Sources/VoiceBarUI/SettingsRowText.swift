@@ -66,6 +66,8 @@ struct SettingsRowLabel: View {
     var statusLineMinHeight: CGFloat? = nil
     /// Both the drawer and Settings window wrap copy fully, including long device names.
     @Environment(\.settingsRowWrapsFully) private var wrapsFully
+    /// On the notch glass the title takes the palette's primary ink and the description its read tier.
+    @Environment(\.notchPaneInk) private var notchInk
 
     private var limit: Int? { isSelected || wrapsFully ? nil : Self.lineLimit }
 
@@ -73,14 +75,14 @@ struct SettingsRowLabel: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 ClippingAwareText(text: title, font: Self.titleFont, lineLimit: limit)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(notchInk.map { AnyShapeStyle($0.primary) } ?? AnyShapeStyle(.primary))
                 if let titleBadge { titleBadge }
             }
             if let description, !description.isEmpty {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     ClippingAwareText(text: description, font: Self.descriptionFont,
                                       lineLimit: limit)
-                        .foregroundStyle(SettingsPanePalette.helper)
+                        .foregroundStyle(notchInk?.note ?? SettingsPanePalette.helper)
                     if let badge { SettingsPill(text: badge) }
                 }
                 .frame(minHeight: statusLineMinHeight)

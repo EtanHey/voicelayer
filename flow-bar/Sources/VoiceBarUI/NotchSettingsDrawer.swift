@@ -156,6 +156,7 @@ struct NotchSettingsDrawer: View {
     private func pane(_ tab: SettingsTab) -> some View {
         context.pane(tab, request?.tab == tab ? request : nil)
             .environment(\.colorScheme, appearance == .dark ? .dark : .light)
+            .environment(\.notchPaneInk, NotchPaneInk(appearance))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
@@ -201,20 +202,32 @@ struct NotchDrawerButton: View {
     let palette: VoiceBarNotchContrastPalette
     var prominent = false
     var isEnabled = true
+    /// An optional leading glyph (Dictionary's Add term). Without it the capsule is text only.
+    var systemImage: String? = nil
+    /// Ink for the label instead of the palette primary (Dictionary's Delete uses the palette's errorText).
+    var ink: Color? = nil
     let action: () -> Void
+
+    /// The capsule's fill, as an opacity of the palette primary.
+    static func fillOpacity(prominent: Bool) -> Double { prominent ? 0.2 : 0.12 }
 
     var body: some View {
         Button(action: action) {
-            Text(title)
-                .font(.system(size: 11.5, weight: .medium))
-                .lineLimit(1)
-                .fixedSize()
-                .foregroundStyle(palette.primary.color.opacity(isEnabled ? 1 : 0.45))
+            HStack(spacing: 4) {
+                if let systemImage {
+                    Image(systemName: systemImage).font(.system(size: 10.5, weight: .semibold))
+                }
+                Text(title)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+                .foregroundStyle((ink ?? palette.primary.color).opacity(isEnabled ? 1 : 0.45))
                 .padding(.horizontal, 10)
                 .frame(height: 24)
                 .background(
                     Capsule(style: .continuous)
-                        .fill(palette.primary.color.opacity(prominent ? 0.2 : 0.12))
+                        .fill(palette.primary.color.opacity(Self.fillOpacity(prominent: prominent)))
                 )
                 .contentShape(Capsule())
         }
@@ -262,7 +275,8 @@ struct NotchSettingsVersionRow: View {
             Text(updates.buildLine)
                 .font(.system(size: NotchSettingsDrawerPresentation.detailFontSize))
                 .monospacedDigit()
-                .foregroundStyle(palette.tertiary.color)
+                // 2.4.6 track T: footer notes take the teleprompter's read-tier ink, like every note on the glass.
+                .foregroundStyle(NotchPaneInk(appearance).note)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
                 .accessibilityIdentifier("notch-settings-build-line")
@@ -273,7 +287,7 @@ struct NotchSettingsVersionRow: View {
                     }
                     Text(status)
                         .font(.system(size: NotchSettingsDrawerPresentation.detailFontSize))
-                        .foregroundStyle(palette.secondary.color)
+                        .foregroundStyle(NotchPaneInk(appearance).note)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
