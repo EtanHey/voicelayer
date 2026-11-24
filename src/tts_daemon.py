@@ -22,6 +22,27 @@ Usage:
 # AIDEV-NOTE: This daemon runs as a separate process from the MCP server.
 # TypeScript side calls it over HTTP (src/tts/qwen3.ts).
 
+# Bound retained RSS between requests; a single utterance may exceed this.
+# Sample current resident memory, not resource.ru_maxrss (a lifetime peak).
+def current_rss_bytes():
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["/bin/ps", "-o", "rss=", "-p", str(os.getpid())],
+            capture_output=True, text=True, timeout=2, check=True)
+        return int(result.stdout.strip()) * 1024
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def retire_over_high_water(read_rss=current_rss_bytes, exit_process=None):
+    rss = read_rss()
+    if rss is not None and rss > 8 * 1024**3:
+        # Called only at serialized admission. Previous audio has been returned;
+        # this request fails over to edge and VoiceBar restarts its owned child.
+        (exit_process or os._exit)(75)
+
+
 import gc
 import asyncio
 import json
@@ -401,6 +422,7 @@ def create_app(
     def resident_model():
         nonlocal model, model_load_time, idle_timer, idle_generation
         with model_lock:
+            retire_over_high_water()
             idle_generation += 1
             if idle_timer:
                 idle_timer.cancel()
