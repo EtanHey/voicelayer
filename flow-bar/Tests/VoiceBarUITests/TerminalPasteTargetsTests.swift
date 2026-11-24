@@ -17,12 +17,11 @@ final class TerminalPasteTargetsTests: XCTestCase {
 
     func testTypingPolicyFoldsEveryPlannerNewlineAndPreservesOtherText() {
         let raw = "  alpha\r\n\nbeta\rnext\u{0085}more\u{2028}words\u{2029}last  ", expected = "  alpha beta next more words last  "
-        for bundle in TerminalPasteTargets.bundleIdentifiers where bundle != "com.cmuxterm.app" {
+        for bundle in TerminalPasteTargets.bundleIdentifiers {
             let delivered = TerminalPasteTargets.typingText(raw, bundleIdentifier: bundle)
             XCTAssertEqual(delivered, expected, bundle)
             XCTAssertFalse(SynthesizedTyping.keystrokes(for: delivered).contains(.newline), bundle)
         }
-        XCTAssertEqual(TerminalPasteTargets.typingText(raw, bundleIdentifier: "com.cmuxterm.app"), raw)
     }
 
     func testDoesNotClaimNonTerminalsOrMissingBundleIdentifiers() {
