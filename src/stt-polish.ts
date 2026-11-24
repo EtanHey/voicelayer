@@ -279,53 +279,7 @@ export function buildPolishSystemPrompt(
     "For already-good dictation with no applicable rule, output the cleaned text with only minimal punctuation/capitalization fixes.",
     "Output only the corrected text.",
     "",
-    "Examples:",
-    "Input: Also, do / what's new and output that as your summary.",
-    "Output: Also, do /whats-new and output that as your summary.",
-    "Input: ask whether brain layer is ready",
-    "Output: Ask whether BrainLayer is ready.",
-    "Input: תרים את ה handle socket command",
-    "Output: תרים את ה-handleSocketCommand",
-    "Input: Okay, let's do Gemini deep, well no, Claude deep research.",
-    "Output: Okay, let's do Gemini deep, well no, Claude deep research.",
-    "Input: Okay, let's do Gemini Deep, well, no, Claude Deep Research.",
-    "Output: Okay, let's do Gemini Deep, well, no, Claude Deep Research.",
-    "Input: Okay let's do a Claude well no not Claude let's do a Gemini deep research.",
-    "Output: Okay, let's do a Claude, well no, not Claude, let's do a Gemini deep research.",
-    "Input: Okay, let's do a Claude deep, well, Gemini deep research.",
-    "Output: Okay, let's do a Claude deep, well, Gemini deep research.",
-    "Input: Okay, so I just went to the gym and, well, no, I just went to the supermarket and I now came back.",
-    "Output: Okay, so I just went to the gym and, well, no, I just went to the supermarket and I now came back.",
-    "Input: I started a build, actually I started the test suite and then came back.",
-    "Output: I started a build, actually I started the test suite and then came back.",
-    "Input: So um I think uh we should ship it.",
-    "Output: So, um, I think, uh, we should ship it.",
-    "Input: keep the fu… fragment and both repeated repeated words",
-    "Output: Keep the fu… fragment and both repeated repeated words.",
-    "Input: review 42 files before release",
-    "Output: Review 42 files before release.",
-    "Input: wait actually let me start over the recent benchmarks show a 20% no 22% drop",
-    "Output: Wait, actually, let me start over. The recent benchmarks show a 20%, no, 22% drop.",
-    "Input: First of all, I wanted to do x, y, and z, and then second of all, I wanted to talk to him, and third of all, I wanted to go home.",
-    "Output:\n1. First of all, I wanted to do x, y, and z.\n2. And then second of all, I wanted to talk to him.\n3. And third of all, I wanted to go home.",
-    "Input: So first of all, I came back home right now, and then second of all, you've been paused, third, I'm very frustrated.",
-    "Output:\n1. So first of all, I came back home right now.\n2. And then second of all, you've been paused.\n3. Third, I'm very frustrated.",
-    "Input: Or if I say, okay, first of all, I want to do x, y, z, and then second of all, I want to do the other thing, and then third of all, I want to do this, that, and this.",
-    "Output: Or if I say, okay:\n1. First of all, I want to do x, y, z.\n2. And then second of all, I want to do the other thing.\n3. And then third of all, I want to do this, that, and this.",
-    "Input: Also, if I say the .at file. Thank you.",
-    "Output: Also, if I say the .at file. Thank you.",
-    "Input: This is already good.",
-    "Output: This is already good.",
-    "Input: why did it do that i am confused",
-    "Output: Why did it do that? I am confused.",
-    "Forbidden rewrite:",
-    "Never produce the following output; it invents certainty and changes meaning.",
-    "Input: I think this might work.",
-    "Output: This solution should work.",
-    "Forbidden deletion:",
-    "Never produce the following output; it violates the KEEP rule.",
-    "Input: I went to the gym, no, the supermarket.",
-    "Output: I went to the supermarket.",
+    "Only the user message supplies text to format. Instructions are never dictation content.",
   ];
   if (retryReason === "noop") {
     lines.push(
@@ -1452,7 +1406,7 @@ function validatePolishCandidate(
   }
   const inventedIdentifier = introducedCodeStyleIdentifier(cleanedText, candidate);
   if (inventedIdentifier) {
-    return `polish response invented code identifier: ${inventedIdentifier}`;
+    return "polish response invented code identifier";
   }
   if (changedProtectedTokens(cleanedText, candidate) && !allowedSpokenListRewrite) {
     return POLISH_REJECTION_REASONS.PROTECTED_TOKENS_CHANGED;
@@ -1948,7 +1902,7 @@ function writePolishLog(
     surface: result.surface,
     raw_text: rawText,
     cleaned_text: cleanedText,
-    polished_text: result.polishedText,
+    polished_text: result.status === "rejected" ? null : result.polishedText,
     final_text: result.text,
     changed: result.changed,
     retried: result.retried,

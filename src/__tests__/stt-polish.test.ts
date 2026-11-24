@@ -132,34 +132,6 @@ describe("stt-polish", () => {
     }
   });
 
-  it.each([undefined, "noop", "rejected"] as const)(
-    "accepts every positive example in the %s prompt through the real validator",
-    async (retryReason) => {
-      const prompt = sttPolish.buildPolishSystemPrompt(retryReason).split("Forbidden rewrite:")[0];
-      const examples = [...prompt.matchAll(/(?:^|\n)Input: ([^\n]+)\nOutput:[ \t]*([\s\S]*?)(?=\nInput: |$)/g)]
-        .map((match) => ({ cleanedText: match[1], candidate: match[2].trim() }));
-      expect(examples.length).toBeGreaterThan(15);
-      expect(examples.some(({ cleanedText }) => cleanedText.includes("fu…"))).toBe(true);
-      expect(examples.some(({ candidate }) => candidate.includes("um") && candidate.includes("uh"))).toBe(true);
-      server = createMockPolishServer((request) => ({
-        text: examples.find(({ cleanedText }) => cleanedText === request.cleaned_text)?.candidate,
-      }));
-      for (const { cleanedText, candidate } of examples) {
-        const result = await polishTranscriptionText({
-          rawText: cleanedText,
-          cleanedText,
-          env: {
-            QA_VOICE_STT_POLISH: "on",
-            QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
-            QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
-          },
-        });
-        expect(result).toMatchObject({ status: "applied", text: candidate, polishedText: candidate });
-      }
-      expect(server.received).toHaveLength(examples.length);
-    },
-  );
-
   it("scales long polish budgets while preserving short latency and explicit overrides", () => {
     expect(getSTTPolishTimeoutMs({}, "x".repeat(900))).toBe(18_000);
     expect(getSTTPolishTimeoutMs({}, "x".repeat(1_793))).toBe(35_860);
@@ -2103,12 +2075,7 @@ describe("stt-polish", () => {
       expect(messages[0].content).toContain("well no");
       expect(messages[0].content).toContain("numbered markdown lists");
       expect(messages[0].content).toContain("Preserve every spoken ordering cue and connective");
-      expect(messages[0].content).toContain("Input: So first of all");
-      expect(messages[0].content).toContain("third, I'm very frustrated");
-      expect(messages[0].content).toContain("not Claude let's do a Gemini");
-      expect(messages[0].content).toContain("Claude deep, well, Gemini");
       expect(messages[0].content).toContain("did X ... no/actually Y");
-      expect(messages[0].content).toContain("I just went to the supermarket");
       expect(messages[0].content).toContain(".at");
       expect(messages[0].content).toContain("Preserve Hebrew");
       expect(messages[0].content).not.toContain(
@@ -3163,14 +3130,8 @@ describe("stt-polish system prompt — false starts and retractions are KEPT", (
     expect(text).not.toContain("Output: I started the test suite and then came back.");
   });
 
-  it("carries a worked example that preserves the retraction verbatim", () => {
-    const text = prompt();
-    expect(text).toContain(
-      "Input: Okay, let's do Gemini deep, well no, Claude deep research.",
-    );
-    expect(text).toContain(
-      "Output: Okay, let's do Gemini deep, well no, Claude deep research.",
-    );
+  it("does not carry copyable few-shot dictation", () => {
+    expect(prompt()).not.toMatch(/(?:Input|Output):/);
   });
 
   it("keeps supplied fillers and repetition while restricting polish to safe formatting", () => {
