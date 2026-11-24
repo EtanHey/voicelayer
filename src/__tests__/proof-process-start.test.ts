@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { darwinProcessStartMs } from "../../scripts/process-start-time";
+import { darwinProcessStartMs } from "../../scripts/t3-optf5-proof";
 
 test.skipIf(process.platform !== "darwin")("kernel start timestamp retains microseconds and rejects missing processes", () => {
   const started = darwinProcessStartMs(process.pid);
