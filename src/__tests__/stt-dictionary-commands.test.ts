@@ -133,19 +133,26 @@ it("600 seeded inputs retain main bytes with empty and absent command sets", () 
     expect(normalizePathTokens(input, new Set(["/zephyr-sweep", "/other"])), input).toBe(baseline);
   }
 });
-it("200 KiB of slash/hyphen near misses stays linear: within 4x of main's function on the same input", () => {
-  // A fixed millisecond bound was flaky on hosted runners (106 ms against 100 on PR #919's run).
-  // A quadratic regression on 200 KiB takes seconds, so a bound relative to main's linear
-  // function, measured in the same process, still catches it without depending on the machine.
+it("200 KiB of slash/hyphen near misses meets the relative long-input regression budget", () => {
+  // Warm both paths, then alternate measurement order to reduce JIT/order bias.
+  // This is a budget on one input size, not a claim about asymptotic scaling.
   const input = "a" + "- /".repeat(68266) + "x!";
-  const mainStart = performance.now();
-  const expected = mainNormalizePathTokens(input);
-  const mainElapsed = performance.now() - mainStart;
-  const start = performance.now();
-  const output = normalizePathTokens(input, new Set(["/quill"]));
-  const elapsed = performance.now() - start;
-  expect(output).toBe(expected);
-  expect(elapsed).toBeLessThan(Math.max(250, 4 * mainElapsed));
+  const known = new Set(["/quill"]);
+  const baseline = () => mainNormalizePathTokens(input);
+  const candidate = () => normalizePathTokens(input, known);
+  const expected = baseline();
+  for (let i = 0; i < 3; i++) expect(candidate()).toBe(baseline());
+  const samples: number[][] = [[], []];
+  for (let i = 0; i < 9; i++) {
+    for (const index of i % 2 ? [1, 0] : [0, 1]) {
+      const start = performance.now();
+      const output = (index === 0 ? baseline : candidate)();
+      samples[index].push(performance.now() - start);
+      expect(output).toBe(expected);
+    }
+  }
+  const median = (values: number[]) => values.sort((a, b) => a - b)[4];
+  expect(median(samples[1])).toBeLessThan(Math.max(250, 4 * median(samples[0])));
 });
 
 const commands = new Set(["/quill", "/other"]);
