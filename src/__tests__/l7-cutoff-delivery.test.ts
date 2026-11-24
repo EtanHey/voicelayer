@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { finalizeTranscriptionResultForSurface } from "../input";
+import { formatDeliveryDashes } from "../stt-delivery-format";
 
 // Decoder-marked ellipses are explicit fragments; attachment alone is not evidence.
 const raw = "Keep um… uh… er… fu… pub… pub… sorry published.";
@@ -64,4 +65,41 @@ describe("L7 cut-off meaning at the shared delivery boundary", () => {
       } finally { server.stop(true); }
     });
   }
+});
+
+
+describe("R2 dash meaning", () => {
+  it.each([
+    ["I was go— going home.", "I was go… going home."],
+    ["I was GO—going home.", "I was GO… going home."],
+    ["Keep pub—pub—published.", "Keep pub… pub… published."],
+    ["Years 2020—2024", "Years 2020–2024"],
+    ["Years 2020 — 2024", "Years 2020–2024"],
+    ["— first item\n  — second item", "first item\n  second item"],
+    ["Tuesday—no, Wednesday—actually Thursday.", "Tuesday, no, Wednesday, actually Thursday."],
+    ["Keep words — this clause survives.", "Keep words, this clause survives."],
+    ["`go—going` /tmp/go—going", "`go—going` /tmp/go—going"],
+  ])("formats %s without changing its words", (input, expected) => {
+    expect(formatDeliveryDashes(input)).toBe(expected);
+    expect(words(formatDeliveryDashes(input))).toEqual(words(input));
+  });
+  it.each([null, "dictation", "voice_ask"] as const)("keeps cutoff meaning on %s", async surface => {
+    const result = await finalizeTranscriptionResultForSurface("I was go— going home.", surface, env());
+    expect(result.text).toBe("I was go… going home.");
+  });
+});
+
+
+it.each(["dictation", "voice_ask"] as const)("protects an original dash cutoff against model punctuation on %s", async surface => {
+  const raw = "I was go— going home and keeping every spoken word.";
+  const server = Bun.serve({ port: 0, fetch: request => request.method !== "POST"
+    ? Response.json({ data: [] }) : Response.json({ choices: [{ message: { content: raw.replace("—", ",") } }] }) });
+  try {
+    const result = await finalizeTranscriptionResultForSurface(raw, surface, {
+      ...env(), QA_VOICE_STT_POLISH: "on",
+      QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+    });
+    expect(result.text).toBe("I was go… going home and keeping every spoken word.");
+    expect(result.polishStatus).toBe("rejected");
+  } finally { server.stop(true); }
 });

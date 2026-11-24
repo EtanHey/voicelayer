@@ -610,7 +610,7 @@ export async function finalizeTranscriptionResultForSurface(
   if (polished.status === "rejected") console.error(`[voicelayer] ${JSON.stringify({
     event: "polish_rejected", reason: polished.reason ?? "unspecified", latency_ms: Math.round(polished.latencyMs),
   })}`);
-  if (polished.status === "failed" && polished.failureKind &&
+  if ((polished.status === "failed" || polished.status === "partial") && polished.failureKind &&
       polished.failureKind !== "timeout" && polished.failureKind !== "endpoint-error") {
     recoverDefaultSTTPolishServerAfterFailure(env, { failureKind: polished.failureKind });
   }

@@ -3557,3 +3557,30 @@ describe("stt-polish terminal question marks", () => {
     });
   });
 });
+
+
+describe("R2 partial long-take recovery", () => {
+  it.each(["dictation", "voice_ask"] as const)("recovers a failed later piece on %s", async surface => {
+    let posts = 0;
+    const text = "Keep every amber word in this complete sentence. ".repeat(100);
+    const recovery = spyOn(polishServerManager, "recoverDefaultSTTPolishServerAfterFailure").mockImplementation(() => {});
+    const http = Bun.serve({ port: 0, fetch: async request => {
+      if (request.method !== "POST") return Response.json({ data: [] });
+      posts++;
+      if (posts > 1) return Response.json({ choices: [] });
+      const body = await request.json() as { messages: Array<{ content: string }> };
+      return Response.json({ choices: [{ message: { content: body.messages.at(-1)!.content.split("VoiceLayer cleaned text to fix:\n").at(-1)! } }] });
+    } });
+    try {
+      const result = await finalizeTranscriptionResultForSurface(text, surface, {
+        ...process.env, QA_VOICE_CORRECTOR: "identity", QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${http.port}/v1/chat/completions`,
+      });
+      expect(posts).toBe(2);
+      expect(result.polishStatus).toBe("partial");
+      expect(result.text.match(/[\p{L}]+/gu)).toEqual(text.match(/[\p{L}]+/gu));
+      expect(recovery).toHaveBeenCalledTimes(1);
+      expect(recovery.mock.calls[0][1]).toEqual({ failureKind: "transport-error" });
+    } finally { recovery.mockRestore(); http.stop(true); }
+  });
+});

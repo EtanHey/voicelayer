@@ -38,12 +38,21 @@ export function canonicalDeliveryInput(text: string): string {
   return outsideLiterals(text, canonicalizeMarkedFillerFragments);
 }
 
-/** Prose dashes are commas; literal bytes and existing ellipsis fragments win. */
+/** Preserve cutoff and range meaning before formatting other prose dashes as commas. */
 export function formatDeliveryDashes(text: string): string {
   return outsideLiterals(text, (prose, offset) => prose.replace(
     /([,;:.!?]?)[^\S\r\n]*—[^\S\r\n]*([,;:.!?]?)[^\S\r\n]*/gu,
     (all: string, left: string, right: string, at: number) => {
-      const previous = text[offset + at - 1];
+      const before = text.slice(0, offset + at);
+      const following = text.slice(offset + at + all.length);
+      const previous = before.at(-1);
+      // Numeric ranges are not clause separators, even with surrounding spaces.
+      if (!left && !right && /\d$/u.test(before) && /^\d/u.test(following)) return "–";
+      // A list marker at the beginning of a line must not invent a comma.
+      if (/^[ \t]*$/u.test(before.slice(before.lastIndexOf("\n") + 1))) return all.match(/^[ \t]*/u)![0];
+      const fragment = !left && /^[—]/u.test(all) ? before.match(/[\p{L}\p{M}]+$/u)?.[0] : undefined;
+      const restart = following.match(/^[\p{L}\p{M}]+/u)?.[0];
+      if (fragment && restart?.toLowerCase().startsWith(fragment.toLowerCase())) return "… ";
       const punctuation = left || right || (previous && /[,;:.!?]/u.test(previous) ? "" : ",");
       const next = text[offset + at + all.length];
       return punctuation + (next && !/[\r\n]/u.test(next) ? " " : "");
