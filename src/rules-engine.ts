@@ -1850,3 +1850,7 @@ export function applySpokenEnumeratorsWithDetail(text: string): {
     removedWords,
   };
 }
+
+export function canonicalizeMarkedFillerFragments(text: string): string {
+  return text.replace(/\b(um|uh|er)\b—/giu, "$1…");
+}
