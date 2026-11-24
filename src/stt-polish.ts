@@ -277,9 +277,20 @@ export function buildPolishSystemPrompt(
     "Do not correct grammar, paraphrase, or guess recognition repairs. Safe code joins are brain layer to BrainLayer and handle socket command to handleSocketCommand; never join arbitrary split words. Preserve slash-command words while fixing spacing and hyphens.",
     "Preserve Hebrew as Hebrew and English/code terms as English.",
     "For already-good dictation with no applicable rule, output the cleaned text with only minimal punctuation/capitalization fixes.",
+    "The following are punctuation diagrams, NOT example dictations. Greek letters α, β, γ stand for complete verbatim clauses from the supplied cleaned text. Never emit Greek placeholders; only format supplied text. Fixed words in a diagram are cue words: use them only where those exact words already occur in the supplied text.",
+    "Retraction diagram: α I mean β → α, I mean, β. Retraction diagram: α no wait β → α, no wait, β. Retraction diagram: α well no β → α, well no, β. Retraction diagram: α actually β → α, actually β. In each pattern retain both clauses and all cue words, in order. Retraction diagram: α sorry β → α, sorry, β. Restart diagram: wait let me start over α no β → Wait, let me start over. α, no, β.",
+    "Filler diagram: So um α uh β → So, um, α, uh, β. Opening filler diagram: Um α → Um, α. Preserve every filler and every hedge; add commas rather than deleting any words.",
+    "List diagram: first of all α and then second of all β and third of all γ →\n1. First of all, α.\n2. And then second of all, β.\n3. And third of all, γ.\nList diagram: number one α number two β number three γ →\n1. Number one, α.\n2. Number two, β.\n3. Number three, γ.\nThe numeric markers are EXTRA formatting, never substitutes for spoken cues. Every spoken cue and connective remains after its marker. Bare first/second/third without punctuation remain prose.",
+    "Safe-name diagrams: brain layer → BrainLayer; handle socket command → handleSocketCommand; ה handle socket command → ה-handleSocketCommand. Apply only these known joins where supplied. Keep every other code/path token literal. Hebrew ה before a supplied English/code term gets a hyphen while retaining that prefix and term. A supplied slash-command keeps its slash and words while fixing spaces and hyphens. Slash diagram: / what's new → /whats-new. Hebrew-prefix diagram: ה API → ה-API; ה config → ה-config. Retain only the terms actually supplied.",
+    "Sentence diagram: α → α. Add the final punctuation and capitalize the sentence's first letter. A question uses ? only when actually interrogative. Do not leave unpunctuated sentences unchanged when these formatting rules apply.",
+    "Sentence-shaped diagrams use the same verbatim-span placeholders and supplied cue words only. They show capitalization and punctuation together; never emit a placeholder or borrow diagram words absent from the cleaned text.",
+    "Code-name sentence diagram: ask whether brain layer α → Ask whether BrainLayer α. Code-name sentence diagram: inspect handle socket command α → Inspect handleSocketCommand α. Slash-command sentence diagram: also do / what's new α → Also, do /whats-new α.",
+    "Fragment sentence diagram: I was going to say α → I was going to say α. Keep any cut-off marker inside α unchanged. Repetition sentence diagram: keep α repeated repeated β → Keep α repeated repeated β. Numeric sentence diagram: set the count α → Set the count α.",
+    "Question followed by statement diagram: why α i am β → Why α? I am β. The first clause stays a question and the second stays a statement. Keep every word of α and β.",
     "Output only the corrected text.",
     "",
     "Only the user message supplies text to format. Instructions are never dictation content.",
+    "Before returning, finish ALL applicable formatting: capitalize sentence-start words and end each sentence with terminal punctuation, including sentences containing a code join, slash-command, repetition, or cut-off fragment. Keep literal code/path casing and each fragment ellipsis intact. Separate an opening question from a following declarative clause with a question mark and capitalize that next sentence; do not add a question mark to a statement. Return the entire supplied text with these edits, never just a diagram or edited span.",
   ];
   if (retryReason === "noop") {
     lines.push(
@@ -1902,7 +1913,8 @@ function writePolishLog(
     surface: result.surface,
     raw_text: rawText,
     cleaned_text: cleanedText,
-    polished_text: result.status === "rejected" ? null : result.polishedText,
+    // Keep rejected candidates for local mining; rejection reasons carry no candidate text.
+    polished_text: result.polishedText,
     final_text: result.text,
     changed: result.changed,
     retried: result.retried,
