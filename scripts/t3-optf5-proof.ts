@@ -17,6 +17,7 @@
 // hashes only, never the paragraph text.
 
 import { createHash } from "crypto";
+import { darwinProcessStartMs } from "./process-start-time";
 import {
   closeSync,
   existsSync,
@@ -348,7 +349,10 @@ function processRows(): ProcessRow[] {
     });
 }
 
-function processStartMs(pid: number): number {
+export function processStartMs(pid: number): number {
+  if (process.platform === "darwin") {
+    try { return darwinProcessStartMs(pid); } catch { fail(`cannot read the start time of process ${pid}`); }
+  }
   const out = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], {
     stdout: "pipe", stderr: "pipe",
     // Date.parse understands the C month/day names, not localized ps output.
@@ -363,18 +367,18 @@ function processStartMs(pid: number): number {
 // is not enough: a bundle swapped under a running VoiceBar would stamp the new GitCommit on
 // events the old binary produced. Installing (copy, unzip, or brew's extract) rewrites the
 // bundle files, so their ctime is the install time; both VoiceBar and its daemon child must
-// have started in a later whole second (`ps lstart` has one-second resolution, so a
-// same-second start cannot be proven to follow the install and fails closed).
+// have started after installation. Darwin uses kernel microsecond start times; other
+// hosts retain conservative whole-second ps timestamps. Missing evidence fails closed.
 function installedRuntime(app: string): { voiceBarPid: number; daemonPids: number[] } {
   const binary = `${app}/Contents/MacOS/VoiceBar`;
-  const installedSecond = Math.floor(statSync(`${app}/Contents/Info.plist`).ctimeMs / 1000);
+  const installedMs = statSync(`${app}/Contents/Info.plist`).ctimeMs;
   const rows = processRows();
   const voiceBars = rows.filter((row) => row.command === binary || row.command.startsWith(`${binary} `));
   if (voiceBars.length === 0) fail(`no running VoiceBar from ${binary}; launch the installed candidate first`);
   if (voiceBars.length > 1) fail(`${voiceBars.length} VoiceBar processes run from ${binary}; one resident only`);
   const voiceBarPid = voiceBars[0].pid;
   requireRunningExecutable(voiceBarPid, binary);
-  if (Math.floor(processStartMs(voiceBarPid) / 1000) <= installedSecond) {
+  if (processStartMs(voiceBarPid) <= installedMs) {
     fail(`VoiceBar process ${voiceBarPid} is older than the installed bundle; relaunch VoiceBar after installing`);
   }
   const daemons = rows.filter((row) => row.ppid === voiceBarPid && row.command.includes("mcp-server-daemon"));
@@ -385,7 +389,7 @@ function installedRuntime(app: string): { voiceBarPid: number; daemonPids: numbe
   if (!existsSync(script) || !realpathSync(script).startsWith(`${resources}/`)) {
     fail("mcp-server-daemon script must be inside the installed bundle's Resources");
   }
-  const daemonInstalledSecond = Math.max(installedSecond, Math.floor(statSync(script).ctimeMs / 1000));
+  const daemonInstalledMs = Math.max(installedMs, statSync(script).ctimeMs);
   for (const daemon of daemons) {
     // ps prints argv joined with spaces (including spaces in the bundle path).
     const commandScript = daemon.command.match(/^(?:\S*\/)?bun run (.+)$/)?.[1];
@@ -394,7 +398,7 @@ function installedRuntime(app: string): { voiceBarPid: number; daemonPids: numbe
     }
     // Bun maps its executable, not the TypeScript it loaded. A rewritten script can leave
     // the old daemon running with an unchanged VoiceBar binary and Info.plist.
-    if (Math.floor(processStartMs(daemon.pid) / 1000) <= daemonInstalledSecond) {
+    if (processStartMs(daemon.pid) <= daemonInstalledMs) {
       fail(`mcp-server-daemon process ${daemon.pid} is older than the installed daemon script; relaunch VoiceBar after installing`);
     }
   }
