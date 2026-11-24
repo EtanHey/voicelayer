@@ -79,8 +79,8 @@ static void Prepare(NSWindow *window) {
 
 @implementation NSResponder (VLBeepAudit)
 - (void)vl_noResponderFor:(SEL)eventSelector {
-    BOOL key = eventSelector == @selector(keyDown:) || eventSelector == @selector(keyUp:)
-        || eventSelector == @selector(performKeyEquivalent:) || eventSelector == @selector(flagsChanged:);
+    // AppKit beeps only for an unhandled keyDown:; keyUp:/flagsChanged: fall through silently, so only keyDown: is audited.
+    BOOL key = eventSelector == @selector(keyDown:);
     if (!key) { [self vl_noResponderFor:eventSelector]; return; }
     [beepLock lock];
     [beeps addObject:[NSString stringWithFormat:@"BEEP: %@ responder=%@ selector=%@",
