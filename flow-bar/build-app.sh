@@ -1124,6 +1124,18 @@ require_bundle_file() {
 
 cp "$BUNDLE_DIR/Info.plist" "$APP_DIR/Contents/"
 cp "$BINARY" "$APP_DIR/Contents/MacOS/VoiceBar"
+# T19b (L68): VoiceBar's own SF Symbols (the History "take loop") compile into Contents/Resources/Assets.car,
+# where `VoiceBarSymbol` loads them from the main bundle. Fails closed: a release must carry them.
+SYMBOL_CATALOG="$SCRIPT_DIR/Symbols/VoiceBarSymbols.xcassets"
+SYMBOL_PARTIAL_PLIST="$REPO_ROOT/.build.noindex/voicebar-symbols-partial.plist"
+mkdir -p "$(dirname "$SYMBOL_PARTIAL_PLIST")"
+if ! xcrun actool "$SYMBOL_CATALOG" --compile "$APP_DIR/Contents/Resources" --platform macosx \
+    --minimum-deployment-target 14.0 --output-partial-info-plist "$SYMBOL_PARTIAL_PLIST" \
+    --errors --warnings --output-format human-readable-text >/dev/null \
+    || [ ! -f "$APP_DIR/Contents/Resources/Assets.car" ]; then
+    echo "[build-app] ERROR: compiling $SYMBOL_CATALOG with xcrun actool failed (needs Xcode)" >&2
+    exit 1
+fi
 bundle_runtime_source
 require_bundle_file "package.json"
 require_bundle_file "bun.lock"

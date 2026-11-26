@@ -66,6 +66,7 @@ public struct CopyFeedbackButton: View {
     private let glyphSize: CGFloat
     private let copy: () -> Bool
     @FocusState private var isFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// `copy` returns whether the text reached the pasteboard.
     public init(
@@ -105,6 +106,9 @@ public struct CopyFeedbackButton: View {
             Image(systemName: isCopied ? VoiceBarActionSymbol.copied : VoiceBarActionSymbol.copy)
                 .font(.system(size: glyphSize, weight: .semibold))
                 .foregroundStyle(foreground ?? Color.secondary)
+                // T19c (L69): the tick replaces the copy glyph instead of teleporting in; a fade with Reduce Motion.
+                .contentTransition(VoiceBarSymbolMotion.copyConfirmation(reduceMotion: reduceMotion))
+                .animation(VoiceBarSymbolMotion.swapAnimation, value: isCopied)
                 .frame(width: Self.hitTarget, height: Self.hitTarget)
                 .contentShape(Rectangle())
         }
