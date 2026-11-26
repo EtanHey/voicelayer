@@ -10,6 +10,22 @@ import XCTest
 /// Optional PNGs show the real focused paint; they do not establish installed-app or VoiceOver acceptance.
 @MainActor
 final class SettingsRowActionFocusTests: XCTestCase {
+    private final class IgnoredKeyWindow: NSWindow {
+        var ignoredKeys: [UInt16] = []
+        private var dispatchedKey: UInt16?
+        override func sendEvent(_ event: NSEvent) {
+            dispatchedKey = event.type == .keyDown ? event.keyCode : nil
+            defer { dispatchedKey = nil }
+            super.sendEvent(event)
+        }
+        override func noResponder(for eventSelector: Selector) {
+            guard eventSelector == #selector(keyDown(with:)), let key = dispatchedKey else {
+                super.noResponder(for: eventSelector); return
+            }
+            ignoredKeys.append(key)
+        }
+    }
+
     func testRecordingDoesNotAdmitAKeyboardMicrophoneChange() throws {
         var reorders: [[String]] = []
         try withHost(microphonePane(recording: true) { reorders.append($0) }, tab: .general) { host, window in
@@ -251,7 +267,7 @@ final class SettingsRowActionFocusTests: XCTestCase {
                 .font(.system(size: 10)).foregroundStyle(.secondary).frame(height: 22)
         }.background(Color(white: 0.16)).environment(\.colorScheme, .dark))
         host.appearance = NSAppearance(named: .darkAqua)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: tab == nil ? 780 : 420, height: tab == nil ? 922 : 522),
+        let window = IgnoredKeyWindow(contentRect: NSRect(x: 0, y: 0, width: tab == nil ? 780 : 420, height: tab == nil ? 922 : 522),
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
@@ -259,6 +275,12 @@ final class SettingsRowActionFocusTests: XCTestCase {
         VLOrderTestWindow(window)
         settle()
         try body(host, window)
+        let expected: [UInt16]
+        if name.contains("testSpaceWithoutASelectedTerm") { expected = [49, 49, 49, 49] }
+        else if name.contains("testRecordingDoesNotAdmit") || name.contains("testDictionaryDeletionRequires") { expected = [49] }
+        else { expected = [] }
+        print("IGNORED_KEYS \(name) codes=\(window.ignoredKeys)")
+        XCTAssertEqual(window.ignoredKeys, expected, "Ignored-key coverage must remain explicit")
         XCTAssertFalse(NSApp.isActive)
     }
 
