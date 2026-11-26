@@ -50,7 +50,8 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-const env = (): Record<string, string> => {
+// Spread into every spawn as `{ ...process.env, ...fixtureEnv() }` (spawn-env isolation guard).
+const fixtureEnv = (): Record<string, string> => {
   const clean: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith("GIT_")) clean[k] = v;
   return {
@@ -61,7 +62,7 @@ const env = (): Record<string, string> => {
   };
 };
 function git(...args: string[]) {
-  const r = Bun.spawnSync(["git", "-C", work, "-c", "commit.gpgsign=false", "-c", "tag.gpgSign=false", ...args], { stdout: "pipe", stderr: "pipe", env: env() });
+  const r = Bun.spawnSync(["git", "-C", work, "-c", "commit.gpgsign=false", "-c", "tag.gpgSign=false", ...args], { stdout: "pipe", stderr: "pipe", env: { ...process.env, ...fixtureEnv() } });
   if (r.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
   return r.stdout.toString().trim();
 }
@@ -75,15 +76,15 @@ function commitAll(message: string) {
   return git("rev-parse", "HEAD");
 }
 function push(...refspecs: string[]) {
-  const r = Bun.spawnSync(["git", "-C", work, "push", "origin", ...refspecs], { stdout: "pipe", stderr: "pipe", env: env() });
+  const r = Bun.spawnSync(["git", "-C", work, "push", "origin", ...refspecs], { stdout: "pipe", stderr: "pipe", env: { ...process.env, ...fixtureEnv() } });
   return { code: r.exitCode, err: r.stderr.toString(), suiteRan: existsSync(marker) };
 }
 
 /** A repo shaped like the release checkout: the real hook and its helpers, a stub suite, a proven build on main pushed to origin. */
 function releaseRepo() {
   mkdirSync(work, { recursive: true });
-  Bun.spawnSync(["git", "init", "-q", "--bare", origin], { env: env() });
-  Bun.spawnSync(["git", "init", "-q", "-b", "main", work], { env: env() });
+  Bun.spawnSync(["git", "init", "-q", "--bare", origin], { env: { ...process.env, ...fixtureEnv() } });
+  Bun.spawnSync(["git", "init", "-q", "-b", "main", work], { env: { ...process.env, ...fixtureEnv() } });
   for (const file of [
     ".githooks/pre-push", "scripts/guard-no-docslocal.sh", "scripts/queue-heavy-suite.py", "scripts/t3-optf5-proof.ts",
     "scripts/release_only_diff.py", "scripts/pre_push_release_only.py", "release-proofs/proof-hosts.json",
@@ -241,7 +242,7 @@ describe("the hook still runs the full suites for everything that is not a gated
 
   test("no stdin from git (a manual run of the hook) runs the suite", () => {
     releaseRepo();
-    const r = Bun.spawnSync(["bash", ".githooks/pre-push"], { cwd: work, stdout: "pipe", stderr: "pipe", env: env(), stdin: new TextEncoder().encode("") });
+    const r = Bun.spawnSync(["bash", ".githooks/pre-push"], { cwd: work, stdout: "pipe", stderr: "pipe", env: { ...process.env, ...fixtureEnv() }, stdin: new TextEncoder().encode("") });
     expect(r.exitCode).toBe(0);
     expect(existsSync(marker)).toBe(true);
     expect(r.stderr.toString()).toContain("git sent no refs on stdin");
