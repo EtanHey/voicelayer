@@ -19,16 +19,12 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: req =>
  Response.json(req.method === "GET" ? {status:"ok"} : {choices:[{message:{content:response}}]}) });
 afterAll(() => server.stop(true));
 
-test("polish examples preserve every supplied digit literal", () => {
+test("polish prompt carries no worked example for the model to copy or to drop a digit from", () => {
  const prompt = buildPolishSystemPrompt();
- const examples = prompt.split(/(?=^Input: )/mu).slice(1);
- expect(examples.length).toBeGreaterThan(0);
- for (const example of examples) {
-  const end = example.indexOf("\nOutput:");
-  expect(end).toBeGreaterThan(0);
-  const input = example.slice(7,end), output = example.slice(end+8);
-  for (const literal of input.match(/\d+(?:\.\d+)*(?:%)?/gu) ?? []) expect(output).toContain(literal);
- }
+ // The worked dictation examples were replaced by cue/span diagrams (polish-safe); a model cannot copy or
+ // re-spell a digit from an example that is not there.
+ expect(prompt.split(/(?=^Input: )/mu).slice(1)).toEqual([]);
+ expect(prompt).not.toMatch(/^Output:/mu);
  expect(prompt).not.toContain("Equivalent numeric spellings");
 });
 for (const value of ["PR 646", "version 2.2.59", "port 8880"]) test(`polish keeps ${value} in digit form`, async () => {
