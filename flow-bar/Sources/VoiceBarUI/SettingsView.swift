@@ -1,12 +1,15 @@
 import Foundation
 import SwiftUI
 
+/// The notch Settings drawer's tabs, in on-screen order (GO-1126 W1): Dictation · Narration · Dictionary ·
+/// Transcription · General. The case names predate the rename (`.history` is the Dictation tab, the notch's History
+/// list; `.speech` is Narration) and stay so deep links, requests and stores keep their identity.
 public enum SettingsTab: Hashable, CaseIterable, Identifiable {
-    case general
-    case transcription
-    case dictionary
-    case speech
     case history
+    case speech
+    case dictionary
+    case transcription
+    case general
 
     public var id: Self {
         self
@@ -14,32 +17,35 @@ public enum SettingsTab: Hashable, CaseIterable, Identifiable {
 
     public var title: String {
         switch self {
-        case .general: "General"
-        case .speech: "Speech"
-        case .transcription: "Transcription"
+        case .history: "Dictation"
+        case .speech: "Narration"
         case .dictionary: "Dictionary"
-        case .history: "History"
+        case .transcription: "Transcription"
+        case .general: "General"
         }
     }
 
-    /// Case-insensitive `voicebar://settings/<tab>` routing; `models` is a permanent legacy alias.
+    /// Case-insensitive `voicebar://settings/<tab>` routing by title. Permanent aliases: `models` (Transcription),
+    /// `speech` (Narration) and `history` (Dictation), so links written before a rename keep opening their tab.
     public init?(urlComponent: String) {
-        if urlComponent.lowercased() == "models" {
-            self = .transcription
+        let component = urlComponent.lowercased()
+        if let alias = Self.urlAliases[component] {
+            self = alias
             return
         }
-        guard let tab = Self.allCases.first(where: { $0.title.lowercased() == urlComponent.lowercased() })
-        else { return nil }
+        guard let tab = Self.allCases.first(where: { $0.title.lowercased() == component }) else { return nil }
         self = tab
     }
 
+    static let urlAliases: [String: SettingsTab] = ["models": .transcription, "speech": .speech, "history": .history]
+
     public var systemImage: String {
         switch self {
-        case .general: "gearshape"
-        case .speech: "speaker.wave.2"
-        case .transcription: "waveform"
-        case .dictionary: "text.book.closed"
         case .history: "clock.arrow.circlepath"
+        case .speech: "speaker.wave.2"
+        case .dictionary: "text.book.closed"
+        case .transcription: "waveform"
+        case .general: "gearshape"
         }
     }
 }
@@ -84,7 +90,7 @@ public enum SettingsHistoryScope: String, Hashable, CaseIterable, Sendable {
         switch self {
         case .recording: "Dictations"
         case .ask: "Ask"
-        case .speech: "Speech"
+        case .speech: "Narration"
         }
     }
 }
@@ -1023,11 +1029,11 @@ public struct SettingsView: View {
                 dictionaryTab
             case .history:
                 settingsPage(
-                    title: "History",
+                    title: SettingsTab.history.title,
                     subtitle: "Your recordings and conversations"
                 ) { historyTab }
             case .speech:
-                settingsPage(title: "Speech") { speechPane }
+                settingsPage(title: SettingsTab.speech.title) { speechPane }
             case .transcription:
                 settingsPage(title: "Transcription") { transcriptionTab }
             case .general:
@@ -2681,6 +2687,8 @@ public struct SettingsView: View {
                 }
                 // In the drawer, rows fade out under the toolbar instead of being cut through (lane S PR 3).
                 .modifier(NotchScrollEdgeFade(isActive: notchEmbeddedTab != nil))
+                // GO-1126 W1: the rows span the toolbar's width, centred in the drawer (no legacy scroller gutter).
+                .background { if notchEmbeddedTab != nil { NotchOverlayScroller() } }
                 // The list takes key focus like a macOS table: arrows move the selection, Delete/Backspace removes
                 // the selected term of your own (with Undo). The search field keeps its own text editing.
                 .focusable()

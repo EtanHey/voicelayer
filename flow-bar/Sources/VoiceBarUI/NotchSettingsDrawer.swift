@@ -74,11 +74,11 @@ public enum NotchSettingsDrawerPresentation {
     /// A tab's tooltip. Never painted in the drawer (0510 N2: no explanatory prose rows).
     public static func tabDescription(_ tab: SettingsTab) -> String {
         switch tab {
-        case .general: "Permissions, the dictation key, your microphone and updates."
-        case .transcription: "The local recognizer, its model and the processing options."
+        case .history: "Your recent dictations, asks and narrations."
+        case .speech: "Narration voices, reading speed and the long-text threshold."
         case .dictionary: "Words VoiceBar should spell your way."
-        case .speech: "Voices, reading speed and the long-text threshold."
-        case .history: "Your recent dictations."
+        case .transcription: "The local recognizer, its model and the processing options."
+        case .general: "Permissions, the dictation key, your microphone and updates."
         }
     }
 }
@@ -112,6 +112,8 @@ struct NotchSettingsDrawer: View {
     let onSelectTab: (SettingsTab) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// GO-1126 W1: the tab swipe in progress (`NotchSettingsTabSwipe`).
+    @State private var tabSwipe = NotchSettingsTabSwipe.pager(on: .general)
 
     private var palette: VoiceBarNotchContrastPalette { .resolve(for: appearance) }
 
@@ -134,6 +136,16 @@ struct NotchSettingsDrawer: View {
         }
         .padding(.horizontal, NotchSettingsDrawerPresentation.horizontalInset)
         .padding(.top, NotchSettingsDrawerPresentation.topInset)
+        .background(NotchSettingsTabSwipeMonitor(
+            tracks: { NotchSettingsTabSwipe.swipesTabs(on: selectedTab, fromTop: $0) },
+            onBegin: { tabSwipe = NotchSettingsTabSwipe.pager(on: selectedTab); tabSwipe.begin() },
+            onMove: { dx, dy in tabSwipe.move(dx: dx, dy: dy) },
+            onEnd: { width in
+                if let tab = NotchSettingsTabSwipe.settle(&tabSwipe, from: selectedTab, width: width) {
+                    onSelectTab(tab)
+                }
+            }
+        ))
     }
 
     @ViewBuilder
@@ -413,6 +425,47 @@ struct NotchScrollEdgeFade: ViewModifier {
             }
         } else {
             content
+        }
+    }
+}
+
+/// GO-1126 W1: centre the Dictionary rows. With a mouse attached macOS draws legacy scrollers, which take their
+/// width out of the list, so the rows ended about 16 pt short of the toolbar's trailing edge and sat off-centre. The
+/// drawer's list scroller overlays the rows instead (it appears while scrolling), so the rows span the same width as
+/// the search and Add term row above them. Re-applied when the system scroller preference changes, because AppKit
+/// resets every scroll view's style then.
+struct NotchOverlayScroller: NSViewRepresentable {
+    func makeNSView(context: Context) -> Probe { Probe() }
+    func updateNSView(_ view: Probe, context: Context) { view.apply() }
+
+    final class Probe: NSView {
+        private var observer: Any?
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+            observer = nil
+            guard window != nil else { return }
+            observer = NotificationCenter.default.addObserver(
+                forName: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil, queue: .main
+            ) { [weak self] _ in self?.apply() }
+            DispatchQueue.main.async { [weak self] in self?.apply() }
+        }
+
+        override func layout() {
+            super.layout()
+            apply()
+        }
+
+        deinit {
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+        }
+
+        func apply() {
+            guard let scrollView = NotchFormScrollerInset.Probe.scrollView(near: self) else { return }
+            if scrollView.scrollerStyle != .overlay { scrollView.scrollerStyle = .overlay }
         }
     }
 }
