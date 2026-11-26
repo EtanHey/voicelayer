@@ -72,6 +72,23 @@ final class HotkeyBindingsTests: XCTestCase {
         XCTAssertEqual(VoiceBarHotkeyBindings.defaults.speakSelectionLabel, VoiceBarHotkeyContract.speakSelectionShortcutLabel)
     }
 
+    /// The shortcut check names the bound key, and the F5-only 🎤 relay never blocks another key.
+    func testShortcutCheckFollowsTheBoundKey() {
+        XCTAssertEqual(SettingsShortcutCheck.message(hotkeyEnabled: true, missingPermissions: [], relayReady: true,
+                                                     relaySummary: "ok"), SettingsShortcutCheck.readyMessage)
+        XCTAssertEqual(SettingsShortcutCheck.message(hotkeyEnabled: true, missingPermissions: [], relayReady: false,
+                                                     relaySummary: "Relay not installed", key: "F6"),
+                       "Shortcut ready: F6 listener is active.")
+        XCTAssertEqual(SettingsShortcutCheck.message(hotkeyEnabled: false, missingPermissions: [], relayReady: false,
+                                                     relaySummary: "Relay not installed", key: "F6"),
+                       "Shortcut needs attention: F6 listener unavailable.")
+        XCTAssertEqual(SettingsShortcutCheck.message(hotkeyEnabled: true, missingPermissions: [], relayReady: false,
+                                                     relaySummary: "Relay not installed"),
+                       "Shortcut needs attention: Relay not installed.")
+        XCTAssertTrue(SettingsShortcutCheck.feedback(message: "Shortcut ready: F6 listener is active.",
+                                                     checkedAt: Date()).hasPrefix("Checked ✓"))
+    }
+
     func testPersistenceRoundTripsAndDefaultsLeaveNothingSaved() throws {
         let suite = "voicebar.tests.hotkey-bindings.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

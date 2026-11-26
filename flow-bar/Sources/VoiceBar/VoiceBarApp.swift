@@ -3177,6 +3177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private func checkShortcutAsync(completion: @escaping (String) -> Void) {
         let listenerEnabled = hotkeyEnabled
         let permissions = missingHotkeyPermissions
+        let key = hotkeyBindings.keyLabel
         let ticket = relayStatusWriteGate.ticket()
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
@@ -3190,7 +3191,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     hotkeyEnabled: listenerEnabled,
                     missingPermissions: permissions,
                     relayReady: status.isReady,
-                    relaySummary: status.summary
+                    relaySummary: status.summary,
+                    key: key
                 ))
             }
         }

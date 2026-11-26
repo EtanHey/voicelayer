@@ -396,19 +396,22 @@ struct SettingsHistoryLoadFence {
 public enum SettingsShortcutCheck {
     static let readyMessage = "Shortcut ready: F5 listener and relay are active."
 
+    /// `key` is the bound dictation key (L105). The 🎤 relay feeds F5 only, so it counts only while F5 is the key.
     public static func message(
         hotkeyEnabled: Bool,
         missingPermissions: [HotkeyPermission],
         relayReady: Bool,
-        relaySummary: String
+        relaySummary: String,
+        key: String = "F5"
     ) -> String {
-        if hotkeyEnabled, missingPermissions.isEmpty, relayReady {
-            return readyMessage
+        let relayApplies = key == "F5"
+        if hotkeyEnabled, missingPermissions.isEmpty, relayReady || !relayApplies {
+            return relayApplies ? readyMessage : "Shortcut ready: \(key) listener is active."
         }
         var problems: [String] = []
-        if !hotkeyEnabled { problems.append("F5 listener unavailable") }
+        if !hotkeyEnabled { problems.append("\(key) listener unavailable") }
         if !missingPermissions.isEmpty { problems.append("Required permissions missing") }
-        if !relayReady { problems.append(relaySummary) }
+        if relayApplies, !relayReady { problems.append(relaySummary) }
         return "Shortcut needs attention: \(problems.joined(separator: "; "))."
     }
 
@@ -424,7 +427,7 @@ public enum SettingsShortcutCheck {
         // Only the relative words read mid-sentence in lower case; a date keeps its capitalisation
         // (#163 review: "Checked sep 18").
         let phrase = ["Just now", "Yesterday"].contains(when) ? when.lowercased() : when
-        return "\(message == readyMessage ? "Checked ✓" : "Checked") \(phrase) · \(message)"
+        return "\(message.hasPrefix("Shortcut ready") ? "Checked ✓" : "Checked") \(phrase) · \(message)"
     }
 }
 
@@ -1203,7 +1206,7 @@ public struct SettingsView: View {
         return SettingsGeneralSetup(
             permissions: permissionRowModels,
             hotkeyListenerActive: hotkeyEnabled,
-            f5CheckedAt: shortcutCheckFeedback?.message == SettingsShortcutCheck.readyMessage
+            f5CheckedAt: shortcutCheckFeedback?.message.hasPrefix("Shortcut ready") == true
                 ? shortcutCheckFeedback?.checkedAt : nil,
             voice: speakingVoiceStatus()
         )
@@ -1390,7 +1393,8 @@ public struct SettingsView: View {
                             .accessibilityLabel("Dictation key: \(key)")
                     }
                     // The F5 check moved here from the healthy F5 setup row, which permission health no longer shows.
-                    Button(SettingsSetupFix.checkF5.title) { perform(.checkF5) }
+                    // L105: the check names the bound key (it read "Test F5" with F6 bound).
+                    Button("Test " + key) { perform(.checkF5) }
                         .buttonStyle(.bordered)
                         .disabled(shortcutCheckRunning)
                         .accessibilityLabel("Check shortcut")
