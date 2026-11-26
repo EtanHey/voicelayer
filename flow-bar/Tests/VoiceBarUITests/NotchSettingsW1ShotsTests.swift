@@ -19,7 +19,7 @@ final class NotchSettingsW1ShotsTests: XCTestCase {
         }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 8))
     }
 
-    static func pane(_ tab: SettingsTab) -> SettingsView {
+    static func pane(_ tab: SettingsTab, bindings: SettingsHotkeyBindingsInput? = nil) -> SettingsView {
         let terms = DictionaryNotchTrackDShotsTests.preview()
         return SettingsView(
             hotkeyEnabled: true, missingPermissions: [],
@@ -33,6 +33,7 @@ final class NotchSettingsW1ShotsTests: XCTestCase {
             vocabularyPreview: { terms }, vocabularyRevision: { 0 },
             openAtLogin: SettingsToggleInput(isOn: { true }, set: { _ in }),
             mouseSideButtons: SettingsToggleInput(isOn: { true }, set: { _ in }),
+            hotkeyBindings: bindings,
             initialTab: tab, initialDictionaryPreview: terms,
             installedVersion: .init(version: "2.4.6", commit: "50f4ade")
         )
@@ -85,6 +86,32 @@ final class NotchSettingsW1ShotsTests: XCTestCase {
             try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
             try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
                 .write(to: URL(fileURLWithPath: dir).appendingPathComponent("w1-dictionary-mouse-dark.png"))
+        }
+    }
+
+    /// L105 (slice B): General's Dictation section with the read-only F5 row it had before (no bindings input), with
+    /// the key and mouse pickers at today's defaults, and rebound to F6 with Back acting like the key. Tall enough to
+    /// reach the Dictation and Shortcuts sections.
+    func testRenderRebindingRows() throws {
+        func drawer(_ bindings: SettingsHotkeyBindingsInput?) -> some View {
+            NotchSettingsDrawer(
+                selectedTab: .general, appearance: .dark,
+                context: NotchSettingsDrawerContext(updates: nil, pane: { tab, _ in
+                    AnyView(Self.pane(tab, bindings: bindings).notchDrawerPane(tab))
+                }),
+                onSelectTab: { _ in }
+            )
+        }
+        let rebound = VoiceBarHotkeyBindings(key: .f6, forward: .returnKey, back: .dictation)
+        let cases: [(String, SettingsHotkeyBindingsInput?)] = [
+            ("readonly", nil),
+            ("defaults", SettingsHotkeyBindingsInput(current: { .defaults }, set: { _ in })),
+            ("rebound-f6", SettingsHotkeyBindingsInput(current: { rebound }, set: { _ in })),
+        ]
+        for (name, input) in cases {
+            let bitmap = try DictionaryNotchTrackDShotsTests.render(drawer(input), appearance: .dark,
+                name: "w1-general-rebind-\(name)-dark", height: 1500, pngDirectoryVariable: "VOICEBAR_W1_PNG_DIR")
+            XCTAssertGreaterThan(bitmap.pixelsWide, 0)
         }
     }
 
