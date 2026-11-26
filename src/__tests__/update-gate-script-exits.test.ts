@@ -72,6 +72,10 @@ function fixture(script: string, fault = "", managed = true, qa = false) {
       elif [[ "$1" == -e ]]; then echo 1.0.0; fi`);
     stub("find", '[[ "$*" != *-print0* ]] || printf "%s\\0" "$TEST_APP/Contents/Resources/node_modules/fixture.dylib"');
     stub("file", "echo Mach-O");
+    // build-app.sh compiles flow-bar/Symbols with actool; the fixture's actool writes the catalog it would.
+    stub("xcrun", `echo "xcrun $*" >> "$TEST_ROOT/calls"
+      [[ "$1" == actool ]] || exit 1 # no notary profile in the fixture
+      while [[ $# -gt 0 ]]; do [[ "$1" == --compile ]] && { mkdir -p "$2"; echo fixture > "$2/Assets.car"; }; shift; done`);
     stub("security", 'echo "$VOICEBAR_CODESIGN_IDENTITY"');
     stub("codesign", `echo "codesign $*" >> "$TEST_ROOT/calls"
       printf '%s\\n' "Authority=$VOICEBAR_CODESIGN_IDENTITY" 'Authority=Developer ID Certification Authority' 'Authority=Apple Root CA' 'TeamIdentifier=PPN23G925Y' >&2`);
