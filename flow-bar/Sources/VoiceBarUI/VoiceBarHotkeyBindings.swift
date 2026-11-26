@@ -45,7 +45,7 @@ public struct VoiceBarHotkeyBindings: Codable, Equatable, Sendable {
     /// The F18 relay keycode: the 🎤 key helper remaps the dictation key to F18, so F18 starts dictation whenever F5
     /// is the key (the default the helper was built for).
     public static let relayKeycode: Int64 = 79
-    /// CGEvent button indices: Forward is side button 5 (index 4; some mice report 5), Back is side button 4 (index 3).
+    /// Event-tap mouse button indices: Forward is side button 5 (index 4; some mice report 5), Back is side button 4 (index 3).
     public static let forwardButtonIndices: Set<Int64> = [4, 5]
     public static let backButtonIndices: Set<Int64> = [3]
 
