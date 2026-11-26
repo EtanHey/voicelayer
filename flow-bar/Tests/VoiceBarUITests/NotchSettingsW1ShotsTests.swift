@@ -49,6 +49,45 @@ final class NotchSettingsW1ShotsTests: XCTestCase {
         )
     }
 
+    /// GO-1126 W1 (centre the Dictionary rows): with a mouse attached macOS gives scroll views a legacy scroller,
+    /// which took its width out of the list and left the rows ending short of the toolbar on one side. The list's
+    /// scroller must come back as an overlay, so the rows span the drawer's full width. Fails on the old drawer.
+    func testDictionaryRowsSpanTheToolbarWithAMouseScroller() throws {
+        let size = CGSize(width: SettingsDrawerLaneSSnapshotTests.drawerWidth,
+                          height: NotchSettingsDrawerPresentation.lowerSurfaceHeight)
+        let host = NSHostingView(rootView: Self.drawer(.dictionary, .dark).frame(width: size.width, height: size.height)
+            .background(DictionaryNotchTrackDShotsTests.backdrop(.dark)).environment(\.colorScheme, .dark))
+        host.appearance = NSAppearance(named: .darkAqua)
+        let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: .borderless,
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = host.appearance
+        window.contentView = host
+        defer { window.contentView = nil; window.close() }
+        VLOrderTestWindow(window)
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+        func scrollViews(_ view: NSView) -> [NSScrollView] {
+            ((view as? NSScrollView).map { [$0] } ?? []) + view.subviews.flatMap(scrollViews)
+        }
+        let list = try XCTUnwrap(scrollViews(host).max { $0.frame.height < $1.frame.height }, "the term list")
+        // A mouse: AppKit switches every scroll view to legacy and announces the preference change.
+        scrollViews(host).forEach { $0.scrollerStyle = .legacy }
+        NotificationCenter.default.post(name: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil)
+        host.needsLayout = true
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+        XCTAssertEqual(list.scrollerStyle, .overlay, "the list's scroller overlays the rows")
+        XCTAssertEqual(list.contentView.bounds.width, list.frame.width, accuracy: 0.5,
+                       "the rows get the list's full width; no scroller gutter on one side")
+        let bitmap = try EtanQA0510Tests.fixedScaleBitmap(host)
+        if let dir = ProcessInfo.processInfo.environment["VOICEBAR_W1_PNG_DIR"], !dir.isEmpty {
+            try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                .write(to: URL(fileURLWithPath: dir).appendingPathComponent("w1-dictionary-mouse-dark.png"))
+        }
+    }
+
     func testRenderEveryTab() throws {
         for appearance in [VoiceBarNotchAppearance.dark, .light] {
             let suffix = appearance == .dark ? "dark" : "light"

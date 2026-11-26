@@ -138,7 +138,7 @@ final class SettingsViewContractTests: XCTestCase {
         let source = try settingsViewSource()
 
         XCTAssertTrue(source.contains("case history"))
-        XCTAssertTrue(source.contains("title: \"History\""))
+        XCTAssertTrue(source.contains("title: SettingsTab.history.title"))
         XCTAssertTrue(source.contains("historyTab"))
         XCTAssertTrue(source.contains("historyGroups"))
         XCTAssertTrue(source.contains("SettingsArchiveIndex.shared.dictationPage"))
