@@ -1840,6 +1840,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         refreshSettingsWindowAnchorState()
     }
 
+    /// L105: the saved dictation key and mouse side-button roles (`VoiceBarHotkeyBindings`); defaults until changed.
+    private(set) lazy var hotkeyBindings = VoiceBarHotkeyBindings.load(from: defaults)
+
+    /// Why the rebinding rows are locked right now: a recording or a held key must keep the key that ends it.
+    var hotkeyRebindDisabledReason: String? {
+        voiceState.mode == .recording || gestureStateMachine.state != .idle
+            ? "Finish the recording to change the dictation key." : nil
+    }
+
+    /// L105: save new bindings and rebuild the tap from them (stop, then start: never two taps). Refused while a
+    /// recording or hold is in progress; the saved bindings change only when the tap was rebuilt.
+    @discardableResult
+    func setHotkeyBindings(_ bindings: VoiceBarHotkeyBindings) -> HotkeyListenerRestartOutcome? {
+        guard bindings != hotkeyBindings else { return nil }
+        let isRecording = voiceState.mode == .recording || gestureStateMachine.state != .idle
+        guard !isRecording else { return .refusedWhileRecording }
+        hotkeyBindings = bindings
+        bindings.save(to: defaults)
+        // A QA run that skips the native tap never gains one from a binding change.
+        guard VoiceBarDefaults.shouldStartHotkey() else { return nil }
+        let outcome = hotkeyListener.rebind(isRecording: false)
+        NSLog("[VoiceBar] Dictation key bound to %@ (forward %@, back %@): %@", bindings.keyLabel,
+              bindings.forward.rawValue, bindings.back.rawValue, String(describing: outcome))
+        applyHotkeyListenerOutcome(outcome)
+        refreshSettingsWindowAnchorState()
+        return outcome
+    }
+
     /// Settings' and the wizard's "Restart F5 listener": the launch start again, for permissions granted after
     /// launch. Only the tap's lifecycle: the callbacks below are the launch ones, and a hold or recording refuses.
     func restartHotkeyListener() -> HotkeyListenerRestartOutcome {
@@ -1858,6 +1886,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     func makeHotkeyManager() -> HotkeyManager {
         let manager = HotkeyManager(gesture: gestureStateMachine)
+        manager.apply(hotkeyBindings)
         manager.onKeyDown = { [weak self] in
             self?.handleHotkeyKeyDown(from: .native)
         }
@@ -3824,6 +3853,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     remoteSTTConfigured: nil
                 )
             },
+            hotkeyBindings: SettingsHotkeyBindingsInput(
+                current: { [weak self] in self?.hotkeyBindings ?? .defaults },
+                set: { [weak self] in _ = self?.setHotkeyBindings($0) },
+                disabledReason: { [weak self] in self?.hotkeyRebindDisabledReason }
+            ),
             initialTab: lastSettingsTab,
             tabRequest: isNotchPane ? notchRequest : settingsTabRequest,
             onSelectedTabChange: { [weak self] tab in

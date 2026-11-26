@@ -1142,4 +1142,18 @@ final class HotkeyManager {
         self.useModifierMode = useModifierMode
         if wasRunning { _ = start() }
     }
+
+    /// L105: the dictation key and the mouse side buttons' roles, set before `start()` (the listener lifecycle builds
+    /// a fresh manager for every start, so a changed binding takes effect on the next start). Only which events match
+    /// changes; gestures, consumption rules and capture are untouched.
+    func apply(_ bindings: VoiceBarHotkeyBindings) {
+        targetKeycodes = bindings.keycodes
+        targetMouseButtons = bindings.dictationMouseButtons
+        enterMouseButtons = bindings.returnMouseButtons
+    }
+
+    /// What the tap will match, for tests.
+    var matchSetsForTesting: (keycodes: Set<Int64>, mouse: Set<Int64>, enter: Set<Int64>) {
+        (targetKeycodes, targetMouseButtons, enterMouseButtons)
+    }
 }

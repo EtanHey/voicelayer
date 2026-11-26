@@ -52,6 +52,15 @@ final class HotkeyListenerLifecycle {
         return start()
     }
 
+    /// L105: a changed dictation key or mouse role. The tap is rebuilt from the new binding (the old one is stopped
+    /// first, so never two consumers); refused while a recording is in progress so a held or locked take never loses
+    /// the key that ends it.
+    func rebind(isRecording: Bool) -> HotkeyListenerRestartOutcome {
+        if isRecording { return .refusedWhileRecording }
+        stop()
+        return start()
+    }
+
     func stop() {
         running?.stop()
         running = nil

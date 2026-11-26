@@ -54,6 +54,28 @@ final class HotkeyListenerLifecycleTests: XCTestCase {
         }
     }
 
+    /// L105: a changed binding rebuilds the tap. The running tap is stopped before the new one starts (never two
+    /// consumers), unlike Restart, which leaves a running tap alone.
+    func testRebindReplacesTheRunningTapWithExactlyOne() {
+        let taps = Taps()
+        let lifecycle = lifecycle([true], taps: taps)
+        XCTAssertEqual(lifecycle.start(), .started)
+        XCTAssertEqual(lifecycle.rebind(isRecording: false), .started)
+        XCTAssertEqual(taps.made.count, 2, "a fresh listener reads the new binding")
+        XCTAssertEqual(taps.made[0].stopCount, 1, "the old tap is stopped")
+        XCTAssertEqual(taps.live, 1, "exactly one live tap after a rebind")
+    }
+
+    func testRebindIsRefusedWhileRecording() {
+        let taps = Taps()
+        let lifecycle = lifecycle([true], taps: taps)
+        XCTAssertEqual(lifecycle.start(), .started)
+        XCTAssertEqual(lifecycle.rebind(isRecording: true), .refusedWhileRecording)
+        XCTAssertEqual(taps.made.count, 1)
+        XCTAssertEqual(taps.made[0].stopCount, 0, "the recording keeps the key that ends it")
+        XCTAssertEqual(taps.live, 1)
+    }
+
     func testLaunchStartKeepsTheRunningListener() {
         let taps = Taps()
         let lifecycle = lifecycle([true], taps: taps)

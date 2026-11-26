@@ -546,6 +546,8 @@ public struct SettingsView: View {
     /// Nil until the app exposes these: the rows then carry no switch.
     public let openAtLogin: SettingsToggleInput?
     public let mouseSideButtons: SettingsToggleInput?
+    /// L105: the dictation key and mouse side-button roles; nil keeps the read-only F5 row (fixtures, older hosts).
+    public let hotkeyBindings: SettingsHotkeyBindingsInput?
     /// Transcription › Language and the K-ui last-dictation note; nil (not wired yet) hides them.
     public let transcriptionLanguage: SettingsChoiceInput?
     public let lastDictationNote: () -> SettingsLastDictationNote?
@@ -653,6 +655,8 @@ public struct SettingsView: View {
     )?
     @State private var relaySetupRunning = false
     @State private var shortcutCheckRunning = false
+    /// The bindings as last read back from the app after a change (the input is a closure, not observable).
+    @State private var shownHotkeyBindings: VoiceBarHotkeyBindings?
     @State private var shortcutCheckFeedback: (message: String, checkedAt: Date)?
     @State private var isAdvancedExpanded = false
     @State private var hoveredMicrophoneIndex: Int?
@@ -772,6 +776,7 @@ public struct SettingsView: View {
         speakingVoiceStatus: @escaping () -> SettingsSetupVoiceStatus? = { nil },
         openAtLogin: SettingsToggleInput? = nil,
         mouseSideButtons: SettingsToggleInput? = nil,
+        hotkeyBindings: SettingsHotkeyBindingsInput? = nil,
         transcriptionLanguage: SettingsChoiceInput? = nil,
         lastDictationNote: @escaping () -> SettingsLastDictationNote? = { nil },
         initialTab: SettingsTab = .general,
@@ -892,6 +897,7 @@ public struct SettingsView: View {
         self.speakingVoiceStatus = speakingVoiceStatus
         self.openAtLogin = openAtLogin
         self.mouseSideButtons = mouseSideButtons
+        self.hotkeyBindings = hotkeyBindings
         self.transcriptionLanguage = transcriptionLanguage
         self.lastDictationNote = lastDictationNote
         self.installedVersion = installedVersion
@@ -1361,13 +1367,28 @@ public struct SettingsView: View {
             SettingsRow(title: SettingsGeneralCopy.dictationKeyTitle,
                         description: SettingsGeneralCopy.dictationKeyDescription) {
                 // The key itself; how macOS remaps it lives under Advanced › F5 key helper.
-                let key = "F5"
+                let key = currentHotkeyBindings.keyLabel
                 HStack(spacing: 8) {
-                    Text(key)
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .padding(.horizontal, 7).padding(.vertical, 2)
-                        .background(RoundedRectangle(cornerRadius: 5).strokeBorder(.tertiary))
+                    if let hotkeyBindings {
+                        // L105: choose the key; only which key feeds the unchanged gestures changes.
+                        Picker("Dictation key", selection: Binding(
+                            get: { currentHotkeyBindings.key },
+                            set: { key in updateHotkeyBindings(hotkeyBindings) { $0.key = key } }
+                        )) {
+                            ForEach(VoiceBarHotkeyBindings.Key.allCases, id: \.self) { Text($0.label).tag($0) }
+                        }
+                        .pickerStyle(.menu).labelsHidden().fixedSize()
+                        .disabled(hotkeyBindings.disabledReason() != nil)
+                        .help(hotkeyBindings.disabledReason() ?? "The key that starts dictation")
                         .accessibilityLabel("Dictation key: \(key)")
+                        .accessibilityIdentifier("settings-dictation-key-picker")
+                    } else {
+                        Text(key)
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .padding(.horizontal, 7).padding(.vertical, 2)
+                            .background(RoundedRectangle(cornerRadius: 5).strokeBorder(.tertiary))
+                            .accessibilityLabel("Dictation key: \(key)")
+                    }
                     // The F5 check moved here from the healthy F5 setup row, which permission health no longer shows.
                     Button(SettingsSetupFix.checkF5.title) { perform(.checkF5) }
                         .buttonStyle(.bordered)
@@ -1382,10 +1403,17 @@ public struct SettingsView: View {
                     SettingsCopyButton(text: shortcutCheckFeedback.message, label: "shortcut check result")
                 }
             }
-            SettingsRow(title: SettingsGeneralCopy.mouseTitle, description: SettingsGeneralCopy.mouseDescription) {
-                if let mouseSideButtons {
-                    Toggle("Mouse side buttons", isOn: Binding(get: mouseSideButtons.isOn, set: mouseSideButtons.set))
-                        .labelsHidden().toggleStyle(.settingsSwitch)
+            if let hotkeyBindings {
+                mouseRoleRow(SettingsGeneralCopy.forwardButtonTitle, hotkeyBindings, role: \.forward,
+                             identifier: "settings-forward-button-role")
+                mouseRoleRow(SettingsGeneralCopy.backButtonTitle, hotkeyBindings, role: \.back,
+                             identifier: "settings-back-button-role")
+            } else {
+                SettingsRow(title: SettingsGeneralCopy.mouseTitle, description: SettingsGeneralCopy.mouseDescription) {
+                    if let mouseSideButtons {
+                        Toggle("Mouse side buttons", isOn: Binding(get: mouseSideButtons.isOn, set: mouseSideButtons.set))
+                            .labelsHidden().toggleStyle(.settingsSwitch)
+                    }
                 }
             }
         }
@@ -1397,11 +1425,11 @@ public struct SettingsView: View {
     /// Read Clipboard as a row whose button sits in the trailing column.
     private var shortcutsSection: some View {
         Section(SettingsGeneralCopy.shortcutsHeader) {
-            SettingsRow(title: SettingsGeneralCopy.singleTapTitle,
+            SettingsRow(title: "Tap " + currentHotkeyBindings.keyLabel,
                         description: VoiceBarHotkeyContract.singleTapDescription) { EmptyView() }
-            SettingsRow(title: VoiceBarHotkeyContract.repasteShortcutLabel,
+            SettingsRow(title: currentHotkeyBindings.repasteLabel,
                         description: VoiceBarHotkeyContract.repasteDescription) { EmptyView() }
-            SettingsRow(title: VoiceBarHotkeyContract.speakSelectionShortcutLabel,
+            SettingsRow(title: currentHotkeyBindings.speakSelectionLabel,
                         description: VoiceBarHotkeyContract.speakSelectionDescription) { EmptyView() }
             SettingsRow(title: SettingsGeneralCopy.readClipboardTitle,
                         description: VoiceBarHotkeyContract.readClipboardDescription) {
@@ -1409,6 +1437,40 @@ public struct SettingsView: View {
                     .accessibilityLabel(VoiceBarHotkeyContract.readClipboardActionLabel)
                     .disabled(onReadClipboard == nil)
             }
+        }
+    }
+
+    /// L105: the bindings on screen (the app's after the last change, else what the input reports).
+    private var currentHotkeyBindings: VoiceBarHotkeyBindings {
+        shownHotkeyBindings ?? hotkeyBindings?.current() ?? .defaults
+    }
+
+    private func updateHotkeyBindings(_ input: SettingsHotkeyBindingsInput,
+                                      _ change: (inout VoiceBarHotkeyBindings) -> Void) {
+        var next = currentHotkeyBindings
+        change(&next)
+        input.set(next)
+        shownHotkeyBindings = input.current() // a refused change reads back unchanged
+    }
+
+    /// One mouse side button: acts like the dictation key, sends Return, or does nothing.
+    private func mouseRoleRow(_ title: String, _ input: SettingsHotkeyBindingsInput,
+                              role: WritableKeyPath<VoiceBarHotkeyBindings, VoiceBarHotkeyBindings.MouseRole>,
+                              identifier: String) -> some View {
+        SettingsRow(title: title) {
+            Picker(title, selection: Binding(
+                get: { currentHotkeyBindings[keyPath: role] },
+                set: { value in updateHotkeyBindings(input) { $0[keyPath: role] = value } }
+            )) {
+                ForEach(VoiceBarHotkeyBindings.MouseRole.allCases, id: \.self) {
+                    Text(currentHotkeyBindings.roleTitle($0)).tag($0)
+                }
+            }
+            .pickerStyle(.menu).labelsHidden().fixedSize()
+            .disabled(input.disabledReason() != nil)
+            .help(input.disabledReason() ?? title)
+            .accessibilityLabel("\(title): \(currentHotkeyBindings.roleTitle(currentHotkeyBindings[keyPath: role]))")
+            .accessibilityIdentifier(identifier)
         }
     }
 
