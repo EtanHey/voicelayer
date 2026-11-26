@@ -161,7 +161,7 @@ final class ReadyTimePasteTests: XCTestCase {
         }
     }
 
-    func testTerminalMultilineTakeNeverPlansReturnExceptUnchangedCmux() throws {
+    func testTerminalMultilineTakeNeverPlansReturn() throws {
         for bundle in ["com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable", "dev.warp.Warp-Preview", "dev.warp.WarpOss",
                        "com.mitchellh.ghostty", "com.cmuxterm.app", "net.kovidgoyal.kitty", "org.alacritty", "com.github.wez.wezterm"] {
             let kit = Kit(), id = try kit.start()
@@ -176,20 +176,16 @@ final class ReadyTimePasteTests: XCTestCase {
                 guard matches() else { return .focusChanged }
                 posted.append(text)
                 let plan = SynthesizedTyping.keystrokes(for: text)
-                if bundle == "com.cmuxterm.app" {
-                    XCTAssertEqual(plan.filter { $0 == .newline }.count, 3)
-                } else {
-                    XCTAssertFalse(plan.contains(.newline), bundle)
-                    guard let events = SynthesizedKeyEvents.events(for: plan, source: nil) else {
-                        XCTFail("Could not construct the unposted event plan"); return .failed
-                    }
-                    XCTAssertFalse(events.contains { $0.getIntegerValueField(.keyboardEventKeycode) == Int64(SynthesizedKeyEvents.returnKeyCode) }, bundle)
-                    XCTAssertFalse(events.contains { $0.flags.contains(.maskShift) }, bundle)
+                XCTAssertFalse(plan.contains(.newline), bundle)
+                guard let events = SynthesizedKeyEvents.events(for: plan, source: nil) else {
+                    XCTFail("Could not construct the unposted event plan"); return .failed
                 }
+                XCTAssertFalse(events.contains { $0.getIntegerValueField(.keyboardEventKeycode) == Int64(SynthesizedKeyEvents.returnKeyCode) }, bundle)
+                XCTAssertFalse(events.contains { $0.flags.contains(.maskShift) }, bundle)
                 return .posted
             }
             kit.final(id, text: raw); kit.final(id, text: raw)
-            XCTAssertEqual(posted, [bundle == "com.cmuxterm.app" ? "whole fu…\n\r\nשלום\nlast words" : "whole fu… שלום last words"], bundle)
+            XCTAssertEqual(posted, ["whole fu… שלום last words"], bundle)
             XCTAssertEqual(kit.state.latestReusableTranscript, "whole fu…\n\r\nשלום\nlast words", bundle)
             XCTAssertEqual(kit.writes, [], bundle)
         }
