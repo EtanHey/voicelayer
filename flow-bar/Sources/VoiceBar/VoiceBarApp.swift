@@ -903,12 +903,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             commandRouter: commandRouter,
             onOpenSettings: { [weak self] in self?.openSettingsWindow() },
             onOpenHistory: { [weak self] in self?.openSettingsWindow(tab: .history) },
-            onOpenHistoryRecording: { [weak self] path in
-                self?.openSettingsWindow(tab: .history, historyRecordingID: path)
-            },
-            onOpenHistoryEntry: { [weak self] destination in
-                self?.openSettingsWindow(tab: .history, historyDestination: destination)
-            },
             presentationModel: notchPresentationModel,
             morphSelection: notchMorphSelection,
             includesPanelOutsets: true,

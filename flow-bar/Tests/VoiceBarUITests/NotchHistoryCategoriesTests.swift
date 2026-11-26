@@ -1,4 +1,5 @@
 import AppKit
+import OffscreenTestSupport
 import SwiftUI
 @testable import VoiceBarUI
 import XCTest
@@ -208,22 +209,127 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         XCTAssertTrue(labels(harness).contains { $0.contains(NotchHistoryPresentation.emptyState(for: .ask).title) })
     }
 
-    func testH2AskAndSpeechRowsOpenTheirOwnArchiveEntry() throws {
+    /// L99: a row click opens that row's text and actions inside the notch, in its own category, and Back returns to
+    /// the list. Before, it closed the drawer and opened the History window (`opens` recorded it).
+    func testL99RowsOpenTheirDetailInsideTheNotch() throws {
         for surface in [NotchSurfaceEvent.openHistory, .openSettings(.history)] {
-            for scope in [SettingsHistoryScope.ask, .speech] {
+            for scope in [SettingsHistoryScope.recording, .ask, .speech] {
                 let harness = makeHarness()
                 open(harness, surface)
                 wait { harness.archive.speech != nil }
-                try swipe(harness, dx: -160)
+                if scope != .recording { try swipe(harness, dx: -160) }
                 if scope == .speech { try swipe(harness, dx: -160) }
-                let row = try XCTUnwrap(frame(identified: "history-row-2", harness))
-                let point = harness.panel.convertPoint(fromScreen: NSPoint(x: row.minX + 30, y: row.midY))
-                try send(.leftMouseDown, at: point, to: harness.panel)
-                try send(.leftMouseUp, at: point, to: harness.panel)
-                drain(0.3)
-                XCTAssertEqual(harness.opens.values, ["\(scope.rawValue):synthetic-\(scope.rawValue)-1"],
-                               "a row must preserve its category and archive id")
+                try click("history-row-2", harness)
+                wait { identifiers(harness).contains(NotchHistoryDetailView.identifier) }
+                let context = "\(surface) \(scope)"
+                XCTAssertTrue(identifiers(harness).contains(NotchHistoryDetailView.identifier), context)
+                let text = tree(harness).first { $0.id == NotchHistoryDetailView.textIdentifier }?.label
+                XCTAssertEqual(text, "\(Self.marker[scope]!) 2.", "the opened row shows its own whole text: \(context)")
+                XCTAssertEqual(harness.opens.values, [], "no History window: \(context)")
+                XCTAssertTrue(harness.model.isHistoryPanelOpen, "the drawer stays open: \(context)")
+                XCTAssertEqual(harness.archive.selectedScope, scope, context)
+                let expected: [NotchHistoryDetail.Action] = switch scope {
+                case .recording: [.play, .copy, .paste, .retranscribe, .reveal]
+                case .ask: [.copy, .paste]
+                case .speech: [.copy]
+                }
+                for action in NotchHistoryDetail.Action.allCases {
+                    XCTAssertEqual(identifiers(harness).contains(NotchHistoryDetailView.actionIdentifier(action)),
+                                   expected.contains(action), "\(action) on \(context)")
+                }
+
+                try click(NotchHistoryDetailView.backIdentifier, harness)
+                wait { !identifiers(harness).contains(NotchHistoryDetailView.identifier) }
+                XCTAssertFalse(identifiers(harness).contains(NotchHistoryDetailView.identifier), "Back: \(context)")
+                XCTAssertTrue(identifiers(harness).contains("history-row-2"), "the list returns: \(context)")
             }
+        }
+    }
+
+    /// L99: an opened row's buttons make the rows' own calls (Copy) and the Finder call, never a window.
+    func testL99OpenedDictationActionsCallThrough() throws {
+        let harness = makeHarness()
+        open(harness, .openHistory)
+        try click("history-row-1", harness)
+        wait { identifiers(harness).contains(NotchHistoryDetailView.identifier) }
+        try click(NotchHistoryDetailView.actionIdentifier(.copy), harness)
+        drain(0.2)
+        // The notch never takes focus from the app the user is in (Paste goes there).
+        XCTAssertFalse(harness.panel.isKeyWindow, "the opened row must not make the notch key")
+        XCTAssertFalse(NSApp.isActive, "the opened row must not activate VoiceBar")
+        XCTAssertEqual(harness.copied.values, ["\(Self.marker[.recording]!) 1."])
+        XCTAssertTrue(labels(harness).contains("Copied"), "the Copy button confirms in place")
+        XCTAssertEqual(harness.opens.values, [])
+    }
+
+    /// L99: the opened row belongs to its category; switching category returns to the lists.
+    func testL99CategoryChangeClosesTheOpenedRow() throws {
+        let harness = makeHarness()
+        open(harness, .openHistory)
+        wait { harness.archive.speech != nil }
+        try swipe(harness, dx: -160)
+        try click("history-row-1", harness)
+        wait { identifiers(harness).contains(NotchHistoryDetailView.identifier) }
+        try click(NotchHistoryPresentation.categoryIdentifier(.speech), harness)
+        wait { harness.archive.selectedScope == .speech }
+        drain(0.3)
+        XCTAssertFalse(identifiers(harness).contains(NotchHistoryDetailView.identifier))
+        XCTAssertTrue(identifiers(harness).contains("history-row-1"))
+    }
+
+    /// L99 pictures for the PR: the drawer's list, then a dictation and an Ask opened in place, read back from the
+    /// window server (native glass as composited). Synthetic rows only. Runs when VOICEBAR_W2_SHOTS=<directory>.
+    func testWriteL99DetailShotsWhenRequested() throws {
+        guard let directory = ProcessInfo.processInfo.environment["VOICEBAR_W2_SHOTS"] else {
+            throw XCTSkip("Set VOICEBAR_W2_SHOTS to write the L99 detail shots")
+        }
+        let harness = makeHarness()
+        VLOrderCompositorTestWindow(harness.panel)
+        open(harness, .openHistory)
+        wait { harness.archive.speech != nil }
+        func shot(_ name: String) throws {
+            drain(0.5)
+            typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+            guard let lookup = UnsafeMutableRawPointer(bitPattern: -2),
+                  let symbol = dlsym(lookup, "CGWindowListCreateImage") else { throw XCTSkip("no window capture") }
+            let capture = unsafeBitCast(symbol, to: Capture.self)
+            let options = CGWindowImageOption.boundsIgnoreFraming.union(.bestResolution)
+            let image = try XCTUnwrap(capture(.null, CGWindowListOption.optionIncludingWindow.rawValue,
+                                              UInt32(harness.panel.windowNumber), options.rawValue)?.takeRetainedValue())
+            try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(name).png"))
+        }
+        try shot("l99-1-list")
+        try click("history-row-2", harness)
+        wait { identifiers(harness).contains(NotchHistoryDetailView.identifier) }
+        try shot("l99-2-dictation-opened")
+        try click(NotchHistoryDetailView.backIdentifier, harness)
+        try swipe(harness, dx: -160)
+        try click("history-row-1", harness)
+        wait { identifiers(harness).contains(NotchHistoryDetailView.identifier) }
+        try shot("l99-3-ask-opened")
+    }
+
+    /// L102: the notch History shows the newest 20 of each category and never offers to load older ones.
+    func testL102NotchHistoryIsTheNewestTwentyWithNoLoadOlder() throws {
+        XCTAssertEqual(NotchHistoryMorph.maximumEntries, 20)
+        XCTAssertEqual(NotchHistoryArchiveStore.limit, 20)
+        let harness = makeHarness()
+        open(harness, .openHistory)
+        wait { harness.archive.speech != nil }
+        XCTAssertEqual(Set(harness.loads.limits), [20], "Ask and Speech load the newest 20")
+        let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/VoiceBarUI")
+        for file in try FileManager.default.contentsOfDirectory(atPath: sources.path)
+        where file.hasPrefix("NotchHistory") {
+            let text = try String(contentsOf: sources.appendingPathComponent(file), encoding: .utf8)
+            for phrase in ["Load older", "Load more", "loadOlder", "loadMore"] {
+                XCTAssertFalse(text.contains(phrase), "\(file) offers \(phrase)")
+            }
+        }
+        for label in labels(harness) {
+            XCTAssertFalse(label.localizedCaseInsensitiveContains("load older"), label)
+            XCTAssertFalse(label.localizedCaseInsensitiveContains("load more"), label)
         }
     }
 
@@ -495,23 +601,6 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         XCTAssertEqual(harness.archive.selectedScope, .recording, "a removed monitor cannot finish its old gesture")
     }
 
-    func testR901MissingArchiveCallbackStillOpensHistory() throws {
-        for scope in [SettingsHistoryScope.ask,.speech] {
-            let harness=makeHarness(archiveCallback:false)
-            open(harness,.openHistory)
-            wait { harness.archive.speech != nil }
-            try swipe(harness,dx:-160)
-            if scope == .speech { try swipe(harness,dx:-160) }
-            let row=try XCTUnwrap(frame(identified:"history-row-2",harness))
-            let point=harness.panel.convertPoint(fromScreen:NSPoint(x:row.minX+30,y:row.midY))
-            try send(.leftMouseDown,at:point,to:harness.panel)
-            try send(.leftMouseUp,at:point,to:harness.panel)
-            drain(0.1)
-            XCTAssertEqual(harness.opens.values,["generic"],"a legacy host must get its History fallback")
-            XCTAssertEqual(harness.archive.selectedScope,scope,"the fallback retains the requested category")
-        }
-    }
-
     func testR901CategorySelectionInvalidatesTheRestOfAPointerDrag() {
         var pager=NotchHistoryCategoryPager(count:3)
         XCTAssertTrue(pager.move(to:CGSize(width:-120,height:0)))
@@ -663,8 +752,10 @@ final class NotchHistoryCategoriesTests: XCTestCase {
     private final class LoadLog: @unchecked Sendable {
         private let lock = NSLock()
         private var value = 0
+        private var seenLimits: [Int] = []
         var count: Int { lock.withLock { value } }
-        func add() { lock.withLock { value += 1 } }
+        var limits: [Int] { lock.withLock { seenLimits } }
+        func add(limit: Int = 0) { lock.withLock { value += 1; seenLimits.append(limit) } }
     }
 
     private final class OpenLog { var values: [String] = [] }
@@ -677,6 +768,7 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         let archive: NotchHistoryArchiveStore
         let loads: LoadLog
         let opens: OpenLog
+        let copied: OpenLog
     }
 
     private static let marker: [SettingsHistoryScope: String] = [
@@ -718,24 +810,25 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         let spoken = rows(.speech, 20) { _ in "0:13" }
         let loads = LoadLog()
         let archive = NotchHistoryArchiveStore(
-            loadAsk: { _ in loads.add(); return asks }, loadSpeech: { _ in loads.add(); return spoken }
+            loadAsk: { loads.add(limit: $0); return asks }, loadSpeech: { loads.add(limit: $0); return spoken }
         )
         let context = NotchSettingsDrawerContext(updates: nil, pane: { tab, _ in AnyView(Text("\(tab.title) pane")) })
         return Fixture(state: state, archive: archive, loads: loads, context: context)
     }
 
-    private func makeHarness(askCount: Int = 12, archiveCallback: Bool = true) -> Harness {
+    private func makeHarness(askCount: Int = 12) -> Harness {
         let fixture = makeFixture(askCount: askCount)
         let (state, archive, loads, context) = (fixture.state, fixture.archive, fixture.loads, fixture.context)
         let opens = OpenLog()
-        let archiveOpen: ((SettingsHistoryDestination) -> Void)? = archiveCallback
-            ? { opens.values.append("\($0.scope.rawValue):\($0.entryID)") } : nil
+        let copied = OpenLog()
+        // Copies land here, never on this Mac's pasteboard.
+        state.pasteboardWriter = { copied.values.append($0) }
+        state.pasteboardStringProvider = { copied.values.last }
         let model = VoiceBarNotchPresentationModel()
         let surface = NotchSurfaceModel()
         surface.log = { _ in }
         let host = PillHostingView(rootView: AnyView(BarView(
             state: state, commandRouter: Router(), onOpenSettings: {}, onOpenHistory: { opens.values.append("generic") },
-            onOpenHistoryEntry: archiveOpen,
             presentationModel: model, includesPanelOutsets: true, surface: surface, settingsDrawer: context
         ).historyCategories(archive: archive)))
         host.activeHitTestProvider = { _ in true }
@@ -746,7 +839,8 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         panel.orderBack(nil)
         windows.append(panel)
         model.setHovered(true)
-        let harness = Harness(model: model, surface: surface, host: host, panel: panel, archive: archive, loads: loads, opens: opens)
+        let harness = Harness(model: model, surface: surface, host: host, panel: panel, archive: archive, loads: loads,
+                              opens: opens, copied: copied)
         resize(harness)
         drain(0.3)
         return harness
@@ -818,6 +912,16 @@ final class NotchHistoryCategoriesTests: XCTestCase {
 
     private func frame(identified id: String, _ harness: Harness) -> NSRect? {
         tree(harness).first { $0.id == id && $0.frame.width > 0 }?.frame
+    }
+
+    /// A real mouse click (down, up) on the element `id`, as a pointer would make it.
+    private func click(_ id: String, _ harness: Harness, file: StaticString = #filePath, line: UInt = #line) throws {
+        let target = try XCTUnwrap(frame(identified: id, harness), "\(id) is on screen", file: file, line: line)
+        let point = harness.panel.convertPoint(fromScreen: NSPoint(x: target.minX + min(30, target.width / 2),
+                                                                   y: target.midY))
+        try send(.leftMouseDown, at: point, to: harness.panel)
+        try send(.leftMouseUp, at: point, to: harness.panel)
+        drain(0.4)
     }
 
     /// The categories whose rows are exposed: exactly the one on screen.

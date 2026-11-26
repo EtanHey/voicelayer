@@ -147,13 +147,6 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let bar = PillHostingView(rootView: BarView(state: model.voice, commandRouter: VoiceBarCommandRouter(voiceState: model.voice),
             onOpenSettings: { self.settings.makeKeyAndOrderFront(nil) },
             onOpenHistory: { self.model.historyDestination = nil; self.model.tab = .history; self.model.requestID += 1; self.model.receipt("history-open") },
-            onOpenHistoryEntry: { destination in
-                self.model.tab = .history
-                self.model.historyDestination = destination
-                self.model.requestID += 1
-                self.model.receipt("history-open-" + destination.scope.rawValue)
-                self.settings.makeKeyAndOrderFront(nil)
-            },
             presentationModel: notchModel,
             includesPanelOutsets: true,
             onOpenMicrophonePicker: { [weak self] in self?.surfaceHandoff.requestMenu(.microphone) },

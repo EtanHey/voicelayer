@@ -14,7 +14,7 @@ struct NotchHistoryPanel: View {
     var onCopy: (RecentTranscriptionEntry) -> Bool
     var onPaste: (RecentTranscriptionEntry) -> Void
     var onRetranscribe: (String) -> Void
-    /// A click on a row's text opens it in the History window (SPEC open question 1). Copy / Paste stay on hover.
+    /// A click on a row's text opens it (L99: in the notch, `NotchHistoryCategoryPanel`). Copy / Paste stay on hover.
     var onOpen: (RecentTranscriptionEntry) -> Void = { _ in }
     var onOpenAtIndex: ((Int) -> Void)?
     var retranscriptionAvailability: () -> HistoryRetranscriptionAvailability = { .available }
@@ -133,7 +133,7 @@ struct NotchHistoryPanel: View {
         let isHovered = (forcedHoverIndex ?? hoveredIndex) == index
         let showsActions = isHovered || isCopied
         return HStack(alignment: .center, spacing: NotchHistoryPresentation.rowColumnSpacing) {
-            // A row click opens it in the History window (SPEC open question 1). A plain button, so the clipped-text
+            // A row click opens it in the notch (L99). A plain button, so the clipped-text
             // tooltip sits on a control and keyboard users reach it too.
             Button { open(entry, index: index) } label: {
                 VStack(alignment: .leading, spacing: NotchHistoryPresentation.rowLineSpacing) {
