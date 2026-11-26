@@ -182,6 +182,15 @@ export function releaseGateApplies(tag: string): boolean {
   return true;
 }
 
+/**
+ * The release-only allow-list: a path a proof-only descendant of a proven build may change.
+ * scripts/release_only_diff.py mirrors this exact rule for the pre-push hook, CI and publish.yml;
+ * src/__tests__/release-only-diff.test.ts fails if the two ever disagree.
+ */
+export function isProofOnlyPath(path: string): boolean {
+  return path.startsWith(`${RELEASE_PROOF_DIR}/`) && path !== `${RELEASE_PROOF_DIR}/proof-hosts.json`;
+}
+
 export interface BuildCommitFacts {
   isAncestor: boolean;
   changedPaths: string[];
@@ -211,7 +220,7 @@ export function checkReleaseRecord(
   if (!facts) fail(`proven build commit ${build} is not in this repository`);
   if (!facts.isAncestor) fail(`proven build commit ${build} is not the tagged commit ${ctx.tagCommit} or its ancestor`);
   // The host list is reviewed code, not part of a proof: a proof-only commit may not change it.
-  const outside = facts.changedPaths.filter((p) => !p.startsWith(`${RELEASE_PROOF_DIR}/`) || p === `${RELEASE_PROOF_DIR}/proof-hosts.json`);
+  const outside = facts.changedPaths.filter((p) => !isProofOnlyPath(p));
   if (outside.length > 0) {
     fail(`tagged commit differs from the proven build ${build} outside ${RELEASE_PROOF_DIR}/: ${outside.slice(0, 5).join(", ")}`);
   }

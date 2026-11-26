@@ -90,6 +90,34 @@ the real app by `record` and again by promotion, which must be given the committ
    Any failure stops it. The tap is not touched before the published asset is confirmed, and
    its edits are reverted if the tap check fails.
 
+### Release-only pushes and PRs skip the suites (one allow-list)
+
+The proof commit, its PR and the tag carry no product code, so three places skip work for them.
+All three share one allow-list, `scripts/release_only_diff.py`, equal to the release gate's own
+`isProofOnlyPath`: **added or modified files under `release-proofs/`, except
+`release-proofs/proof-hosts.json`**. Nothing else: not `package.json`, not a lockfile, not a doc, a
+workflow or a script. A deleted file, a rename and an empty diff are never release-only. A parity
+test fails if the Python list and the TypeScript rule ever differ.
+
+- **Pre-push hook** (`.githooks/pre-push` → `scripts/pre_push_release_only.py`): when every pushed
+  ref is release-only vs its remote base (the remote tip, or for a new branch the merge base with
+  `<remote>/main`) and the release gate passes for each `release-proofs/vX.Y.Z.json` carried (a
+  `vX.Y.Z` tag push is checked by the gate alone), the Swift and bun suites are skipped and one line
+  `[pre-push] RELEASE-ONLY PUSH: ... SKIPPED by rule, not by --no-verify` is printed. Any doubt (a
+  non-release path, a deleted ref, a dirty tracked tree, the pushed commit not being HEAD, no bun, a
+  gate refusal) prints `[pre-push] full suites run: <why>` and runs the suites as before. The
+  docs.local guard always runs first.
+- **Required CI checks** (`ci.yml` `test`, `Swift (VoiceBar)`; `ratchet.yml` `ratchet`): a PR whose
+  diff is release-only passes them at their first step with a `RELEASE-ONLY PR` notice; the checks
+  still report under the same names and branch protection is unchanged. A `changes` job decides, using
+  the classifier from the PR's **base** commit, never from the PR; if it cannot answer, everything
+  runs. Pushes to `main` always run everything.
+- **`publish.yml`**: after the release gate, `scripts/publish_tests_proven.py` checks that the
+  proven build (`release.gitCommit` in the proof) is an ancestor of the tag, differs from it only by
+  release-only files, and has a green `test` check run. If so, the audio tool install, the daemon test
+  dependencies and `bun test` are skipped (`PROOF-ONLY TAG` notice); typecheck, pack contract, pack and
+  publish always run.
+
 The gate refuses, with a non-zero exit and a message naming the problem, when:
 
 - the proof is missing or is not valid JSON;

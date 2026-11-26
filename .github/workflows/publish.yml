@@ -17,6 +17,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  checks: read
 
 jobs:
   publish:
@@ -30,6 +31,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      checks: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,6 +63,23 @@ jobs:
           RELEASE_TAG: ${{ inputs.ref || github.ref_name }}
         run: bun ../workflow-tools/scripts/t3-optf5-proof.ts release-gate --tag "$RELEASE_TAG"
 
+      # Change 4 of the release-speed plan. The gate above has just proved the tag is a proof-only
+      # descendant of the installed-proven build (only release-proofs/ differs). This step adds the
+      # other fact `bun test` would re-prove: that build commit has a green `test` check run. Both
+      # true -> the audio tool install, the daemon test dependencies and `bun test` are skipped
+      # (loud line below). Any doubt prints tests_proven=false and the suite runs as before.
+      - name: Proven build already has a green test job
+        id: proven
+        env:
+          RELEASE_TAG: ${{ inputs.ref || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 ../workflow-tools/scripts/publish_tests_proven.py --source . --tag "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --github-output "$GITHUB_OUTPUT"
+
+      - name: Tests skipped, the proven build already passed them
+        if: steps.proven.outputs.tests_proven == 'true'
+        run: |
+          echo "::notice title=PROOF-ONLY TAG::bun test is SKIPPED because this tag differs from its installed-proven build only under release-proofs/ and that build has a green test job."
+
       # No registry-url: that makes setup-node write a token-based .npmrc
       # (always-auth + empty NODE_AUTH_TOKEN) which overrides OIDC and 404s.
       # OIDC Trusted Publishing needs npm to see NO _authToken so it exchanges
@@ -75,6 +94,7 @@ jobs:
           sudo apt-get install -y ffmpeg
           ffmpeg -version
           ffprobe -version
+        if: steps.proven.outputs.tests_proven != 'true'
 
       - run: bun install --frozen-lockfile
 
@@ -84,11 +104,13 @@ jobs:
 
       - name: Install daemon test dependencies
         run: python3 -m pip install -r ../workflow-tools/tests/requirements-tts-daemon.txt
+        if: steps.proven.outputs.tests_proven != 'true'
 
       - name: Run tests
         env:
           VOICELAYER_REQUIRE_TTS_DAEMON_DEPS: '1'
         run: bun test
+        if: steps.proven.outputs.tests_proven != 'true'
 
       - name: Type check
         run: bun run typecheck
