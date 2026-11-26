@@ -59,6 +59,10 @@ struct SettingsPill: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 2)
             .background(Capsule().fill((tint ?? ink.primary).opacity(0.18)))
+            .background(GeometryReader { proxy in
+                Color.clear.preference(key: SettingsControlFrameKey.self,
+                    value: ["status-pill-\(text)": proxy.frame(in: .global)])
+            })
             .fixedSize()
     }
 }
