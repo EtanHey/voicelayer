@@ -26,6 +26,7 @@ Usage:
 # Sample current resident memory, not resource.ru_maxrss (a lifetime peak).
 HIGH_WATER_BYTES = 8 * 1024**3
 RESTART_OWNER_ENV = "VOICELAYER_CLONE_RESTART_OWNER"
+RESTART_OWNER_PID_ENV = "VOICELAYER_CLONE_RESTART_OWNER_PID"
 RESTART_OWNER_EXIT_CODE = 75
 
 
@@ -41,12 +42,11 @@ def current_rss_bytes():
 
 
 def restart_owner_confirmed(environ=None):
-    """True only for a daemon its restart owner launched itself (VoiceBar's engine controller).
-
-    A standalone CLI daemon, or one VoiceBar merely adopted, has nobody to bring it back, so
-    retiring it would switch clone synthesis off until a manual restart.
-    """
-    return (os.environ if environ is None else environ).get(RESTART_OWNER_ENV) == "voicebar"
+    """An orphan loses retirement authority even if a new controller adopts it."""
+    env = os.environ if environ is None else environ
+    parent = os.getppid()
+    return (parent > 1 and env.get(RESTART_OWNER_ENV) == "voicebar"
+            and env.get(RESTART_OWNER_PID_ENV) == str(parent))
 
 
 def retire_over_high_water(read_rss=current_rss_bytes, request_retirement=None):
@@ -703,6 +703,10 @@ def main():
         server_holder: list = []
 
         def request_retirement():
+            # Check again at the threshold. The original controller may have died
+            # since startup, and adoption does not transfer its restart authority.
+            if not restart_owner_confirmed():
+                return
             retirement.set()
             if server_holder:
                 server_holder[0].should_exit = True  # uvicorn: graceful, waits for in-flight responses

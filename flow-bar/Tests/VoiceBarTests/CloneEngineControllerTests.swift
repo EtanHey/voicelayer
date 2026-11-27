@@ -38,6 +38,59 @@ final class CloneEngineControllerTests: XCTestCase {
         XCTAssertTrue(foreign.isRunning)
     }
 
+    func testOrphanStaysAvailableAfterAdoptionWithAutostartOff() throws {
+        let fixture = try Fixture(autostart: false)
+        let launcher = try fixture.launchFake()
+        let source = (0..<4).reduce(URL(fileURLWithPath: #filePath)) { url, _ in
+            url.deletingLastPathComponent()
+        }.appendingPathComponent("src").path
+        launcher.arguments = (launcher.arguments ?? []) + ["--restart-owner", source]
+        defer {
+            if launcher.isRunning { launcher.terminate(); launcher.waitUntilExit() }
+            if fixture.port != nil {
+                let finish = fixture.directory.appendingPathComponent("finish")
+                let finished = fixture.directory.appendingPathComponent("finished")
+                _ = FileManager.default.createFile(atPath: finish.path, contents: nil)
+                XCTAssertTrue(fixture.wait { FileManager.default.fileExists(atPath: finished.path) })
+            }
+            fixture.cleanup()
+        }
+        try launcher.run()
+        XCTAssertTrue(fixture.wait { fixture.port != nil })
+        let port = try XCTUnwrap(fixture.port)
+        XCTAssertTrue(launcher.isRunning)
+        launcher.terminate()
+        launcher.waitUntilExit()
+
+        let baseURL = try XCTUnwrap(URL(string: "http://127.0.0.1:\(port)"))
+        let token = fixture.directory.appendingPathComponent("secret").path
+        let adopter = CloneEngineController(autostart: false, saveAutostart: { _ in },
+            probe: { CloneEngineProbe.inspect(url: baseURL.appendingPathComponent("health"),
+                                             tokenFile: token, completion: $0) },
+            makeProcess: { XCTFail("Adoption with autostart off must not launch"); return Process() },
+            schedule: { _, block in fixture.tasks.append(block) })
+        defer { adopter.quit() }
+        adopter.open()
+        XCTAssertTrue(fixture.wait { adopter.snapshot.reason == "adopted_existing" })
+        let pid = try XCTUnwrap(adopter.snapshot.pid)
+        XCTAssertFalse(adopter.snapshot.startWithVoiceBar)
+        XCTAssertNotEqual(pid, Int(launcher.processIdentifier))
+
+        // The isolated engine executes the production retirement check at this
+        // endpoint before it can handle another health request.
+        var checked: CloneEngineObservation?
+        CloneEngineProbe.inspect(url: baseURL.appendingPathComponent("high-water"),
+                                 tokenFile: token) { checked = $0 }
+        XCTAssertTrue(fixture.wait { checked != nil })
+        XCTAssertEqual(checked, .healthy(pid))
+
+        var after: CloneEngineObservation?
+        CloneEngineProbe.inspect(url: baseURL.appendingPathComponent("health"),
+                                 tokenFile: token) { after = $0 }
+        XCTAssertTrue(fixture.wait { after != nil })
+        XCTAssertEqual(after, .healthy(pid))
+    }
+
     func testCrashBackoffAndStopInvalidatesQueuedRestart() throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
