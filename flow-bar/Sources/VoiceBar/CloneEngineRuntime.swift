@@ -89,7 +89,10 @@ extension CloneEngineController {
                 process.arguments = [script.path, "--host", "127.0.0.1", "--port", "8880"]
                 process.currentDirectoryURL = URL(fileURLWithPath: config.workingDirectory)
                 // Deliberately no inherited API keys, Python injection, proxy or QA configuration.
-                process.environment = ["HOME": home, "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", "LANG": "en_US.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"]
+                // VOICELAYER_CLONE_RESTART_OWNER tells the daemon this controller restarts it when it exits
+                // (it may retire itself above 8 GiB). A daemon started any other way never retires itself.
+                process.environment = ["HOME": home, "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", "LANG": "en_US.UTF-8", "PYTHONDONTWRITEBYTECODE": "1",
+                                       "VOICELAYER_CLONE_RESTART_OWNER": "voicebar"]
                 process.standardInput = FileHandle.nullDevice
                 log.attach(to: process)
                 return process
