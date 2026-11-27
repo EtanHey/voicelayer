@@ -22,6 +22,11 @@ public final class NotchHistoryArchiveStore: ObservableObject {
         public let detail: String?
         public var hasActionableText = true
         public var destination: SettingsHistoryDestination? = nil
+        /// L99, the row opened in the notch: Ask's whole question, the audio Play plays and the opened row's meta
+        /// after the time (Ask: the answer's length, since the question has its own line).
+        public var question: String? = nil
+        public var audio: [URL] = []
+        public var detailMeta: String? = nil
     }
 
     public typealias Loader = @Sendable (Int) async -> [Row]
@@ -108,20 +113,26 @@ public final class NotchHistoryArchiveStore: ObservableObject {
             entry: RecentTranscriptionEntry(text: entry.displayResponseTranscript, createdAt: entry.createdAt),
             detail: entry.hasQuestionText ? "Asked “\(NotchHistoryPresentation.firstWords(entry.questionText))”" : nil,
             hasActionableText: entry.hasResponseTranscript,
-            destination: SettingsHistoryDestination(scope: .ask, entryID: entry.id)
+            destination: SettingsHistoryDestination(scope: .ask, entryID: entry.id),
+            question: entry.hasQuestionText ? entry.questionText : nil,
+            audio: [entry.responseAudioPath].compactMap { $0 },
+            detailMeta: entry.responseDurationMs.map { SettingsAudioPlaybackPosition.clockLabel(Double($0) / 1000) }
         )
     }
 
     /// A Speech row leads with the text that was read aloud; its length follows the time.
     nonisolated static func row(_ entry: SettingsSpeechHistoryEntry) -> Row {
-        Row(
+        var row = Row(
             entry: RecentTranscriptionEntry(text: entry.spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? entry.preview : entry.spokenText, createdAt: entry.createdAt),
             detail: entry.status == "completed" || entry.durationMs == nil
                 ? (entry.durationMs == nil ? entry.statusLabel : entry.durationLabel)
                 : "\(entry.durationLabel) · \(entry.statusLabel)",
             hasActionableText: !entry.spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            destination: SettingsHistoryDestination(scope: .speech, entryID: entry.id)
+            destination: SettingsHistoryDestination(scope: .speech, entryID: entry.id),
+            audio: entry.audioPaths
         )
+        row.detailMeta = row.detail
+        return row
     }
 }

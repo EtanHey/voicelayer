@@ -13,12 +13,12 @@
     "formal/notch-surfaces/MutantNoReopenCancel.cfg": "ecf170488a511d95b0fedd3d2814d99a8911c0538e614dd9449f7ad15bde2638",
     "formal/notch-surfaces/MutantPresentStale.cfg": "c4e392d37fff16d053e401fa0ffa8d0f8e2c2dd0f81a6e09f082c005f1b88c01",
     "formal/notch-surfaces/Fixed.cfg": "faa99d7f69bc7b7e700b969498156b12b15360fc558d7d78bc4565682bce8f22",
-    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "13f3378de50d65ef58f62ad61cff3e25f636130492cbdf61082fc642c42e500c",
-    "flow-bar/Sources/VoiceBarUI/BarView.swift": "33c37da28fecc5384159f69d4a7cceab2363c18d088a9f41d40750215bb371d1",
+    "flow-bar/Sources/VoiceBar/VoiceBarApp.swift": "5830479a5dc9faf018d5a698d6b2eff3cb806ef5dd491fea02b1f367dcacc9d7",
+    "flow-bar/Sources/VoiceBarUI/BarView.swift": "b5f2b659a0b7ff28c1475ffc6902c4c3b6c2f7f9d6de10263f300920d955c645",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchPresentationModel.swift": "755f93b34fb4d6abc567e617f410a9b621aa09902663e5ef8d25590bd8e3bd20",
     "flow-bar/Sources/VoiceBarUI/VoiceBarNotchSurfaceCoordinator.swift": "d37e537343919a323d7d06b9e00d1f777f72ef0b433376724e780f94b66719ca",
     "flow-bar/Sources/VoiceBarUI/BareNotchMenuControl.swift": "a7dc2ca4c1e4afe7b3d1477e40307a7c8c4647ef047d2604d5bc9141813432ac",
-    "flow-bar/Sources/VoiceBar/UIE2EHost.swift": "3585fc5d35906a71a23ef97a7c978e440375ed498f7b4347437c4fd34d726d5e",
+    "flow-bar/Sources/VoiceBar/UIE2EHost.swift": "38074574dbaf822f281a95cb4e6b4d5eb5faeb08c54151c80c40e0296cbda8b4",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {

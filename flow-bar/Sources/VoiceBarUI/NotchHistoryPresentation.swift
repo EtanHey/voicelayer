@@ -122,13 +122,14 @@ public enum NotchHistoryPresentation {
         }
     }
 
-    public static let openHint = "Opens this recording in the History window"
+    /// L99: a row opens in the notch itself.
+    public static let openHint = "Shows this recording's text and actions here"
 
     public static func openHint(for scope: SettingsHistoryScope) -> String {
         switch scope {
         case .recording: openHint
-        case .ask: "Opens this ask in the History window"
-        case .speech: "Opens this speech in the History window"
+        case .ask: "Shows this ask's answer and actions here"
+        case .speech: "Shows this speech's text and actions here"
         }
     }
 

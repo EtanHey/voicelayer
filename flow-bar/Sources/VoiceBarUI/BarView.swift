@@ -363,10 +363,8 @@ public struct BarView: View {
     public var onCancelNotchMenu: () -> Void
     /// 2.3 U2: the gear while setup needs attention opens Settings at the setup spot.
     public var onOpenSetupSettings: () -> Void
-    /// SPEC open question 1 (recommendation built): a notch History row click opens that recording in the History
-    /// window. Nil falls back to opening the window at its newest row.
-    public var onOpenHistoryRecording: ((String) -> Void)?
-    public var onOpenHistoryEntry: ((SettingsHistoryDestination) -> Void)?
+    /// L99: an opened History row's Show in Finder. Tests replace it; nothing else does.
+    var onRevealHistoryFile: (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
     private let presentationModel: VoiceBarNotchPresentationModel?
     private let morphSelection: VoiceBarNotchMorphSelection?
     private let includesPanelOutsets: Bool
@@ -450,8 +448,6 @@ public struct BarView: View {
         commandRouter: BarCommandRouting,
         onOpenSettings: @escaping () -> Void,
         onOpenHistory: @escaping () -> Void,
-        onOpenHistoryRecording: ((String) -> Void)? = nil,
-        onOpenHistoryEntry: ((SettingsHistoryDestination) -> Void)? = nil,
         presentationModel: VoiceBarNotchPresentationModel? = nil,
         morphSelection: VoiceBarNotchMorphSelection? = nil,
         includesPanelOutsets: Bool = false,
@@ -476,8 +472,6 @@ public struct BarView: View {
         self.onOpenHistory = onOpenHistory
         self.onOpenMicrophonePicker = onOpenMicrophonePicker
         self.onOpenSetupSettings = onOpenSetupSettings ?? onOpenSettings
-        self.onOpenHistoryRecording = onOpenHistoryRecording
-        self.onOpenHistoryEntry = onOpenHistoryEntry
         self.presentationModel = presentationModel
         self.morphSelection = morphSelection
         self.includesPanelOutsets = includesPanelOutsets
@@ -2330,12 +2324,16 @@ public struct BarView: View {
         NotchHistoryCategoryPanel(
             dictations: historyDictationsPanel(listHeight: fixedListHeight), archive: historyArchive,
             initialScope: historyInitialScope, initialSwipe: historyInitialSwipe,
-            onOpenArchive: { destination in
-                guard !drawerBodyDragJustHappened else { return }
-                surface.send(.dismiss(.action))
-                if let onOpenHistoryEntry { onOpenHistoryEntry(destination) }
-                else { onOpenHistory() }
-            }
+            detailActions: historyDetailActions
+        )
+    }
+
+    /// Both notch History surfaces use the same player that VoiceState fences for Ask.
+    @MainActor var historyDetailActions: NotchHistoryDetailActions {
+        NotchHistoryDetailActions(
+            copy: copyHistoryEntry, paste: pasteHistoryEntry, retranscribe: retranscribeHistoryEntry,
+            reveal: onRevealHistoryFile, playback: state.historyPlayback,
+            retranscriptionAvailability: { state.historyRetranscriptionAvailability }
         )
     }
 
@@ -2350,27 +2348,29 @@ public struct BarView: View {
         return copy
     }
 
+    private func copyHistoryEntry(_ entry: RecentTranscriptionEntry) -> Bool {
+        state.copyTranscript(entry.text)
+    }
+
+    /// Paste goes to the app the user was in, so the drawer closes first.
+    private func pasteHistoryEntry(_ entry: RecentTranscriptionEntry) {
+        guard !drawerBodyDragJustHappened else { return }
+        surface.send(.dismiss(.action))
+        state.repasteTranscript(entry.text, source: "bar_history")
+    }
+
+    private func retranscribeHistoryEntry(_ recordingPath: String) {
+        commandRouter.handleRetranscribeHistoryEntry(recordingPath: recordingPath)
+    }
+
     private func historyDictationsPanel(listHeight fixedListHeight: CGFloat?) -> NotchHistoryPanel {
         NotchHistoryPanel(
             entries: state.recentTranscriptionEntries,
             activeRetranscriptionPath: state.activeHistoryRetranscriptionPath,
             palette: notchPalette,
-            onCopy: { state.copyTranscript($0.text) },
-            onPaste: { entry in
-                guard !drawerBodyDragJustHappened else { return }
-                surface.send(.dismiss(.action))
-                state.repasteTranscript(entry.text, source: "bar_history")
-            },
-            onRetranscribe: { commandRouter.handleRetranscribeHistoryEntry(recordingPath: $0) },
-            onOpen: { entry in
-                guard !drawerBodyDragJustHappened else { return }
-                surface.send(.dismiss(.action))
-                if let path = entry.recordingPath, let onOpenHistoryRecording {
-                    onOpenHistoryRecording(path)
-                } else {
-                    onOpenHistory()
-                }
-            },
+            onCopy: copyHistoryEntry,
+            onPaste: pasteHistoryEntry,
+            onRetranscribe: retranscribeHistoryEntry,
             retranscriptionAvailability: { state.historyRetranscriptionAvailability },
             listHeight: fixedListHeight ?? min(
                 NotchHistoryMorph.listHeight(rows: historyRowsExtent),

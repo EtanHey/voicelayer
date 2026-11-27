@@ -13,10 +13,12 @@ struct NotchHistoryCategoryPanel: View {
     /// The Dictations list as the notch builds it. Ask and Speech are the same list with their own rows.
     let dictations: NotchHistoryPanel
     @ObservedObject var archive: NotchHistoryArchiveStore
-
-    var onOpenArchive: (SettingsHistoryDestination) -> Void = { _ in }
+    /// L99: what an opened row's buttons call. Nil (shots) shows the detail without actions.
+    var detailActions: NotchHistoryDetailActions?
 
     @State private var pager: NotchHistoryCategoryPager
+    /// L99: the row opened in place of its list, until Back or a category change.
+    @State private var opened: NotchHistoryDetail?
     @State private var selectorFocus = NotchHistorySelectorFocus()
     @State private var swipeCancellation = NotchHistorySwipeCancellation()
     @State private var swipeEndedAt: TimeInterval = 0
@@ -30,10 +32,11 @@ struct NotchHistoryCategoryPanel: View {
     /// `initialScope` and `initialSwipe` (points the lists are dragged, as mid-gesture) are for shots.
     init(dictations: NotchHistoryPanel, archive: NotchHistoryArchiveStore,
          initialScope: SettingsHistoryScope? = nil, initialSwipe: CGFloat = 0,
-         onOpenArchive: @escaping (SettingsHistoryDestination) -> Void = { _ in }) {
+         detailActions: NotchHistoryDetailActions? = nil, initialDetail: NotchHistoryDetail? = nil) {
         self.dictations = dictations
         self.archive = archive
-        self.onOpenArchive = onOpenArchive
+        self.detailActions = detailActions
+        _opened = State(initialValue: initialDetail)
         var pager = NotchHistoryCategoryPager(count: Self.scopes.count, index: Self.scopes.firstIndex(of: initialScope ?? archive.selectedScope) ?? 0)
         if initialSwipe != 0 { pager.move(dx: initialSwipe, dy: 0) }
         _pager = State(initialValue: pager)
@@ -116,12 +119,12 @@ struct NotchHistoryCategoryPanel: View {
                     animation: NotchDrawerMotion.easeOut(NotchDrawerMotion.tabInDuration),
                     transition: NotchDrawerMotion.tabTransition(reduceMotion: true)
                 ) { index in
-                    list(Self.scopes[index]).frame(width: width)
+                    page(Self.scopes[index]).frame(width: width)
                 }
             } else {
                 HStack(spacing: Self.pageGap) {
                     ForEach(Array(Self.scopes.enumerated()), id: \.element) { index, scope in
-                        list(scope)
+                        page(scope)
                             .frame(width: width)
                             // Only the category on screen takes input or shows in the accessibility tree.
                             .allowsHitTesting(index == pager.index && !pager.isSwiping)
@@ -152,8 +155,47 @@ struct NotchHistoryCategoryPanel: View {
                 .onEnded { value in
                     let throwDistance = value.predictedEndTranslation.width - value.translation.width
                     finish(width: width, flick: abs(throwDistance) > 60 && (throwDistance > 0) == (value.translation.width > 0))
-                }
+                },
+            // L99: over an opened row a pointer drag scrolls its text; it never drags the lists.
+            including: opened == nil ? .all : .subviews
         )
+    }
+
+    /// A category's page: its list, or (L99) the row opened from it.
+    @ViewBuilder
+    private func page(_ scope: SettingsHistoryScope) -> some View {
+        let detail = liveDetail.flatMap { $0.scope == scope ? $0 : nil }
+        ZStack(alignment: .topLeading) {
+            list(scope)
+                .opacity(detail == nil ? 1 : 0)
+                .allowsHitTesting(detail == nil)
+                .disabled(detail != nil)
+                .accessibilityHidden(detail != nil)
+
+            if let detail {
+                NotchHistoryDetailView(detail: detail, palette: palette, actions: detailActions ?? .inert) {
+                    show(nil)
+                }
+                .frame(height: listHeight)
+                .transition(.opacity)
+                .zIndex(1)
+            }
+        }
+    }
+
+    /// The opened row as it is now: a dictation re-transcribed while open shows its new text.
+    private var liveDetail: NotchHistoryDetail? {
+        guard let opened else { return nil }
+        if opened.scope == .recording, let path = opened.recordingPath,
+           let entry = dictations.entries.first(where: { $0.recordingPath == path }) {
+            return .dictation(entry)
+        }
+        return opened
+    }
+
+    /// Opens a row in place of its list, or (nil) goes back to the list. A fade, the drawer's own tab timing.
+    private func show(_ detail: NotchHistoryDetail?) {
+        withAnimation(NotchDrawerMotion.easeOut(NotchDrawerMotion.tabInDuration)) { opened = detail }
     }
 
     private func list(_ scope: SettingsHistoryScope) -> NotchHistoryPanel {
@@ -166,19 +208,22 @@ struct NotchHistoryCategoryPanel: View {
             return dictations.onCopy(entry)
         }
         panel.onRetranscribe = { path in if !swipeJustHappened { dictations.onRetranscribe(path) } }
-        panel.onOpen = { entry in if !swipeJustHappened { dictations.onOpen(entry) } }
         panel.onPaste = { entry in if !swipeJustHappened { dictations.onPaste(entry) } }
         let rows: [NotchHistoryArchiveStore.Row]?
         switch scope {
         case .recording:
             panel.emptyState = NotchHistoryPresentation.emptyState(for: scope)
+            panel.onOpenAtIndex = { index in
+                guard !swipeJustHappened, let entry = dictations.entries[safe: index] else { return }
+                show(.dictation(entry))
+            }
             return panel
         case .ask: rows = archive.ask
         case .speech: rows = archive.speech
         }
         panel.onOpenAtIndex = { index in
-            guard !swipeJustHappened, let destination = rows?[safe: index]?.destination else { return }
-            onOpenArchive(destination)
+            guard !swipeJustHappened, let row = rows?[safe: index] else { return }
+            show(.archive(row, scope: scope))
         }
         panel.rowHasActionableText = { rows?[safe: $0]?.hasActionableText ?? false }
         panel.entries = rows?.map(\.entry) ?? []
@@ -237,6 +282,8 @@ struct NotchHistoryCategoryPanel: View {
             withAnimation(NotchDrawerMotion.easeOut(duration)) { change(&pager) }
         }
         archive.selectedScope = Self.scopes[pager.index]
+        // L99: an opened row belongs to its category; moving to another one returns to the lists.
+        if let opened, opened.scope != archive.selectedScope { self.opened = nil }
     }
 }
 

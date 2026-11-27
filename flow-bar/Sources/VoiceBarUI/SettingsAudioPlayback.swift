@@ -77,6 +77,8 @@ public final class SettingsAudioPlayback {
 
     public private(set) var playingURL: URL?
     public private(set) var failureMessage: String?
+    /// Identifies the view that requested this playback or received its error.
+    private(set) var requestOwner: UUID?
     private var voiceOwners: [String: Int32] = [:]
     private let canPlay: @MainActor () -> Bool
     public var isVoiceBusy: Bool {
@@ -96,10 +98,14 @@ public final class SettingsAudioPlayback {
     private var queueHead: URL?
 
     public func toggle(_ urls: [URL]) {
+        toggle(urls, owner: nil)
+    }
+
+    func toggle(_ urls: [URL], owner: UUID?) {
         guard let first = urls.first else { return }
-        if queueHead == first, playingURL != nil { stop(); return }
-        toggle(first)
-        guard playingURL == first else { return }
+        if requestOwner == owner, isPlaying(first) { stop(); return }
+        toggle(first, owner: owner)
+        guard playingURL == first, requestOwner == owner else { return }
         queueHead = first
         queuedURLs = Array(urls.dropFirst())
     }
@@ -133,13 +139,18 @@ public final class SettingsAudioPlayback {
 
     /// Starts `url`, or stops it when it is already the clip playing.
     public func toggle(_ url: URL) {
-        if playingURL == url {
+        toggle(url, owner: nil)
+    }
+
+    private func toggle(_ url: URL, owner: UUID?) {
+        if playingURL == url, requestOwner == owner {
             stop()
             return
         }
         failureMessage = nil
         guard !isVoiceBusy else { return }
         if playingURL != nil { stop() }
+        requestOwner = owner
         do { releaseAdmission = try admit() }
         catch { failureMessage = NativeUpdateGate.busyMessage; return }
         if start(url) {
@@ -148,6 +159,11 @@ public final class SettingsAudioPlayback {
             finishAdmission()
             failureMessage = "Audio couldn't start. Try Play again or reveal the file in Finder."
         }
+    }
+
+    func stop(ownedBy owner: UUID) {
+        guard requestOwner == owner else { return }
+        stop()
     }
 
     public func stop() {
