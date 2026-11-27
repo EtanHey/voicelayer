@@ -153,8 +153,8 @@ extension VoiceBarFlowTests {
 
     func testE2E24HistoryAllActions() throws {
         historyFlow()
-        e2e24SettingsControls("History")
-        e2e24AssertSettingsControls("History")
+        e2e24SettingsControls("Dictation")
+        e2e24AssertSettingsControls("Dictation")
     }
 
     func testE2E24PlaybackPauseResumeSeekReplay() throws {

@@ -62,7 +62,8 @@ final class DictionaryNotchTrackDShotsTests: XCTestCase {
 
     @discardableResult
     static func render(_ view: some View, appearance: VoiceBarNotchAppearance, name: String,
-                       height: CGFloat = NotchSettingsDrawerPresentation.lowerSurfaceHeight) throws -> NSBitmapImageRep {
+                       height: CGFloat = NotchSettingsDrawerPresentation.lowerSurfaceHeight,
+                       pngDirectoryVariable: String = "VOICEBAR_TRACK_D_PNG_DIR") throws -> NSBitmapImageRep {
         let size = CGSize(width: SettingsDrawerLaneSSnapshotTests.drawerWidth, height: height)
         let scheme: ColorScheme = appearance == .dark ? .dark : .light
         let nsAppearance = NSAppearance(named: appearance == .dark ? .darkAqua : .aqua)
@@ -81,7 +82,7 @@ final class DictionaryNotchTrackDShotsTests: XCTestCase {
         host.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(1.0))
         let bitmap = try EtanQA0510Tests.fixedScaleBitmap(host)
-        if let dir = ProcessInfo.processInfo.environment["VOICEBAR_TRACK_D_PNG_DIR"], !dir.isEmpty {
+        if let dir = ProcessInfo.processInfo.environment[pngDirectoryVariable], !dir.isEmpty {
             try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
             let url = URL(fileURLWithPath: dir).appendingPathComponent("\(name).png")
             try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: url)

@@ -2173,7 +2173,7 @@ public final class VoiceState {
 
     public func previewTTSProfile(_ profile: SpeechProfile) {
         guard isConnected else { speechNotice = "Preview unavailable: VoiceLayer isn't connected."; return }
-        guard speechControls != nil else { speechNotice = "Preview unavailable: Speech settings haven't arrived yet."; return }
+        guard speechControls != nil else { speechNotice = "Preview unavailable: Narration settings haven't arrived yet."; return }
         if let reason = speechBusyReason { speechNotice = "Preview unavailable: \(reason)"; return }
         guard speechRequestIDs.isEmpty else { speechNotice = "Preview unavailable: a speech request is still in progress."; return }
         guard let sendCommand else { speechNotice = "Preview unavailable: VoiceLayer can't receive commands."; return }

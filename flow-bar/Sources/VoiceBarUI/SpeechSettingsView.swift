@@ -99,7 +99,7 @@ public struct SpeechSettingsView: View {
                     }
                 }
             } else {
-                Text(connected ? "Speech settings are not reported by this VoiceLayer version." : "VoiceLayer isn't connected. Speech settings appear when it reconnects.")
+                Text(connected ? "Narration settings are not reported by this VoiceLayer version." : "VoiceLayer isn't connected. Narration settings appear when it reconnects.")
                     .foregroundStyle(readInk)
             }
             if let notice, pending["preview"] == nil {

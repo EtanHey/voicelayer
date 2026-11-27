@@ -1,6 +1,6 @@
 import Foundation
 
-/// The sentence Settings › History › Speech shows for a record's state and reason.
+/// The sentence History › Narration shows for a record's state and reason.
 /// Display only: the reason codes are the daemon's wire values and are never rewritten here.
 /// `src/__tests__/speech-reason-copy-guard.test.ts` fails when `speechReasons` gains a code this file does not map.
 enum SettingsSpeechReasonCopy {
@@ -30,9 +30,9 @@ enum SettingsSpeechReasonCopy {
         case "SYNTH_FAILED": return "The voice couldn't generate this speech."
         case "PLAYER_FAILED": return "Audio playback failed."
         // Producers write this for any non-refusal speak error (e.g. a missing clone profile), so stay cause-neutral.
-        case "OUTPUT_UNAVAILABLE": return "Speech output failed."
+        case "OUTPUT_UNAVAILABLE": return "Narration output failed."
         case "REJECTED": return "VoiceLayer turned this request down before playing it."
-        case "SPEECH_FAILED": return "Speech failed before it finished."
+        case "SPEECH_FAILED": return "Narration failed before it finished."
         case "ARCHIVE_INCOMPLETE": return "This read was only partly saved."
         default: return "Ended for a reason this version doesn't recognise."
         }

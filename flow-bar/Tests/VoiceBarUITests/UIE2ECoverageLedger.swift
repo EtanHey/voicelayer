@@ -119,7 +119,7 @@ enum UIE2EKnownIssue: String {
 }
 
 struct UIE2ECoverageLedger {
-    static let requiredSurfaces: Set<String> = ["General", "Transcription", "Dictionary", "Speech", "History",
+    static let requiredSurfaces: Set<String> = ["General", "Transcription", "Dictionary", "Narration", "Dictation",
         "Pill", "Popover", "Context menu", "Setup wizard", "notch:supersede-preparing", "notch:replay-playing",
         "notch:seek-playing", "notch:seek-idle", "notch:list-newlines"]
     var requiredScope: Set<String> = Self.requiredSurfaces
