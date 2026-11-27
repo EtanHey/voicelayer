@@ -10,7 +10,7 @@ test.skipIf(process.platform !== "darwin")("kernel start timestamp retains micro
 
 import { processStartMs } from "../../scripts/t3-optf5-proof";
 
-test.skipIf(process.platform !== "darwin")("fresh child start follows install within the same second (200 loops)", async () => {
+test.skipIf(process.platform !== "darwin")("kernel timestamps put child starts at or after the reference and the parent before it (200 loops)", async () => {
   for (let i = 0; i < 200; i++) {
     const installed = Date.now();
     const child = Bun.spawn([process.execPath, "-e", "setInterval(()=>{},1000)"], {
@@ -35,7 +35,7 @@ import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 import { installedRuntime, type ProcessRow } from "../../scripts/t3-optf5-proof";
 import { statSync } from "fs";
 
-function fakeInstalledBundle(): { app: string; plistMs: number; installedMs: number; binary: string; script: string; sameSecondLater: number } {
+function fakeInstalledBundle(): { app: string; plistMs: number; daemonInstalledMs: number; binary: string; script: string } {
   const root = mkdtempSync(join(bundleFixtureRoot(), "t3fresh-"));
   const app = join(root, "VoiceBar.app");
   const binary = `${app}/Contents/MacOS/VoiceBar`;
@@ -46,13 +46,16 @@ function fakeInstalledBundle(): { app: string; plistMs: number; installedMs: num
   writeFileSync(binary, "binary"); chmodSync(binary, 0o755);
   writeFileSync(script, "// daemon");
   const plistMs = statSync(`${app}/Contents/Info.plist`).ctimeMs;
-  const installedMs = Math.max(plistMs, statSync(script).ctimeMs);
-  // A start strictly after the install that is still inside the install's own second.
-  const boundary = (Math.floor(installedMs / 1000) + 1) * 1000;
-  const sameSecondLater = installedMs + Math.min(0.5, (boundary - installedMs) / 2);
-  expect(Math.floor(sameSecondLater / 1000)).toBe(Math.floor(installedMs / 1000));
-  expect(sameSecondLater).toBeGreaterThan(installedMs);
-  return { app, plistMs, installedMs, binary, script, sameSecondLater };
+  const daemonInstalledMs = Math.max(plistMs, statSync(script).ctimeMs);
+  return { app, plistMs, daemonInstalledMs, binary, script };
+}
+
+function laterInSameSecond(installedMs: number): number {
+  const nextSecond = (Math.floor(installedMs / 1000) + 1) * 1000;
+  const startedMs = installedMs + Math.min(0.5, (nextSecond - installedMs) / 2);
+  expect(startedMs).toBeGreaterThan(installedMs);
+  expect(Math.floor(startedMs / 1000)).toBe(Math.floor(installedMs / 1000));
+  return startedMs;
 }
 
 function probeFor(fixture: ReturnType<typeof fakeInstalledBundle>, starts: { voiceBar: number; daemon: number }) {
@@ -70,7 +73,11 @@ function probeFor(fixture: ReturnType<typeof fakeInstalledBundle>, starts: { voi
 test("the gate accepts a VoiceBar and daemon that started later in the install's own second", () => {
   const fixture = fakeInstalledBundle();
   try {
-    expect(installedRuntime(fixture.app, probeFor(fixture, { voiceBar: fixture.sameSecondLater, daemon: fixture.sameSecondLater })))
+    const starts = {
+      voiceBar: laterInSameSecond(fixture.plistMs),
+      daemon: laterInSameSecond(fixture.daemonInstalledMs),
+    };
+    expect(installedRuntime(fixture.app, probeFor(fixture, starts)))
       .toEqual({ voiceBarPid: 4001, daemonPids: [4002] });
   } finally { rmSync(fixture.app, { recursive: true, force: true }); }
 });
@@ -78,13 +85,15 @@ test("the gate accepts a VoiceBar and daemon that started later in the install's
 test("the gate rejects a stale VoiceBar, and a stale daemon under a fresh VoiceBar, including a same-instant start", () => {
   const fixture = fakeInstalledBundle();
   try {
-    expect(() => installedRuntime(fixture.app, probeFor(fixture, { voiceBar: fixture.plistMs - 1500, daemon: fixture.sameSecondLater })))
+    const freshVoiceBar = laterInSameSecond(fixture.plistMs);
+    const freshDaemon = laterInSameSecond(fixture.daemonInstalledMs);
+    expect(() => installedRuntime(fixture.app, probeFor(fixture, { voiceBar: fixture.plistMs - 1500, daemon: freshDaemon })))
       .toThrow(/VoiceBar process 4001 is older than the installed bundle/);
-    expect(() => installedRuntime(fixture.app, probeFor(fixture, { voiceBar: fixture.plistMs, daemon: fixture.sameSecondLater })))
+    expect(() => installedRuntime(fixture.app, probeFor(fixture, { voiceBar: fixture.plistMs, daemon: freshDaemon })))
       .toThrow(/VoiceBar process 4001 is older than the installed bundle/);
-    expect(() => installedRuntime(fixture.app, probeFor(fixture, { voiceBar: fixture.sameSecondLater, daemon: fixture.installedMs - 1500 })))
+    expect(() => installedRuntime(fixture.app, probeFor(fixture, { voiceBar: freshVoiceBar, daemon: fixture.daemonInstalledMs - 1500 })))
       .toThrow(/mcp-server-daemon process 4002 is older than the installed daemon script/);
-    expect(() => installedRuntime(fixture.app, probeFor(fixture, { voiceBar: fixture.sameSecondLater, daemon: fixture.installedMs })))
+    expect(() => installedRuntime(fixture.app, probeFor(fixture, { voiceBar: freshVoiceBar, daemon: fixture.daemonInstalledMs })))
       .toThrow(/mcp-server-daemon process 4002 is older than the installed daemon script/);
   } finally { rmSync(fixture.app, { recursive: true, force: true }); }
 });
