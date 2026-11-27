@@ -462,7 +462,13 @@ final class SettingsViewTests: XCTestCase {
         ).contains("Relay needs attention"))
         let source = try settingsViewSource()
         // U3a (R2): Check is the F5 key step's fix in General › Setup.
-        XCTAssertTrue(source.contains("case .checkF5:\n            shortcutCheckRunning = true"))
+        let perform = try XCTUnwrap(source.functionBody(named: "perform(_ fix: SettingsSetupFix)"))
+        let checkCase = try XCTUnwrap(perform.range(of: "case .checkF5:"))
+        let nextCase = try XCTUnwrap(perform[checkCase.upperBound...].range(of: "case .restartF5Listener:"))
+        let check = perform[checkCase.upperBound..<nextCase.lowerBound]
+        let start = try XCTUnwrap(check.range(of: "shortcutCheckRunning = true"))
+        let invoke = try XCTUnwrap(check.range(of: "onCheckShortcut {"))
+        XCTAssertLessThan(start.lowerBound, invoke.lowerBound)
     }
 
     /// Fold 2 review S2: the visible-first fix goes through the same reorder path as the arrows.

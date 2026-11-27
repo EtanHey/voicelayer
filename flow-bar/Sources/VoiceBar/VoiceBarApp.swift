@@ -1840,6 +1840,87 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         refreshSettingsWindowAnchorState()
     }
 
+    /// L105: where the bindings are saved (the app's defaults; tests point it at their own suite).
+    lazy var hotkeyBindingsStore: UserDefaults = defaults
+
+    /// L105: the dictation key and mouse side-button roles the tap matches (`VoiceBarHotkeyBindings`). The saved
+    /// value is replaced only after a new tap started with it.
+    private(set) lazy var hotkeyBindings = VoiceBarHotkeyBindings.load(from: hotkeyBindingsStore)
+
+    /// The one binding state every Settings surface reads (Codex r1 on #980: per-surface copies undid each other).
+    lazy var hotkeyBindingsModel: HotkeyBindingsModel = MainActor.assumeIsolated {
+        HotkeyBindingsModel(
+            bindings: hotkeyBindings,
+            disabledReason: { [weak self] in self?.hotkeyRebindDisabledReason },
+            apply: { [weak self] next, done in
+                guard let self else { done("VoiceBar is shutting down."); return }
+                applyHotkeyBindings(next, completion: done)
+            }
+        )
+    }
+
+    /// Why the rebinding rows are locked right now: a recording or a held key must keep the key that ends it.
+    var hotkeyRebindDisabledReason: String? {
+        voiceState.mode == .recording || gestureStateMachine.state != .idle
+            ? "Finish the recording to change the dictation key." : nil
+    }
+
+    /// L105: rebuild the tap from `next` (the old tap is torn down before the new one arms) and save `next` only once
+    /// the new tap is live. If it cannot start, the previous bindings and listener are restored and `completion`
+    /// gets the reason (Codex r1 on #980). Refused while a recording or hold is in progress. `completion` is on main.
+    func applyHotkeyBindings(_ next: VoiceBarHotkeyBindings, completion: @escaping (String?) -> Void) {
+        guard next != hotkeyBindings else { completion(nil); return }
+        if let reason = hotkeyRebindDisabledReason { completion(reason); return }
+        // A QA run that skips the native tap never gains one from a binding change.
+        guard VoiceBarDefaults.shouldStartHotkey() else {
+            hotkeyBindings = next
+            next.save(to: hotkeyBindingsStore)
+            completion(nil)
+            return
+        }
+        let previous = hotkeyBindings
+        hotkeyBindings = next // `makeHotkeyManager` reads it for the new tap
+        hotkeyListener.rebind(isRecording: false) { [weak self] outcome in
+            guard let self else { return }
+            NSLog("[VoiceBar] Dictation key bound to %@ (forward %@, back %@): %@", next.keyLabel,
+                  next.forward.rawValue, next.back.rawValue, String(describing: outcome))
+            if outcome == .started {
+                next.save(to: hotkeyBindingsStore)
+                applyHotkeyListenerOutcome(outcome)
+                refreshSettingsWindowAnchorState()
+                completion(nil)
+                return
+            }
+            hotkeyBindings = previous
+            hotkeyListener.rebind(isRecording: false) { [weak self] restored in
+                guard let self else { return }
+                NSLog("[VoiceBar] Dictation key restored to %@: %@", previous.keyLabel, String(describing: restored))
+                applyHotkeyListenerOutcome(restored)
+                refreshSettingsWindowAnchorState()
+            }
+            completion(Self.rebindFailure(outcome, previous: previous))
+        }
+    }
+
+    /// The words the picker shows when a switch failed; the previous key stays.
+    static func rebindFailure(_ outcome: HotkeyListenerRestartOutcome, previous: VoiceBarHotkeyBindings) -> String {
+        switch outcome {
+        case let .failed(missing) where !missing.isEmpty:
+            let names = missing.map {
+                switch $0 {
+                case .inputMonitoring: "Input Monitoring"
+                case .accessibility: "Accessibility"
+                case .microphone: "Microphone"
+                }
+            }.joined(separator: " and ")
+            return "The key listener needs \(names) permission. \(previous.keyLabel) stays the dictation key."
+        case .refusedWhileRecording:
+            return "Finish the recording to change the dictation key."
+        default:
+            return "The key listener could not start with the new key. \(previous.keyLabel) stays the dictation key."
+        }
+    }
+
     /// Settings' and the wizard's "Restart F5 listener": the launch start again, for permissions granted after
     /// launch. Only the tap's lifecycle: the callbacks below are the launch ones, and a hold or recording refuses.
     func restartHotkeyListener() -> HotkeyListenerRestartOutcome {
@@ -1858,6 +1939,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     func makeHotkeyManager() -> HotkeyManager {
         let manager = HotkeyManager(gesture: gestureStateMachine)
+        manager.apply(hotkeyBindings)
         manager.onKeyDown = { [weak self] in
             self?.handleHotkeyKeyDown(from: .native)
         }
@@ -3148,6 +3230,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private func checkShortcutAsync(completion: @escaping (String) -> Void) {
         let listenerEnabled = hotkeyEnabled
         let permissions = missingHotkeyPermissions
+        let key = hotkeyBindings.keyLabel
         let ticket = relayStatusWriteGate.ticket()
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
@@ -3161,7 +3244,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     hotkeyEnabled: listenerEnabled,
                     missingPermissions: permissions,
                     relayReady: status.isReady,
-                    relaySummary: status.summary
+                    relaySummary: status.summary,
+                    key: key
                 ))
             }
         }
@@ -3824,6 +3908,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     remoteSTTConfigured: nil
                 )
             },
+            hotkeyBindings: hotkeyBindingsModel,
             initialTab: lastSettingsTab,
             tabRequest: isNotchPane ? notchRequest : settingsTabRequest,
             onSelectedTabChange: { [weak self] tab in

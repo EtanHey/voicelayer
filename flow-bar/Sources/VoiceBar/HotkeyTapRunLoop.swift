@@ -26,6 +26,10 @@ final class HotkeyActivitySnapshot {
 final class HotkeyTapRunLoop {
     private var runLoop: CFRunLoop?
     private var responsivenessWatchdog: RuntimeResponsivenessWatchdog?
+    /// Set on main before the loop is told to stop; read on the tap thread after its cleanup (the stop block orders
+    /// the two). L105 / Codex r1 on #980: a rebind waits for this, so a new tap never arms beside the old one.
+    private final class TeardownSignal { var done: (() -> Void)? }
+    private let teardown = TeardownSignal()
 
     func start(install: @escaping (CFRunLoop) -> Void, cleanup: @escaping (CFRunLoop) -> Void) -> Bool {
         precondition(Thread.isMainThread)
@@ -43,6 +47,7 @@ final class HotkeyTapRunLoop {
             CFRunLoopRun()
             cleanup(loop)
             CFRunLoopRemoveSource(loop, keepalive, .commonModes)
+            if let done = teardown.done { DispatchQueue.main.async(execute: done) }
         }
         thread.name = "VoiceBar.HotkeyEventTap"
         thread.qualityOfService = .userInteractive
@@ -70,11 +75,16 @@ final class HotkeyTapRunLoop {
         CFRunLoopAddTimer(loop, timer, .commonModes)
     }
 
-    func stop() {
+    /// `teardown` runs on main once the tap thread has run its cleanup (the tap disabled and invalidated).
+    func stop(teardown done: (() -> Void)? = nil) {
         responsivenessWatchdog?.stop()
         responsivenessWatchdog = nil
-        guard let runLoop else { return }
+        guard let runLoop else {
+            if let done { DispatchQueue.main.async(execute: done) }
+            return
+        }
         self.runLoop = nil
+        teardown.done = done
         CFRunLoopPerformBlock(runLoop, CFRunLoopMode.commonModes.rawValue) { CFRunLoopStop(runLoop) }
         CFRunLoopWakeUp(runLoop)
     }
