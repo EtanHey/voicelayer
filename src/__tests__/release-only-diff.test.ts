@@ -1,6 +1,6 @@
 import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { isProofOnlyPath } from "../../scripts/t3-optf5-proof";
 
@@ -41,12 +41,29 @@ describe("one allow-list: the Python classifier equals the release gate's isProo
     ".github/workflows/publish.yml",
     "scripts/release_only_diff.py",
     "Release-Proofs/v2.4.7.json",
+    // files the root `bun test` discovers by name: code that would run in the suite being skipped
+    "release-proofs/sneaky.test.ts",
+    "release-proofs/sub/dir/sneaky.spec.js",
+    "release-proofs/a_test.tsx",
+    "release-proofs/a_spec.mjs",
+    "release-proofs/A.TEST.TS",
+    "release-proofs/x.test.cts",
+    "release-proofs/notes.test.md", // not a bun-discoverable extension: data
+    "release-proofs/contest.json",
+    "release-proofs/latest.ts", // a plain script is not discovered by `bun test` (still never read as a proof)
   ];
 
   test("every path gets the same answer from both implementations", () => {
     const r = py(["--classify-paths"], { input: paths.join("\n") });
     expect(r.code).toBe(0);
     expect(r.out.trim().split("\n")).toEqual(paths.map((p) => (isProofOnlyPath(p) ? "allowed" : "refused")));
+  });
+
+  test("a file the root bun test discovers by name is never release-only", () => {
+    for (const path of ["release-proofs/sneaky.test.ts", "release-proofs/sub/x.spec.js", "release-proofs/a_test.tsx", "release-proofs/a_spec.mjs", "release-proofs/A.TEST.TS"]) {
+      expect(isProofOnlyPath(path), path).toBe(false);
+    }
+    expect(isProofOnlyPath("release-proofs/v2.4.7.json")).toBe(true);
   });
 
   test("the allow-list is exactly release-proofs/ minus proof-hosts.json (and nothing wider, e.g. package.json)", () => {
@@ -162,6 +179,74 @@ describe("release_only_diff.py on a real diff (safe side first)", () => {
     renameSync(join(dir, "src/tts.ts"), join(dir, "release-proofs/v2.4.7.json"));
     commit("move");
     expect(classify(b).code).toBe(1);
+  });
+
+  test("a new symlink under release-proofs/ is NOT release-only (S4: the gate would follow it)", () => {
+    const b = base();
+    mkdirSync(join(dir, "release-proofs"), { recursive: true });
+    symlinkSync("../src/tts.ts", join(dir, "release-proofs/v2.4.7.json"));
+    commit("symlink");
+    const r = classify(b);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("git mode 120000");
+  });
+
+  test("editing an existing proof into a symlink, or a symlink target, is NOT release-only", () => {
+    const b = base();
+    rmSync(join(dir, "release-proofs/v2.4.6.json"));
+    symlinkSync("../src/tts.ts", join(dir, "release-proofs/v2.4.6.json"));
+    commit("proof became a symlink");
+    expect(classify(b).code).toBe(1); // status T (type change) / mode 120000
+  });
+
+  test("a submodule (gitlink, mode 160000) under release-proofs/ is NOT release-only", () => {
+    const b = base();
+    git("update-index", "--add", "--cacheinfo", `160000,${b},release-proofs/sub`);
+    git("commit", "-q", "-m", "gitlink");
+    const r = classify(b);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("git mode 160000");
+  });
+
+  test("an executable file under release-proofs/ is NOT release-only", () => {
+    const b = base();
+    put("release-proofs/v2.4.7.json");
+    chmodSync(join(dir, "release-proofs/v2.4.7.json"), 0o755);
+    commit("executable");
+    expect(classify(b).err).toContain("git mode 100755");
+  });
+
+  test("a bun test file under release-proofs/ is NOT release-only (S5: it would skip its own run)", () => {
+    const b = base();
+    put("release-proofs/sneaky.test.ts", "import { test } from 'bun:test'; test('x', () => {});\n");
+    commit("test file");
+    const r = classify(b);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("sneaky.test.ts");
+  });
+
+  test("--ancestor: a base that is not an ancestor of head cannot be classified (B1: a rewrite that drops code)", () => {
+    const b = base();
+    git("checkout", "-q", "-b", "feat");
+    put("src/tts.ts", "export const feature = 1;\n");
+    const featureTip = commit("feature code");
+    git("checkout", "-q", "main");
+    put("release-proofs/v2.4.7.json");
+    commit("proof only, built on main");
+    // Three-dot (merge base) makes the rewrite look proof-only; it is not: it drops the feature code.
+    expect(classify(featureTip).code).toBe(0);
+    const strict = py(["--repo", dir, "--base", featureTip, "--head", "HEAD", "--ancestor"]);
+    expect(strict.code).toBe(2);
+    expect(strict.err).toContain("not an ancestor");
+    // and the same proof on top of the feature tip IS release-only under --ancestor
+    rmSync(join(dir, ".out"), { force: true }); // the answer file classify() wrote; keep it out of the commit
+    git("checkout", "-q", "feat");
+    put("release-proofs/v2.4.7.json");
+    commit("proof on top of the feature");
+    const onTop = py(["--repo", dir, "--base", featureTip, "--head", "HEAD", "--ancestor"]);
+    expect(onTop.err).toContain("RELEASE-ONLY");
+    expect(onTop.code).toBe(0);
+    void b;
   });
 
   test("an empty diff is NOT release-only", () => {
@@ -292,6 +377,7 @@ describe("publish.yml: skip the suite only for a proven proof-only tag", () => {
     expect(job().steps[firstRun].run).toContain("release-gate --tag");
     expect(job().steps[firstRun + 1].id).toBe("proven");
     expect(job().steps[firstRun + 1].run).toContain("publish_tests_proven.py");
+    expect(job().steps[firstRun + 1].name).toContain("CI already ran bun test");
   });
 
   test("the apt tool install, the daemon test dependencies and `bun test` are the only steps skipped, and only on tests_proven", () => {
@@ -309,7 +395,7 @@ describe("publish.yml: skip the suite only for a proven proof-only tag", () => {
   test("no continue-on-error anywhere, and the added permission is read-only", () => {
     expect(readFileSync(join(repoRoot, ".github", "workflows", "publish.yml"), "utf8")).not.toContain("continue-on-error");
     const text = readFileSync(join(repoRoot, ".github", "workflows", "publish.yml"), "utf8");
-    expect(text.match(/^\s+checks: read$/gm)?.length).toBe(2); // workflow and job block both name it
-    expect(text).not.toMatch(/checks: write/);
+    expect(text.match(/^\s+actions: read$/gm)?.length).toBe(2); // workflow and job block both name it
+    expect(text).not.toMatch(/(?:actions|checks): write/);
   });
 });

@@ -1,6 +1,6 @@
 import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { createHash } from "crypto";
 
@@ -238,6 +238,114 @@ describe("the hook still runs the full suites for everything that is not a gated
     const r = push("scratch-tag");
     expect(r.suiteRan).toBe(true);
     expect(r.err).toContain("not a vMAJOR.MINOR.PATCH release tag");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  // ---- Codex review r1 bypasses: each of these skipped the suites on 90748ee6 ----
+
+  test("B1: a force-update that DROPS code the remote branch has, behind a valid proof, runs the suite", () => {
+    const build = releaseRepo();
+    git("checkout", "-q", "-b", "feat");
+    put("src/tts.ts", "export const feature = 1;\n");
+    commitAll("feature code");
+    expect(push("feat").suiteRan).toBe(true);
+    rmSync(marker, { force: true });
+    git("reset", "-q", "--hard", "main"); // the rewrite discards the feature commit
+    writeProof(build);
+    commitAll("proof only, built on main");
+    const r = push("--force", "feat");
+    expect(r.suiteRan).toBe(true);
+    expect(r.err).toContain("does not contain the remote tip");
+    expect(r.err).not.toContain("RELEASE-ONLY PUSH");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("B1: a remote tip this checkout has never seen runs the suite (not diffed against main)", () => {
+    const build = releaseRepo();
+    // someone else pushes code to feat2; this checkout never fetches it
+    const other = join(root, "other");
+    Bun.spawnSync(["git", "clone", "-q", "-b", "main", origin, other], { env: { ...process.env, ...fixtureEnv() } });
+    const og = (...args: string[]) => Bun.spawnSync(["git", "-C", other, "-c", "commit.gpgsign=false", ...args], { env: { ...process.env, ...fixtureEnv() }, stdout: "pipe", stderr: "pipe" });
+    og("checkout", "-q", "-b", "feat2");
+    writeFileSync(join(other, "src/tts.ts"), "export const theirs = 1;\n");
+    og("commit", "-q", "-am", "their code");
+    expect(og("push", "-q", "origin", "feat2").exitCode).toBe(0);
+    git("checkout", "-q", "-b", "feat2");
+    writeProof(build);
+    commitAll("proof only");
+    const r = push("--force", "feat2");
+    expect(r.suiteRan).toBe(true);
+    expect(r.err).toContain("is not in this checkout");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("B1: a new branch with no <remote>/main to diff against runs the suite", () => {
+    const build = releaseRepo();
+    git("checkout", "-q", "-b", "proof");
+    writeProof(build);
+    commitAll("proof");
+    git("update-ref", "-d", "refs/remotes/origin/main");
+    const r = push("proof");
+    expect(r.suiteRan).toBe(true);
+    expect(r.err).toContain("no refs/remotes/origin/main");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("B2: a tag older than v2.4.0 (the gate exits 0 without verifying any proof) runs the suite", () => {
+    releaseRepo();
+    git("checkout", "-q", "-b", "oldtag");
+    put("package.json", JSON.stringify({ name: "voicelayer-mcp", version: "2.3.5" }));
+    put("src/tts.ts", "export const unreviewed = 1;\n");
+    commitAll("code under an old-looking tag");
+    git("tag", "-a", "-m", "VoiceLayer v2.3.5", "v2.3.5");
+    const r = push("v2.3.5");
+    expect(r.suiteRan).toBe(true);
+    expect(r.err).toContain("without affirming an installed-candidate proof");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("B2: a tag whose proof commit also DELETES a release-proofs file runs the suite (the gate's path check allows deletes)", () => {
+    releaseRepo();
+    git("checkout", "-q", "-b", "release");
+    put("release-proofs/old-note.json", "{}\n");
+    const build = commitAll("a file under release-proofs in the proven build");
+    writeProof(build);
+    git("rm", "-q", "release-proofs/old-note.json");
+    commitAll("proof plus a deletion");
+    git("tag", "-a", "-m", "VoiceLayer v2.4.0", "v2.4.0");
+    const r = push("v2.4.0");
+    expect(r.suiteRan).toBe(true);
+    expect(r.err).toContain("only added or modified");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("S4: a proof that is a symlink (the gate would follow it) runs the suite", () => {
+    const build = releaseRepo();
+    git("checkout", "-q", "-b", "linkproof");
+    writeProof(build, "real"); // a valid proof body at release-proofs/real.json
+    symlinkSync("real.json", join(work, "release-proofs", "v2.4.0.json"));
+    commitAll("proof as a symlink to a valid-looking file");
+    const r = push("linkproof");
+    expect(r.suiteRan).toBe(true);
+    expect(r.err).toContain("git mode 120000");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("S4: a gitlink (submodule entry) under release-proofs/ runs the suite", () => {
+    const build = releaseRepo();
+    git("checkout", "-q", "-b", "gitlink");
+    writeProof(build);
+    git("add", "release-proofs/v2.4.0.json");
+    git("update-index", "--add", "--cacheinfo", `160000,${build},release-proofs/sub`);
+    git("commit", "-q", "-m", "proof plus a gitlink");
+    mkdirSync(join(work, "release-proofs/sub")); // an empty submodule directory keeps the tree clean
+    const r = push("gitlink");
+    expect(r.suiteRan).toBe(true);
+    expect(r.err).toContain("git mode 160000");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("S5: a bun test file under release-proofs/ beside a valid proof runs the suite", () => {
+    const build = releaseRepo();
+    git("checkout", "-q", "-b", "sneaky");
+    writeProof(build);
+    put("release-proofs/sneaky.test.ts", "import { test } from 'bun:test'; test('x', () => {});\n");
+    commitAll("proof plus a test file");
+    const r = push("sneaky");
+    expect(r.suiteRan).toBe(true);
+    expect(r.err).toContain("sneaky.test.ts");
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("no stdin from git (a manual run of the hook) runs the suite", () => {

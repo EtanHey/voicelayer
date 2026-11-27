@@ -95,14 +95,19 @@ the real app by `record` and again by promotion, which must be given the committ
 The proof commit, its PR and the tag carry no product code, so three places skip work for them.
 All three share one allow-list, `scripts/release_only_diff.py`, equal to the release gate's own
 `isProofOnlyPath`: **added or modified files under `release-proofs/`, except
-`release-proofs/proof-hosts.json`**. Nothing else: not `package.json`, not a lockfile, not a doc, a
+`release-proofs/proof-hosts.json`, and except files the root `bun test` discovers by name
+(`*.test.ts`, `*_spec.js`, ...)**, and only regular files (git mode 100644: no symlink, submodule
+or executable). Nothing else: not `package.json`, not a lockfile, not a doc, a
 workflow or a script. A deleted file, a rename and an empty diff are never release-only. A parity
 test fails if the Python list and the TypeScript rule ever differ.
 
 - **Pre-push hook** (`.githooks/pre-push` → `scripts/pre_push_release_only.py`): when every pushed
-  ref is release-only vs its remote base (the remote tip, or for a new branch the merge base with
-  `<remote>/main`) and the release gate passes for each `release-proofs/vX.Y.Z.json` carried (a
-  `vX.Y.Z` tag push is checked by the gate alone), the Swift and bun suites are skipped and one line
+  ref is release-only vs its remote base (an existing branch's old tip, which must be known locally
+  and be an ancestor of the pushed commit, else the suites run; for a new branch the merge base with
+  `<remote>/main`, and with no such ref the suites run) and the release gate AFFIRMS an
+  installed-candidate proof for each `release-proofs/vX.Y.Z.json` carried (the gate merely exiting 0,
+  as it does for a pre-v2.4.0 tag, is not enough) with only release-only changes since the proven
+  build (a `vX.Y.Z` tag push needs the same affirmed proof and diff), the Swift and bun suites are skipped and one line
   `[pre-push] RELEASE-ONLY PUSH: ... SKIPPED by rule, not by --no-verify` is printed. Any doubt (a
   non-release path, a deleted ref, a dirty tracked tree, the pushed commit not being HEAD, no bun, a
   gate refusal) prints `[pre-push] full suites run: <why>` and runs the suites as before. The
@@ -113,8 +118,10 @@ test fails if the Python list and the TypeScript rule ever differ.
   the classifier from the PR's **base** commit, never from the PR; if it cannot answer, everything
   runs. Pushes to `main` always run everything.
 - **`publish.yml`**: after the release gate, `scripts/publish_tests_proven.py` checks that the
-  proven build (`release.gitCommit` in the proof) is an ancestor of the tag, differs from it only by
-  release-only files, and has a green `test` check run. If so, the audio tool install, the daemon test
+  proven build (`release.gitCommit` in the proof, read from the committed blob) is an ancestor of the
+  tag, differs from it only by release-only files, and that build's own `ci.yml` run shows the
+  `Run tests` step of job `test` succeeded on that exact commit (a check merely named `test` is not
+  evidence: the CI shortcut emits one). If so, the audio tool install, the daemon test
   dependencies and `bun test` are skipped (`PROOF-ONLY TAG` notice); typecheck, pack contract, pack and
   publish always run.
 
