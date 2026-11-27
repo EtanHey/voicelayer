@@ -646,6 +646,21 @@ function retractionContentLoss(
     if (countMatches(candidate.normalize("NFKC"), marker) <
         countMatches(cleanedText.normalize("NFKC"), marker)) return "deleted";
   }
+  // A dash attached to a word ("go— going") marks THAT word as cut off. The count above would still
+  // pass if the model moved the dash to another word; bind each source marker to its word occurrence.
+  const attachedDashWords = (text: string): Set<number> => {
+    const indices = new Set<number>();
+    let index = 0;
+    for (const match of text.normalize("NFKC").matchAll(/[\p{L}\p{N}'’]+(—)?/gu)) {
+      if (match[1]) indices.add(index);
+      index++;
+    }
+    return indices;
+  };
+  const candidateDashWords = attachedDashWords(candidate);
+  for (const index of attachedDashWords(cleanedText)) {
+    if (!candidateDashWords.has(index)) return "deleted";
+  }
   const markerPositions = falseStartMarkerStreamPositions(cleanedText);
   if (markerPositions.length === 0) return null;
 
@@ -1292,7 +1307,15 @@ function conservedContentTokens(text: string, protectProseOne = false): string[]
     .match(/[\p{L}\p{N}'’]+(?:\.{3})?|[,.!?;:]/gu)
     ?.map((token, index, words) => {
       if (/^[,.!?;:]$/u.test(token)) return null;
-      const lower = token.toLowerCase().replace(/['’]/gu, "");
+      // Apostrophes belong to the word: "well" and "we'll" differ, and a curly apostrophe is a
+      // straight one. Only the negation contractions already allowed above ("dont" and "don't")
+      // are one spelling; every other apostrophe placement is kept as spoken.
+      const glyphNormalized = token.toLowerCase().replace(/’/gu, "'");
+      const apostropheFree = glyphNormalized.replace(/'/gu, "");
+      // "what's" joins to the supported /whats-new slash command, which drops its apostrophe.
+      const supportedRepair = (word: string) => NEGATION_TOKENS.has(word) || word === "whats";
+      const lower = supportedRepair(apostropheFree.replace(/\.{3}$/u, ""))
+        ? apostropheFree : glyphNormalized;
       const cutoff = lower.endsWith("...");
       const base = cutoff ? lower.slice(0, -3) : lower;
       // Bind the cutoff to this occurrence in the ordered stream; a later

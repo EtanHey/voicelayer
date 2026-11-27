@@ -53,6 +53,13 @@ export function formatDeliveryDashes(text: string): string {
       const fragment = !left && /^[—]/u.test(all) ? before.match(/[\p{L}\p{M}]+$/u)?.[0] : undefined;
       const restart = following.match(/^[\p{L}\p{M}]+/u)?.[0];
       if (fragment && restart?.toLowerCase().startsWith(fragment.toLowerCase())) return "… ";
+      // A word cut off by a dash that the next word does not follow directly ("fu— no wait", or a
+      // take that ends on "fu—") is an interruption, not a clause break: keep it as the ellipsis
+      // fragment even when the restart does not repeat the same letters.
+      if (fragment && (all.length > 1 || following === "")) {
+        const gap = following === "" || /^[\r\n]/u.test(following) ? "" : " ";
+        return "…" + gap;
+      }
       const punctuation = left || right || (previous && /[,;:.!?]/u.test(previous) ? "" : ",");
       const next = text[offset + at + all.length];
       return punctuation + (next && !/[\r\n]/u.test(next) ? " " : "");

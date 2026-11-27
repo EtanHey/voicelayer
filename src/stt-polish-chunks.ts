@@ -43,6 +43,10 @@ export async function polishLongTake(input: STTPolishInput, budgetMs: number,
     if (part.eligible && performance.now() < deadline && failure?.status !== "failed") {
       let result = await run({ ...input, rawText: body, cleanedText: body }, deadline);
       attempted++;
+      // A chunk that came back after the shared deadline is not trusted: keep its source slice.
+      if (result.status === "applied" && performance.now() >= deadline) {
+        result = { ...result, status: "rejected", text: body, polished: false, changed: false, reason: "chunk returned after the shared deadline" };
+      }
       if (result.status === "applied" && !preservesChunkSeam(body, result.text,
         part.start > 0 && !terminal(input.cleanedText.slice(0, part.start)), part.end < input.cleanedText.length)) {
         result = { ...result, status: "rejected", text: body, polished: false, changed: false, reason: "chunk seam changed" };

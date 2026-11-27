@@ -571,7 +571,7 @@ export async function finalizeTranscriptionResultForSurface(
   // Existing layout and safe acoustic boundaries win; the floor changes only whitespace.
   const paragraphText = (text: string): string => measureTakeStage("dictionary_rules", () => {
     // Code whitespace is content: abstain before either paragraph stage.
-    if (hasParagraphCodeBlock(text)) return text;
+    if (hasParagraphCodeBlock(text)) return formatDeliveryDashes(text);
     const candidate = !coherentParagraphsEnabled(env) && pauseParagraphsEnabled(env) && boundaryContext
       ? applyPauseParagraphs(text, boundaryContext.segments, boundaryContext.pauses)
       : text;
