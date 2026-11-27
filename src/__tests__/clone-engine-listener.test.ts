@@ -22,14 +22,20 @@ class Health(BaseHTTPRequestHandler):
         self.send_response(200); self.end_headers()
         self.wfile.write(json.dumps({'status':'ok', 'pid':os.getpid(), 'model_loaded':False}).encode())
     def log_message(self, *args): pass
-def run(app, fd, log_level):
-    server = HTTPServer(('127.0.0.1', 0), Health, bind_and_activate=False)
-    server.socket.close()
-    server.socket = socket.fromfd(fd, socket.AF_INET, socket.SOCK_STREAM)
-    Path(marker).write_text(str(server.socket.getsockname()[1]))
-    server.serve_forever()
+class Config:
+    def __init__(self, app, *, fd, log_level):
+        self.fd = fd
+class Server:
+    def __init__(self, config):
+        self.config = config
+    def run(self):
+        with HTTPServer(('127.0.0.1', 0), Health, bind_and_activate=False) as server:
+            server.socket.close()
+            server.socket = socket.fromfd(self.config.fd, socket.AF_INET, socket.SOCK_STREAM)
+            Path(marker).write_text(str(server.socket.getsockname()[1]))
+            server.serve_forever()
 engine.create_app = create
-sys.modules['uvicorn'] = types.SimpleNamespace(run=run)
+sys.modules['uvicorn'] = types.SimpleNamespace(Config=Config, Server=Server)
 sys.argv = ['fake-engine', '--host', '127.0.0.1', '--port', str(port)]
 engine.main()
 `;
