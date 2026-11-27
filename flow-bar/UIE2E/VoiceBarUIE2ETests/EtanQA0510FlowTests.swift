@@ -68,7 +68,7 @@ extension VoiceBarFlowTests {
 
     func testN1SettingsContainControlsInsteadOfWindowHandoffs() throws {
         var observations: [(String, Int, Int)] = []
-        for title in ["General", "Transcription", "Dictionary", "Narration", "History"] {
+        for title in ["Dictation", "Narration", "Dictionary", "Transcription", "General"] {
             try e2e24Fixture("tooltips-settings", owner: "lane-A")
             try qa0510Require(qa0510Tabs.buttons[title])
             click(qa0510Tabs.buttons[title])

@@ -84,13 +84,14 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertFalse(source.contains("Picker(\"Anchor\""))
     }
 
+    /// GO-1126 W1: Dictation · Narration · Dictionary · Transcription · General.
     func testSettingsUsesFiveDestinationOrder() {
         XCTAssertEqual(
             SettingsTab.allCases,
-            [.general, .transcription, .dictionary, .speech, .history]
+            [.history, .speech, .dictionary, .transcription, .general]
         )
         XCTAssertEqual(SettingsTab.allCases.map(\.title), [
-            "General", "Transcription", "Dictionary", "Narration", "History",
+            "Dictation", "Narration", "Dictionary", "Transcription", "General",
         ])
     }
 
@@ -104,13 +105,21 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertFalse(modelSource.contains("LabeledContent(\"Speech model\")"))
     }
 
+    /// `speech`, `history` and `models` stay permanent aliases of the renamed tabs; the new titles route too.
     func testNarrationTitlesAndURLRouting() throws {
         XCTAssertEqual(SettingsTab.speech.title, "Narration")
         XCTAssertEqual(SettingsHistoryScope.speech.title, "Narration")
         XCTAssertTrue(try settingsViewSource().contains("settingsPage(title: SettingsTab.speech.title)"))
-        XCTAssertEqual(SettingsTab(urlComponent: "narration"), .speech)
-        XCTAssertEqual(SettingsTab(urlComponent: "NaRrAtIoN"), .speech)
         XCTAssertEqual(SettingsTab(urlComponent: "SpEeCh"), .speech)
+        XCTAssertEqual(SettingsTab(urlComponent: "narration"), .speech)
+        XCTAssertEqual(SettingsTab(urlComponent: "NARRATION"), .speech)
+        XCTAssertEqual(SettingsTab(urlComponent: "history"), .history)
+        XCTAssertEqual(SettingsTab(urlComponent: "Dictation"), .history)
+        XCTAssertEqual(SettingsTab(urlComponent: "models"), .transcription)
+        XCTAssertEqual(SettingsTab(urlComponent: "transcription"), .transcription)
+        XCTAssertEqual(SettingsTab(urlComponent: "general"), .general)
+        XCTAssertEqual(SettingsTab(urlComponent: "dictionary"), .dictionary)
+        XCTAssertNil(SettingsTab(urlComponent: "speak"))
     }
 
     func testDictionarySourceLabelsStayTypedAndPlainLanguage() {
@@ -132,7 +141,7 @@ final class SettingsViewContractTests: XCTestCase {
         let source = try settingsViewSource()
 
         XCTAssertTrue(source.contains("case history"))
-        XCTAssertTrue(source.contains("title: \"History\""))
+        XCTAssertTrue(source.contains("title: SettingsTab.history.title"))
         XCTAssertTrue(source.contains("historyTab"))
         XCTAssertTrue(source.contains("historyGroups"))
         XCTAssertTrue(source.contains("SettingsArchiveIndex.shared.dictationPage"))

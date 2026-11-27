@@ -1,6 +1,6 @@
 import Foundation
 
-/// The sentence Settings › History › Speech shows for a record's state and reason.
+/// The sentence History › Narration shows for a record's state and reason.
 /// Display only: the reason codes are the daemon's wire values and are never rewritten here.
 /// `src/__tests__/speech-reason-copy-guard.test.ts` fails when `speechReasons` gains a code this file does not map.
 enum SettingsSpeechReasonCopy {

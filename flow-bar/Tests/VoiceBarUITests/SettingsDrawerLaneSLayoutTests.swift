@@ -88,18 +88,19 @@ final class SettingsDrawerLaneSLayoutTests: XCTestCase {
     /// (8 pt), in every grouped-Form tab. On 8e1d5352 the cards started 28 pt in.
     func testSectionCardsLineUpWithTheTabBarEdges() async throws {
         let updates = await SettingsDrawerLaneSSnapshotTests.updates()
+        // The tab bar spans the drawer minus its inset; the first tab's selected fill starts there (GO-1126 W1:
+        // Dictation is the first tab, so the fixture selects it to show that edge).
+        let tabEdge = NotchSettingsDrawerPresentation.horizontalInset
+        let tabs = try SettingsDrawerLaneSSnapshotTests.render(
+            SettingsDrawerLaneSSnapshotTests.drawer(.history, updates: nil), height: 470, name: "gutter-scratch-tabs")
+        XCTAssertEqual(try XCTUnwrap(Self.firstPaintedX(tabs, atY: 20)), tabEdge, accuracy: 1,
+                       "fixture: the selected first tab's fill marks the tab bar's left edge")
         for tab in [SettingsTab.general, .transcription] {
             let view = SettingsDrawerLaneSSnapshotTests.drawer(tab, updates: tab == .general ? updates : nil)
             let bitmap = try SettingsDrawerLaneSSnapshotTests.render(view, height: 470, name: "gutter-scratch")
             let lines = try Self.paintedLines(view, height: 470)
             let anchor = try Self.line(lines, containing: tab == .general ? "wireless mic" : "parakeet")
             let cardEdge = try XCTUnwrap(Self.firstPaintedX(bitmap, atY: anchor.box.midY))
-            // The tab bar spans the drawer minus its inset; its selected-tab fill starts there (General shows it).
-            let tabEdge = NotchSettingsDrawerPresentation.horizontalInset
-            if tab == .general {
-                XCTAssertEqual(try XCTUnwrap(Self.firstPaintedX(bitmap, atY: 20)), tabEdge, accuracy: 1,
-                               "fixture: the selected General tab's fill marks the tab bar's left edge")
-            }
             XCTAssertEqual(cardEdge, tabEdge, accuracy: 1.5,
                            "[S3] \(tab.title): card starts at \(cardEdge) pt, the tab bar at \(tabEdge) pt")
         }

@@ -172,7 +172,7 @@ final class LaneANotchSurfaceNativeTests: XCTestCase {
         try anchored(gear).click()
         XCTAssertTrue(waitForReceipt("-> settings(general) (open settings general)", after: before))
         XCTAssertTrue(settingsTabs.waitForExistence(timeout: 3))
-        for title in ["General", "Transcription", "Dictionary", "Narration", "History"] {
+        for title in ["Dictation", "Narration", "Dictionary", "Transcription", "General"] {
             XCTAssertTrue(pill.buttons[title].exists, "\(title) tab")
         }
         before = events().count

@@ -279,7 +279,7 @@ final class UIE2ECoverageLedgerTests: XCTestCase {
         XCTAssertTrue(ledger.missingSurfaces.contains("Dictionary"))
         ledger.verifiedSurfaces.insert("Dictionary")
         XCTAssertFalse(ledger.missingSurfaces.contains("Dictionary"))
-        XCTAssertTrue(ledger.missingSurfaces.contains("History"))
+        XCTAssertTrue(ledger.missingSurfaces.contains("Dictation"))
     }
 
     func testDictationPasteNeverCoversAskResponsePaste() {

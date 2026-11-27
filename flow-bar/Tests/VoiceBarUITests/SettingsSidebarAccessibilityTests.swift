@@ -9,7 +9,8 @@ import XCTest
 @MainActor
 final class SettingsSidebarAccessibilityTests: XCTestCase {
     private final class SelectionBox {
-        var tab: SettingsTab = .general
+        /// GO-1126 W1: starts on the first tab (Dictation) and walks the ruled order.
+        var tab: SettingsTab = SettingsTab.allCases[0]
     }
 
     func testArrowKeysMoveTheSidebarSelectionAndTheRowReportsSelected() throws {
@@ -34,16 +35,18 @@ final class SettingsSidebarAccessibilityTests: XCTestCase {
         let table = try XCTUnwrap(firstTable(in: host), "the sidebar must be a native table-backed List")
         XCTAssertTrue(window.makeFirstResponder(table))
 
-        for expected in [SettingsTab.transcription, .dictionary, .speech, .history, .history] {
+        let order = SettingsTab.allCases
+        for expected in Array(order.dropFirst()) + [order[order.count - 1]] {
             try window.sendEvent(arrow(down: true, window: window))
             settle()
             XCTAssertEqual(box.tab, expected, "↓ must move the sidebar selection")
         }
         try window.sendEvent(arrow(down: false, window: window))
         settle()
-        XCTAssertEqual(box.tab, .speech, "↑ must move the sidebar selection back")
+        let back = order[order.count - 2]
+        XCTAssertEqual(box.tab, back, "↑ must move the sidebar selection back")
 
-        let speechRow = try XCTUnwrap(SettingsTab.allCases.firstIndex(of: .speech))
+        let speechRow = try XCTUnwrap(SettingsTab.allCases.firstIndex(of: back))
         XCTAssertEqual(table.selectedRow, speechRow)
         XCTAssertEqual(table.accessibilitySelectedRows()?.count, 1, "VoiceOver reads the selected row from here")
         XCTAssertEqual(table.rowView(atRow: speechRow, makeIfNecessary: false)?.isSelected, true)

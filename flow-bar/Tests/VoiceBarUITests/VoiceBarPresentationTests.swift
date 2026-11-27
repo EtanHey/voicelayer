@@ -375,7 +375,7 @@ final class VoiceBarPresentationTests: XCTestCase {
         let warmup = VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(
                 mode: .transcribing,
-                statusText: "Loading speech model"
+                statusText: "Loading transcription model"
             )
         )
         // c9-P: the spinner on the left, the rippling recording meter on the right, in the recording band's wings.
@@ -797,7 +797,7 @@ final class VoiceBarPresentationTests: XCTestCase {
         )
     }
 
-    func testLiveStatusTextCanSurfaceTranscribingWarmupLabel() {
+    func testLiveStatusTextPresentsRecognizerWarmupAsLoadingTranscriptionModel() {
         XCTAssertEqual(
             VoiceBarPresentation.liveStatusText(
                 mode: .transcribing,
@@ -810,7 +810,7 @@ final class VoiceBarPresentationTests: XCTestCase {
                 commandModeState: nil,
                 activeClipMarker: nil
             ),
-            "Loading speech model"
+            "Loading transcription model"
         )
     }
 
