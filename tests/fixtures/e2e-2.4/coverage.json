@@ -186,7 +186,7 @@
       "ReadyTimePasteTests/testTerminalReadOnlyTextAreaFocusIsTypedExactlyOnce",
       "ReadyTimePasteTests/testTerminalNonTextFocusIsTypedExactlyOnce",
       "ReadyTimePasteTests/testTerminalControlsKeepTakeInHistory",
-      "ReadyTimePasteTests/testTerminalMultilineTakeNeverPlansReturnExceptUnchangedCmux",
+      "ReadyTimePasteTests/testTerminalMultilineTakeNeverPlansReturn",
       "ReadyTimePasteTests/testNonTerminalNonTextFocusKeepsHistory",
       "ReadyTimePasteTests/testTerminalPostingBoundaryCannotRetargetOriginatingInput",
       "ReadyTimePasteTests/testTerminalNonTextFocusStillRequiresIdentityAndSecurity",

@@ -66,7 +66,7 @@ export interface PolishReplayEvidence {
   edges: ReturnType<typeof stageEdges>;
 }
 export function eligibleReplayEdges(replay: PolishReplayEvidence) {
-  return replay.edges.filter(edge => edge.to !== "polish" || replay.status === "applied");
+  return replay.edges.filter(edge => edge.to !== "polish" || (replay.status === "applied" || replay.status === "partial"));
 }
 export function summarizePolishReplays(replays: readonly PolishReplayEvidence[]) {
   const statuses = new Map<STTPolishStatus, number>();
@@ -75,7 +75,7 @@ export function summarizePolishReplays(replays: readonly PolishReplayEvidence[])
     statuses.set(replay.status, (statuses.get(replay.status) ?? 0) + 1);
     if (replay.failureKind) failures.set(replay.failureKind, (failures.get(replay.failureKind) ?? 0) + 1);
   }
-  const applied = replays.filter(replay => replay.status === "applied");
+  const applied = replays.filter(replay => (replay.status === "applied" || replay.status === "partial"));
   const edits = applied.flatMap(replay => replay.edges.filter(edge => edge.to === "polish").flatMap(edge => edge.edits));
   return { total: replays.length, applied: applied.length, statuses: Object.fromEntries(statuses), failures: Object.fromEntries(failures),
     appliedDeletedTokens: applied.length ? edits.filter(e => e.kind === "delete").length : null,

@@ -11,6 +11,40 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Release-only diff
+    # Decides whether a PR carries only release-proofs/ (the release gate's allow-list). Never
+    # required itself; the required jobs below read its output. Any doubt (no base script, a git
+    # error, a push event) leaves release_only empty and the required jobs run in full.
+    runs-on: ubuntu-latest
+    outputs:
+      release_only: ${{ steps.classify.outputs.release_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The classifier is read from the PR's BASE, never from the PR: a PR cannot edit the rule
+      # that decides whether its own checks run. Before this script exists on the base, the step
+      # fails, output stays empty and everything runs.
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted
+          persist-credentials: false
+
+      - name: Classify the PR diff against the release-proofs/ allow-list
+        id: classify
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 .trusted/scripts/release_only_diff.py --base "$BASE_SHA" --head "$HEAD_SHA" --github-output "$GITHUB_OUTPUT"
+
   docs-local-guard:
     name: No tracked docs.local
     runs-on: ubuntu-latest
@@ -20,17 +54,27 @@ jobs:
         run: bash scripts/guard-no-docslocal.sh
 
   test:
+    needs: changes
+    # Run even if the classifier job failed: no answer means everything runs.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
+      - name: Release-only PR, required job passes without running
+        if: needs.changes.outputs.release_only == 'true'
+        run: |
+          echo "::notice title=RELEASE-ONLY PR::this diff touches only release-proofs/ (the release gate's allow-list); test is reported green WITHOUT running its steps. Branch protection is unchanged."
+
       - uses: actions/checkout@v4
         with:
           # docs/control-availability/test_c5_inventory.py reads sources at a pinned earlier commit
           # (`git show <sha>:<path>`); a depth-1 checkout does not have it (candidate 8, PR #903).
           fetch-depth: 0
+        if: needs.changes.outputs.release_only != 'true'
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+        if: needs.changes.outputs.release_only != 'true'
 
       - name: Install audio test tools
         run: |
@@ -38,26 +82,33 @@ jobs:
           sudo apt-get install -y ffmpeg
           ffmpeg -version
           ffprobe -version
+        if: needs.changes.outputs.release_only != 'true'
 
       - run: bun install --frozen-lockfile
+        if: needs.changes.outputs.release_only != 'true'
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+        if: needs.changes.outputs.release_only != 'true'
 
       - name: Install daemon test dependencies
         run: python3 -m pip install -r tests/requirements-tts-daemon.txt
+        if: needs.changes.outputs.release_only != 'true'
 
       - name: Test TTS daemon
         run: python3 -m pytest -q tests/test_tts_daemon_cancel.py tests/test_tts_daemon.py tests/test_tts_daemon_security.py tests/test_model_residency.py tests/test_tts_high_water.py
+        if: needs.changes.outputs.release_only != 'true'
 
       - name: Run tests
         env:
           VOICELAYER_REQUIRE_TTS_DAEMON_DEPS: '1'
         run: bun test
+        if: needs.changes.outputs.release_only != 'true'
 
       - name: Type check
         run: bun run typecheck
+        if: needs.changes.outputs.release_only != 'true'
 
   swift:
     name: Swift (VoiceBar)
@@ -65,19 +116,30 @@ jobs:
     # noticed, because no job ran it. VoiceBarUI uses macOS 26 SDK API
     # (glassEffect), so this needs an Xcode 26+ image. Public repo: macOS
     # runner minutes are free.
-    runs-on: macos-26
+    needs: changes
+    # Run even if the classifier job failed: no answer means everything runs.
+    if: ${{ !cancelled() }}
+    runs-on: ${{ needs.changes.outputs.release_only == 'true' && 'ubuntu-latest' || 'macos-26' }}
     # 30 was exceeded by candidate 8's suite (2,533 UI + 798 core tests; cancelled at 30m, PR #903).
     timeout-minutes: 60
     steps:
+      - name: Release-only PR, required job passes without running
+        if: needs.changes.outputs.release_only == 'true'
+        run: |
+          echo "::notice title=RELEASE-ONLY PR::this diff touches only release-proofs/ (the release gate's allow-list); Swift (VoiceBar) is reported green WITHOUT running its steps. Branch protection is unchanged."
+
       - uses: actions/checkout@v4
+        if: needs.changes.outputs.release_only != 'true'
 
       - name: Toolchain
         run: |
           xcodebuild -version
           swift --version
+        if: needs.changes.outputs.release_only != 'true'
 
       - name: Build VoiceBar
         run: swift build --package-path flow-bar --product VoiceBar
+        if: needs.changes.outputs.release_only != 'true'
 
       # Etan ruling 2: the QA probes are dev/CI-only. The release configuration must compile
       # them out; this is the same check build-app.sh and release-voicebar.sh run.
@@ -85,26 +147,31 @@ jobs:
         run: |
           swift build -c release --package-path flow-bar --product VoiceBar
           bash scripts/check-voicebar-qa-free.sh "$(swift build -c release --package-path flow-bar --show-bin-path)/VoiceBar"
+        if: needs.changes.outputs.release_only != 'true'
 
       # #416 C1: nothing compiled the QA-only UIE2E sources, so they could stop building
       # unnoticed. Same flags as `VOICEBAR_QA_BUILD=1 VOICEBAR_UIE2E_GATE2245=1 build-app.sh`.
       # Runs after the QA-free check above, so the release binary it checked is not this one.
       - name: QA-only UIE2E sources compile (hide1, gate2246)
         run: bash scripts/check-voicebar-qa-compile.sh
+        if: needs.changes.outputs.release_only != 'true'
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+        if: needs.changes.outputs.release_only != 'true'
 
       - run: bun install --frozen-lockfile
+        if: needs.changes.outputs.release_only != 'true'
 
       - name: Swift tests
         run: swift test --package-path flow-bar
+        if: needs.changes.outputs.release_only != 'true'
 
       # Lane c10-K: hosted xctest died twice with signal 11 and left nothing to read. On failure,
       # keep the crash reports and the xctest unified log so the next crash names its frame.
       - name: Collect Swift crash evidence
-        if: failure()
+        if: ${{ (failure()) && needs.changes.outputs.release_only != 'true' }}
         run: |
           out=.build.noindex/swift-crash-evidence
           mkdir -p "$out"
@@ -124,7 +191,7 @@ jobs:
           ls -la "$out"
 
       - name: Upload Swift crash evidence
-        if: failure()
+        if: ${{ (failure()) && needs.changes.outputs.release_only != 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: swift-crash-evidence-${{ github.run_attempt }}

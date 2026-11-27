@@ -1,12 +1,15 @@
 import Foundation
 import SwiftUI
 
+/// The notch Settings drawer's tabs, in on-screen order (GO-1126 W1): Dictation · Narration · Dictionary ·
+/// Transcription · General. The case names predate the rename (`.history` is the Dictation tab, the notch's History
+/// list; `.speech` is Narration) and stay so deep links, requests and stores keep their identity.
 public enum SettingsTab: Hashable, CaseIterable, Identifiable {
-    case general
-    case transcription
-    case dictionary
-    case speech
     case history
+    case speech
+    case dictionary
+    case transcription
+    case general
 
     public var id: Self {
         self
@@ -14,32 +17,35 @@ public enum SettingsTab: Hashable, CaseIterable, Identifiable {
 
     public var title: String {
         switch self {
-        case .general: "General"
-        case .speech: "Speech"
-        case .transcription: "Transcription"
+        case .history: "Dictation"
+        case .speech: "Narration"
         case .dictionary: "Dictionary"
-        case .history: "History"
+        case .transcription: "Transcription"
+        case .general: "General"
         }
     }
 
-    /// Case-insensitive `voicebar://settings/<tab>` routing; `models` is a permanent legacy alias.
+    /// Case-insensitive `voicebar://settings/<tab>` routing by title. Permanent aliases: `models` (Transcription),
+    /// `speech` (Narration) and `history` (Dictation), so links written before a rename keep opening their tab.
     public init?(urlComponent: String) {
-        if urlComponent.lowercased() == "models" {
-            self = .transcription
+        let component = urlComponent.lowercased()
+        if let alias = Self.urlAliases[component] {
+            self = alias
             return
         }
-        guard let tab = Self.allCases.first(where: { $0.title.lowercased() == urlComponent.lowercased() })
-        else { return nil }
+        guard let tab = Self.allCases.first(where: { $0.title.lowercased() == component }) else { return nil }
         self = tab
     }
 
+    static let urlAliases: [String: SettingsTab] = ["models": .transcription, "speech": .speech, "history": .history]
+
     public var systemImage: String {
         switch self {
-        case .general: "gearshape"
-        case .speech: "speaker.wave.2"
-        case .transcription: "waveform"
-        case .dictionary: "text.book.closed"
         case .history: "clock.arrow.circlepath"
+        case .speech: "speaker.wave.2"
+        case .dictionary: "text.book.closed"
+        case .transcription: "waveform"
+        case .general: "gearshape"
         }
     }
 }
@@ -84,7 +90,7 @@ public enum SettingsHistoryScope: String, Hashable, CaseIterable, Sendable {
         switch self {
         case .recording: "Dictations"
         case .ask: "Ask"
-        case .speech: "Speech"
+        case .speech: "Narration"
         }
     }
 }
@@ -521,7 +527,8 @@ public struct SettingsView: View {
     public let askHistorySearchPage: @Sendable (Int, String) async -> SettingsAskHistoryPage
     /// Warms the search text in the background once History has its pages (lead add-on).
     public let searchPrewarm: @Sendable () async -> Void
-    public let onCopyHistoryTranscript: (String) -> Void
+    /// Returns nil when the copy handler is unavailable.
+    public let onCopyHistoryTranscript: (String) -> Bool?
     public let onPasteHistoryTranscript: (String) -> Void
     public let onRetranscribeHistoryEntry: (String) -> Void
     public let historyRunLog: () -> SettingsHistoryRunLog
@@ -652,6 +659,8 @@ public struct SettingsView: View {
     @State private var hoveredMicrophoneIndex: Int?
     @Environment(\.settingsHoverPreview) private var settingsHoverPreview
     @State private var setupHighlight = SettingsArrivalHighlight()
+    @State private var setupRepairFeedback = SettingsSetupRepairFeedback()
+    @State private var previousGeneralSetup: SettingsGeneralSetup?
     @FocusState private var focusedSetupFix: SettingsSetupStepID?
     @State private var microphoneSnapshot = MicrophonePrioritySnapshot.unavailable
     @State private var microphoneDrag: MicrophoneDragState
@@ -737,7 +746,7 @@ public struct SettingsView: View {
             await SettingsArchiveIndex.shared.prewarmSearchText()
         },
         initialAskHistoryPage: SettingsAskHistoryPage? = nil,
-        onCopyHistoryTranscript: @escaping (String) -> Void = { _ in },
+        onCopyHistoryTranscript: @escaping (String) -> Bool? = { _ in nil },
         onPasteHistoryTranscript: @escaping (String) -> Void = { _ in },
         onRetranscribeHistoryEntry: @escaping (String) -> Void = { _ in },
         historyRunLog: @escaping () -> SettingsHistoryRunLog = { SettingsHistoryRunLog() },
@@ -1023,11 +1032,11 @@ public struct SettingsView: View {
                 dictionaryTab
             case .history:
                 settingsPage(
-                    title: "History",
+                    title: SettingsTab.history.title,
                     subtitle: "Your recordings and conversations"
                 ) { historyTab }
             case .speech:
-                settingsPage(title: "Speech") { speechPane }
+                settingsPage(title: SettingsTab.speech.title) { speechPane }
             case .transcription:
                 settingsPage(title: "Transcription") { transcriptionTab }
             case .general:
@@ -1253,9 +1262,16 @@ public struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        // A success line has nothing left to say once health is back; a later break starts clean.
-        .onChange(of: generalSetup.isHealthy) { _, healthy in
-            if healthy { hotkeyListenerRestartLine = nil }
+        .onChange(of: generalSetup, initial: true) { _, current in
+            let previous = previousGeneralSetup
+            previousGeneralSetup = current
+            if current.isHealthy { hotkeyListenerRestartLine = nil }
+            guard let previous,
+                  setupRepairFeedback.observe(from: previous, to: current, at: Date()) else { return }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(SettingsSetupRepairFeedback.duration))
+                setupRepairFeedback.expire(at: Date())
+            }
         }
         .onAppear(perform: refreshMicrophoneSnapshot)
         .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
@@ -1269,14 +1285,15 @@ public struct SettingsView: View {
 
     // MARK: - General setup (R2)
 
-    /// Permission health (Etan, 2026-11-07): nothing at all when every permission is on and F5 works, even right after
-    /// the restart that fixed it; otherwise only the broken steps, each with its fix, and the last restart's line.
+    /// Shows actionable problems and briefly keeps a repaired row in place for its done mark.
     @ViewBuilder
     private var setupSection: some View {
         let setup = generalSetup
-        if setup.showsSection {
+        // Keep the same row identity in the first render of a repaired snapshot, before onChange starts the timer.
+        let visibleSteps = setupRepairFeedback.visibleSteps(in: setup, transitioningFrom: previousGeneralSetup, at: Date())
+        if !visibleSteps.isEmpty {
             Section {
-                ForEach(setup.steps, id: \.id) { step in
+                ForEach(visibleSteps, id: \.id) { step in
                     setupStepRow(step)
                 }
                 if let hotkeyListenerRestartLine = setup.visibleRestartLine(hotkeyListenerRestartLine) {
@@ -2436,18 +2453,17 @@ public struct SettingsView: View {
         isRetranscribing: Bool,
         enablement: SettingsHistoryActionEnablement
     ) -> some View {
-        HStack(spacing: 8) {
+        HistoryActionRow { copyFeedback in
             ForEach(part.actions.filter { enablement.availability($0, for: part) != .hidden }, id: \.self) { action in
                 historyActionButton(
                     action,
                     for: part,
                     isRetranscribing: isRetranscribing,
-                    enablement: enablement
+                    enablement: enablement,
+                    copyFeedback: copyFeedback
                 )
             }
         }
-        .buttonStyle(.borderless)
-        .controlSize(.small)
     }
 
     // AIDEV-NOTE: the in-flight Re-transcribe icon turns off the clock (HistorySpinningSymbol), never an implicit
@@ -2482,7 +2498,8 @@ public struct SettingsView: View {
         _ action: SettingsHistoryAction,
         for part: SettingsHistoryMediaPart,
         isRetranscribing: Bool,
-        enablement: SettingsHistoryActionEnablement
+        enablement: SettingsHistoryActionEnablement,
+        copyFeedback: Binding<CopyFeedback>
     ) -> some View {
         let disabled = !enablement.isEnabled(action, for: part)
         let reason: String? = if case let .unavailable(why) = enablement.availability(action, for: part) {
@@ -2518,12 +2535,11 @@ public struct SettingsView: View {
             .accessibilityLabel("\(isPlaying ? "Stop" : "Play") \(part.accessibilityNoun)")
 
         case .copy:
-            Button {
-                guard let text = part.actionableText else { return }
-                onCopyHistoryTranscript(text)
-            } label: {
-                historyActionLabel("Copy", systemImage: "doc.on.doc", isEnabled: !disabled)
+            CopyFeedbackButton("Copy transcript", feedback: copyFeedback, targetSize: 28, showsNativeTooltip: false) {
+                guard let text = part.actionableText else { return false }
+                return onCopyHistoryTranscript(text) == true
             }
+            .opacity(disabled ? SettingsHistoryActionStyle.disabledOpacity : 1)
             .disabled(disabled)
             .help(reason ?? "Copy transcript") // QA-03: says which copy this is.
             .accessibilityHint(reason ?? "")
@@ -2681,6 +2697,8 @@ public struct SettingsView: View {
                 }
                 // In the drawer, rows fade out under the toolbar instead of being cut through (lane S PR 3).
                 .modifier(NotchScrollEdgeFade(isActive: notchEmbeddedTab != nil))
+                // GO-1126 W1: the rows span the toolbar's width, centred in the drawer (no legacy scroller gutter).
+                .background { if notchEmbeddedTab != nil { NotchOverlayScroller() } }
                 // The list takes key focus like a macOS table: arrows move the selection, Delete/Backspace removes
                 // the selected term of your own (with Undo). The search field keeps its own text editing.
                 .focusable()
@@ -3760,4 +3778,17 @@ enum SettingsPermissionActions {
 
 private extension String {
     var lowercasedFirst: String { prefix(1).lowercased() + dropFirst() }
+}
+
+private struct HistoryActionRow<Content: View>: View {
+    @State private var copyFeedback = CopyFeedback()
+    @ViewBuilder let content: (Binding<CopyFeedback>) -> Content
+
+    var body: some View {
+        HStack(spacing: 8) {
+            content($copyFeedback)
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+    }
 }

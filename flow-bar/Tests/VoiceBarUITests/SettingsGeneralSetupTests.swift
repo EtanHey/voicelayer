@@ -51,6 +51,40 @@ final class SettingsGeneralSetupTests: XCTestCase {
         XCTAssertEqual(broken.firstBroken, .accessibility)
     }
 
+    func testRepairedAccessibilityKeepsItsDoneMarkBeforeLeavingGeneral() throws {
+        let now = Date(timeIntervalSince1970: 100)
+        let broken = setup(accessibility: false)
+        let healthy = setup()
+        var feedback = SettingsSetupRepairFeedback()
+
+        XCTAssertTrue(feedback.visibleSteps(in: healthy, at: now).isEmpty)
+        XCTAssertEqual(feedback.visibleSteps(in: healthy, transitioningFrom: broken, at: now).first?.markKind, .done)
+        XCTAssertTrue(feedback.observe(from: broken, to: healthy, at: now))
+        let visible = feedback.visibleSteps(in: healthy, at: now.addingTimeInterval(1.59))
+        XCTAssertEqual(visible.map(\.id), [.accessibility])
+        let repaired = try XCTUnwrap(visible.first)
+        XCTAssertEqual(repaired.markKind, .done)
+        XCTAssertNil(repaired.fix)
+        XCTAssertTrue(feedback.visibleSteps(in: healthy, at: now.addingTimeInterval(1.6)).isEmpty)
+        XCTAssertNil(healthy.firstBroken)
+    }
+
+    func testASecondRepairGetsAFullWindowAfterAccessBreaksAgain() {
+        let now = Date(timeIntervalSince1970: 100)
+        let broken = setup(accessibility: false)
+        let healthy = setup()
+        var feedback = SettingsSetupRepairFeedback()
+
+        feedback.observe(from: broken, to: healthy, at: now)
+        feedback.observe(from: healthy, to: broken, at: now.addingTimeInterval(0.5))
+        XCTAssertEqual(feedback.visibleSteps(in: broken, at: now.addingTimeInterval(0.5)), broken.steps)
+        feedback.observe(from: broken, to: healthy, at: now.addingTimeInterval(1))
+        feedback.expire(at: now.addingTimeInterval(1.6))
+        XCTAssertEqual(feedback.visibleSteps(in: healthy, at: now.addingTimeInterval(1.6)).map(\.id), [.accessibility])
+        feedback.expire(at: now.addingTimeInterval(2.6))
+        XCTAssertTrue(feedback.visibleSteps(in: healthy, at: now.addingTimeInterval(2.6)).isEmpty)
+    }
+
     func testEachPermissionDeepLinksToItsOwnPrivacyPane() {
         let panes: [(SettingsGeneralSetup, SettingsSetupStepID, String)] = [
             (setup(microphone: .denied), .microphone, "Privacy_Microphone"),

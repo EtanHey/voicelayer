@@ -200,7 +200,7 @@ struct VoiceBarNotchHistoryActionButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "clock.arrow.circlepath")
+            VoiceBarSymbol.image(VoiceBarSymbol.history)
                 .font(.system(size: 11, weight: .semibold))
                 .frame(width: VoiceBarNotchFeedback.historyButtonWidth,
                        height: VoiceBarNotchFeedback.historyButtonWidth)

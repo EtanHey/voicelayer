@@ -70,7 +70,7 @@ final class SettingsDesignPassArtifactTests: XCTestCase {
                 loadedEntryCount: Self.sampleHistoryGroups.reduce(0) { $0 + $1.entries.count },
                 hasMore: true
             ),
-            onCopyHistoryTranscript: { _ in },
+            onCopyHistoryTranscript: { _ in false },
             onPasteHistoryTranscript: { _ in },
             onRetranscribeHistoryEntry: { _ in },
             initialTab: tab

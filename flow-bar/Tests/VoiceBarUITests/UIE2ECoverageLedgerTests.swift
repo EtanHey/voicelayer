@@ -75,7 +75,7 @@ final class UIE2ECoverageLedgerTests: XCTestCase {
         focused.verifiedSurfaces = ["338:paste-feedback"]
         XCTAssertEqual(focused.missingSurfaces, ["338:busy"])
         let full = UIE2ECoverageLedger()
-        XCTAssertTrue(full.missingSurfaces.contains("Speech"))
+        XCTAssertTrue(full.missingSurfaces.contains("Narration"))
         XCTAssertFalse(focused.recordExpected(surface: "notch:list-newlines", issue: .listNewlines,
             descriptions: ["[P14b] unrelated known issue"]))
     }
@@ -279,7 +279,7 @@ final class UIE2ECoverageLedgerTests: XCTestCase {
         XCTAssertTrue(ledger.missingSurfaces.contains("Dictionary"))
         ledger.verifiedSurfaces.insert("Dictionary")
         XCTAssertFalse(ledger.missingSurfaces.contains("Dictionary"))
-        XCTAssertTrue(ledger.missingSurfaces.contains("History"))
+        XCTAssertTrue(ledger.missingSurfaces.contains("Dictation"))
     }
 
     func testDictationPasteNeverCoversAskResponsePaste() {

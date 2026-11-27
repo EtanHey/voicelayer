@@ -317,7 +317,7 @@ final class VoiceBarFlowTests: XCTestCase {
                 try mutate { coordinate.click() }
                 waitUntil { self.fixtureEvents().dropFirst(self.lastActionEventIndex).contains("microphone-order") }
                 XCTAssertFalse(resolve().exists, "The old Make default row must become Default")
-            } else if activePage == "History", type == .button,
+            } else if activePage == "Dictation", type == .button,
                       label.hasPrefix("QA fixture transcript") || label.hasPrefix("QA older transcript") || label.hasPrefix("QA loaded transcript") {
                 // Native RED: the plain row's AX centre falls between its two
                 // text lines; the older row stayed unselected after dispatch.
@@ -366,7 +366,7 @@ final class VoiceBarFlowTests: XCTestCase {
             case "General": content = app.buttons["Check shortcut"]
             case "Transcription": content = app.scrollViews["models-settings-form"]
             case "Dictionary": content = app.textFields["Search terms and variants"]
-            case "Speech": content = app.textFields["speech-short_limit_chars"]
+            case "Narration": content = app.textFields["speech-short_limit_chars"]
             default: content = app.radioButtons["Dictations"]
             }
             XCTAssertTrue(content.waitForExistence(timeout: 3))
@@ -418,9 +418,9 @@ final class VoiceBarFlowTests: XCTestCase {
         }
         // Dictionary's animated top-level edit sheet and inline delete confirmation
         // have separate Cancel controls. Exercise both before the long tab sweeps.
-        for (name, run) in [("Dictionary", dictionaryFlow), ("History", historyFlow), ("Pill", pillFlow),
+        for (name, run) in [("Dictionary", dictionaryFlow), ("Dictation", historyFlow), ("Pill", pillFlow),
             ("Popover", menuBarFlow), ("Context menu", contextMenuFlow), ("Notch", notchRegressionFlow),
-            ("General", generalFlow), ("Transcription", transcriptionFlow), ("Speech", speechFlow)] {
+            ("General", generalFlow), ("Transcription", transcriptionFlow), ("Narration", speechFlow)] {
             let before = testRun?.failureCount ?? 0
             run()
             step("verify completed surface \(name)", evidenceContract: name == "Context menu" ? "terminated" : "visible") {
@@ -533,7 +533,7 @@ extension VoiceBarFlowTests {
         let identity = section ?? (element.identifier.isEmpty ? (element.elementType == .popUpButton ? "voice-picker" : label) : element.identifier)
         var context = UIE2EControlContext(page: activePage)
         if label == "Open General settings" { context.page = "Navigation" }
-        if context.page == "History" {
+        if context.page == "Dictation" {
             let selector = element.elementType == .radioButton && ["Ask", "Dictations"].contains(label)
             context.scope = selector ? "scope-selector" : activeHistoryScope
             if label.hasPrefix("QA fixture transcript") { context.row = "qa-recording" }
@@ -553,7 +553,7 @@ extension VoiceBarFlowTests {
                 context.row = editingDictionaryRow
             }
         }
-        if activePage == "Speech", element.elementType == .popUpButton || element.elementType == .slider || label.contains("daemon command") {
+        if activePage == "Narration", element.elementType == .popUpButton || element.elementType == .slider || label.contains("daemon command") {
             context.profile = speechProfile(element)
         }
         return ledger.key(role: String(element.elementType.rawValue), identity: identity, context: context)
@@ -612,18 +612,18 @@ extension VoiceBarFlowTests {
     }
 
     func didActivate(label: String, type: XCUIElement.ElementType) {
-        if type == .staticText, ["General", "Transcription", "Dictionary", "Speech", "History"].contains(label) { activePage = label }
-        if label == "View history →" { activePage = "History" }
+        if type == .staticText, ["Dictation", "Narration", "Dictionary", "Transcription", "General"].contains(label) { activePage = label }
+        if label == "View history →" { activePage = "Dictation" }
         if label == "Open General settings" { activePage = "General" }
-        if activePage == "History", type == .radioButton, ["Ask", "Dictations"].contains(label) {
+        if activePage == "Dictation", type == .radioButton, ["Ask", "Dictations"].contains(label) {
             activeHistoryScope = label
             selectedHistoryRow = label == "Ask" ? "qa-ask-response" : "qa-recording"
             // Every scope receives an inventory; another scope's click cannot discharge it.
             observeControls()
         }
-        if activePage == "History", label.hasPrefix("QA fixture transcript") { selectedHistoryRow = "qa-recording" }
-        if activePage == "History", label.hasPrefix("QA older transcript") { selectedHistoryRow = "qa-older" }
-        if activePage == "History", label.hasPrefix("QA loaded transcript") { selectedHistoryRow = "qa-loaded" }
+        if activePage == "Dictation", label.hasPrefix("QA fixture transcript") { selectedHistoryRow = "qa-recording" }
+        if activePage == "Dictation", label.hasPrefix("QA older transcript") { selectedHistoryRow = "qa-older" }
+        if activePage == "Dictation", label.hasPrefix("QA loaded transcript") { selectedHistoryRow = "qa-loaded" }
         if activePage == "Dictionary" {
             for prefix in ["Edit term ", "Delete term "] where label.hasPrefix(prefix) {
                 editingDictionaryRow = String(label.dropFirst(prefix.count))
@@ -965,7 +965,7 @@ extension VoiceBarFlowTests {
     }
 
     func speechFlow() {
-        walk("Speech")
+        walk("Narration")
         for (index, kind) in ["short", "long"].enumerated() {
             let picker = app.popUpButtons["speech-\(kind).voice"]
             click(picker, "open grouped voice list \(index)")
@@ -1089,7 +1089,7 @@ extension VoiceBarFlowTests {
     }
 
     func historyFlow() {
-        walk("History")
+        walk("Dictation")
         click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA fixture transcript'")).firstMatch, "select fixture history row")
         // V27: the selected row is the last of its day, directly above the next day's header. Each day header's
         // accessibility element is its opaque cover (`history.dayHeader.cover`), so its frame includes the cover's

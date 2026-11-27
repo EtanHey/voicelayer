@@ -84,13 +84,14 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertFalse(source.contains("Picker(\"Anchor\""))
     }
 
+    /// GO-1126 W1: Dictation · Narration · Dictionary · Transcription · General.
     func testSettingsUsesFiveDestinationOrder() {
         XCTAssertEqual(
             SettingsTab.allCases,
-            [.general, .transcription, .dictionary, .speech, .history]
+            [.history, .speech, .dictionary, .transcription, .general]
         )
         XCTAssertEqual(SettingsTab.allCases.map(\.title), [
-            "General", "Transcription", "Dictionary", "Speech", "History",
+            "Dictation", "Narration", "Dictionary", "Transcription", "General",
         ])
     }
 
@@ -104,8 +105,18 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertFalse(modelSource.contains("LabeledContent(\"Speech model\")"))
     }
 
+    /// `speech`, `history` and `models` stay permanent aliases of the renamed tabs; the new titles route too.
     func testSpeechURLRouting() {
         XCTAssertEqual(SettingsTab(urlComponent: "SpEeCh"), .speech)
+        XCTAssertEqual(SettingsTab(urlComponent: "narration"), .speech)
+        XCTAssertEqual(SettingsTab(urlComponent: "NARRATION"), .speech)
+        XCTAssertEqual(SettingsTab(urlComponent: "history"), .history)
+        XCTAssertEqual(SettingsTab(urlComponent: "Dictation"), .history)
+        XCTAssertEqual(SettingsTab(urlComponent: "models"), .transcription)
+        XCTAssertEqual(SettingsTab(urlComponent: "transcription"), .transcription)
+        XCTAssertEqual(SettingsTab(urlComponent: "general"), .general)
+        XCTAssertEqual(SettingsTab(urlComponent: "dictionary"), .dictionary)
+        XCTAssertNil(SettingsTab(urlComponent: "speak"))
     }
 
     func testDictionarySourceLabelsStayTypedAndPlainLanguage() {
@@ -127,7 +138,7 @@ final class SettingsViewContractTests: XCTestCase {
         let source = try settingsViewSource()
 
         XCTAssertTrue(source.contains("case history"))
-        XCTAssertTrue(source.contains("title: \"History\""))
+        XCTAssertTrue(source.contains("title: SettingsTab.history.title"))
         XCTAssertTrue(source.contains("historyTab"))
         XCTAssertTrue(source.contains("historyGroups"))
         XCTAssertTrue(source.contains("SettingsArchiveIndex.shared.dictationPage"))
@@ -203,7 +214,7 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertEqual(SettingsHistoryScope.allCases.first, .recording)
         XCTAssertEqual(SettingsHistoryScope.recording.title, "Dictations")
         XCTAssertEqual(SettingsHistoryScope.ask.title, "Ask")
-        XCTAssertEqual(SettingsHistoryScope.speech.title, "Speech")
+        XCTAssertEqual(SettingsHistoryScope.speech.title, "Narration")
     }
 
     func testHistoryTabRendersASegmentedScopePickerDefaultingToRecording() throws {
@@ -539,9 +550,9 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("Privacy_Microphone"))
         XCTAssertTrue(source.contains("private var setupSection: some View"))
         // 2.3 U2's gear badge target now carries Setup (its first broken step); permission health shows the section
-        // only when something is broken.
+        // while a step needs attention or briefly after a repair.
         XCTAssertTrue(source.contains("Text(setup.header ?? \"Setup\")\n                    .id(SettingsFocus.permissions)"))
-        XCTAssertTrue(source.contains("if setup.showsSection {"))
+        XCTAssertTrue(source.contains("if !visibleSteps.isEmpty {"))
         XCTAssertTrue(source.contains("setup.visibleRestartLine(hotkeyListenerRestartLine)"))
         XCTAssertFalse(source.contains("All permissions granted"))
         XCTAssertTrue(source.contains("SettingsDisclosureRow(\"Advanced\", isExpanded:"))

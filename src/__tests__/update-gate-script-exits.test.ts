@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const CHILD_TIMEOUT_MS = 15_000;
@@ -15,7 +15,7 @@ function fixture(script: string, fault = "", managed = true, qa = false) {
   const original = qa ? join(root, "qa.noindex/VoiceBarQA.app") : app;
   for (const dir of [bin, app, original, join(root, "scripts/lib"), join(root, "flow-bar"), join(root, "launchd"), join(root, "home")])
     mkdirSync(dir, { recursive: true });
-  for (const tool of ["bash", "cat", "chmod", "cp", "dirname", "basename", "id", "mkdir", "awk", "sort", "uniq", "tr", "sed", "grep", "date", "env", "wc", "paste", "head", "tail", "readlink", "seq", "mv", "rm"])
+  for (const tool of ["bash", "cat", "chmod", "cp", "dirname", "basename", "id", "mkdir", "awk", "sort", "uniq", "tr", "sed", "grep", "date", "env", "wc", "paste", "head", "tail", "readlink", "seq", "mv", "rm", "mktemp", "rmdir"])
     symlinkSync(Bun.which(tool)!, join(bin, tool));
   const stub = (name: string, body: string) => writeFileSync(join(bin, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 });
   const relocate = (source: string) => {
@@ -55,7 +55,7 @@ function fixture(script: string, fault = "", managed = true, qa = false) {
       plutil) [[ "$TEST_FAULT" != plist ]];;
       *) exit 0;;
     esac`);
-  if (fault === "build-success") {
+  if (script === "flow-bar/build-app.sh") {
     mkdirSync(join(root, "flow-bar/bundle"), { recursive: true });
     mkdirSync(join(root, "src"));
     for (const file of ["package.json", "bun.lock", "flow-bar/bundle/Info.plist", "flow-bar/bundle/VoiceBar.entitlements",
@@ -64,14 +64,21 @@ function fixture(script: string, fault = "", managed = true, qa = false) {
     relocate("launchd/install.sh");
     for (const check of ["check-voicebar-qa-free.sh", "check-voicebar-test-free.sh", "check-voicebar-python-cache-free.sh"])
       writeFileSync(join(root, "scripts", check), '#!/bin/bash\necho bundle-check >> "$TEST_ROOT/calls"\n', { mode: 0o755 });
-    stub("swift", 'echo compiler >> "$TEST_ROOT/calls"; mkdir -p "$TEST_ROOT/built"; echo fixture > "$TEST_ROOT/built/VoiceBar"; [[ "$*" != *--show-bin-path* ]] || echo "$TEST_ROOT/built"');
+    if (["build-success", "actool-failure"].includes(fault)) stub("swift", 'echo compiler >> "$TEST_ROOT/calls"; mkdir -p "$TEST_ROOT/built"; echo fixture > "$TEST_ROOT/built/VoiceBar"; [[ "$*" != *--show-bin-path* ]] || echo "$TEST_ROOT/built"');
     stub("bun", readFileSync(join(bin, "bun"), "utf8") + `
       if [[ "$1" == install ]]; then
         mkdir -p "$TEST_APP/Contents/Resources/node_modules/zod" "$TEST_APP/Contents/Resources/node_modules/@modelcontextprotocol/sdk"
         echo fixture > "$TEST_APP/Contents/Resources/node_modules/fixture.dylib"
       elif [[ "$1" == -e ]]; then echo 1.0.0; fi`);
-    stub("find", '[[ "$*" != *-print0* ]] || printf "%s\\0" "$TEST_APP/Contents/Resources/node_modules/fixture.dylib"');
+    stub("find", `if [[ "$TEST_FAULT" == actool-failure && "$1" == "$TEST_APP" && "$2" == -mindepth ]]; then
+      /bin/rm -rf "$TEST_APP/Contents"
+    elif [[ "$*" == *-print0* ]]; then printf "%s\\0" "$TEST_APP/Contents/Resources/node_modules/fixture.dylib"; fi`);
     stub("file", "echo Mach-O");
+    // build-app.sh compiles flow-bar/Symbols with actool; the fixture's actool writes the catalog it would.
+    stub("xcrun", `echo "xcrun $*" >> "$TEST_ROOT/calls"
+      [[ "$1" == actool ]] || exit 1 # no notary profile in the fixture
+      [[ "$TEST_FAULT" != actool-failure ]] || exit 42
+      while [[ $# -gt 0 ]]; do [[ "$1" == --compile ]] && { mkdir -p "$2"; echo fixture > "$2/Assets.car"; }; shift; done`);
     stub("security", 'echo "$VOICEBAR_CODESIGN_IDENTITY"');
     stub("codesign", `echo "codesign $*" >> "$TEST_ROOT/calls"
       printf '%s\\n' "Authority=$VOICEBAR_CODESIGN_IDENTITY" 'Authority=Developer ID Certification Authority' 'Authority=Apple Root CA' 'TeamIdentifier=PPN23G925Y' >&2`);
@@ -213,6 +220,22 @@ scriptTest("update --no-stop restores the verified canonical bundle after nested
   expect(result.calls).not.toContain(`open ${f.original}`);
 });
 
+scriptTest("actool failure leaves the existing bundle and its running process untouched", () => {
+  const f = fixture("flow-bar/build-app.sh", "actool-failure");
+  const sentinel = join(f.app, "Contents/original");
+  writeFileSync(sentinel, "original bundle");
+  const result = f.run();
+  expect(result.calls).toContain("xcrun actool ");
+  expect(result.exit).toBe(1);
+  expect(result.err).toContain("with xcrun actool failed");
+  expect({
+    quit: result.calls.includes("gate-quit"),
+    running: result.running,
+    original: existsSync(sentinel) ? readFileSync(sentinel, "utf8") : null,
+  }).toEqual({ quit: false, running: "101", original: "original bundle" });
+  expect(readdirSync(join(f.root, ".build.noindex"))).toEqual([]);
+}, 20000);
+
 scriptTest("real resident-target build success restores the original QA bundle after the gate quit", () => {
   const f = fixture("flow-bar/build-app.sh", "build-success", false, true), result = f.run();
   expect(result.calls).toContain("gate-quit");
@@ -220,6 +243,9 @@ scriptTest("real resident-target build success restores the original QA bundle a
   expect(result.calls).toContain("compiler");
   expect({ exit: result.exit, err: result.err, out: result.out }).toMatchObject({ exit: 0 });
   expect(result.out).toContain(`[build-app] Done: ${f.app}`);
+  expect(result.calls.match(/^xcrun actool /gm)).toHaveLength(1);
+  expect(readFileSync(join(f.app, "Contents/Resources/Assets.car"), "utf8")).toBe("fixture\n");
+  expect(readdirSync(join(f.root, ".build.noindex"))).toEqual([]);
   expect(result.out).toContain("the original bundle is restored on exit if the gate quit it");
   expect(result.running).toBe("202");
   expect(result.calls.split("\n").filter(line => line.startsWith("open "))).toEqual([`open ${f.original}`]);

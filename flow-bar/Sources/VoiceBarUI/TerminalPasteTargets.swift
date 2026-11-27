@@ -17,8 +17,7 @@ import Foundation
 /// So these bundle identifiers never take the AX route. They used to take
 /// clipboard + Cmd+V instead; since 2026-09-13 they get the transcript TYPED and
 /// his pasteboard is never touched. Typed ESC[200~ markers do not survive cmux
-/// (v2.2.19 turned them into a stray "a"). cmux keeps its shipped Shift+Return
-/// line breaks; other terminals fold them to spaces — see `typingText`.
+/// (v2.2.19 turned them into a stray "a"). All terminals fold newline runs to spaces — see `typingText`.
 /// The full history of why is the AIDEV-NOTE
 /// at VoiceState's paste call site.
 public enum TerminalPasteTargets {
@@ -42,10 +41,10 @@ public enum TerminalPasteTargets {
     }
 
     /// Shell-safe default: newline runs become one space; words and other layout stay intact.
-    /// cmux alone keeps its shipped kitty-protocol composer behavior (lead ruling, 2026-11-08).
+    /// Terminal identity cannot distinguish a shell prompt from an agent composer.
+    /// Never emit Shift+Return into either: shells can submit or print protocol garbage.
     public static func typingText(_ text: String, bundleIdentifier: String) -> String {
         let stripped = strippingSingleTrailingNewline(text)
-        guard bundleIdentifier != "com.cmuxterm.app" else { return stripped }
         var result = "", previousWasNewline = false
         for character in stripped {
             if character.isNewline {

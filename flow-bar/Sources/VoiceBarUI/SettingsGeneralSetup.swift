@@ -165,6 +165,44 @@ public struct SettingsGeneralSetup: Equatable, Sendable {
     }
 }
 
+/// Keeps a repaired General row in its existing slot long enough to show the done mark.
+struct SettingsSetupRepairFeedback {
+    static let duration: TimeInterval = 1.6
+
+    private var deadlines: [SettingsSetupStepID: Date] = [:]
+
+    @discardableResult
+    mutating func observe(from previous: SettingsGeneralSetup, to current: SettingsGeneralSetup, at now: Date) -> Bool {
+        let done = Set(current.allSteps.filter(\.isDone).map(\.id))
+        deadlines = deadlines.filter { done.contains($0.key) && now < $0.value }
+        let repaired = previous.steps.filter { done.contains($0.id) }
+        for step in repaired {
+            deadlines[step.id] = now.addingTimeInterval(Self.duration)
+        }
+        return !repaired.isEmpty
+    }
+
+    func visibleSteps(
+        in setup: SettingsGeneralSetup,
+        transitioningFrom previous: SettingsGeneralSetup? = nil,
+        at now: Date
+    ) -> [SettingsSetupStep] {
+        let broken = Set(setup.steps.map(\.id))
+        let previouslyBroken = Set(previous?.steps.map(\.id) ?? [])
+        return setup.allSteps.compactMap { step in
+            if broken.contains(step.id) { return step }
+            let showingFeedback = deadlines[step.id].map { now < $0 } ?? false
+            guard step.isDone, showingFeedback || previouslyBroken.contains(step.id) else { return nil }
+            return SettingsSetupStep(id: step.id, title: step.title, description: step.description,
+                                     isDone: true, fix: nil)
+        }
+    }
+
+    mutating func expire(at now: Date) {
+        deadlines = deadlines.filter { now < $0.value }
+    }
+}
+
 /// Arriving from the notch's orange dot (or any request focused on Setup) briefly highlights the broken row: a
 /// 1.6 s amber fade, none under Reduce Motion (focus still moves to the row's fix).
 public struct SettingsArrivalHighlight: Equatable, Sendable {

@@ -159,3 +159,13 @@ test("offline admission backs off for dictation but never retries an unavailable
   await expect(waitForIdle(async () => { checks++; throw new Error("Live socket unavailable"); }, async () => { pauses++; })).rejects.toThrow("unavailable");
   expect(checks).toBe(1); expect(pauses).toBe(1);
 });
+
+
+test("partial polish retains its eval edges and applied loss counts", () => {
+  const edges = stageEdges([{ name: "dictionary_rules", text: "keep every word" }, { name: "polish", text: "keep word" }]);
+  const partial = { status: "partial", edges } as const;
+  expect(eligibleReplayEdges(partial)).toEqual(edges);
+  expect(summarizePolishReplays([partial])).toMatchObject({
+    total: 1, applied: 1, statuses: { partial: 1 }, appliedDeletedTokens: 1, appliedSubstitutions: 0,
+  });
+});

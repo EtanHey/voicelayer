@@ -126,7 +126,7 @@ final class LateWingControlTooltipTests: XCTestCase {
         let lock = try Self.scan(barView: try mutate(bar, after: "state.setRecordingHold(!state.isRecordingHoldEngaged)\n                    }",
                                                      insert: transition), wingControls: helper)
         XCTAssertTrue(lock.violations.contains { $0.contains("recordingHoldControl") }, "\(lock.violations)")
-        let mute = try Self.scan(barView: try mutate(bar, after: ".contentTransition(.symbolEffect(.replace))",
+        let mute = try Self.scan(barView: try mutate(bar, after: ".contentTransition(VoiceBarSymbolMotion.swap(reduceMotion: accessibilityReduceMotion))",
                                                      insert: transition), wingControls: helper)
         XCTAssertTrue(mute.violations.contains { $0.contains("recordingPauseControl") }, "\(mute.violations)")
         let wrapped = try mutate(bar, after: "            ZStack(alignment: .trailing) {\n                notchWaveform\n                    .opacity(showsReveal ? 0 : 1)\n                if showsReveal {",

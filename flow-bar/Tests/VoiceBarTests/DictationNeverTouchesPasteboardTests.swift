@@ -28,7 +28,7 @@ final class DictationNeverTouchesPasteboardTests: XCTestCase {
         harness.dictate("line one\nline two\nline three")
 
         XCTAssertEqual(harness.typed.count, 1, "one delivery, not one per line")
-        XCTAssertEqual(harness.typed.first?.text, "line one\nline two\nline three")
+        XCTAssertEqual(harness.typed.first?.text, "line one line two line three")
         XCTAssertEqual(harness.pasteboard, "WHAT HE COPIED")
         XCTAssertEqual(harness.pasteboardWrites, [])
     }
@@ -50,7 +50,7 @@ final class DictationNeverTouchesPasteboardTests: XCTestCase {
             let harness = PasteHarness(bundleIdentifier: bundle, pasteboard: "WHAT HE COPIED")
             harness.state.asyncDictationInsertionHandlerProvider = { { _, _ in XCTFail("Terminals must keep skipping AX"); return false } }
             harness.dictate("ADD שלום 👩‍💻\nsecond line")
-            XCTAssertEqual(harness.typed.map(\.text), [bundle == "com.cmuxterm.app" ? "ADD שלום 👩‍💻\nsecond line" : "ADD שלום 👩‍💻 second line"], bundle)
+            XCTAssertEqual(harness.typed.map(\.text), ["ADD שלום 👩‍💻 second line"], bundle)
             XCTAssertEqual(harness.pasteboard, "WHAT HE COPIED", bundle)
             XCTAssertEqual(harness.pasteboardWrites, [], bundle)
             XCTAssertEqual(harness.state.latestDictationInsertionStatus, .typed, "Posted events are typed, not readback")
@@ -60,7 +60,7 @@ final class DictationNeverTouchesPasteboardTests: XCTestCase {
     func testEveryTerminalKeepsTranscriptConfirmationAndTypedStatus() {
         let text = "ADD שלום 👩‍💻\nsecond line"
         for bundle in TerminalPasteTargets.bundleIdentifiers.sorted() {
-            let delivered = bundle == "com.cmuxterm.app" ? text : "ADD שלום 👩‍💻 second line"
+            let delivered = "ADD שלום 👩‍💻 second line"
             let harness = PasteHarness(bundleIdentifier: bundle, pasteboard: "WHAT HE COPIED")
             harness.state.asyncDictationInsertionHandlerProvider = {
                 { _, _ in XCTFail("Terminals must keep skipping AX: \(bundle)"); return false }

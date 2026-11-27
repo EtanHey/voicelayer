@@ -1,4 +1,6 @@
+import { POLISH_CHUNK_CHARS, polishLongTake } from "./stt-polish-chunks";
 import { getSTTDictionaryCommands } from "./stt-cleanup";
+import { canonicalDeliveryInput, restoreSourceEllipsisMarkers } from "./stt-delivery-format";
 import { requireIsolatedOverride } from "./test-isolation";
 import { randomUUID } from "crypto";
 import { processingEnv } from "./processing-settings";
@@ -17,6 +19,7 @@ export type STTPolishStatus =
   | "unavailable"
   | "shadowed"
   | "applied"
+  | "partial"
   | "rejected"
   | "failed";
 export type STTPolishFailureKind =
@@ -58,6 +61,7 @@ export interface STTPolishResult {
   retried: boolean;
   latencyMs: number;
   polished: boolean;
+  chunkCounts?: { applied: number; attempted: number; total: number };
   reason?: string;
   /** Structured transport failure; timeouts/HTTP errors never trigger recovery. */
   failureKind?: STTPolishFailureKind;
@@ -643,6 +647,21 @@ function retractionContentLoss(
     if (countMatches(candidate.normalize("NFKC"), marker) <
         countMatches(cleanedText.normalize("NFKC"), marker)) return "deleted";
   }
+  // A dash attached to a word ("go— going") marks THAT word as cut off. The count above would still
+  // pass if the model moved the dash to another word; bind each source marker to its word occurrence.
+  const attachedDashWords = (text: string): Set<number> => {
+    const indices = new Set<number>();
+    let index = 0;
+    for (const match of text.normalize("NFKC").matchAll(/[\p{L}\p{N}'’]+(—)?/gu)) {
+      if (match[1]) indices.add(index);
+      index++;
+    }
+    return indices;
+  };
+  const candidateDashWords = attachedDashWords(candidate);
+  for (const index of attachedDashWords(cleanedText)) {
+    if (!candidateDashWords.has(index)) return "deleted";
+  }
   const markerPositions = falseStartMarkerStreamPositions(cleanedText);
   if (markerPositions.length === 0) return null;
 
@@ -818,7 +837,8 @@ function projectRejectedCandidatePunctuation(
     const punctuation = candidateSuffix.match(
       /^([,.!?…:;]+)(?:["')\]]*)?(?=\s|$)/u,
     )?.[1];
-    if (!punctuation) continue;
+    // A rejected reply cannot supply a cutoff through the punctuation floor.
+    if (!punctuation || /…|\.{2}/u.test(punctuation)) continue;
 
     const insertionIndex = cleanedTokens[cleanedIndex].end;
     if (/^[,.!?…:;]+/u.test(cleanedText.slice(insertionIndex))) continue;
@@ -1281,17 +1301,35 @@ function compactContentSequence(text: string): string {
     .replace(/[^\p{L}\p{N}]/gu, "");
 }
 
-function conservedContentTokens(text: string, protectProseOne = false): string[] {
+function conservedContentTokens(
+  text: string,
+  protectProseOne = false,
+  commandJoin?: "source" | "candidate",
+): string[] {
   // Do not use compactContentSequence: erasing word boundaries would equate
   // "the rapist" with "therapist". contentTokens also equates "a" with "an"
   // and zero with "no". Only numeric spelling and known code joins belong here.
+  const wordPattern = /[\p{L}\p{N}'’]+(?:\.{3})?|[,.!?;:]/gu;
+  // These patterns only participate in the paired comparison after the ordinary
+  // lexical check fails. The source spelling must correspond to a completed
+  // command in the reply at the same position in the ordered token stream.
+  const joinedCommand = commandJoin === "source"
+    ? /(?<!\S)\/(?:[ \t]+what(?:['’])?s[ \t]+new|whats-new)(?=\s|[.,;:!?](?:\s|$)|$)/giu
+    : /(?<!\S)\/whats-new(?=\s|[.,;:!?](?:\s|$)|$)/giu;
+  const tokenPattern = commandJoin
+    ? new RegExp(joinedCommand.source + "|" + wordPattern.source, "giu")
+    : wordPattern;
   const tokens = normalizeSpokenNumberPairs(text.normalize("NFKC"))
-    .match(/[\p{L}\p{N}'’]+(?:\.{3})?|[,.!?;:]/gu)
+    .match(tokenPattern)
     ?.map((token, index, words) => {
+      if (token.startsWith("/")) return "command:whats-new";
       if (/^[,.!?;:]$/u.test(token)) return null;
-      const lower = token.toLowerCase().replace(/['’]/gu, "");
+      // Require the exact contraction spelling before equating it with its
+      // unpunctuated variant. A curly apostrophe is the same glyph choice.
+      const lower = token.toLowerCase().replace(/’/gu, "'");
       const cutoff = lower.endsWith("...");
-      const base = cutoff ? lower.slice(0, -3) : lower;
+      const spelling = cutoff ? lower.slice(0, -3) : lower;
+      const base = NEGATION_TOKENS.has(spelling) ? spelling.replace(/'/gu, "") : spelling;
       // Bind the cutoff to this occurrence in the ordered stream; a later
       // identical word cannot pay for moving a fragment marker forward.
       const value = protectProseOne && base === "one" && isProseOne(words, index)
@@ -1520,16 +1558,19 @@ function validatePolishCandidate(
   // Raw-accurate is the default on both transports and surfaces. Similarity,
   // token bags and retraction windows cannot prove that an ordinary word,
   // repeated beat or short fragment survived in its original position.
-  if (!sameTokenSequence(
-    conservedContentTokens(cleanedText),
-    conservedContentTokens(contentCandidate),
-  )) {
-    return POLISH_REJECTION_REASONS.CHANGED_LEXICAL_CONTENT;
-  }
+  // Mark cutoffs on the reply before tokenization can discard the dashes.
+  const markedCandidate = canonicalDeliveryInput(contentCandidate);
+  const plainTokensMatch = sameTokenSequence(
+    conservedContentTokens(cleanedText), conservedContentTokens(markedCandidate),
+  );
+  if (!plainTokensMatch && !sameTokenSequence(
+    conservedContentTokens(cleanedText, false, "source"),
+    conservedContentTokens(markedCandidate, false, "candidate"),
+  )) return POLISH_REJECTION_REASONS.CHANGED_LEXICAL_CONTENT;
 
-  const protectedOnes = conservedContentTokens(cleanedText, true);
+  const protectedOnes = conservedContentTokens(cleanedText, true, plainTokensMatch ? undefined : "source");
   if (protectedOnes.some(token => token.startsWith("lexical:one")) && !sameTokenSequence(
-    protectedOnes, conservedContentTokens(contentCandidate, true),
+    protectedOnes, conservedContentTokens(markedCandidate, true, plainTokensMatch ? undefined : "candidate"),
   )) return POLISH_REJECTION_REASONS.CHANGED_LEXICAL_CONTENT;
 
   return null;
@@ -1557,7 +1598,10 @@ function applyPolishCandidate(
     !/[\r\n]/u.test(trimmedPolishedText)
     ? trimmedPolishedText.replace(/^[-—][ \t]+(?=\S)/u, "")
     : trimmedPolishedText;
-  const rejectionReason = validatePolishCandidate(cleanedText, candidateText, env);
+  const validationReason = validatePolishCandidate(cleanedText, candidateText, env);
+  const restoredText = validationReason ? null : restoreSourceEllipsisMarkers(cleanedText, candidateText);
+  const rejectionReason = validationReason ??
+    (restoredText === null ? POLISH_REJECTION_REASONS.CHANGED_LEXICAL_CONTENT : null);
   if (mode === "shadow") {
     return buildResult(
       cleanedText,
@@ -1567,16 +1611,16 @@ function applyPolishCandidate(
       retried,
     );
   }
-  if (rejectionReason) {
+  if (restoredText === null) {
     return buildResult(
       buildFallbackText(candidateText),
       candidateText,
       "rejected",
-      rejectionReason,
+      rejectionReason ?? undefined,
       retried,
     );
   }
-  return buildResult(guardedPolishText(cleanedText, candidateText), candidateText, "applied", undefined, retried);
+  return buildResult(guardedPolishText(cleanedText, restoredText), candidateText, "applied", undefined, retried);
 }
 
 /**
@@ -1972,15 +2016,26 @@ function writePolishLog(
 
 export async function polishTranscriptionText(input: STTPolishInput): Promise<STTPolishResult> {
   const env = input.env ?? processingEnv();
-  if (getSTTPolishMode(env) === "off" || !input.cleanedText.trim() || getSTTPolishEndpoint(env) !== DEFAULT_POLISH_ENDPOINT) return polishTranscriptionTextReady(input);
+  // The legacy Unix transport already has its own short timeout and response contract.
+  if (getSTTPolishMode(env) === "on" && getSTTPolishEndpoint(env) && input.cleanedText.length > POLISH_CHUNK_CHARS * 2) {
+    // Bound wasted work, not input length. Every word in every remaining chunk survives.
+    const budget = Math.min(getSTTPolishTimeoutMs(env, input.cleanedText), DEFAULT_POLISH_TIMEOUT_MS);
+    return polishLongTake(input, budget, (chunk, deadline) =>
+      polishTranscriptionTextWithinBudget(chunk, performance.now(), deadline, true));
+  }
+  return polishTranscriptionTextWithinBudget(input);
+}
+
+async function polishTranscriptionTextWithinBudget(input: STTPolishInput, startedAt = performance.now(), deadlineOverride?: number, singleAttempt = false): Promise<STTPolishResult> {
+  const env = input.env ?? processingEnv();
+  if (getSTTPolishMode(env) === "off" || !input.cleanedText.trim() || getSTTPolishEndpoint(env) !== DEFAULT_POLISH_ENDPOINT) return polishTranscriptionTextReady(input, startedAt, deadlineOverride, singleAttempt);
   const { withSTTPolishServer } = await import("./stt-polish-server");
-  const startedAt = performance.now();
-  const budget = getSTTPolishTimeoutMs(env, input.rawText.length > input.cleanedText.length ? input.rawText : input.cleanedText);
-  const deadline = startedAt + budget;
+  const budget = deadlineOverride ? Math.max(1, deadlineOverride - performance.now()) : getSTTPolishTimeoutMs(env, input.rawText.length > input.cleanedText.length ? input.rawText : input.cleanedText);
+  const deadline = deadlineOverride ?? startedAt + budget;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      withSTTPolishServer(() => polishTranscriptionTextReady(input, startedAt, deadline), { env }),
+      withSTTPolishServer(() => polishTranscriptionTextReady(input, startedAt, deadline, singleAttempt), { env }),
       new Promise<STTPolishResult>(resolve => {
         timer = setTimeout(() => {
           const mode = getSTTPolishMode(env);
@@ -1998,7 +2053,7 @@ export async function polishTranscriptionText(input: STTPolishInput): Promise<ST
   } finally { clearTimeout(timer); }
 }
 
-async function polishTranscriptionTextReady(input: STTPolishInput, startedAt = performance.now(), deadlineOverride?: number): Promise<STTPolishResult> {
+async function polishTranscriptionTextReady(input: STTPolishInput, startedAt = performance.now(), deadlineOverride?: number, singleAttempt = false): Promise<STTPolishResult> {
   const env = input.env ?? processingEnv();
   const mode = getSTTPolishMode(env);
   const surface = input.surface ?? "dictation";
@@ -2081,7 +2136,7 @@ async function polishTranscriptionTextReady(input: STTPolishInput, startedAt = p
         env,
       );
       const retryReason =
-        result.status === "applied" &&
+        singleAttempt ? null : result.status === "applied" &&
         result.polishedText === input.cleanedText &&
         shouldRetryNoopPolish(input.cleanedText)
           ? "noop"

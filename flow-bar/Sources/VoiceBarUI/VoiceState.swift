@@ -2173,7 +2173,7 @@ public final class VoiceState {
 
     public func previewTTSProfile(_ profile: SpeechProfile) {
         guard isConnected else { speechNotice = "Preview unavailable: VoiceLayer isn't connected."; return }
-        guard speechControls != nil else { speechNotice = "Preview unavailable: Speech settings haven't arrived yet."; return }
+        guard speechControls != nil else { speechNotice = "Preview unavailable: Narration settings haven't arrived yet."; return }
         if let reason = speechBusyReason { speechNotice = "Preview unavailable: \(reason)"; return }
         guard speechRequestIDs.isEmpty else { speechNotice = "Preview unavailable: a speech request is still in progress."; return }
         guard let sendCommand else { speechNotice = "Preview unavailable: VoiceLayer can't receive commands."; return }
@@ -5780,16 +5780,17 @@ public final class VoiceState {
                     // and only his clipboard; dictation never writes the pasteboard.
                     //
                     // So the transcript is TYPED as printable text only. TerminalPasteTargets
-                    // folds line breaks outside cmux; retained breaks use Shift+Return
-                    // (SynthesizedTyping). No control character ever rides in
+                    // folds line breaks to spaces in every terminal, cmux included
+                    // (SynthesizedTyping never sees one). No control character ever rides in
                     // a key event. This route serves terminals, known rich-host automatic
                     // delivery, explicit re-paste and verified editable native targets.
                     // There is no clipboard fallback anywhere, by design: a failed
                     // paste is recoverable with Shift+F5, a paste over his clipboard is not.
                     //
-                    // cmux retains its shipped Shift+Return behavior for kitty-protocol
-                    // composers. Other terminals fold newlines to spaces so a bare shell
-                    // never receives a Return or Shift+Return from a dictated line break.
+                    // Every terminal, cmux included, folds newlines to spaces: a shell
+                    // prompt cannot be told from an agent composer, and Shift+Return in a
+                    // shell leaves protocol garbage (18 Nov 2026 pty proof, which
+                    // superseded the 8 Nov keep-Shift+Return ruling for cmux).
                     logDiagnostic("paste_path", details: [
                         "plan": String(describing: plan),
                         "targetApp": pasteTargetBundleID,
