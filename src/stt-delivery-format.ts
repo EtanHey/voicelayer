@@ -52,9 +52,11 @@ export function canonicalDeliveryInput(text: string): string {
   return rewriteDeliveryDashes(outsideLiterals(text, canonicalizeMarkedFillerFragments), true);
 }
 
-/** Preserve cutoff and range meaning before formatting other prose dashes as commas. */
+/** Format prose dashes and render word-attached cutoffs with one ellipsis glyph. */
 export function formatDeliveryDashes(text: string): string {
-  return rewriteDeliveryDashes(text, false);
+  const formatted = rewriteDeliveryDashes(text, false);
+  return outsideLiterals(formatted, prose =>
+    prose.replace(/([\p{L}\p{M}])\.{3}(?![\p{L}\p{M}\p{N}.])/gu, "$1…"));
 }
 
 function rewriteDeliveryDashes(text: string, cutoffsOnly: boolean): string {

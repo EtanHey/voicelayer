@@ -124,6 +124,36 @@ describe("r2 finding 1: the source determines whether an attached dash is a cuto
   });
 });
 
+describe("Claude review finding 1: polish cannot invent a cutoff", () => {
+  for (const surface of ["dictation", "voice_ask"] as const) {
+    it.each(["Tuesday—no", "Tuesday — no", "Tuesday no"])(
+      `rejects a cutoff introduced into %j on ${surface}`,
+      async source => {
+        const raw = `Please read the notes before we start today. I said ${source} wait. We are ready now.`;
+        const unpolished = await finalizeTranscriptionResultForSurface(raw, surface, { ...baseEnv(), QA_VOICE_STT_POLISH: "off" });
+        const result = await withModel(() => raw.replace(source, "Tuesday— no"), endpoint =>
+          finalizeTranscriptionResultForSurface(raw, surface, { ...baseEnv(), QA_VOICE_STT_POLISH: "on", QA_VOICE_STT_POLISH_ENDPOINT: endpoint }));
+        expect(result.text).toBe(unpolished.text);
+        expect(words(result.text)).toEqual(words(raw));
+        expect(result.polishStatus).toBe("rejected");
+      },
+    );
+  }
+});
+
+describe("Claude review finding 2: a preserved cutoff delivers the ellipsis glyph", () => {
+  it.each(["dictation", "voice_ask"] as const)("delivers an accepted ASCII cutoff as an ellipsis on %s", async surface => {
+    const raw = "Please read the notes before we start today. I said fu— no wait. We are ready now.";
+    const unpolished = await finalizeTranscriptionResultForSurface(raw, surface, { ...baseEnv(), QA_VOICE_STT_POLISH: "off" });
+    const result = await withModel(() => raw.replace("fu— no", "fu... no"), endpoint =>
+      finalizeTranscriptionResultForSurface(raw, surface, { ...baseEnv(), QA_VOICE_STT_POLISH: "on", QA_VOICE_STT_POLISH_ENDPOINT: endpoint }));
+    expect(result.polishStatus).toBe("applied");
+    expect(result.text).toBe(unpolished.text);
+    expect(result.text).toContain("fu… no wait");
+    expect(words(result.text)).toEqual(words(raw));
+  });
+});
+
 describe("r2 finding 2: a tilde fence closes only on a bare marker line", () => {
   it.each([null, "dictation", "voice_ask"] as const)("keeps code bytes and resumes prose formatting on %s", async surface => {
     const code = "~~~js\n~~~inside\nconst a = b — c;\n~~~";

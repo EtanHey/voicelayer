@@ -1,5 +1,6 @@
 import { POLISH_CHUNK_CHARS, polishLongTake } from "./stt-polish-chunks";
 import { getSTTDictionaryCommands } from "./stt-cleanup";
+import { canonicalDeliveryInput } from "./stt-delivery-format";
 import { requireIsolatedOverride } from "./test-isolation";
 import { randomUUID } from "crypto";
 import { processingEnv } from "./processing-settings";
@@ -1556,17 +1557,19 @@ function validatePolishCandidate(
   // Raw-accurate is the default on both transports and surfaces. Similarity,
   // token bags and retraction windows cannot prove that an ordinary word,
   // repeated beat or short fragment survived in its original position.
+  // Mark cutoffs on the reply before tokenization can discard the dashes.
+  const markedCandidate = canonicalDeliveryInput(contentCandidate);
   const plainTokensMatch = sameTokenSequence(
-    conservedContentTokens(cleanedText), conservedContentTokens(contentCandidate),
+    conservedContentTokens(cleanedText), conservedContentTokens(markedCandidate),
   );
   if (!plainTokensMatch && !sameTokenSequence(
     conservedContentTokens(cleanedText, false, "source"),
-    conservedContentTokens(contentCandidate, false, "candidate"),
+    conservedContentTokens(markedCandidate, false, "candidate"),
   )) return POLISH_REJECTION_REASONS.CHANGED_LEXICAL_CONTENT;
 
   const protectedOnes = conservedContentTokens(cleanedText, true, plainTokensMatch ? undefined : "source");
   if (protectedOnes.some(token => token.startsWith("lexical:one")) && !sameTokenSequence(
-    protectedOnes, conservedContentTokens(contentCandidate, true, plainTokensMatch ? undefined : "candidate"),
+    protectedOnes, conservedContentTokens(markedCandidate, true, plainTokensMatch ? undefined : "candidate"),
   )) return POLISH_REJECTION_REASONS.CHANGED_LEXICAL_CONTENT;
 
   return null;
