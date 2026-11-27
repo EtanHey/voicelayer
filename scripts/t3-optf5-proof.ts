@@ -182,6 +182,23 @@ export function releaseGateApplies(tag: string): boolean {
   return true;
 }
 
+/**
+ * The release-only allow-list: a path a proof-only descendant of a proven build may change.
+ * scripts/release_only_diff.py mirrors this exact rule for the pre-push hook and PR CI;
+ * src/__tests__/release-only-diff.test.ts fails if the two ever disagree.
+ */
+export function isProofOnlyPath(path: string): boolean {
+  return path.startsWith(`${RELEASE_PROOF_DIR}/`) && path !== `${RELEASE_PROOF_DIR}/proof-hosts.json` && !BUN_TEST_FILE.test(path);
+}
+
+/**
+ * A file the root `bun test` discovers by name (*.test.*, *_test.*, *.spec.*, *_spec.* in
+ * js/jsx/ts/tsx/mjs/cjs/mts/cts, at any depth). Under release-proofs/ it would be code that
+ * runs in the very suite a release-only shortcut skips, so it is never proof-only. Mirrored in
+ * scripts/release_only_diff.py (BUN_TEST_FILE); the parity test pins both.
+ */
+export const BUN_TEST_FILE = /[._](?:test|spec)\.[cm]?[jt]sx?$/i;
+
 export interface BuildCommitFacts {
   isAncestor: boolean;
   changedPaths: string[];
@@ -211,7 +228,7 @@ export function checkReleaseRecord(
   if (!facts) fail(`proven build commit ${build} is not in this repository`);
   if (!facts.isAncestor) fail(`proven build commit ${build} is not the tagged commit ${ctx.tagCommit} or its ancestor`);
   // The host list is reviewed code, not part of a proof: a proof-only commit may not change it.
-  const outside = facts.changedPaths.filter((p) => !p.startsWith(`${RELEASE_PROOF_DIR}/`) || p === `${RELEASE_PROOF_DIR}/proof-hosts.json`);
+  const outside = facts.changedPaths.filter((p) => !isProofOnlyPath(p));
   if (outside.length > 0) {
     fail(`tagged commit differs from the proven build ${build} outside ${RELEASE_PROOF_DIR}/: ${outside.slice(0, 5).join(", ")}`);
   }
@@ -251,13 +268,21 @@ function releaseGate(args: Map<string, string>) {
     console.log(`[t3-optf5-proof] release gate not applied: ${tag} is older than v${RELEASE_GATE_FROM.join(".")}`);
     return;
   }
-  const path = join(repo, RELEASE_PROOF_DIR, `${tag}.json`);
-  if (!existsSync(path)) fail(`${RELEASE_PROOF_DIR}/${tag}.json is missing: no installed-candidate T3 Option+F5 proof for this release`);
+  // The proof is read from the committed blob at HEAD, never through the working tree: a symlink
+  // (mode 120000) or gitlink (160000) at that path could otherwise make the gate validate bytes
+  // that are not in the commit being released.
+  const proofPath = `${RELEASE_PROOF_DIR}/${tag}.json`;
+  const entry = git(repo, "ls-tree", "-z", "HEAD", "--", proofPath);
+  if (!entry.ok || entry.out === "") fail(`${proofPath} is missing: no installed-candidate T3 Option+F5 proof for this release`);
+  const mode = entry.out.split(" ")[0];
+  if (mode !== "100644") fail(`${proofPath} is not a regular committed file (git mode ${mode}): a symlink or submodule cannot be a release proof`);
+  const blob = git(repo, "show", `HEAD:${proofPath}`);
   let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(path, "utf8"));
+    if (!blob.ok) throw new Error("unreadable");
+    raw = JSON.parse(blob.out);
   } catch {
-    fail(`${RELEASE_PROOF_DIR}/${tag}.json is not valid JSON`);
+    fail(`${proofPath} is not valid JSON`);
   }
   const p = checkReleaseRecord(raw, {
     tag,

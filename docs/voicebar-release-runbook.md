@@ -90,6 +90,31 @@ the real app by `record` and again by promotion, which must be given the committ
    Any failure stops it. The tap is not touched before the published asset is confirmed, and
    its edits are reverted if the tap check fails.
 
+### Release-only branch pushes and PRs
+
+The pre-push hook and required PR checks use the path allow-list in
+`scripts/release_only_diff.py`. It mirrors the release gate's `isProofOnlyPath`. A release-only diff
+contains only additions or modifications under `release-proofs/`. Each added file must have Git mode
+`100644`, and each modified file must have that mode before and after the change.
+`release-proofs/proof-hosts.json` and files the root `bun test` discovers are excluded. Deletions,
+renames, empty diffs, and version-bump files such as `package.json` and lockfiles run the suites.
+A parity test checks that the Python and TypeScript path rules agree.
+
+- **Pre-push hook.** After the docs.local guard, `scripts/pre_push_release_only.py` checks every pushed
+  branch. For an existing branch, the advertised old tip must exist locally and be an ancestor
+  of the pushed commit. For a new branch, the hook queries the push destination's current
+  `refs/heads/main` with `git ls-remote` and compares from its merge base with the pushed commit.
+  If the remote main cannot be established, its commit is missing locally, or there is no merge base,
+  the hook runs the full suites. For each changed `release-proofs/vX.Y.Z.json`, the release gate must
+  affirm the installed-candidate proof, and changes since the proven build must also be release-only.
+  When the shortcut applies, the hook prints `[pre-push] RELEASE-ONLY PUSH` and skips the Swift and Bun
+  suites. Any push that includes a tag runs the full suites.
+- **Required CI checks.** `ci.yml` (`test`, `Swift (VoiceBar)`) and `ratchet.yml` (`ratchet`) report
+  success at their first step with a `RELEASE-ONLY PR` notice when the PR diff qualifies.
+  The `changes` job loads the classifier from the PR base commit. The checks run in full when
+  classification is unavailable and on every push to `main`.
+- **Publish workflow.** After the release gate passes, `publish.yml` runs the full Bun suite.
+
 The gate refuses, with a non-zero exit and a message naming the problem, when:
 
 - the proof is missing or is not valid JSON;

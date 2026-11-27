@@ -31,6 +31,19 @@ if [ -f scripts/guard-no-docslocal.sh ]; then
   bash scripts/guard-no-docslocal.sh || exit 1
 fi
 
+# Release-only branch pushes: a push whose diff vs the remote base is only release-proofs/ files
+# (the release gate's own allow-list, scripts/release_only_diff.py) and whose release gate passes
+# tests nothing new, so it skips the Swift + bun suites below. This is a hook rule, never
+# --no-verify, and it fails closed: any tag, other path, deleted ref, dirty tree or gate refusal
+# runs the full suites as before. It prints one loud line saying why.
+refs_input=""
+[ -t 0 ] || refs_input="$(cat)"
+if [ -f scripts/pre_push_release_only.py ] && command -v python3 >/dev/null; then
+  if printf '%s\n' "$refs_input" | python3 -B scripts/pre_push_release_only.py "${1:-}" "${2:-}"; then
+    exit 0
+  fi
+fi
+
 # Guard 2 — regression harness
 [ ! -f scripts/run_tests.sh ] && { echo "⚠️  no scripts/run_tests.sh — skipping"; exit 0; }
 if command -v python3 >/dev/null; then
