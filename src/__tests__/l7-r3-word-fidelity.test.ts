@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { finalizeTranscriptionResultForSurface } from "../input";
 import { formatDeliveryDashes } from "../stt-delivery-format";
 import { polishLongTake } from "../stt-polish-chunks";
+import { polishTranscriptionText } from "../stt-polish";
 
 // Codex r1 on #979: word-fidelity blockers. Every fixture is synthetic.
 const words = (text: string) => text.toLowerCase().match(/[\p{L}\p{M}\p{N}'’]+/gu);
@@ -92,5 +93,79 @@ describe("S5: a chunk that comes back after the shared deadline is not applied",
     expect(result.text).not.toContain("late");
     expect(words(result.text)).toEqual(words(source));
     expect(result.chunkCounts?.applied).toBe(0);
+  });
+});
+
+describe("r2 finding 1: the source determines whether an attached dash is a cutoff", () => {
+  const raw = "Please read the notes before we start today. I said fu before. I said fu— no wait. We are ready now.";
+  it.each(["dictation", "voice_ask"] as const)("keeps the cutoff on its original occurrence after model spacing changes on %s", async surface => {
+    const result = await withModel(() => raw.replace("fu— no", "fu—no"), endpoint =>
+      finalizeTranscriptionResultForSurface(raw, surface, { ...baseEnv(), QA_VOICE_STT_POLISH: "on", QA_VOICE_STT_POLISH_ENDPOINT: endpoint }));
+    expect(result.polishStatus).toBe("rejected");
+    expect(result.text).toContain("I said fu before. I said fu… no wait.");
+    expect(words(result.text)).toEqual(words(raw));
+  });
+
+  it.each(["dictation", "voice_ask"] as const)("accepts formatting that retains the source cutoff on %s", async surface => {
+    const formatted = raw.replace("fu— no", "fu… no").replace("today.", "today!");
+    const result = await withModel(() => formatted, endpoint =>
+      finalizeTranscriptionResultForSurface(raw, surface, { ...baseEnv(), QA_VOICE_STT_POLISH: "on", QA_VOICE_STT_POLISH_ENDPOINT: endpoint }));
+    expect(result.polishStatus).toBe("applied");
+    expect(result.text).toBe(formatted);
+    expect(words(result.text)).toEqual(words(raw));
+  });
+
+  const lineBreak = "Please read the notes before we start today. I said fu—\nThen we went home.";
+  it.each(["dictation", "voice_ask"] as const)("keeps a comma at the line break for an identity reply on %s", async surface => {
+    const result = await withModel(text => text, endpoint =>
+      finalizeTranscriptionResultForSurface(lineBreak, surface, { ...baseEnv(), QA_VOICE_STT_POLISH: "on", QA_VOICE_STT_POLISH_ENDPOINT: endpoint }));
+    expect(result.polishStatus).toBe("applied");
+    expect(result.text).toBe(lineBreak.replace("—", ","));
+  });
+});
+
+describe("r2 finding 2: a tilde fence closes only on a bare marker line", () => {
+  it.each([null, "dictation", "voice_ask"] as const)("keeps code bytes and resumes prose formatting on %s", async surface => {
+    const code = "~~~js\n~~~inside\nconst a = b — c;\n~~~";
+    const raw = `First we were go— going home.\n${code}\nThen we were go— going outside.`;
+    const result = await finalizeTranscriptionResultForSurface(raw, surface, { ...baseEnv(), QA_VOICE_STT_POLISH: "off" });
+    expect(result.text).toBe(raw.replaceAll("go— going", "go… going"));
+  });
+
+  it("requires a long enough closer and keeps an interior backtick inside the fence", () => {
+    const code = "~~~~js\n~~~\nconst marker = \`;\nconst a = b — c;\n~~~~~  ";
+    expect(formatDeliveryDashes(code + "\nThen I was go— going.")).toBe(code + "\nThen I was go… going.");
+  });
+});
+
+describe("r2 finding 3: apostrophe repairs require exact spellings and a valid command join", () => {
+  it.each([
+    ["whats", "wh'at's"],
+    ["whats", "what's"],
+    ["dont", "do'n't"],
+  ])("keeps ordinary prose %j when the model emits %j", async (spoken, rewritten) => {
+    const raw = `Please read the notes before we start today. I said ${spoken} wrong. We are ready now.`;
+    for (const surface of ["dictation", "voice_ask"] as const) {
+      const result = await withModel(text => text.replace(spoken, rewritten), endpoint =>
+        finalizeTranscriptionResultForSurface(raw, surface, { ...baseEnv(), QA_VOICE_STT_POLISH: "on", QA_VOICE_STT_POLISH_ENDPOINT: endpoint }));
+      expect(result.polishStatus).toBe("rejected");
+      expect(result.text).toBe(raw);
+    }
+  });
+
+  it("keeps prose spelling when the same reply also joins a valid slash command", async () => {
+    const raw = "Please do / what's new and tell me whats happening next.";
+    const result = await withModel(() => "Please do /whats-new and tell me what's happening next.", endpoint =>
+      polishTranscriptionText({ rawText: raw, cleanedText: raw, env: { ...baseEnv(), QA_VOICE_STT_POLISH: "on", QA_VOICE_STT_POLISH_ENDPOINT: endpoint } }));
+    expect(result.status).toBe("rejected");
+    expect(result.text).toBe(raw);
+  });
+
+  it.each(["what's", "what’s", "whats"])("allows / %s new to join as /whats-new", async spelling => {
+    const raw = `Also, do / ${spelling} new and output that as your summary.`;
+    const result = await withModel(() => "Also, do /whats-new and output that as your summary.", endpoint =>
+      polishTranscriptionText({ rawText: raw, cleanedText: raw, env: { ...baseEnv(), QA_VOICE_STT_POLISH: "on", QA_VOICE_STT_POLISH_ENDPOINT: endpoint } }));
+    expect(result.status).toBe("applied");
+    expect(result.text).toContain("/whats-new");
   });
 });

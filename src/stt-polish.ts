@@ -1299,25 +1299,35 @@ function compactContentSequence(text: string): string {
     .replace(/[^\p{L}\p{N}]/gu, "");
 }
 
-function conservedContentTokens(text: string, protectProseOne = false): string[] {
+function conservedContentTokens(
+  text: string,
+  protectProseOne = false,
+  commandJoin?: "source" | "candidate",
+): string[] {
   // Do not use compactContentSequence: erasing word boundaries would equate
   // "the rapist" with "therapist". contentTokens also equates "a" with "an"
   // and zero with "no". Only numeric spelling and known code joins belong here.
+  const wordPattern = /[\p{L}\p{N}'’]+(?:\.{3})?|[,.!?;:]/gu;
+  // These patterns only participate in the paired comparison after the ordinary
+  // lexical check fails. The source spelling must correspond to a completed
+  // command in the reply at the same position in the ordered token stream.
+  const joinedCommand = commandJoin === "source"
+    ? /(?<!\S)\/(?:[ \t]+what(?:['’])?s[ \t]+new|whats-new)(?=\s|[.,;:!?](?:\s|$)|$)/giu
+    : /(?<!\S)\/whats-new(?=\s|[.,;:!?](?:\s|$)|$)/giu;
+  const tokenPattern = commandJoin
+    ? new RegExp(joinedCommand.source + "|" + wordPattern.source, "giu")
+    : wordPattern;
   const tokens = normalizeSpokenNumberPairs(text.normalize("NFKC"))
-    .match(/[\p{L}\p{N}'’]+(?:\.{3})?|[,.!?;:]/gu)
+    .match(tokenPattern)
     ?.map((token, index, words) => {
+      if (token.startsWith("/")) return "command:whats-new";
       if (/^[,.!?;:]$/u.test(token)) return null;
-      // Apostrophes belong to the word: "well" and "we'll" differ, and a curly apostrophe is a
-      // straight one. Only the negation contractions already allowed above ("dont" and "don't")
-      // are one spelling; every other apostrophe placement is kept as spoken.
-      const glyphNormalized = token.toLowerCase().replace(/’/gu, "'");
-      const apostropheFree = glyphNormalized.replace(/'/gu, "");
-      // "what's" joins to the supported /whats-new slash command, which drops its apostrophe.
-      const supportedRepair = (word: string) => NEGATION_TOKENS.has(word) || word === "whats";
-      const lower = supportedRepair(apostropheFree.replace(/\.{3}$/u, ""))
-        ? apostropheFree : glyphNormalized;
+      // Require the exact contraction spelling before equating it with its
+      // unpunctuated variant. A curly apostrophe is the same glyph choice.
+      const lower = token.toLowerCase().replace(/’/gu, "'");
       const cutoff = lower.endsWith("...");
-      const base = cutoff ? lower.slice(0, -3) : lower;
+      const spelling = cutoff ? lower.slice(0, -3) : lower;
+      const base = NEGATION_TOKENS.has(spelling) ? spelling.replace(/'/gu, "") : spelling;
       // Bind the cutoff to this occurrence in the ordered stream; a later
       // identical word cannot pay for moving a fragment marker forward.
       const value = protectProseOne && base === "one" && isProseOne(words, index)
@@ -1546,16 +1556,17 @@ function validatePolishCandidate(
   // Raw-accurate is the default on both transports and surfaces. Similarity,
   // token bags and retraction windows cannot prove that an ordinary word,
   // repeated beat or short fragment survived in its original position.
-  if (!sameTokenSequence(
-    conservedContentTokens(cleanedText),
-    conservedContentTokens(contentCandidate),
-  )) {
-    return POLISH_REJECTION_REASONS.CHANGED_LEXICAL_CONTENT;
-  }
+  const plainTokensMatch = sameTokenSequence(
+    conservedContentTokens(cleanedText), conservedContentTokens(contentCandidate),
+  );
+  if (!plainTokensMatch && !sameTokenSequence(
+    conservedContentTokens(cleanedText, false, "source"),
+    conservedContentTokens(contentCandidate, false, "candidate"),
+  )) return POLISH_REJECTION_REASONS.CHANGED_LEXICAL_CONTENT;
 
-  const protectedOnes = conservedContentTokens(cleanedText, true);
+  const protectedOnes = conservedContentTokens(cleanedText, true, plainTokensMatch ? undefined : "source");
   if (protectedOnes.some(token => token.startsWith("lexical:one")) && !sameTokenSequence(
-    protectedOnes, conservedContentTokens(contentCandidate, true),
+    protectedOnes, conservedContentTokens(contentCandidate, true, plainTokensMatch ? undefined : "candidate"),
   )) return POLISH_REJECTION_REASONS.CHANGED_LEXICAL_CONTENT;
 
   return null;
