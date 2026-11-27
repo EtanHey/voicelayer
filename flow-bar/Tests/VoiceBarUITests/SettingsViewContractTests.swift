@@ -550,9 +550,9 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("Privacy_Microphone"))
         XCTAssertTrue(source.contains("private var setupSection: some View"))
         // 2.3 U2's gear badge target now carries Setup (its first broken step); permission health shows the section
-        // only when something is broken.
+        // while a step needs attention or briefly after a repair.
         XCTAssertTrue(source.contains("Text(setup.header ?? \"Setup\")\n                    .id(SettingsFocus.permissions)"))
-        XCTAssertTrue(source.contains("if setup.showsSection {"))
+        XCTAssertTrue(source.contains("if !visibleSteps.isEmpty {"))
         XCTAssertTrue(source.contains("setup.visibleRestartLine(hotkeyListenerRestartLine)"))
         XCTAssertFalse(source.contains("All permissions granted"))
         XCTAssertTrue(source.contains("SettingsDisclosureRow(\"Advanced\", isExpanded:"))

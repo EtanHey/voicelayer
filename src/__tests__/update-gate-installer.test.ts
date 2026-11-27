@@ -16,9 +16,25 @@ export function fixture(phase: string | null) {
   if (phase) writeFileSync(proof, JSON.stringify({ phase, ready: phase === "idle" }));
   const log = join(root, "calls"); writeFileSync(log, "");
   writeFileSync(join(root, "bash-env"), "enable -n kill\n");
-  for (const name of ["brew", "launchctl", "osascript", "kill", "mv", "swift", "pkill", "open", "codesign", "hidutil", "plutil", "cp", "rm", "ditto"]) {
+  for (const name of ["brew", "launchctl", "osascript", "kill", "mv", "swift", "pkill", "open", "codesign", "hidutil", "plutil", "cp", "ditto"]) {
     writeFileSync(join(bin, name), `#!/bin/bash\nprintf '%s %s\\n' '${name}' "$*" >> "$CALL_LOG"\n`, { mode: 0o755 });
   }
+  // Model actool output and allow teardown only of the two files in its scratch directory.
+  writeFileSync(join(bin, "xcrun"), `#!/bin/bash
+[[ "$1" == actool && "$3" == --compile && -d "$4" ]] || exit 1
+case "$4" in "$SYMBOL_STAGE_PREFIX"*) ;; *) exit 1;; esac
+printf '%s\\n' "$4" > "$CALL_LOG.symbol-stage"
+printf fixture > "$4/Assets.car"
+`, { mode: 0o755 });
+  writeFileSync(join(bin, "rm"), `#!/bin/bash
+stage=
+if [[ -f "$CALL_LOG.symbol-stage" ]]; then IFS= read -r stage < "$CALL_LOG.symbol-stage"; fi
+if [[ -n "$stage" && $# -eq 4 && "$1" == -f && "$2" == -- &&
+      "$3" == "$stage/Assets.car" && "$4" == "$stage/partial.plist" ]]; then
+  exec /bin/rm "$@"
+fi
+printf 'rm %s\\n' "$*" >> "$CALL_LOG"
+`, { mode: 0o755 });
   writeFileSync(join(bin, "pgrep"), "#!/bin/bash\nexit 1\n", { mode: 0o755 });
   // CLI still routes to the actual updater main; external mutations are PATH stubs.
   writeFileSync(join(bin, "bash"), `#!/bin/bash
@@ -38,6 +54,7 @@ fi
   process.env.VOICELAYER_UPDATE_GATE_PATH = gate; process.env.VOICELAYER_TEST_INSTALL_PROOF = proof;
   const env = { ...process.env, HOME: join(root, "home"), BASH_ENV: join(root, "bash-env"), VOICELAYER_INSTALL_OPERATION: "", PATH: `${bin}:${process.env.PATH}`, CALL_LOG: log,
     VOICELAYER_UPDATE_GATE_PATH: gate, VOICELAYER_TEST_INSTALL_PROOF: proof,
+    SYMBOL_STAGE_PREFIX: join(repo, ".build.noindex/voicebar-symbols."),
     VOICEBAR_TEST_BREW_CASK_REGISTERED: "0", VOICEBAR_TEST_PROCESS_TABLE: "none", VOICEBAR_TEST_PS_PID_PPID: "none",
     BREW_CASK_SYNC_BREW_BIN: join(bin, "brew"), VOICELAYER_UPDATE_TARGET_SHA: "a".repeat(40) };
   const start = () => Bun.spawn(["/bin/bash", "src/cli/voicelayer.sh", "update", "--no-stop", "--no-relaunch"],

@@ -16,6 +16,7 @@
     "!src/__tests__/**",
     "flow-bar/Package.swift",
     "flow-bar/build-app.sh",
+    "flow-bar/Symbols/",
     "bun.lock",
     "flow-bar/bundle/",
     "flow-bar/Sources/",

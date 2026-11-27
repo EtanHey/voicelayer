@@ -305,11 +305,12 @@ public struct SettingsHistoryDiagnosticsPanel: View {
 }
 
 /// Icon-only copy: the symbol is the affordance; the tooltip and VoiceOver carry the words.
-/// The checkmark swap is state feedback, not motion, and reverts after two seconds.
+/// The checkmark replaces the copy glyph (a fade with Reduce Motion, T19c) and reverts after two seconds.
 struct SettingsHistoryCopyIconButton: View {
     let text: String?
     let label: String
     @State private var copied = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         if let payload = SettingsCopyPayload.nonempty(text) {
@@ -320,6 +321,8 @@ struct SettingsHistoryCopyIconButton: View {
             } label: {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
                     .font(.caption)
+                    .contentTransition(VoiceBarSymbolMotion.copyConfirmation(reduceMotion: reduceMotion))
+                    .animation(VoiceBarSymbolMotion.swapAnimation, value: copied)
                     .frame(width: 20, height: 20)
                     .contentShape(Rectangle())
             }
