@@ -76,6 +76,7 @@ struct SettingsRowLabel: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 ClippingAwareText(text: title, font: Self.titleFont, lineLimit: limit)
                     .foregroundStyle(notchInk.map { AnyShapeStyle($0.primary) } ?? AnyShapeStyle(.primary))
+                    .alignmentGuide(.settingsTitleCentre) { $0[VerticalAlignment.center] }
                 if let titleBadge { titleBadge }
             }
             if let description, !description.isEmpty {
@@ -165,14 +166,20 @@ private enum SettingsStatusCentre: AlignmentID {
     static func defaultValue(in context: ViewDimensions) -> CGFloat { context[VerticalAlignment.center] }
 }
 
+private enum SettingsTitleCentre: AlignmentID {
+    static func defaultValue(in context: ViewDimensions) -> CGFloat { context[VerticalAlignment.center] }
+}
+
 extension VerticalAlignment {
     static let settingsTitleCapCentre = VerticalAlignment(SettingsTitleCapCentre.self)
     static let settingsStatusCentre = VerticalAlignment(SettingsStatusCentre.self)
+    static let settingsTitleCentre = VerticalAlignment(SettingsTitleCentre.self)
 }
 
 struct SettingsRowLayout: Layout {
     var controlsFollowStatus = false
     var controlsFollowTitle = false
+    var controlsFollowTitleCentre = false
     var spacing: CGFloat = 8
     var textMinWidth: CGFloat = SettingsRowLabel.textMinWidth
 
@@ -183,6 +190,7 @@ struct SettingsRowLayout: Layout {
     private struct Plan {
         let wraps: Bool
         let textSize: CGSize
+        let textY: CGFloat
         let controlsSize: CGSize
         let controlsY: CGFloat
         let controlsPlacementY: CGFloat
@@ -196,12 +204,21 @@ struct SettingsRowLayout: Layout {
                                        textMinWidth: textMinWidth)
         let textWidth = wraps ? width : width - controls.width - spacing
         let dimensions = subviews[0].dimensions(in: ProposedViewSize(width: textWidth, height: nil))
-        let centre = controlsFollowStatus ? dimensions[.settingsStatusCentre] : dimensions.height / 2
-        return Plan(wraps: wraps, textSize: CGSize(width: textWidth, height: dimensions.height), controlsSize: controls,
-                    controlsY: max(0, centre - controls.height / 2),
+        let centre: CGFloat
+        if controlsFollowTitleCentre {
+            centre = dimensions[.settingsTitleCentre]
+        } else {
+            centre = controlsFollowStatus ? dimensions[.settingsStatusCentre] : dimensions.height / 2
+        }
+        let controlsTop = centre - controls.height / 2
+        // Give taller controls room above the title while keeping both children within the row.
+        let textY = controlsFollowTitleCentre && !wraps ? max(0, -controlsTop) : 0
+        let controlsY = max(0, controlsTop)
+        return Plan(wraps: wraps, textSize: CGSize(width: textWidth, height: dimensions.height),
+                    textY: textY, controlsSize: controls, controlsY: controlsY,
                     controlsPlacementY: controlsFollowTitle
                         ? dimensions[.settingsTitleCapCentre] - controls.height / 2
-                        : max(0, centre - controls.height / 2), width: width)
+                        : controlsY, width: width)
     }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
@@ -209,17 +226,16 @@ struct SettingsRowLayout: Layout {
         let plan = plan(width: proposal.width, subviews: subviews)
         let height = plan.wraps
             ? plan.textSize.height + spacing / 2 + plan.controlsSize.height
-            : max(plan.textSize.height, plan.controlsY + plan.controlsSize.height)
+            : max(plan.textY + plan.textSize.height, plan.controlsY + plan.controlsSize.height)
         return CGSize(width: plan.width, height: height)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         guard subviews.count == 2 else { return }
         let plan = plan(width: bounds.width, subviews: subviews)
-        subviews[0].place(at: bounds.origin, anchor: .topLeading,
+        subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.minY + plan.textY), anchor: .topLeading,
                           proposal: ProposedViewSize(width: plan.textSize.width, height: nil))
-        // Dictionary actions follow the first title cap centre; microphone actions follow the measured status line.
-        // Placement can rise above the text frame; the original row height and wrapping calculation stay fixed.
+        // Dictionary actions can rise above the text frame while keeping their original reserved row height.
         // The reserved controls have the same geometry at rest, on hover and with keyboard focus.
         let controlsOrigin = plan.wraps
             ? CGPoint(x: bounds.minX, y: bounds.minY + plan.textSize.height + spacing / 2)
