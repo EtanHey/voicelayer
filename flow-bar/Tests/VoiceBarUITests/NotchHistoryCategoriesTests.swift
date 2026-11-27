@@ -330,7 +330,8 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         try click(NotchHistoryDetailView.actionIdentifier(.play), harness)
         XCTAssertEqual(starts, [url])
         let message = try XCTUnwrap(player.failureMessage)
-        XCTAssertTrue(labels(harness).contains(message))
+        XCTAssertTrue(tree(harness).contains { $0.label == message || $0.staticTextValue == message },
+                      "The opened detail exposes the exact playback error")
     }
 
     func testBackStopsOnlyPlaybackStartedByTheOpenedDetail() throws {
@@ -986,19 +987,24 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         )))
     }
 
-    /// Every accessibility element under the host, as (identifier, label, frame).
-    private func elements(_ root: Any, depth: Int = 0) -> [(id: String, label: String, frame: NSRect, hint: String)] {
+    private typealias AXElement = (id: String, label: String, frame: NSRect, hint: String, staticTextValue: String?)
+
+    /// Every accessibility element under the host.
+    private func elements(_ root: Any, depth: Int = 0) -> [AXElement] {
         guard depth < 40, let object = root as? NSObject,
               object.responds(to: NSSelectorFromString("accessibilityRole")) else { return [] }
         // KVC on a key an element does not implement raises; ask first.
         func read(_ key: String) -> Any? {
             object.responds(to: NSSelectorFromString(key)) ? object.value(forKey: key) : nil
         }
-        var found = [(
+        // SwiftUI can put the contents of a Text in AXValue instead of AXLabel.
+        let isStaticText = read("accessibilityRole") as? String == NSAccessibility.Role.staticText.rawValue
+        var found: [AXElement] = [(
             id: read("accessibilityIdentifier") as? String ?? "",
             label: read("accessibilityLabel") as? String ?? "",
             frame: (read("accessibilityFrame") as? NSValue)?.rectValue ?? .zero,
-            hint: read("accessibilityHelp") as? String ?? ""
+            hint: read("accessibilityHelp") as? String ?? "",
+            staticTextValue: isStaticText ? read("accessibilityValue") as? String : nil
         )]
         for child in read("accessibilityChildren") as? [Any] ?? [] {
             found += elements(child, depth: depth + 1)
@@ -1006,7 +1012,7 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         return found
     }
 
-    private func tree(_ harness: Harness) -> [(id: String, label: String, frame: NSRect, hint: String)] {
+    private func tree(_ harness: Harness) -> [AXElement] {
         harness.host.layoutSubtreeIfNeeded()
         return elements(harness.host)
     }
