@@ -5,7 +5,7 @@ public enum VoiceBarHotkeyContract {
     // Copy below mirrors the actual wiring in HotkeyManager/VoiceBarCommandRouter:
     // single tap stops recording/speech and cancels transcription (idle: nothing),
     // hold is push-to-talk, double-tap locks the active recording hands-free.
-    public static let singleTapDescription = "Stop recording or speech; cancel transcription"
+    public static let singleTapDescription = "Stop recording or narration; cancel transcription"
     public static let holdDescription = "Push-to-talk recording"
     public static let doubleTapDescription = "Lock the active recording (hands-free)"
     public static let repasteShortcutLabel = "Shift+F5"

@@ -144,7 +144,7 @@ extension VoiceBarFlowTests {
 
         click(app.buttons["qa-fixture-speaking-collapsed"])
         step("WINGS-U2 speaking-collapsed") {
-            assertWing("speaking-collapsed", left: ["Pause speech"], right: ["Show teleprompter", "Stop speaking"])
+            assertWing("speaking-collapsed", left: ["Pause narration"], right: ["Show teleprompter", "Stop speaking"])
         }
 
         // First click while another app is frontmost (PILL1 + the U2 regression guard).

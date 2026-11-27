@@ -90,7 +90,7 @@ public struct SettingsHistoryDiagnostics: Equatable, Sendable {
         let reason = metadata["not_transcribed_reason"] as? String
         let status = metadata["transcription_status"] as? String
         let summary: String
-        if reason == "transcription-failed" { summary = "Speech recognition failed: see saved details" }
+        if reason == "transcription-failed" { summary = "Transcription failed: see saved details" }
         else if status == "partial" { summary = "Archive reports a partial transcript" }
         else if status == "cancelled" { summary = "Recording cancelled" }
         else if let reason { summary = "Not transcribed: \(SettingsHistoryDiagnosticPrivacy.text(reason))" }

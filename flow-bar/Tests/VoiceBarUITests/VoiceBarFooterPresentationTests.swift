@@ -126,7 +126,7 @@ final class VoiceBarFooterPresentationTests: XCTestCase {
         }
         XCTAssertNil(notice(false))
         XCTAssertNil(notice(nil))
-        XCTAssertEqual(notice(true), "Remote speech backend configured")
+        XCTAssertEqual(notice(true), "Remote transcription backend configured")
     }
 
     /// S2, 2026-11-02: omit the obsolete local-transcription footer from all sources.

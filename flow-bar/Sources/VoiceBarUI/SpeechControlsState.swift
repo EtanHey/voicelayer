@@ -34,7 +34,7 @@ public struct SpeechControlsState: Equatable, Sendable {
                 return "Not measured yet. Press Preview."
             }
             let name = SpeechControlsState.voiceKindLabel(engine)
-            let source = origin == "preview" ? "Last preview" : "Last speech"
+            let source = origin == "preview" ? "Last preview" : "Last narration"
             return String(format: "%@: first sound after %.1f s · %@%@", source, ms / 1000, name,
                           measurementFallback ? " (fallback)" : "")
         }
@@ -146,14 +146,14 @@ struct SpeechThresholdDraft: Equatable {
     static func blockedReason(controls: SpeechControlsState?, connected: Bool, busy: Bool,
                               pending: [String: SpeechValue], callbackAvailable: Bool) -> String? {
         guard connected else { return "VoiceLayer isn't connected. Draft retained." }
-        guard let controls else { return "Waiting for Speech settings." }
+        guard let controls else { return "Waiting for Narration settings." }
         if let lock = controls.lockReason(for: "short_limit_chars") { return "\(lock). Threshold is locked." }
         if case .number(let value) = pending["short_limit_chars"] {
             return "Applying \(value) characters… Awaiting confirmation."
         }
-        if !pending.isEmpty { return "A speech request is pending." }
+        if !pending.isEmpty { return "A narration request is pending." }
         if busy { return "Voice session in progress." }
-        return callbackAvailable ? nil : "Speech setting changes are unavailable."
+        return callbackAvailable ? nil : "Narration setting changes are unavailable."
     }
     func canApply(controls: SpeechControlsState?, connected: Bool, busy: Bool,
                   pending: [String: SpeechValue], callbackAvailable: Bool) -> Bool {

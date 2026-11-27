@@ -256,7 +256,7 @@ final class SettingsHistoryArchiveTests: XCTestCase {
             (#""not_transcribed_reason": "silent-input", "input_dbfs": -93.9"#,
              "Not transcribed: the microphone sent only silence (-93.9 dBFS)"),
             (#""not_transcribed_reason": "no-speech", "input_dbfs": -46.9"#,
-             "Not transcribed: no speech detected"),
+             "Not transcribed: no spoken audio detected"),
             (#""not_transcribed_reason": "transcription-failed", "not_transcribed_detail": "whisper-server timed out""#,
              "Transcription failed: whisper-server timed out"),
             (#""not_transcribed_reason": "empty-transcript""#,

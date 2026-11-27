@@ -223,11 +223,11 @@ final class PlaybackPauseTests: XCTestCase {
     func testControlShowsOnlyWhileSpeakingOrPaused() {
         let speaking = VoiceBarPresentation.playbackPauseControl(mode: .speaking, isPaused: false, isReadback: false)
         XCTAssertEqual(speaking?.iconName, "pause.fill")
-        XCTAssertEqual(speaking?.accessibilityLabel, "Pause speech")
+        XCTAssertEqual(speaking?.accessibilityLabel, "Pause narration")
 
         let paused = VoiceBarPresentation.playbackPauseControl(mode: .speaking, isPaused: true, isReadback: false)
         XCTAssertEqual(paused?.iconName, "play.fill")
-        XCTAssertEqual(paused?.accessibilityLabel, "Resume speech")
+        XCTAssertEqual(paused?.accessibilityLabel, "Resume narration")
 
         for mode in [VoiceMode.idle, .recording, .transcribing, .error, .disconnected] {
             XCTAssertNil(
@@ -364,7 +364,7 @@ final class PlaybackPauseTests: XCTestCase {
         XCTAssertFalse(state.isF5SpeechPausedDuringCapture)
         XCTAssertEqual(state.teleprompterText, "One two three four five six")
         XCTAssertTrue(state.showsSelectionBusyNote)
-        XCTAssertEqual(state.selectionFeedbackNote, "Speech stopped")
+        XCTAssertEqual(state.selectionFeedbackNote, "Narration stopped")
         XCTAssertFalse(sent().contains { $0["cmd"] as? String == "resume" })
     }
 

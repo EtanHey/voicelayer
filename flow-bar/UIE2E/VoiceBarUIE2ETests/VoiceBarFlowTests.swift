@@ -366,7 +366,7 @@ final class VoiceBarFlowTests: XCTestCase {
             case "General": content = app.buttons["Check shortcut"]
             case "Transcription": content = app.scrollViews["models-settings-form"]
             case "Dictionary": content = app.textFields["Search terms and variants"]
-            case "Speech": content = app.textFields["speech-short_limit_chars"]
+            case "Narration": content = app.textFields["speech-short_limit_chars"]
             default: content = app.radioButtons["Dictations"]
             }
             XCTAssertTrue(content.waitForExistence(timeout: 3))
@@ -420,7 +420,7 @@ final class VoiceBarFlowTests: XCTestCase {
         // have separate Cancel controls. Exercise both before the long tab sweeps.
         for (name, run) in [("Dictionary", dictionaryFlow), ("History", historyFlow), ("Pill", pillFlow),
             ("Popover", menuBarFlow), ("Context menu", contextMenuFlow), ("Notch", notchRegressionFlow),
-            ("General", generalFlow), ("Transcription", transcriptionFlow), ("Speech", speechFlow)] {
+            ("General", generalFlow), ("Transcription", transcriptionFlow), ("Narration", speechFlow)] {
             let before = testRun?.failureCount ?? 0
             run()
             step("verify completed surface \(name)", evidenceContract: name == "Context menu" ? "terminated" : "visible") {
@@ -553,7 +553,7 @@ extension VoiceBarFlowTests {
                 context.row = editingDictionaryRow
             }
         }
-        if activePage == "Speech", element.elementType == .popUpButton || element.elementType == .slider || label.contains("daemon command") {
+        if activePage == "Narration", element.elementType == .popUpButton || element.elementType == .slider || label.contains("daemon command") {
             context.profile = speechProfile(element)
         }
         return ledger.key(role: String(element.elementType.rawValue), identity: identity, context: context)
@@ -612,7 +612,7 @@ extension VoiceBarFlowTests {
     }
 
     func didActivate(label: String, type: XCUIElement.ElementType) {
-        if type == .staticText, ["General", "Transcription", "Dictionary", "Speech", "History"].contains(label) { activePage = label }
+        if type == .staticText, ["General", "Transcription", "Dictionary", "Narration", "History"].contains(label) { activePage = label }
         if label == "View history →" { activePage = "History" }
         if label == "Open General settings" { activePage = "General" }
         if activePage == "History", type == .radioButton, ["Ask", "Dictations"].contains(label) {
@@ -965,7 +965,7 @@ extension VoiceBarFlowTests {
     }
 
     func speechFlow() {
-        walk("Speech")
+        walk("Narration")
         for (index, kind) in ["short", "long"].enumerated() {
             let picker = app.popUpButtons["speech-\(kind).voice"]
             click(picker, "open grouped voice list \(index)")
@@ -1009,7 +1009,7 @@ extension VoiceBarFlowTests {
 
     func speechCopyFlow() {
         let command = app.buttons["Copy daemon command"].firstMatch
-        let error = app.buttons["Copy speech error"].firstMatch
+        let error = app.buttons["Copy narration error"].firstMatch
         // Inspect both edges first so a lazy Form cannot be mistaken for an absent feature.
         scrollFully(-1)
         let hasError = error.exists
@@ -1020,7 +1020,7 @@ extension VoiceBarFlowTests {
         for index in 0..<2 {
             assertCopy("Copy daemon command", equals: "voicelayer daemon", target: commands.element(boundBy: index))
         }
-        assertCopy("Copy speech error", equals: "Couldn't complete the speech request - provider unavailable\nFull diagnostic: connection refused · שלום 🎧")
+        assertCopy("Copy narration error", equals: "Couldn't complete the narration request - provider unavailable\nFull diagnostic: connection refused · שלום 🎧")
     }
 
     /// Native evidence: row selection, Refresh and Clear search replace detail views.
@@ -1346,7 +1346,7 @@ extension VoiceBarFlowTests {
         step("idle fixture clears the Preparing and readback presentation") {
             waitUntil {
                 let pill = self.app.dialogs["VoiceBar QA Pill"]
-                let preparing = pill.descendants(matching: .any).matching(UIE2EAXText.predicate("Preparing speech…",
+                let preparing = pill.descendants(matching: .any).matching(UIE2EAXText.predicate("Preparing narration…",
                     staticTextRole: XCUIElement.ElementType.staticText.rawValue)).firstMatch
                 return !preparing.exists && !pill.buttons["Stop speaking"].exists &&
                     !pill.buttons["Dismiss teleprompter"].exists && !pill.staticTexts["Teleprompter hidden"].exists

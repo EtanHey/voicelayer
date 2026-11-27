@@ -363,7 +363,7 @@ public struct RecognizerPickerState: Equatable, Sendable {
                 return engine.title + ": " + Self.message(for: reason)
             }
         }
-        if fallbackReason == "vad-no-speech" { return "No speech detected." }
+        if fallbackReason == "vad-no-speech" { return "No spoken audio detected." }
         if selected == .parakeet, effective == .whisper, fallbackReason == "parakeet-startup-failed" {
             return "Using Whisper: Parakeet failed to load"
         }

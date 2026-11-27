@@ -90,7 +90,7 @@ final class SettingsViewContractTests: XCTestCase {
             [.general, .transcription, .dictionary, .speech, .history]
         )
         XCTAssertEqual(SettingsTab.allCases.map(\.title), [
-            "General", "Transcription", "Dictionary", "Speech", "History",
+            "General", "Transcription", "Dictionary", "Narration", "History",
         ])
     }
 
@@ -104,7 +104,12 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertFalse(modelSource.contains("LabeledContent(\"Speech model\")"))
     }
 
-    func testSpeechURLRouting() {
+    func testNarrationTitlesAndURLRouting() throws {
+        XCTAssertEqual(SettingsTab.speech.title, "Narration")
+        XCTAssertEqual(SettingsHistoryScope.speech.title, "Narration")
+        XCTAssertTrue(try settingsViewSource().contains("settingsPage(title: SettingsTab.speech.title)"))
+        XCTAssertEqual(SettingsTab(urlComponent: "narration"), .speech)
+        XCTAssertEqual(SettingsTab(urlComponent: "NaRrAtIoN"), .speech)
         XCTAssertEqual(SettingsTab(urlComponent: "SpEeCh"), .speech)
     }
 
@@ -203,7 +208,7 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertEqual(SettingsHistoryScope.allCases.first, .recording)
         XCTAssertEqual(SettingsHistoryScope.recording.title, "Dictations")
         XCTAssertEqual(SettingsHistoryScope.ask.title, "Ask")
-        XCTAssertEqual(SettingsHistoryScope.speech.title, "Speech")
+        XCTAssertEqual(SettingsHistoryScope.speech.title, "Narration")
     }
 
     func testHistoryTabRendersASegmentedScopePickerDefaultingToRecording() throws {

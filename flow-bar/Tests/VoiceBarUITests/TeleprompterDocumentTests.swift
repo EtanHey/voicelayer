@@ -106,7 +106,7 @@ final class TeleprompterDocumentTests: XCTestCase {
     func testThreeChunkLongReadRendersOneDocumentAndTheHighlightCrossesChunkBoundaries() {
         let state = VoiceState(playbackAmplitudeClock: { 100 })
         prepare(state)
-        XCTAssertEqual(state.teleprompterText, "Preparing speech…", "Preparing looks exactly as today")
+        XCTAssertEqual(state.teleprompterText, "Preparing narration…")
 
         play(state, chunk: 0)
         XCTAssertEqual(state.teleprompterText, document, "the first chunk already shows the whole read")

@@ -125,7 +125,7 @@ final class NotchLeftInkRuleTests: XCTestCase {
     /// Review r1 (lead decision): reading aloud while an Ask answer is still transcribing with nothing queued puts the
     /// spinner in Forward's slot. Its ink meets the rule too (it sat at 15.0 pt); the slot and every hit rect stay.
     func testTheSpinnerInForwardsSlotSitsOnTheRule() throws {
-        let fixture = Fixture(name: "reading aloud, Ask answer transcribing", tooltip: "Pause speech", icon: "pause.fill") {
+        let fixture = Fixture(name: "reading aloud, Ask answer transcribing", tooltip: "Pause narration", icon: "pause.fill") {
             var speaking: [String: Any] = ["type": "state", "state": "speaking", "text": "A synthetic sentence to read.",
                                            "request_id": "ink-read", "playback_id": "ink-player", "generation": 1]
             speaking["utteranceId"] = "ink-read"

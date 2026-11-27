@@ -403,7 +403,7 @@ final class SettingsPlaybackScrubBarTests: XCTestCase {
     func testTeleprompterTrackIsCentredAndGrowingDoesNotMoveIt() throws {
         func bitmap(time: Double, growing: Bool) throws -> NSBitmapImageRep {
             try render(SettingsPlaybackScrubBar(position: { SettingsAudioPlaybackPosition(currentTime: time, duration: 100) },
-                seek: { _ in }, accessibilityNoun: "agent speech", isPlaying: false, isGrowing: growing,
+                seek: { _ in }, accessibilityNoun: "agent narration", isPlaying: false, isGrowing: growing,
                 allowsSeeking: true, isTeleprompter: true).frame(width: 400, height: 24),
                 size: CGSize(width: 400, height: 24), appearance: NSAppearance(named: .darkAqua))
         }
@@ -429,7 +429,7 @@ final class SettingsPlaybackScrubBarTests: XCTestCase {
                              allowsSeeking: Bool = true, teleprompter: Bool = true,
                              width: CGFloat = 437) throws -> NSBitmapImageRep {
         try render(SettingsPlaybackScrubBar(position: { SettingsAudioPlaybackPosition(currentTime: time, duration: duration) },
-            seek: { _ in }, accessibilityNoun: "agent speech", isPlaying: isPlaying, isGrowing: growing,
+            seek: { _ in }, accessibilityNoun: "agent narration", isPlaying: isPlaying, isGrowing: growing,
             allowsSeeking: allowsSeeking, isTeleprompter: teleprompter)
             .frame(width: width, height: 24).background(Color(white: 0.13)),
             size: CGSize(width: width, height: 24), appearance: NSAppearance(named: .darkAqua))
@@ -549,7 +549,7 @@ final class SettingsPlaybackScrubBarTests: XCTestCase {
     func testCloneTrackIsUniformAcrossPlaybackPositions() throws {
         func bitmap(at time: Double) throws -> NSBitmapImageRep {
             try render(SettingsPlaybackScrubBar(position: { SettingsAudioPlaybackPosition(currentTime: time, duration: 100) },
-                seek: { _ in }, accessibilityNoun: "agent speech", isPlaying: false,
+                seek: { _ in }, accessibilityNoun: "agent narration", isPlaying: false,
                 allowsSeeking: false, isTeleprompter: true).frame(width: 400, height: 24),
                 size: CGSize(width: 400, height: 24), appearance: NSAppearance(named: .darkAqua))
         }

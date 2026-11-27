@@ -54,7 +54,7 @@ let a = VoiceControlAvailability.evaluate(control, facts, handlerInstalled: onAc
 | Settings window: sidebar | `windowTab(tab)` |
 | Settings › General | `readClipboard`, `restartListener`, `checkShortcut`, `permissionFix`, `hide`, `show`, `microphone(edit, eligible:)` for Make default / drag reorder / move / visible-first |
 | Settings › Transcription | `recognizer(.select/.loadAndSelect/.load/.unload/.download/.cancelDownload/.requestDelete/.confirmDelete, row)`, `processingToggle(key, lockedBy:)` |
-| Settings › Speech | `speechSetting(key)`, `preview(profile)`, `clone(action, engine)` |
+| Settings › Narration | `speechSetting(key)`, `preview(profile)`, `clone(action, engine)` |
 | Settings › Dictionary | `dictionaryEdit(readOnly:)`, `dictionaryCommit` |
 | Settings › History rows | `historyPlay(audio:)`, `historyCopy`, `historyPaste`, `historyReveal`, `retranscribe(.window, audio:)`, `historyNavigate` |
 | Right-click menu / popover | `windowTab(.general)` (Settings…), `hide`, `copyLastTranscript`, `pasteLastTranscript`, `retranscribe(.latest, audio:)`, `chooseMicrophone` (Change…), `quit` |

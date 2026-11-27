@@ -308,7 +308,7 @@ final class VoiceBarNotchContrastTests: XCTestCase {
 
         XCTAssertEqual(tapAgain, "Tap again to lock")
         XCTAssertEqual(transcribing, "Transcribing…")
-        XCTAssertEqual(modelLoad, "Loading speech model")
+        XCTAssertEqual(modelLoad, "Loading transcription model")
 
         let source = try barViewSource()
         let statusStart = try XCTUnwrap(source.range(of: "private var statusLabel"))

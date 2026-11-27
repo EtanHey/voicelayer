@@ -68,7 +68,7 @@ extension VoiceBarFlowTests {
 
     func testN1SettingsContainControlsInsteadOfWindowHandoffs() throws {
         var observations: [(String, Int, Int)] = []
-        for title in ["General", "Transcription", "Dictionary", "Speech", "History"] {
+        for title in ["General", "Transcription", "Dictionary", "Narration", "History"] {
             try e2e24Fixture("tooltips-settings", owner: "lane-A")
             try qa0510Require(qa0510Tabs.buttons[title])
             click(qa0510Tabs.buttons[title])
@@ -283,7 +283,7 @@ extension VoiceBarFlowTests {
     }
     func testT8ScrubberIsCloseToEyeReplayRow() throws {
         try qa0510Speaking()
-        let scrub = qa0510Pill.descendants(matching: .any)["Playback position, agent speech"], eye = qa0510Pill.buttons["Hide teleprompter"]
+        let scrub = qa0510Pill.descendants(matching: .any)["Playback position, agent narration"], eye = qa0510Pill.buttons["Hide teleprompter"]
         try qa0510Require(scrub); try qa0510Require(eye)
         qa0510Fixed("T8") {
             XCTAssertLessThanOrEqual(eye.frame.minY - scrub.frame.maxY, 7, "[T8] proposed 7 pt gap budget (existing stack spacing)")

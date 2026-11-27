@@ -31,20 +31,20 @@ final class Tip2PausedTooltipTests: XCTestCase {
             }
         }
 
-        let playing = try mounted(pauseLabel: "Pause speech")
-        XCTAssertEqual(playing.map(\.toolTip), ["Pause speech", "Next read", "Shell continuity"])
+        let playing = try mounted(pauseLabel: "Pause narration")
+        XCTAssertEqual(playing.map(\.toolTip), ["Pause narration", "Next read", "Shell continuity"])
         state.paused = true
-        let paused = try mounted(pauseLabel: "Resume speech")
+        let paused = try mounted(pauseLabel: "Resume narration")
         for (before, after) in zip(playing, paused) {
             XCTAssertTrue(before === after, "Pause must preserve mounted wing identity: \(before.identifier!)")
         }
-        XCTAssertEqual(paused.map(\.toolTip), ["Resume speech", "Next read", "Shell continuity"])
+        XCTAssertEqual(paused.map(\.toolTip), ["Resume narration", "Next read", "Shell continuity"])
         state.paused = false
-        let resumed = try mounted(pauseLabel: "Pause speech")
+        let resumed = try mounted(pauseLabel: "Pause narration")
         for (before, after) in zip(playing, resumed) {
             XCTAssertTrue(before === after, "Resume must preserve mounted wing identity")
         }
-        XCTAssertEqual(resumed.map(\.toolTip), ["Pause speech", "Next read", "Shell continuity"])
+        XCTAssertEqual(resumed.map(\.toolTip), ["Pause narration", "Next read", "Shell continuity"])
         XCTAssertTrue(panel.allowsToolTipsWhenApplicationIsInactive)
         XCTAssertFalse(panel.isKeyWindow)
     }
@@ -144,7 +144,7 @@ final class Tip2PausedTooltipTests: XCTestCase {
                 try XCTUnwrap(descendants(host).first { $0.toolTip == label && !$0.visibleRect.isEmpty })
             }
         }
-        let playing = try controls("Pause speech")
+        let playing = try controls("Pause narration")
         let stops = descendants(host).filter { $0.toolTip == "Stop speaking" }
         XCTAssertEqual(stops.count, 1, "Hidden compact Stop must clear its native registration")
         // T7 (Etan QA 2026-11-09, reversing 2.3 U5): the expanded Stop sits in the eye row, not the top row.
@@ -158,13 +158,13 @@ final class Tip2PausedTooltipTests: XCTestCase {
         }
         state.handleEvent(["type": "playback_state", "state": "paused", "offset_ms": 0,
                            "playback_id": "tip3", "generation": 2])
-        let paused = try controls("Resume speech", terminal: "Close read")
+        let paused = try controls("Resume narration", terminal: "Close read")
         XCTAssertTrue(playing[0] === paused[0])
         XCTAssertTrue(playing[1] === paused[1])
         XCTAssertFalse(descendants(host).contains { $0.toolTip == "Stop speaking" }, "no Stop square while paused")
         state.handleEvent(["type": "playback_state", "state": "resumed", "offset_ms": 0,
                            "playback_id": "tip3", "generation": 3])
-        let resumed = try controls("Pause speech")
+        let resumed = try controls("Pause narration")
         XCTAssertTrue(playing[0] === resumed[0])
         XCTAssertTrue(playing[1] === resumed[1])
         XCTAssertTrue(panel.allowsToolTipsWhenApplicationIsInactive)
@@ -226,7 +226,7 @@ final class Tip2PausedTooltipTests: XCTestCase {
                 isKeyboardFocused: false
             )) {
                 HStack {
-                    TooltipProbe(id: "pause", text: playback.paused ? "Resume speech" : "Pause speech")
+                    TooltipProbe(id: "pause", text: playback.paused ? "Resume narration" : "Pause narration")
                     TooltipProbe(id: "next", text: "Next read")
                 }
             } trailingContent: {

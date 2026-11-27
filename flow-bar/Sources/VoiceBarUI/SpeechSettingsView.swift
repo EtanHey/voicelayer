@@ -99,14 +99,14 @@ public struct SpeechSettingsView: View {
                     }
                 }
             } else {
-                Text(connected ? "Speech settings are not reported by this VoiceLayer version." : "VoiceLayer isn't connected. Speech settings appear when it reconnects.")
+                Text(connected ? "Narration settings are not reported by this VoiceLayer version." : "VoiceLayer isn't connected. Narration settings appear when it reconnects.")
                     .foregroundStyle(readInk)
             }
             if let notice, pending["preview"] == nil {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(notice).font(.caption).foregroundStyle(noticeInk(notice))
                         .fixedSize(horizontal: false, vertical: true)
-                    SettingsCopyButton(text: notice, label: "speech error")
+                    SettingsCopyButton(text: notice, label: "narration error")
                 }
             }
         }
@@ -184,15 +184,15 @@ public struct SpeechSettingsView: View {
         [SpeechThresholdDraft.confirmedLabel(limit), thresholdPurpose, SpeechThresholdDraft.reportStatus]
             .joined(separator: "\n")
     }
-    static let appliesNote = "Changes apply to the next speech."
-    /// The Voice row's one line: "First sound 0.8 s · Fast voice" (the reported label leads with "Last speech: first
+    static let appliesNote = "Changes apply to the next narration."
+    /// The Voice row's one line: "First sound 0.8 s · Fast voice" (the reported label leads with "Last narration: first
     /// sound after", which wrapped beside the picker). The number keeps its unit on the same line.
     static func latencyNote(_ label: String) -> String {
-        label.replacingOccurrences(of: "Last speech: first sound after ", with: "First sound ")
+        label.replacingOccurrences(of: "Last narration: first sound after ", with: "First sound ")
             .replacingOccurrences(of: #"(\d) s\b"#, with: "$1\u{00A0}s", options: .regularExpression)
     }
 
-    static let thresholdPurpose = "Chooses the short or long voice profile for the next speech."
+    static let thresholdPurpose = "Chooses the short or long voice profile for the next narration."
 
     @ViewBuilder
     private func voiceControl(_ kind: SpeechProfile, display: DisplayProfile, controls: SpeechControlsState) -> some View {

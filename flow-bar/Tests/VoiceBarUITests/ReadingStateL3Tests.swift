@@ -36,7 +36,7 @@ final class ReadingStateL3Tests: XCTestCase {
         state.dismissTeleprompter()
         let tooltips = try mountedTooltips(state, until: { $0.contains("Show teleprompter") })
         XCTAssertTrue(tooltips.contains("Show teleprompter"), "X1-34: the eye stays when paused hidden: \(tooltips)")
-        XCTAssertTrue(tooltips.contains("Resume speech"))
+        XCTAssertTrue(tooltips.contains("Resume narration"))
     }
 
     func testPausedTerminalControlIsCloseXNotTheStopSquare() throws {

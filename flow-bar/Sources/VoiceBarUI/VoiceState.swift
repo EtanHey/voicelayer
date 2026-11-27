@@ -804,6 +804,7 @@ public final class VoiceState {
 
     public var teleprompterText: String? {
         if mode == .speaking, !statusText.isEmpty {
+            if isPreparingSpeech, statusText == "Preparing speech…" { return "Preparing narration…" }
             return isShowingLongReadDocument ? longReadDocument?.text ?? statusText : statusText
         }
         if mode == .idle {
@@ -926,7 +927,7 @@ public final class VoiceState {
         if mode == .recording || modelsRecordingReason == "Recording…" { return "Recording in progress" }
         if mode == .transcribing || modelsRecordingReason == "Transcribing…" { return "Transcription in progress" }
         if speechPending["preview"] != nil || speechControls?.previewActive == true { return "Preview in progress…" }
-        return speechPending.isEmpty ? nil : "Saving speech settings…"
+        return speechPending.isEmpty ? nil : "Saving narration settings…"
     }
     public var speechAckTimeout: Duration = .seconds(10)
     /// Processing toggles sent and not yet acked (P1): the value the row shows meanwhile.
@@ -2173,9 +2174,9 @@ public final class VoiceState {
 
     public func previewTTSProfile(_ profile: SpeechProfile) {
         guard isConnected else { speechNotice = "Preview unavailable: VoiceLayer isn't connected."; return }
-        guard speechControls != nil else { speechNotice = "Preview unavailable: Speech settings haven't arrived yet."; return }
+        guard speechControls != nil else { speechNotice = "Preview unavailable: Narration settings haven't arrived yet."; return }
         if let reason = speechBusyReason { speechNotice = "Preview unavailable: \(reason)"; return }
-        guard speechRequestIDs.isEmpty else { speechNotice = "Preview unavailable: a speech request is still in progress."; return }
+        guard speechRequestIDs.isEmpty else { speechNotice = "Preview unavailable: a narration request is still in progress."; return }
         guard let sendCommand else { speechNotice = "Preview unavailable: VoiceLayer can't receive commands."; return }
         let id = UUID().uuidString
         speechRequestIDs[id] = ["preview"]
@@ -2199,7 +2200,7 @@ public final class VoiceState {
             }
             speechRequestIDs[id] = nil
             for key in keys { speechPending[key] = nil }
-            speechNotice = "Couldn't confirm the speech request. Showing VoiceLayer's current settings."
+            speechNotice = "Couldn't confirm the narration request. Showing VoiceLayer's current settings."
             sendCommand?(["cmd": "health"])
             onSpeechSettled?()
         }
@@ -2213,7 +2214,7 @@ public final class VoiceState {
             speechControls = controls
         } else if ack.outcome == .accept { sendCommand?(["cmd": "health"]) }
         if ack.outcome == .accept { speechNotice = nil }
-        else { speechNotice = "Couldn't complete the speech request" + (ack.reason.map { " - \($0)" } ?? "") }
+        else { speechNotice = "Couldn't complete the narration request" + (ack.reason.map { " - \($0)" } ?? "") }
         onSpeechSettled?()
     }
 
@@ -2571,7 +2572,7 @@ public final class VoiceState {
                 return .unavailable("Finish or cancel the current take and re-transcription first")
             }
             if mode == .speaking || isPlaybackPaused || isPlaybackPreparing || isAskCapture || historyPlayback.isVoiceBusy {
-                return .unavailable("Finish speech or Ask before re-transcribing")
+                return .unavailable("Finish narration or Ask before re-transcribing")
             }
             if mode != .idle { return .unavailable("Recover VoiceBar before re-transcribing") }
             return .available
@@ -3101,7 +3102,7 @@ public final class VoiceState {
         // not the end of the read, so never settle it here; but a click must never look dead.
         if command == "pause", event["outcome"] as? String == "noop", event["reason"] as? String == "nothing playing",
            mode == .speaking, !isPlaybackPaused {
-            showConfirmation("Speech is loading. Try again")
+            showConfirmation("Narration is loading. Try again")
             return
         }
         guard event["outcome"] as? String == "reject" else { return }
@@ -4141,7 +4142,7 @@ public final class VoiceState {
                     retainedTeleprompterWordBoundaries = document?.boundaries ?? read.words
                     retainedDisplayBlocks = document?.displayBlocks ?? read.document.display?.blocks ?? []
                     if mode == .speaking { enterIdleState(clearQueue: false) }
-                    showSelectionBusyNote(message: "Speech stopped")
+                    showSelectionBusyNote(message: "Narration stopped")
                 }
                 // A terminal paused player cannot become a running highlight clock while its
                 // replacement is still synthesizing. Freeze its readback before removing the park.

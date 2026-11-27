@@ -471,7 +471,7 @@ final class TeleprompterScrubTests: XCTestCase {
         var reads = 0
         let host = NSHostingView(rootView: SettingsPlaybackScrubBar(
             position: { reads += 1; return SettingsAudioPlaybackPosition(currentTime: 2, duration: 10) },
-            seek: { _ in }, accessibilityNoun: "agent speech", isPlaying: false
+            seek: { _ in }, accessibilityNoun: "agent narration", isPlaying: false
         ).frame(width: 300, height: 20))
         host.frame = NSRect(x: 0, y: 0, width: 300, height: 20)
         host.layoutSubtreeIfNeeded()

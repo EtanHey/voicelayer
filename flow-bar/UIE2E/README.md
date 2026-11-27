@@ -167,7 +167,7 @@ state, confirm mute before launch, and restore it afterward. Stop on a permissio
 never grant one. Keep the installed app, resident sockets and global hotkeys untouched.
 
 The integrated-candidate flow has capability checks for UI still in open PRs. Missing S3
-Speech Copy buttons produce a screenshot and `SKIP S3 not in this build`. Once the buttons
+Narration Copy buttons produce a screenshot and `SKIP S3 not in this build`. Once the buttons
 exist, both profile command copies and the multiline error Copy must preserve exact bytes.
 P1b #338 feedback fixtures become available when its feedback marker is present in the
 compiled source (stamped as `UIE2EPasteFeedback` in the QA bundle); otherwise the run logs
@@ -197,7 +197,7 @@ signing. The QA entry resolves this persistent identity before AppDelegate/NSApp
 missing/invalid UIE2E mode, invalid sandbox or unconfirmed mute refuses startup. Removing
 the mode flag while retaining isolated socket paths cannot enable production hotkeys/daemon.
 
-The coverage ledger keys controls by page plus History scope/selected row or Speech
+The coverage ledger keys controls by page plus History scope/selected row or Narration
 profile, not just label. Each History scope is inventoried independently. Ask response
 Paste must add exactly `history-paste:QA response` to the synthetic sink for that click;
 a prior Dictations Paste cannot satisfy either the ledger or payload assertion.

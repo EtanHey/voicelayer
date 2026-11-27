@@ -128,7 +128,7 @@ public enum NotchHistoryPresentation {
         switch scope {
         case .recording: openHint
         case .ask: "Opens this ask in the History window"
-        case .speech: "Opens this speech in the History window"
+        case .speech: "Opens this narration in the History window"
         }
     }
 

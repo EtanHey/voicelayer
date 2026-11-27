@@ -184,7 +184,7 @@ final class NotchIconButtonTooltipTests: XCTestCase {
         // Forward are disabled.
         assertEveryControlHasATooltip("speaking", try mount(bar(s)),
                                      expecting: ["Stop speaking", "Drag to show more or fewer lines", "Playback speed",
-                                                 "Previous read", "Pause speech", "Next read"],
+                                                 "Previous read", "Pause narration", "Next read"],
                                      textButtons: 3, disabled: ["Previous read", "Next read"])
     }
 }

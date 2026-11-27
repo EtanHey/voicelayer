@@ -1092,7 +1092,7 @@ private struct UIE2ESettings: View {
             modelsStatus: { model.voice.modelsSettingsState }, onRefreshModelsStatus: { model.refresh() },
             residencyNotice: { "QA recognizer failure\nSecond line" }, onSelectResidency: { model.voice.setWhisperResidency($0) },
             speechControls: { model.voice.speechControls }, speechConnected: { model.voice.isConnected },
-            speechNotice: { "Couldn't complete the speech request - provider unavailable\nFull diagnostic: connection refused · שלום 🎧" },
+            speechNotice: { "Couldn't complete the narration request - provider unavailable\nFull diagnostic: connection refused · שלום 🎧" },
             onChangeSpeech: { model.voice.setTTSSetting($0, $1) },
             onSelectSpeechEngine: { model.voice.setTTSProfile($0, engine: $1, voice: $2) },
             // Preview deliberately has no callback. It is disabled, and never clicked.
