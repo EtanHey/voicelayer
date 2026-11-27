@@ -144,7 +144,8 @@ struct NotchSettingsDrawer: View {
                 if let tab = NotchSettingsTabSwipe.settle(&tabSwipe, from: selectedTab, width: width) {
                     onSelectTab(tab)
                 }
-            }
+            },
+            onCancel: { tabSwipe.begin() }
         ))
     }
 
