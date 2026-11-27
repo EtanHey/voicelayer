@@ -1049,6 +1049,34 @@ if [[ "${VOICEBAR_UIE2E_ADHOC:-0}" == 1 ]] && ! allows_uie2e_adhoc_signing; then
 fi
 refuse_brew_managed_install_path
 guard_build_lifecycle_for_running_instances
+# Keep the compiled catalog in a unique scratch directory owned by this invocation.
+# The wrapper keeps it alive across the update gate's exec and cleans up after the build exits.
+if [[ -z "${VOICEBAR_BUILD_SYMBOL_STAGE:-}" ]]; then
+    (
+        mkdir -p "$REPO_ROOT/.build.noindex"
+        symbol_stage="$(mktemp -d "$REPO_ROOT/.build.noindex/voicebar-symbols.XXXXXX")"
+        cleanup_symbol_stage() {
+            rm -f -- "$symbol_stage/Assets.car" "$symbol_stage/partial.plist"
+            rmdir -- "$symbol_stage"
+        }
+        trap cleanup_symbol_stage EXIT
+        SYMBOL_CATALOG="$SCRIPT_DIR/Symbols/VoiceBarSymbols.xcassets"
+        if ! xcrun actool "$SYMBOL_CATALOG" --compile "$symbol_stage" --platform macosx \
+            --minimum-deployment-target 14.0 --output-partial-info-plist "$symbol_stage/partial.plist" \
+            --errors --warnings --output-format human-readable-text >/dev/null \
+            || [ ! -s "$symbol_stage/Assets.car" ]; then
+            echo "[build-app] ERROR: compiling $SYMBOL_CATALOG with xcrun actool failed (needs Xcode)" >&2
+            exit 1
+        fi
+        VOICEBAR_BUILD_SYMBOL_STAGE="$symbol_stage" bash "$SCRIPT_DIR/build-app.sh" "$@"
+    )
+    exit $?
+fi
+symbol_stage="$VOICEBAR_BUILD_SYMBOL_STAGE"
+if [ ! -s "$symbol_stage/Assets.car" ]; then
+    echo "[build-app] ERROR: missing staged VoiceBar symbol catalog" >&2
+    exit 1
+fi
 # Carry the guard's restrictive lifecycle decision through controlled quit/re-exec.
 export VOICEBAR_PRE_GATE_APP_DIR="$APP_DIR" VOICEBAR_PRE_GATE_STOP="$STOP_RUNNING"
 export VOICEBAR_PRE_GATE_RELAUNCH="$RELAUNCH_APP" VOICEBAR_PRE_GATE_LEAVE="$LEAVE_RUNNING_INSTANCE_ALONE"
@@ -1058,6 +1086,7 @@ if [[ "$STOP_RUNNING" -eq 1 || "$RELAUNCH_APP" -eq 1 || "$APP_DIR" == /Applicati
     vl_update_gate "$REPO_ROOT" bash "$SCRIPT_DIR/build-app.sh" "$@"
 fi
 
+unset VOICEBAR_BUILD_SYMBOL_STAGE
 protect_notarized_resident_before_rebuild
 
 if [[ "$LEAVE_RUNNING_INSTANCE_ALONE" -eq 1 ]]; then
@@ -1124,18 +1153,7 @@ require_bundle_file() {
 
 cp "$BUNDLE_DIR/Info.plist" "$APP_DIR/Contents/"
 cp "$BINARY" "$APP_DIR/Contents/MacOS/VoiceBar"
-# T19b (L68): VoiceBar's own SF Symbols (the History "take loop") compile into Contents/Resources/Assets.car,
-# where `VoiceBarSymbol` loads them from the main bundle. Fails closed: a release must carry them.
-SYMBOL_CATALOG="$SCRIPT_DIR/Symbols/VoiceBarSymbols.xcassets"
-SYMBOL_PARTIAL_PLIST="$REPO_ROOT/.build.noindex/voicebar-symbols-partial.plist"
-mkdir -p "$(dirname "$SYMBOL_PARTIAL_PLIST")"
-if ! xcrun actool "$SYMBOL_CATALOG" --compile "$APP_DIR/Contents/Resources" --platform macosx \
-    --minimum-deployment-target 14.0 --output-partial-info-plist "$SYMBOL_PARTIAL_PLIST" \
-    --errors --warnings --output-format human-readable-text >/dev/null \
-    || [ ! -f "$APP_DIR/Contents/Resources/Assets.car" ]; then
-    echo "[build-app] ERROR: compiling $SYMBOL_CATALOG with xcrun actool failed (needs Xcode)" >&2
-    exit 1
-fi
+cp "$symbol_stage/Assets.car" "$APP_DIR/Contents/Resources/Assets.car"
 bundle_runtime_source
 require_bundle_file "package.json"
 require_bundle_file "bun.lock"

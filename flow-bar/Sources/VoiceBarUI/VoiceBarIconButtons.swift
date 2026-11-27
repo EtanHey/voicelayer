@@ -64,6 +64,8 @@ public struct CopyFeedbackButton: View {
     @Binding private var feedback: CopyFeedback
     private let foreground: Color?
     private let glyphSize: CGFloat
+    private let targetSize: CGFloat
+    private let showsNativeTooltip: Bool
     private let copy: () -> Bool
     @FocusState private var isFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -75,6 +77,8 @@ public struct CopyFeedbackButton: View {
         feedback: Binding<CopyFeedback>,
         foreground: Color? = nil,
         glyphSize: CGFloat = 12,
+        targetSize: CGFloat = CopyFeedbackButton.hitTarget,
+        showsNativeTooltip: Bool = true,
         copy: @escaping () -> Bool
     ) {
         self.label = label
@@ -82,6 +86,8 @@ public struct CopyFeedbackButton: View {
         _feedback = feedback
         self.foreground = foreground
         self.glyphSize = glyphSize
+        self.targetSize = targetSize
+        self.showsNativeTooltip = showsNativeTooltip
         self.copy = copy
     }
 
@@ -109,7 +115,7 @@ public struct CopyFeedbackButton: View {
                 // T19c (L69): the tick replaces the copy glyph instead of teleporting in; a fade with Reduce Motion.
                 .contentTransition(VoiceBarSymbolMotion.copyConfirmation(reduceMotion: reduceMotion))
                 .animation(VoiceBarSymbolMotion.swapAnimation, value: isCopied)
-                .frame(width: Self.hitTarget, height: Self.hitTarget)
+                .frame(width: targetSize, height: targetSize)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -117,7 +123,11 @@ public struct CopyFeedbackButton: View {
         .focusEffectDisabled(feedback.hidesFocusRing)
         .onChange(of: isFocused) { _, focused in feedback.focusChanged(to: focused) }
         // Native registration: SwiftUI `.help` does not show in the non-activating notch panel (R0856-09).
-        .background(PillControlTooltip(text: isCopied ? "Copied" : label))
+        .background {
+            if showsNativeTooltip {
+                PillControlTooltip(text: isCopied ? "Copied" : label)
+            }
+        }
         .accessibilityLabel(isCopied ? "Copied" : label)
     }
 }
