@@ -15,7 +15,13 @@ if "--restart-owner" in sys.argv:
     env = {**os.environ, "VOICELAYER_CLONE_RESTART_OWNER": "voicebar",
            "VOICELAYER_CLONE_RESTART_OWNER_PID": str(os.getpid()),
            "PYTHONDONTWRITEBYTECODE": "1"}
-    subprocess.Popen([sys.executable, __file__, sys.argv[1], "--orphanable", sys.argv[3]], env=env)
+    # Foundation's Process.terminate() signals the launcher's process group.
+    # Give the fake engine its own session so it survives losing its parent.
+    subprocess.Popen(
+        [sys.executable, __file__, sys.argv[1], "--orphanable", sys.argv[3]],
+        env=env,
+        start_new_session=True,
+    )
     sleep(30)
     sys.exit(0)
 
