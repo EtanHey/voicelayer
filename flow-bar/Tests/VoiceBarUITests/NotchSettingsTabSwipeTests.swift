@@ -87,6 +87,18 @@ final class NotchSettingsTabSwipeTests: XCTestCase {
         XCTAssertEqual(selected, [.speech])
     }
 
+    /// Codex r1 on #976: a gesture the system cancels after travelling past the commit distance must not change tab.
+    func testACancelledSwipePastTheThresholdKeepsTheTab() throws {
+        var selected: [SettingsTab] = []
+        let (window, probe) = try host(tab: .dictionary) { selected.append($0) }
+        let pane = NSPoint(x: probe.bounds.midX, y: probe.bounds.height - 60)
+        XCTAssertTrue(try swipe(probe, in: window, from: pane, dx: -12, steps: 12, finalPhase: 8),
+                      "the cancelled gesture was a sideways swipe kept from the pane")
+        XCTAssertEqual(selected, [], "a cancelled swipe never settles on a tab")
+        _ = try swipe(probe, in: window, from: pane, dx: -12, steps: 12)
+        XCTAssertEqual(selected, [.transcription], "the next swipe still works")
+    }
+
     func testVerticalScrollOverTheDrawerReachesThePane() throws {
         var selected: [SettingsTab] = []
         let (window, probe) = try host(tab: .general) { selected.append($0) }
@@ -135,12 +147,13 @@ final class NotchSettingsTabSwipeTests: XCTestCase {
     }
 
     /// Began, `steps` changed events of `dx`/`dy`, ended. Returns whether any event was kept from the pane.
+    /// `finalPhase` 4 ends the gesture, 8 is the system cancelling it.
     private func swipe(_ probe: NotchSettingsTabSwipeMonitor.Probe, in window: NSWindow, from point: NSPoint,
-                       dx: Int32, dy: Int32 = 0, steps: Int) throws -> Bool {
+                       dx: Int32, dy: Int32 = 0, steps: Int, finalPhase: Int64 = 4) throws -> Bool {
         let location = probe.convert(point, to: nil)
         var kept = false
         let phases = [(Int64(1), Int32(0), Int32(0))] + Array(repeating: (Int64(2), dx, dy), count: steps)
-            + [(Int64(4), Int32(0), Int32(0))]
+            + [(finalPhase, Int32(0), Int32(0))]
         for (phase, x, y) in phases {
             let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
                                            wheel1: y, wheel2: x, wheel3: 0))

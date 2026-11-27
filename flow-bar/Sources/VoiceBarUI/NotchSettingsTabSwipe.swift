@@ -55,6 +55,8 @@ struct NotchSettingsTabSwipeMonitor: NSViewRepresentable {
     let onMove: (CGFloat, CGFloat) -> Bool
     /// The drawer's width, for the commit distance.
     let onEnd: (CGFloat) -> Void
+    /// The system cancelled the gesture: forget it without settling, so no tab changes (Codex r1 on #976).
+    let onCancel: () -> Void
 
     func makeNSView(context: Context) -> Probe { Probe() }
 
@@ -111,7 +113,13 @@ struct NotchSettingsTabSwipeMonitor: NSViewRepresentable {
                 if isTracking { handlers.onBegin() }
             }
             guard isTracking else { return false }
-            if phase.contains(.ended) || phase.contains(.cancelled) {
+            if phase.contains(.cancelled) {
+                isTracking = false
+                swallowsMomentum = isSideways
+                handlers.onCancel()
+                return false
+            }
+            if phase.contains(.ended) {
                 isTracking = false
                 swallowsMomentum = isSideways
                 handlers.onEnd(bounds.width)
