@@ -184,7 +184,7 @@ export function releaseGateApplies(tag: string): boolean {
 
 /**
  * The release-only allow-list: a path a proof-only descendant of a proven build may change.
- * scripts/release_only_diff.py mirrors this exact rule for the pre-push hook, CI and publish.yml;
+ * scripts/release_only_diff.py mirrors this exact rule for the pre-push hook and PR CI;
  * src/__tests__/release-only-diff.test.ts fails if the two ever disagree.
  */
 export function isProofOnlyPath(path: string): boolean {

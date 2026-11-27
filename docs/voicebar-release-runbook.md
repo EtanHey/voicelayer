@@ -90,40 +90,30 @@ the real app by `record` and again by promotion, which must be given the committ
    Any failure stops it. The tap is not touched before the published asset is confirmed, and
    its edits are reverted if the tap check fails.
 
-### Release-only pushes and PRs skip the suites (one allow-list)
+### Release-only branch pushes and PRs
 
-The proof commit, its PR and the tag carry no product code, so three places skip work for them.
-All three share one allow-list, `scripts/release_only_diff.py`, equal to the release gate's own
-`isProofOnlyPath`: **added or modified files under `release-proofs/`, except
-`release-proofs/proof-hosts.json`, and except files the root `bun test` discovers by name
-(`*.test.ts`, `*_spec.js`, ...)**, and only regular files (git mode 100644: no symlink, submodule
-or executable). Nothing else: not `package.json`, not a lockfile, not a doc, a
-workflow or a script. A deleted file, a rename and an empty diff are never release-only. A parity
-test fails if the Python list and the TypeScript rule ever differ.
+The pre-push hook and required PR checks use the path allow-list in
+`scripts/release_only_diff.py`. It mirrors the release gate's `isProofOnlyPath`. A release-only diff
+contains only additions or modifications under `release-proofs/`. Each added file must have Git mode
+`100644`, and each modified file must have that mode before and after the change.
+`release-proofs/proof-hosts.json` and files the root `bun test` discovers are excluded. Deletions,
+renames, empty diffs, and version-bump files such as `package.json` and lockfiles run the suites.
+A parity test checks that the Python and TypeScript path rules agree.
 
-- **Pre-push hook** (`.githooks/pre-push` → `scripts/pre_push_release_only.py`): when every pushed
-  ref is release-only vs its remote base (an existing branch's old tip, which must be known locally
-  and be an ancestor of the pushed commit, else the suites run; for a new branch the merge base with
-  `<remote>/main`, and with no such ref the suites run) and the release gate AFFIRMS an
-  installed-candidate proof for each `release-proofs/vX.Y.Z.json` carried (the gate merely exiting 0,
-  as it does for a pre-v2.4.0 tag, is not enough) with only release-only changes since the proven
-  build (a `vX.Y.Z` tag push needs the same affirmed proof and diff), the Swift and bun suites are skipped and one line
-  `[pre-push] RELEASE-ONLY PUSH: ... SKIPPED by rule, not by --no-verify` is printed. Any doubt (a
-  non-release path, a deleted ref, a dirty tracked tree, the pushed commit not being HEAD, no bun, a
-  gate refusal) prints `[pre-push] full suites run: <why>` and runs the suites as before. The
-  docs.local guard always runs first.
-- **Required CI checks** (`ci.yml` `test`, `Swift (VoiceBar)`; `ratchet.yml` `ratchet`): a PR whose
-  diff is release-only passes them at their first step with a `RELEASE-ONLY PR` notice; the checks
-  still report under the same names and branch protection is unchanged. A `changes` job decides, using
-  the classifier from the PR's **base** commit, never from the PR; if it cannot answer, everything
-  runs. Pushes to `main` always run everything.
-- **`publish.yml`**: after the release gate, `scripts/publish_tests_proven.py` checks that the
-  proven build (`release.gitCommit` in the proof, read from the committed blob) is an ancestor of the
-  tag, differs from it only by release-only files, and that build's own `ci.yml` run shows the
-  `Run tests` step of job `test` succeeded on that exact commit (a check merely named `test` is not
-  evidence: the CI shortcut emits one). If so, the audio tool install, the daemon test
-  dependencies and `bun test` are skipped (`PROOF-ONLY TAG` notice); typecheck, pack contract, pack and
-  publish always run.
+- **Pre-push hook.** After the docs.local guard, `scripts/pre_push_release_only.py` checks every pushed
+  branch. For an existing branch, the advertised old tip must exist locally and be an ancestor
+  of the pushed commit. For a new branch, the hook queries the push destination's current
+  `refs/heads/main` with `git ls-remote` and compares from its merge base with the pushed commit.
+  If the remote main cannot be established, its commit is missing locally, or there is no merge base,
+  the hook runs the full suites. For each changed `release-proofs/vX.Y.Z.json`, the release gate must
+  affirm the installed-candidate proof, and changes since the proven build must also be release-only.
+  When the shortcut applies, the hook prints `[pre-push] RELEASE-ONLY PUSH` and skips the Swift and Bun
+  suites. Any push that includes a tag runs the full suites.
+- **Required CI checks.** `ci.yml` (`test`, `Swift (VoiceBar)`) and `ratchet.yml` (`ratchet`) report
+  success at their first step with a `RELEASE-ONLY PR` notice when the PR diff qualifies.
+  The `changes` job loads the classifier from the PR base commit. The checks run in full when
+  classification is unavailable and on every push to `main`.
+- **Publish workflow.** After the release gate passes, `publish.yml` runs the full Bun suite.
 
 The gate refuses, with a non-zero exit and a message naming the problem, when:
 

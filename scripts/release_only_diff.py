@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Is a git diff release-only? One allow-list, shared by the pre-push hook, CI and publish.yml.
+"""Is a git diff release-only? One allow-list, shared by the pre-push hook and PR CI.
 
 The allow-list is the rule scripts/t3-optf5-proof.ts `isProofOnlyPath` already enforces for a
 proof-only descendant of a proven build (the release gate, publish.yml's first step):
@@ -9,9 +9,9 @@ else: not package.json, not a lockfile, not a doc. A parity test
 (src/__tests__/release-only-diff.test.ts) keeps this file and the TypeScript rule identical.
 
 On top of the path rule, a release-only diff must be non-empty and every entry must be an
-Added or Modified REGULAR file (git mode 100644). A deleted or type-changed entry, a symlink
-(120000), a submodule (160000) or an executable (100755) is never release-only (renames are
-reported as delete + add, so a rename out of another directory is refused too). Files the
+Added or Modified REGULAR file (git mode 100644 on both sides of a modification). A deleted
+or type-changed entry, a symlink (120000), a submodule (160000) or an executable (100755) is
+never release-only. Renames are reported as delete + add, so they are also refused. Files the
 root `bun test` discovers by name (*.test.ts, *_spec.js, ...) are also refused: under
 release-proofs/ they would be code that runs in the very suite the shortcut skips.
 
@@ -46,8 +46,8 @@ def is_release_only_path(path: str) -> bool:
     return path.startswith(f"{PROOF_DIR}/") and path != PROOF_HOSTS_FILE and not BUN_TEST_FILE.search(path)
 
 
-def parse_raw_z(raw: bytes) -> list[tuple[str, str, str]]:
-    """Parse `git diff --raw -z --no-renames` into (status, path, new mode) triples."""
+def parse_raw_z(raw: bytes) -> list[tuple[str, str, str, str]]:
+    """Parse `git diff --raw -z --no-renames` into (status, path, old mode, new mode) entries."""
     fields = raw.split(b"\0")
     if fields and fields[-1] == b"":
         fields.pop()
@@ -58,18 +58,20 @@ def parse_raw_z(raw: bytes) -> list[tuple[str, str, str]]:
         meta = fields[i].decode("ascii", "replace").split()
         if len(meta) != 5 or not meta[0].startswith(":"):
             raise ValueError("unparseable git diff --raw -z entry")
-        entries.append((meta[4], fields[i + 1].decode("utf-8", "surrogateescape"), meta[1]))
+        entries.append((meta[4], fields[i + 1].decode("utf-8", "surrogateescape"), meta[0][1:], meta[1]))
     return entries
 
 
-def classify_entries(entries: list[tuple[str, str, str]]) -> tuple[bool, str]:
+def classify_entries(entries: list[tuple[str, str, str, str]]) -> tuple[bool, str]:
     if not entries:
         return False, "the diff is empty: nothing to classify as release-only"
-    for status, path, mode in entries:
+    for status, path, old_mode, new_mode in entries:
         if status not in ALLOWED_STATUSES:
             return False, f"{path} is {status!r} (only added or modified files can be release-only)"
-        if mode != REGULAR_FILE_MODE:
-            return False, f"{path} has git mode {mode} (only regular non-executable files can be release-only: no symlink, submodule or executable)"
+        if new_mode != REGULAR_FILE_MODE:
+            return False, f"{path} has git mode {new_mode} (only regular non-executable files can be release-only: no symlink, submodule or executable)"
+        if status == "M" and old_mode != REGULAR_FILE_MODE:
+            return False, f"{path} had git mode {old_mode} (modifications require mode 100644 on both sides)"
         if not is_release_only_path(path):
             return False, f"{path} is outside {PROOF_DIR}/ (or is {PROOF_HOSTS_FILE}, or a file `bun test` discovers): not release-only"
     return True, f"{len(entries)} file(s), all under {PROOF_DIR}/"
@@ -82,7 +84,7 @@ def is_ancestor(repo: str, ancestor: str, descendant: str) -> bool:
     ).returncode == 0
 
 
-def diff_entries(repo: str, base: str, head: str, require_ancestor: bool = False) -> list[tuple[str, str, str]]:
+def diff_entries(repo: str, base: str, head: str, require_ancestor: bool = False) -> list[tuple[str, str, str, str]]:
     """Entries changed from BASE to HEAD.
 
     Default: BASE...HEAD (since the merge base), which is how a PR's file list is formed. With

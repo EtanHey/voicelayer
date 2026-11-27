@@ -4,12 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, sy
 import { dirname, join } from "path";
 import { isProofOnlyPath } from "../../scripts/t3-optf5-proof";
 
-// Release-speed plan, changes 1/3/4 (docs.local/go-1126/vl-w4/REPORT.md §1.4). Three places now
-// skip work for a release-only diff: the pre-push hook, the required CI jobs, publish.yml. They
-// share ONE allow-list, scripts/release_only_diff.py, which must stay identical to the release
-// gate's own `isProofOnlyPath`. The safety side matters most: every path outside the allow-list
-// must still run everything.
-
+// The pre-push hook and required PR checks share the release gate's path allow-list.
 const repoRoot = new URL("../..", import.meta.url).pathname;
 const classifier = join(repoRoot, "scripts", "release_only_diff.py");
 
@@ -216,6 +211,18 @@ describe("release_only_diff.py on a real diff (safe side first)", () => {
     expect(classify(b).err).toContain("git mode 100755");
   });
 
+  test("r2 #5: removing the executable bit from a proof is NOT release-only", () => {
+    base();
+    const proof = join(dir, "release-proofs/v2.4.6.json");
+    chmodSync(proof, 0o755);
+    const executable = commit("make proof executable");
+    chmodSync(proof, 0o644);
+    commit("remove executable bit");
+    const r = classify(executable);
+    expect(r.code).toBe(1);
+    expect(outFile()).toBe("release_only=false\n");
+  });
+
   test("a bun test file under release-proofs/ is NOT release-only (S5: it would skip its own run)", () => {
     const b = base();
     put("release-proofs/sneaky.test.ts", "import { test } from 'bun:test'; test('x', () => {});\n");
@@ -365,37 +372,5 @@ describe("CI workflows: the required jobs short-circuit a release-only PR and ru
     const guard = workflow("ci.yml").jobs["docs-local-guard"];
     expect(guard.needs).toBeUndefined();
     expect(guard.steps.every((s) => s.if === undefined)).toBe(true);
-  });
-});
-
-describe("publish.yml: skip the suite only for a proven proof-only tag", () => {
-  const job = () => workflow("publish.yml").jobs.publish;
-  const names = () => job().steps.map((s) => s.name ?? s.uses ?? s.run ?? "");
-
-  test("the release gate is still the first run step; the green-test check comes right after it", () => {
-    const firstRun = job().steps.findIndex((s) => s.run);
-    expect(job().steps[firstRun].run).toContain("release-gate --tag");
-    expect(job().steps[firstRun + 1].id).toBe("proven");
-    expect(job().steps[firstRun + 1].run).toContain("publish_tests_proven.py");
-    expect(job().steps[firstRun + 1].name).toContain("CI already ran bun test");
-  });
-
-  test("the apt tool install, the daemon test dependencies and `bun test` are the only steps skipped, and only on tests_proven", () => {
-    const skipped = job().steps.filter((s) => s.if?.includes("tests_proven != 'true'")).map((s) => s.name);
-    expect(skipped).toEqual(["Install replay audio test tools", "Install daemon test dependencies", "Run tests"]);
-    const loud = job().steps.find((s) => s.if === "steps.proven.outputs.tests_proven == 'true'")!;
-    expect(loud.run).toContain("SKIPPED");
-    // typecheck, pack contract, packing and publishing always run
-    for (const must of ["Type check", "Verify packed package contract", "Publish (OIDC trusted publishing)"]) {
-      expect(job().steps.find((s) => s.name === must)?.if).toBeUndefined();
-    }
-    expect(names().length).toBeGreaterThan(10);
-  });
-
-  test("no continue-on-error anywhere, and the added permission is read-only", () => {
-    expect(readFileSync(join(repoRoot, ".github", "workflows", "publish.yml"), "utf8")).not.toContain("continue-on-error");
-    const text = readFileSync(join(repoRoot, ".github", "workflows", "publish.yml"), "utf8");
-    expect(text.match(/^\s+actions: read$/gm)?.length).toBe(2); // workflow and job block both name it
-    expect(text).not.toMatch(/(?:actions|checks): write/);
   });
 });
