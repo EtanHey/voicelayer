@@ -581,31 +581,60 @@ final class SocketServerTests: XCTestCase {
     }
 
     @MainActor
-    func testAskGateStopsHistoryBeforeAcknowledgingItsExactClient() throws {
+    func testAskGateStopsNotchHistoryBeforeAcknowledgingItsExactClient() throws {
         let fixture = try makeConnectedServerFixture()
         defer { fixture.cleanup() }
-        var stopped = false
         let url = URL(fileURLWithPath: "/tmp/synthetic-history.wav")
-        fixture.state.historyPlayback = SettingsAudioPlayback(start: { _ in true }, stop: { stopped = true })
-        fixture.state.historyPlayback.toggle(url)
+        let askClient = fixture.legacyClient
+        var events: [String] = []
+        fixture.state.historyPlayback = SettingsAudioPlayback(start: { _ in
+            events.append("start")
+            return true
+        }, stop: {
+            // If ACK has already been dispatched, it can arrive here while the main actor is still stopping.
+            do {
+                XCTAssertNil(try readLine(from: askClient, timeout: 0.1))
+            } catch {
+                XCTFail("Could not check for an early ready ACK: \(error)")
+            }
+            events.append("stop")
+        })
+        let bar = BarView(state: fixture.state, commandRouter: VoiceBarCommandRouter(voiceState: fixture.state),
+                          onOpenSettings: {}, onOpenHistory: {})
+        let player = try XCTUnwrap(bar.historyDetailActions.playback)
+        XCTAssertTrue(player === fixture.state.historyPlayback)
+        let owner = UUID()
+        player.toggle([url], owner: owner)
+        XCTAssertEqual(events, ["start"])
         try writeLine(
             #"{"type":"client_hello","role":"mcp-server","pid":\#(ProcessInfo.processInfo.processIdentifier),"accepts_commands":false}"#,
-            to: fixture.legacyClient
+            to: askClient
         )
-        try writeLine(#"{"type":"history_playback_gate","id":"ask-synthetic","busy":true}"#, to: fixture.legacyClient)
-        XCTAssertTrue(waitUntil(timeout: 2) { stopped })
-        let receipt = try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 2))
-        XCTAssertTrue(stopped)
-        XCTAssertNil(fixture.state.historyPlayback.playingURL)
-        XCTAssertTrue(fixture.state.historyPlayback.isVoiceBusy)
+        try writeLine(#"{"type":"history_playback_gate","id":"ask-synthetic","busy":true}"#, to: askClient)
+        XCTAssertTrue(waitUntil(timeout: 2) { player.isVoiceBusy })
+        let receipt = try XCTUnwrap(readLine(from: askClient, timeout: 2))
+        XCTAssertEqual(events, ["start", "stop"])
+        XCTAssertNil(player.playingURL)
+        XCTAssertTrue(receipt.contains(#""cmd":"history_playback_ready""#))
+        XCTAssertTrue(receipt.contains(#""id":"ask-synthetic""#))
+        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.1))
+
+        player.toggle([url], owner: owner)
+        XCTAssertNil(player.playingURL)
+        XCTAssertEqual(events, ["start", "stop"], "Play is refused until Ask releases the gate")
         XCTAssertEqual(
             fixture.state.playbackElapsedMilliseconds(),
             0,
             "History never starts a synthetic teleprompter clock"
         )
-        XCTAssertTrue(receipt.contains(#""cmd":"history_playback_ready""#))
-        XCTAssertTrue(receipt.contains(#""id":"ask-synthetic""#))
-        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.1))
+
+        try writeLine(#"{"type":"history_playback_gate","id":"ask-synthetic","busy":false}"#, to: askClient)
+        XCTAssertTrue(waitUntil(timeout: 2) { !player.isVoiceBusy })
+        let release = try XCTUnwrap(readLine(from: askClient, timeout: 2))
+        XCTAssertTrue(release.contains(#""cmd":"history_playback_ready""#))
+        player.toggle([url], owner: owner)
+        XCTAssertEqual(player.playingURL, url)
+        XCTAssertEqual(events, ["start", "stop", "start"])
     }
 
     @MainActor

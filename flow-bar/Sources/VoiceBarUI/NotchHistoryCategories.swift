@@ -164,15 +164,22 @@ struct NotchHistoryCategoryPanel: View {
     /// A category's page: its list, or (L99) the row opened from it.
     @ViewBuilder
     private func page(_ scope: SettingsHistoryScope) -> some View {
-        if let detail = liveDetail, detail.scope == scope {
-            NotchHistoryDetailView(detail: detail, palette: palette, actions: detailActions ?? .inert) {
-                show(nil)
-            }
-            .frame(height: listHeight)
-            .transition(.opacity)
-        } else {
+        let detail = liveDetail.flatMap { $0.scope == scope ? $0 : nil }
+        ZStack(alignment: .topLeading) {
             list(scope)
+                .opacity(detail == nil ? 1 : 0)
+                .allowsHitTesting(detail == nil)
+                .disabled(detail != nil)
+                .accessibilityHidden(detail != nil)
+
+            if let detail {
+                NotchHistoryDetailView(detail: detail, palette: palette, actions: detailActions ?? .inert) {
+                    show(nil)
+                }
+                .frame(height: listHeight)
                 .transition(.opacity)
+                .zIndex(1)
+            }
         }
     }
 

@@ -380,8 +380,6 @@ public struct BarView: View {
     /// here. The app and the UIE2E host inject theirs; a BarView without one owns a private model.
     private let injectedSurface: NotchSurfaceModel?
     @State private var ownSurface = NotchSurfaceModel()
-    /// L99: plays an opened History row's audio; it stops when the row closes or a capture starts.
-    @State private var historyPlayback = SettingsAudioPlayback.system()
     /// The Settings drawer's data and actions. Without it the gear keeps opening the Settings window (2.3).
     private let settingsDrawer: NotchSettingsDrawerContext?
     @State private var modalObserver: NotchModalObserver?
@@ -2330,13 +2328,11 @@ public struct BarView: View {
         )
     }
 
-    /// L99: what an opened History row's buttons do. Copy, Paste and Re-transcribe are the rows' own calls; Play
-    /// waits while VoiceBar records or transcribes.
-    private var historyDetailActions: NotchHistoryDetailActions {
+    /// Both notch History surfaces use the same player that VoiceState fences for Ask.
+    @MainActor var historyDetailActions: NotchHistoryDetailActions {
         NotchHistoryDetailActions(
             copy: copyHistoryEntry, paste: pasteHistoryEntry, retranscribe: retranscribeHistoryEntry,
-            reveal: onRevealHistoryFile, playback: historyPlayback,
-            isVoiceBusy: { state.mode == .recording || state.mode == .transcribing },
+            reveal: onRevealHistoryFile, playback: state.historyPlayback,
             retranscriptionAvailability: { state.historyRetranscriptionAvailability }
         )
     }

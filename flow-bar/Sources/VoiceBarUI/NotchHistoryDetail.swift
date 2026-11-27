@@ -98,13 +98,11 @@ struct NotchHistoryDetailActions {
     var retranscribe: (String) -> Void
     var reveal: (URL) -> Void
     var playback: SettingsAudioPlayback?
-    /// Play waits while VoiceBar records or transcribes (the voice is busy).
-    var isVoiceBusy: () -> Bool
     var retranscriptionAvailability: () -> HistoryRetranscriptionAvailability
 
     /// Shots: every button shows, none does anything.
     static let inert = Self(copy: { _ in false }, paste: { _ in }, retranscribe: { _ in }, reveal: { _ in },
-                            playback: nil, isVoiceBusy: { false }, retranscriptionAvailability: { .available })
+                            playback: nil, retranscriptionAvailability: { .available })
 }
 
 struct NotchHistoryDetailView: View {
@@ -121,6 +119,13 @@ struct NotchHistoryDetailView: View {
     let onBack: () -> Void
 
     @State private var copyFeedback = CopyFeedback()
+    @State private var playbackOwner = UUID()
+
+    private var isVoiceBusy: Bool { actions.playback?.isVoiceBusy == true }
+    private var failureMessage: String? {
+        guard actions.playback?.requestOwner == playbackOwner else { return nil }
+        return actions.playback?.failureMessage
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -145,6 +150,14 @@ struct NotchHistoryDetailView: View {
                 .padding(.horizontal, NotchHistoryPresentation.rowLeadingPadding)
             }
             .scrollIndicators(.automatic)
+            if let failureMessage {
+                Text(failureMessage)
+                    .font(.system(size: NotchHistoryPresentation.rowMetaFontSize))
+                    .foregroundStyle(palette.secondary.color)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, NotchHistoryPresentation.rowLeadingPadding)
+                    .accessibilityLabel(failureMessage)
+            }
             actionBar
         }
         .padding(.vertical, 4)
@@ -152,8 +165,10 @@ struct NotchHistoryDetailView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(Self.identifier)
         .accessibilityAction(.escape) { onBack() }
-        .onChange(of: actions.isVoiceBusy()) { _, busy in if busy { actions.playback?.stop() } }
-        .onDisappear { actions.playback?.stop() }
+        .onChange(of: isVoiceBusy) { _, busy in
+            if busy { actions.playback?.stop(ownedBy: playbackOwner) }
+        }
+        .onDisappear { actions.playback?.stop(ownedBy: playbackOwner) }
     }
 
     private var header: some View {
@@ -197,7 +212,8 @@ struct NotchHistoryDetailView: View {
 
     private func actionButton(_ action: NotchHistoryDetail.Action) -> some View {
         let isCopied = action == .copy && copyFeedback.isCopied(at: Date())
-        let isPlaying = action == .play && detail.audio.first.map { actions.playback?.isPlaying($0) ?? false } == true
+        let isPlaying = action == .play && actions.playback?.requestOwner == playbackOwner
+            && actions.playback?.playingURL != nil
         let label = isCopied ? "Copied" : isPlaying ? "Stop" : action.label
         let help = isCopied ? "Copied" : isPlaying ? "Stop" : action.help
         let symbol = isCopied ? VoiceBarActionSymbol.copied : isPlaying ? "stop.fill" : action.symbol
@@ -228,7 +244,7 @@ struct NotchHistoryDetailView: View {
     private func unavailableReason(_ action: NotchHistoryDetail.Action) -> String? {
         switch action {
         case .play:
-            if actions.isVoiceBusy() { return SettingsHistoryCopy.playBusy }
+            if isVoiceBusy { return SettingsHistoryCopy.playBusy }
             guard let first = detail.audio.first, FileManager.default.fileExists(atPath: first.path) else {
                 return "The audio file is missing"
             }
@@ -248,7 +264,7 @@ struct NotchHistoryDetailView: View {
     private func perform(_ action: NotchHistoryDetail.Action) {
         switch action {
         case .play:
-            actions.playback?.toggle(detail.audio)
+            actions.playback?.toggle(detail.audio, owner: playbackOwner)
         case .copy:
             let succeeded = actions.copy(detail.entry)
             copyFeedback.copied(succeeded: succeeded, byPointer: CopyFeedback.isPointerEvent(NSApp.currentEvent), at: Date())
