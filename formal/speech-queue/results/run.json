@@ -110,7 +110,7 @@
     "src/recording-take-queue.ts": "781306092e4ed6b22eedff048023059867f26682b98ad0bd470f11484621bb7b",
     "src/selection-read-queue.ts": "563b79c5ae488665501d93d10d0a04aebaa6b6c7148c67118ba1cef73abbc52d",
     "src/socket-handlers.ts": "1661715474c9e172abbff70ea5103b561eebf848cf6d51f219b9f06122a5b17b",
-    "src/socket-protocol.ts": "618c1fd1af361e908a3dc5b904dc6b28c022682e4a49a5aa6857b4de2342d721",
+    "src/socket-protocol.ts": "623d66641517514bdd85097b4d55067d6a55fd7cc36fa341a085527df0321330",
     "src/tts.ts": "3bf5ba6583a19d22e8ef6e960336910465fb86f1fa0d1b57f27f00e358c20c80",
     "src/tts/long-read.ts": "884cabc066c307dc047ba9b79c83bf0ef22016b20b6822657c11cfe4f429d526",
     "src/tts/playback-timing.ts": "16aab4ec58c7610a1d28c6c06f12d8316a1de93141861a63bb0489b2b29fce3e",

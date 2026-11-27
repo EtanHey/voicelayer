@@ -158,7 +158,7 @@ export interface TranscriptionEvent extends RecordingJobIdentity {
   /** Whether the optional LLM polish layer produced the final candidate. */
   polished?: boolean;
   /** Outcome of the polish attempt; rejected means the safety gate kept cleaned text. */
-  polish_status?: "skipped" | "unavailable" | "shadowed" | "applied" | "rejected" | "failed";
+  polish_status?: "partial" | "skipped" | "unavailable" | "shadowed" | "applied" | "rejected" | "failed";
   /** Why the cleaned fallback was used when polished is false. */
   polish_reason?: string;
 }
