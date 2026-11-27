@@ -52,11 +52,23 @@ export function canonicalDeliveryInput(text: string): string {
   return rewriteDeliveryDashes(outsideLiterals(text, canonicalizeMarkedFillerFragments), true);
 }
 
-/** Format prose dashes and render word-attached cutoffs with one ellipsis glyph. */
+/** Format prose dashes while keeping existing ellipsis markers. */
 export function formatDeliveryDashes(text: string): string {
-  const formatted = rewriteDeliveryDashes(text, false);
-  return outsideLiterals(formatted, prose =>
-    prose.replace(/([\p{L}\p{M}])\.{3}(?![\p{L}\p{M}\p{N}.])/gu, "$1…"));
+  return rewriteDeliveryDashes(text, false);
+}
+
+/** Restore marker spelling after polish has validated the ordered cutoff occurrences. */
+export function restoreSourceEllipsisMarkers(source: string, candidate: string): string | null {
+  const marker = /(?<=[\p{L}\p{M}\p{N}'’])(?:\.{3}|…)[.…]*/gu;
+  const sourceMarkers: string[] = [];
+  outsideLiterals(source, prose => {
+    sourceMarkers.push(...(prose.match(marker) ?? []));
+    return prose;
+  });
+  let index = 0;
+  const restored = outsideLiterals(canonicalDeliveryInput(candidate), prose =>
+    prose.replace(marker, match => sourceMarkers[index++] ?? match));
+  return index === sourceMarkers.length ? restored : null;
 }
 
 function rewriteDeliveryDashes(text: string, cutoffsOnly: boolean): string {

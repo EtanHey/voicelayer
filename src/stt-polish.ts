@@ -1,6 +1,6 @@
 import { POLISH_CHUNK_CHARS, polishLongTake } from "./stt-polish-chunks";
 import { getSTTDictionaryCommands } from "./stt-cleanup";
-import { canonicalDeliveryInput } from "./stt-delivery-format";
+import { canonicalDeliveryInput, restoreSourceEllipsisMarkers } from "./stt-delivery-format";
 import { requireIsolatedOverride } from "./test-isolation";
 import { randomUUID } from "crypto";
 import { processingEnv } from "./processing-settings";
@@ -837,7 +837,8 @@ function projectRejectedCandidatePunctuation(
     const punctuation = candidateSuffix.match(
       /^([,.!?…:;]+)(?:["')\]]*)?(?=\s|$)/u,
     )?.[1];
-    if (!punctuation) continue;
+    // A rejected reply cannot supply a cutoff through the punctuation floor.
+    if (!punctuation || /…|\.{2}/u.test(punctuation)) continue;
 
     const insertionIndex = cleanedTokens[cleanedIndex].end;
     if (/^[,.!?…:;]+/u.test(cleanedText.slice(insertionIndex))) continue;
@@ -1597,7 +1598,10 @@ function applyPolishCandidate(
     !/[\r\n]/u.test(trimmedPolishedText)
     ? trimmedPolishedText.replace(/^[-—][ \t]+(?=\S)/u, "")
     : trimmedPolishedText;
-  const rejectionReason = validatePolishCandidate(cleanedText, candidateText, env);
+  const validationReason = validatePolishCandidate(cleanedText, candidateText, env);
+  const restoredText = validationReason ? null : restoreSourceEllipsisMarkers(cleanedText, candidateText);
+  const rejectionReason = validationReason ??
+    (restoredText === null ? POLISH_REJECTION_REASONS.CHANGED_LEXICAL_CONTENT : null);
   if (mode === "shadow") {
     return buildResult(
       cleanedText,
@@ -1607,16 +1611,16 @@ function applyPolishCandidate(
       retried,
     );
   }
-  if (rejectionReason) {
+  if (restoredText === null) {
     return buildResult(
       buildFallbackText(candidateText),
       candidateText,
       "rejected",
-      rejectionReason,
+      rejectionReason ?? undefined,
       retried,
     );
   }
-  return buildResult(guardedPolishText(cleanedText, candidateText), candidateText, "applied", undefined, retried);
+  return buildResult(guardedPolishText(cleanedText, restoredText), candidateText, "applied", undefined, retried);
 }
 
 /**

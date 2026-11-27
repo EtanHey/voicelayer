@@ -139,6 +139,15 @@ describe("Claude review finding 1: polish cannot invent a cutoff", () => {
       },
     );
   }
+
+  it.each(["dictation", "voice_ask"] as const)("keeps an invented ellipsis out of the run-on fallback on %s", async surface => {
+    const raw = "we will meet on Tuesday after the team finishes reading the notes and then decide what to do with the remaining work";
+    const result = await withModel(() => raw.replace("Tuesday", "Tuesday..."), endpoint =>
+      finalizeTranscriptionResultForSurface(raw, surface, { ...baseEnv(), QA_VOICE_STT_POLISH: "on", QA_VOICE_STT_POLISH_ENDPOINT: endpoint }));
+    expect(result.polishStatus).toBe("rejected");
+    expect(result.text).toContain("Tuesday after");
+    expect(words(result.text)).toEqual(words(raw));
+  });
 });
 
 describe("Claude review finding 2: a preserved cutoff delivers the ellipsis glyph", () => {
@@ -151,6 +160,14 @@ describe("Claude review finding 2: a preserved cutoff delivers the ellipsis glyp
     expect(result.text).toBe(unpolished.text);
     expect(result.text).toContain("fu… no wait");
     expect(words(result.text)).toEqual(words(raw));
+  });
+
+  it.each(["dictation", "voice_ask"] as const)("preserves each source marker when polish swaps their spellings on %s", async surface => {
+    const raw = "Please keep fu... here and fu… there, beside `fu...`, before we read the remaining notes.";
+    const result = await withModel(() => raw.replace("fu... here and fu… there", "fu… here and fu... there"), endpoint =>
+      finalizeTranscriptionResultForSurface(raw, surface, { ...baseEnv(), QA_VOICE_STT_POLISH: "on", QA_VOICE_STT_POLISH_ENDPOINT: endpoint }));
+    expect(result.polishStatus).toBe("applied");
+    expect(result.text).toBe(raw);
   });
 });
 
