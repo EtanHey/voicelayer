@@ -67,7 +67,8 @@ final class HotkeyBindingsTests: XCTestCase {
         XCTAssertEqual(bindings.keyLabel, "F13")
         XCTAssertEqual(bindings.repasteLabel, "Shift+F13")
         XCTAssertEqual(bindings.speakSelectionLabel, "Option+F13")
-        XCTAssertEqual(bindings.roleTitle(.dictation), "Like F13")
+        XCTAssertEqual(bindings.roleTitle(.dictation), "Dictation",
+                       "a mouse button is a dictation button with its own gesture, not a copy of the key (Codex r1)")
         XCTAssertEqual(VoiceBarHotkeyBindings.defaults.repasteLabel, VoiceBarHotkeyContract.repasteShortcutLabel)
         XCTAssertEqual(VoiceBarHotkeyBindings.defaults.speakSelectionLabel, VoiceBarHotkeyContract.speakSelectionShortcutLabel)
     }
@@ -101,5 +102,109 @@ final class HotkeyBindingsTests: XCTestCase {
         XCTAssertNil(defaults.object(forKey: VoiceBarHotkeyBindings.defaultsKey))
         defaults.set(Data("not json".utf8), forKey: VoiceBarHotkeyBindings.defaultsKey)
         XCTAssertEqual(VoiceBarHotkeyBindings.load(from: defaults), .defaults, "unreadable data falls back to defaults")
+    }
+
+    // MARK: Codex r1 on #980
+
+    /// (2) A replacement tap that fails to start is never saved: the previous bindings and listener come back and the
+    /// picker gets the reason.
+    @MainActor
+    func testAFailedTapReplacementKeepsThePreviousBindingAndListener() throws {
+        let suite = "voicebar.tests.hotkey-bindings.app.\(UUID().uuidString)"
+        let store = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { store.removePersistentDomain(forName: suite) }
+        let app = AppDelegate()
+        app.hotkeyBindingsStore = store
+        let taps = ScriptedTaps(answers: [true, false, true])
+        app.hotkeyListener = HotkeyListenerLifecycle { taps.make() }
+        XCTAssertEqual(app.hotkeyListener.start(), .started)
+        var failure: String?? = .none
+        app.applyHotkeyBindings(VoiceBarHotkeyBindings(key: .f6)) { failure = .some($0) }
+        let reason = try XCTUnwrap(failure ?? nil, "the caller hears that the switch failed")
+        XCTAssertTrue(reason.contains("F5 stays"), reason)
+        XCTAssertEqual(app.hotkeyBindings, .defaults, "the failed selection is not kept")
+        XCTAssertNil(store.object(forKey: VoiceBarHotkeyBindings.defaultsKey), "nothing was saved")
+        XCTAssertEqual(taps.made, 3, "old, failed replacement, restored listener")
+        XCTAssertEqual(taps.live, 1, "the previous listener is running again")
+
+        var success: String?? = .none
+        let ok = ScriptedTaps(answers: [true, true])
+        app.hotkeyListener = HotkeyListenerLifecycle { ok.make() }
+        XCTAssertEqual(app.hotkeyListener.start(), .started)
+        app.applyHotkeyBindings(VoiceBarHotkeyBindings(key: .f6)) { success = .some($0) }
+        XCTAssertEqual(success, .some(nil))
+        XCTAssertEqual(app.hotkeyBindings.key, .f6)
+        XCTAssertEqual(VoiceBarHotkeyBindings.load(from: store).key, .f6, "saved only after the new tap is live")
+    }
+
+    private final class ScriptedTaps {
+        private var answers: [Bool]
+        private(set) var made = 0
+        var live = 0
+        init(answers: [Bool]) { self.answers = answers }
+        func make() -> HotkeyListening {
+            made += 1
+            return Listener(owner: self, succeeds: answers.isEmpty ? true : answers.removeFirst())
+        }
+        final class Listener: HotkeyListening {
+            unowned let owner: ScriptedTaps
+            let succeeds: Bool
+            private var tapped = false
+            var isEnabled: Bool { tapped }
+            var missingPermissions: [HotkeyPermission] { [] }
+            init(owner: ScriptedTaps, succeeds: Bool) { self.owner = owner; self.succeeds = succeeds }
+            func start() -> Bool { guard succeeds else { return false }; tapped = true; owner.live += 1; return true }
+            func stop() { if tapped { owner.live -= 1 }; tapped = false }
+        }
+    }
+
+    /// (3) One shared state: edits from two surfaces apply to the latest bindings, never to a stale per-surface copy.
+    @MainActor
+    func testEditsFromTwoSurfacesApplyToTheLatestBindings() {
+        var applied: [VoiceBarHotkeyBindings] = []
+        let model = HotkeyBindingsModel(bindings: .defaults, apply: { next, done in applied.append(next); done(nil) })
+        let window = model, notch = model // both Settings surfaces read the app's one model
+        window.update { $0.key = .f6 }
+        notch.update { $0.key = .f7 }
+        window.update { $0.back = .dictation }
+        XCTAssertEqual(model.bindings, VoiceBarHotkeyBindings(key: .f7, forward: .dictation, back: .dictation))
+        XCTAssertEqual(applied.last, model.bindings, "the window's mouse edit kept the notch's F7")
+    }
+
+    /// (2) and (5): a failed apply leaves the bindings and the key generation alone; a key change bumps it, a mouse
+    /// role change does not.
+    @MainActor
+    func testTheModelChangesOnlyOnSuccessAndCountsKeyChanges() {
+        var fail = true
+        let model = HotkeyBindingsModel(bindings: .defaults, apply: { _, done in done(fail ? "no tap" : nil) })
+        model.update { $0.key = .f6 }
+        XCTAssertEqual(model.bindings, .defaults)
+        XCTAssertEqual(model.error, "no tap")
+        XCTAssertEqual(model.keyGeneration, 0)
+        fail = false
+        model.update { $0.key = .f6 }
+        XCTAssertEqual(model.bindings.key, .f6)
+        XCTAssertNil(model.error)
+        XCTAssertEqual(model.keyGeneration, 1, "a shortcut check started for F5 is now stale")
+        model.update { $0.forward = .nothing }
+        XCTAssertEqual(model.keyGeneration, 1, "a mouse role change keeps the check's key")
+    }
+
+    /// (4) Two buttons bound to dictation: the second button's press and release are swallowed while the first owns
+    /// the press, so its release cannot end the first's hold.
+    func testOverlappingDictationButtonsPairEachReleaseWithItsOwner() {
+        var owner: Int64?
+        XCTAssertEqual(pairMouseDictationAction(.keyDown, button: 4, owner: &owner), .keyDown)
+        XCTAssertEqual(pairMouseDictationAction(.keyDown, button: 3, owner: &owner), .consume, "second button: no gesture")
+        XCTAssertEqual(pairMouseDictationAction(.keyUp, button: 3, owner: &owner), .consume, "its release ends nothing")
+        XCTAssertEqual(owner, 4)
+        XCTAssertEqual(pairMouseDictationAction(.keyUp, button: 4, owner: &owner), .keyUp, "the owner's release ends it")
+        XCTAssertNil(owner)
+        XCTAssertEqual(pairMouseDictationAction(.keyDown, button: 3, owner: &owner), .keyDown, "then either may start")
+        XCTAssertEqual(pairMouseDictationAction(.keyUp, button: 3, owner: &owner), .keyUp)
+        var none: Int64?
+        XCTAssertEqual(pairMouseDictationAction(.keyUp, button: 4, owner: &none), .keyUp,
+                       "a release with no recorded press keeps today's behaviour")
+        XCTAssertEqual(pairMouseDictationAction(.sendEnter, button: 3, owner: &none), .sendEnter)
     }
 }

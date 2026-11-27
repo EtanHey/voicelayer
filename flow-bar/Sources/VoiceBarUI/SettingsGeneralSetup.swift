@@ -233,6 +233,8 @@ enum SettingsGeneralCopy {
     static let mouseDescription = "Forward acts like F5. Back sends Return."
     static let forwardButtonTitle = "Mouse Forward button"
     static let backButtonTitle = "Mouse Back button"
+    static let mouseDictationDescription = "Click to dictate hands-free, click again to stop. Hold to talk."
+    static let rebindFailedTitle = "Couldn't change the dictation key"
     static let openAtLoginTitle = "Open at login"
     static let hideTitle = "Hide the notch"
     static let hideDescription = "VoiceBar keeps working. Click its Dock icon to bring the notch back."

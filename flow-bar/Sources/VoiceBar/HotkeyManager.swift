@@ -701,6 +701,24 @@ func sequenceAwareHotkeyAction(
     return action
 }
 
+/// L105 (Codex r1 on #980): pairs a dictation button's release with the button that owns the accepted press. A
+/// second dictation button pressed while the first is down is consumed (no gesture), and so is its release.
+func pairMouseDictationAction(_ action: HotkeyAction, button: Int64, owner: inout Int64?) -> HotkeyAction {
+    switch action {
+    case .keyDown:
+        if let current = owner, current != button { return .consume }
+        owner = button
+        return action
+    case .keyUp:
+        guard let current = owner else { return action }
+        guard current == button else { return .consume }
+        owner = nil
+        return action
+    default:
+        return action
+    }
+}
+
 func mouseHotkeyAction(
     type: CGEventType,
     buttonNumber: Int64,
@@ -774,10 +792,14 @@ final class TapContext {
     let returnPoster: HotkeyReturnKeyPoster
     var pressedKeycodes: Set<Int64> = []
     var pressedMouseButtons: Set<Int64> = []
+    /// L105 (Codex r1 on #980): with two side buttons bound to dictation, the button whose press was accepted owns the
+    /// release; the other button's press and release are swallowed, so its release can never end the first's hold.
+    var dictationMouseOwner: Int64?
     var hasPendingPress: Bool { !pressedKeycodes.isEmpty || !pressedMouseButtons.isEmpty }
     func clearPendingPresses() {
         pressedKeycodes.removeAll()
         pressedMouseButtons.removeAll()
+        dictationMouseOwner = nil
     }
     var readModifierFlags: () -> CGEventFlags = { CGEventSource.flagsState(.hidSystemState) }
     var reenableTap: (() -> Void)?
@@ -867,7 +889,7 @@ func hotkeyCallback(
     let modifierFlags = ctx.useModifierMode && type == .keyDown && autorepeat == 0
         && ctx.targetKeycodes.contains(keycode) && !flags.contains(.maskCommand)
         ? ctx.readModifierFlags() : flags
-    let action: HotkeyAction = if isMouseHotkeyEvent {
+    var action: HotkeyAction = if isMouseHotkeyEvent {
         mouseHotkeyAction(
             type: type,
             buttonNumber: mouseButtonNumber,
@@ -887,6 +909,9 @@ func hotkeyCallback(
             cancellationIsActive: gestureIsActive || activity & 2 != 0,
             sequenceState: &ctx.hotkeySequenceState
         )
+    }
+    if isMouseHotkeyEvent {
+        action = pairMouseDictationAction(action, button: mouseButtonNumber, owner: &ctx.dictationMouseOwner)
     }
     // Track physical presses before main can process their queued gesture actions.
     if type == .keyUp { ctx.pressedKeycodes.remove(keycode) }
@@ -1118,11 +1143,14 @@ final class HotkeyManager {
     }
 
     /// Stop the event tap and clean up.
-    func stop() {
+    func stop() { stopTap(teardown: nil) }
+
+    /// Stops the tap; `teardown` runs on main after the tap thread has disabled and invalidated it.
+    func stopTap(teardown: (() -> Void)?) {
         if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
         wakeObserver = nil
         tapContext?.invalidate()
-        tapRunLoop?.stop()
+        if let tapRunLoop { tapRunLoop.stop(teardown: teardown) } else if let teardown { DispatchQueue.main.async(execute: teardown) }
         tapRunLoop = nil
         eventTap = nil
         tapContext = nil

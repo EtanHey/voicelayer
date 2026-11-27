@@ -85,7 +85,7 @@ public struct VoiceBarHotkeyBindings: Codable, Equatable, Sendable {
 
     public func roleTitle(_ role: MouseRole) -> String {
         switch role {
-        case .dictation: "Like \(key.label)"
+        case .dictation: "Dictation"
         case .returnKey: "Return"
         case .nothing: "Nothing"
         }
@@ -111,17 +111,45 @@ public struct VoiceBarHotkeyBindings: Codable, Equatable, Sendable {
     }
 }
 
-/// The rebinding rows' inputs: the current bindings, a setter, and why a change is refused right now (nil = allowed).
-public struct SettingsHotkeyBindingsInput {
-    public let current: () -> VoiceBarHotkeyBindings
-    public let set: (VoiceBarHotkeyBindings) -> Void
+/// L105: the one binding state every Settings surface reads (Codex r1 on #980: two surfaces each caching their own
+/// copy could undo each other's edits). An edit applies to the latest bindings; the app applies it to the event tap
+/// and the model changes only when that succeeded, so a failed switch never reads back as chosen.
+@MainActor
+public final class HotkeyBindingsModel: ObservableObject {
+    @Published public private(set) var bindings: VoiceBarHotkeyBindings
+    /// A change is being applied to the tap; the pickers wait for it.
+    @Published public private(set) var isApplying = false
+    /// Why the last change failed, in words for the person who made it; nil after a success.
+    @Published public private(set) var error: String?
+    /// Bumps whenever the bound key changes, so a shortcut check started for the old key is dropped.
+    @Published public private(set) var keyGeneration = 0
+    /// Why the pickers are locked right now (a recording or a held key); nil when a change is allowed.
     public let disabledReason: () -> String?
+    private let apply: (VoiceBarHotkeyBindings, @escaping (String?) -> Void) -> Void
 
-    public init(current: @escaping () -> VoiceBarHotkeyBindings,
-                set: @escaping (VoiceBarHotkeyBindings) -> Void,
-                disabledReason: @escaping () -> String? = { nil }) {
-        self.current = current
-        self.set = set
+    /// `apply` switches the tap to the new bindings and calls back on main with nil, or the reason it failed.
+    public init(bindings: VoiceBarHotkeyBindings, disabledReason: @escaping () -> String? = { nil },
+                apply: @escaping (VoiceBarHotkeyBindings, @escaping (String?) -> Void) -> Void) {
+        self.bindings = bindings
         self.disabledReason = disabledReason
+        self.apply = apply
+    }
+
+    /// Changes one field of the latest bindings and applies the result.
+    public func update(_ change: (inout VoiceBarHotkeyBindings) -> Void) {
+        guard !isApplying else { return }
+        var next = bindings
+        change(&next)
+        guard next != bindings else { return }
+        let previous = bindings
+        isApplying = true
+        apply(next) { [weak self] failure in
+            guard let self else { return }
+            isApplying = false
+            error = failure
+            guard failure == nil else { return }
+            bindings = next
+            if next.key != previous.key { keyGeneration += 1 }
+        }
     }
 }

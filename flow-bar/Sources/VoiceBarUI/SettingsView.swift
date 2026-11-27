@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SwiftUI
 
@@ -549,8 +550,9 @@ public struct SettingsView: View {
     /// Nil until the app exposes these: the rows then carry no switch.
     public let openAtLogin: SettingsToggleInput?
     public let mouseSideButtons: SettingsToggleInput?
-    /// L105: the dictation key and mouse side-button roles; nil keeps the read-only F5 row (fixtures, older hosts).
-    public let hotkeyBindings: SettingsHotkeyBindingsInput?
+    /// L105: the one shared dictation key and mouse role state (every surface reads the same model); nil keeps the
+    /// read-only F5 row (fixtures, older hosts).
+    public let hotkeyBindings: HotkeyBindingsModel?
     /// Transcription › Language and the K-ui last-dictation note; nil (not wired yet) hides them.
     public let transcriptionLanguage: SettingsChoiceInput?
     public let lastDictationNote: () -> SettingsLastDictationNote?
@@ -658,8 +660,6 @@ public struct SettingsView: View {
     )?
     @State private var relaySetupRunning = false
     @State private var shortcutCheckRunning = false
-    /// The bindings as last read back from the app after a change (the input is a closure, not observable).
-    @State private var shownHotkeyBindings: VoiceBarHotkeyBindings?
     @State private var shortcutCheckFeedback: (message: String, checkedAt: Date)?
     @State private var isAdvancedExpanded = false
     @State private var hoveredMicrophoneIndex: Int?
@@ -779,7 +779,7 @@ public struct SettingsView: View {
         speakingVoiceStatus: @escaping () -> SettingsSetupVoiceStatus? = { nil },
         openAtLogin: SettingsToggleInput? = nil,
         mouseSideButtons: SettingsToggleInput? = nil,
-        hotkeyBindings: SettingsHotkeyBindingsInput? = nil,
+        hotkeyBindings: HotkeyBindingsModel? = nil,
         transcriptionLanguage: SettingsChoiceInput? = nil,
         lastDictationNote: @escaping () -> SettingsLastDictationNote? = { nil },
         initialTab: SettingsTab = .general,
@@ -1338,8 +1338,11 @@ public struct SettingsView: View {
                 refresh: { permissionsRefreshTick &+= 1 }
             )
         case .checkF5:
+            // L105 (Codex r1 on #980): a result that lands after the key changed is for the old key; drop it.
+            let generation = hotkeyBindings?.keyGeneration
             shortcutCheckRunning = true
             onCheckShortcut { result in
+                guard hotkeyBindings?.keyGeneration == generation else { return }
                 shortcutCheckFeedback = (result, Date())
                 shortcutCheckRunning = false
             }
@@ -1367,37 +1370,44 @@ public struct SettingsView: View {
 
     private var dictationSection: some View {
         Section("Dictation") {
-            SettingsRow(title: SettingsGeneralCopy.dictationKeyTitle,
-                        description: SettingsGeneralCopy.dictationKeyDescription) {
-                // The key itself; how macOS remaps it lives under Advanced › F5 key helper.
-                let key = currentHotkeyBindings.keyLabel
-                HStack(spacing: 8) {
-                    if let hotkeyBindings {
-                        // L105: choose the key; only which key feeds the unchanged gestures changes.
-                        Picker("Dictation key", selection: Binding(
-                            get: { currentHotkeyBindings.key },
-                            set: { key in updateHotkeyBindings(hotkeyBindings) { $0.key = key } }
-                        )) {
-                            ForEach(VoiceBarHotkeyBindings.Key.allCases, id: \.self) { Text($0.label).tag($0) }
-                        }
-                        .pickerStyle(.menu).labelsHidden().fixedSize()
-                        .disabled(hotkeyBindings.disabledReason() != nil)
-                        .help(hotkeyBindings.disabledReason() ?? "The key that starts dictation")
-                        .accessibilityLabel("Dictation key: \(key)")
-                        .accessibilityIdentifier("settings-dictation-key-picker")
-                    } else {
-                        Text(key)
-                            .font(.system(size: 12, weight: .medium, design: .rounded))
-                            .padding(.horizontal, 7).padding(.vertical, 2)
-                            .background(RoundedRectangle(cornerRadius: 5).strokeBorder(.tertiary))
+            withHotkeyBindings { bindings, model in
+                SettingsRow(title: SettingsGeneralCopy.dictationKeyTitle,
+                            description: SettingsGeneralCopy.dictationKeyDescription) {
+                    // The key itself; how macOS remaps it lives under Advanced › F5 key helper.
+                    let key = bindings.keyLabel
+                    HStack(spacing: 8) {
+                        if let model {
+                            // L105: choose the key; only which key feeds the unchanged gestures changes.
+                            Picker("Dictation key", selection: Binding(
+                                get: { model.bindings.key },
+                                set: { key in model.update { $0.key = key } }
+                            )) {
+                                ForEach(VoiceBarHotkeyBindings.Key.allCases, id: \.self) { Text($0.label).tag($0) }
+                            }
+                            .pickerStyle(.menu).labelsHidden().fixedSize()
+                            .disabled(model.isApplying || model.disabledReason() != nil)
+                            .help(model.disabledReason() ?? "The key that starts dictation")
                             .accessibilityLabel("Dictation key: \(key)")
+                            .accessibilityIdentifier("settings-dictation-key-picker")
+                        } else {
+                            Text(key)
+                                .font(.system(size: 12, weight: .medium, design: .rounded))
+                                .padding(.horizontal, 7).padding(.vertical, 2)
+                                .background(RoundedRectangle(cornerRadius: 5).strokeBorder(.tertiary))
+                                .accessibilityLabel("Dictation key: \(key)")
+                        }
+                        // The F5 check moved here from the healthy F5 setup row, which permission health no longer
+                        // shows. L105: the check names the bound key (it read "Test F5" with F6 bound).
+                        Button("Test " + key) { perform(.checkF5) }
+                            .buttonStyle(.bordered)
+                            .disabled(shortcutCheckRunning)
+                            .accessibilityLabel("Check shortcut")
                     }
-                    // The F5 check moved here from the healthy F5 setup row, which permission health no longer shows.
-                    // L105: the check names the bound key (it read "Test F5" with F6 bound).
-                    Button("Test " + key) { perform(.checkF5) }
-                        .buttonStyle(.bordered)
-                        .disabled(shortcutCheckRunning)
-                        .accessibilityLabel("Check shortcut")
+                }
+                // L105 (Codex r1 on #980): a switch the tap could not make is said here; the key stays as it was.
+                if let error = model?.error {
+                    SettingsRowLabel(title: SettingsGeneralCopy.rebindFailedTitle, description: error)
+                        .accessibilityIdentifier("settings-dictation-key-error")
                 }
             }
             if let shortcutCheckFeedback {
@@ -1407,19 +1417,27 @@ public struct SettingsView: View {
                     SettingsCopyButton(text: shortcutCheckFeedback.message, label: "shortcut check result")
                 }
             }
-            if let hotkeyBindings {
-                mouseRoleRow(SettingsGeneralCopy.forwardButtonTitle, hotkeyBindings, role: \.forward,
-                             identifier: "settings-forward-button-role")
-                mouseRoleRow(SettingsGeneralCopy.backButtonTitle, hotkeyBindings, role: \.back,
-                             identifier: "settings-back-button-role")
-            } else {
-                SettingsRow(title: SettingsGeneralCopy.mouseTitle, description: SettingsGeneralCopy.mouseDescription) {
-                    if let mouseSideButtons {
-                        Toggle("Mouse side buttons", isOn: Binding(get: mouseSideButtons.isOn, set: mouseSideButtons.set))
-                            .labelsHidden().toggleStyle(.settingsSwitch)
+            withHotkeyBindings { _, model in
+                if let model {
+                    mouseRoleRow(SettingsGeneralCopy.forwardButtonTitle, model, role: \.forward,
+                                 identifier: "settings-forward-button-role")
+                    mouseRoleRow(SettingsGeneralCopy.backButtonTitle, model, role: \.back,
+                                 identifier: "settings-back-button-role")
+                } else {
+                    SettingsRow(title: SettingsGeneralCopy.mouseTitle, description: SettingsGeneralCopy.mouseDescription) {
+                        if let mouseSideButtons {
+                            Toggle("Mouse side buttons", isOn: Binding(get: mouseSideButtons.isOn, set: mouseSideButtons.set))
+                                .labelsHidden().toggleStyle(.settingsSwitch)
+                        }
                     }
                 }
             }
+        }
+        // L105 (Codex r1 on #980): a check result belongs to the key it checked; a key change clears it.
+        .onReceive(hotkeyBindings?.$keyGeneration.dropFirst().eraseToAnyPublisher()
+            ?? Empty<Int, Never>().eraseToAnyPublisher()) { _ in
+            shortcutCheckFeedback = nil
+            shortcutCheckRunning = false
         }
     }
 
@@ -1429,12 +1447,14 @@ public struct SettingsView: View {
     /// Read Clipboard as a row whose button sits in the trailing column.
     private var shortcutsSection: some View {
         Section(SettingsGeneralCopy.shortcutsHeader) {
-            SettingsRow(title: "Tap " + currentHotkeyBindings.keyLabel,
-                        description: VoiceBarHotkeyContract.singleTapDescription) { EmptyView() }
-            SettingsRow(title: currentHotkeyBindings.repasteLabel,
-                        description: VoiceBarHotkeyContract.repasteDescription) { EmptyView() }
-            SettingsRow(title: currentHotkeyBindings.speakSelectionLabel,
-                        description: VoiceBarHotkeyContract.speakSelectionDescription) { EmptyView() }
+            withHotkeyBindings { bindings, _ in
+                SettingsRow(title: "Tap " + bindings.keyLabel,
+                            description: VoiceBarHotkeyContract.singleTapDescription) { EmptyView() }
+                SettingsRow(title: bindings.repasteLabel,
+                            description: VoiceBarHotkeyContract.repasteDescription) { EmptyView() }
+                SettingsRow(title: bindings.speakSelectionLabel,
+                            description: VoiceBarHotkeyContract.speakSelectionDescription) { EmptyView() }
+            }
             SettingsRow(title: SettingsGeneralCopy.readClipboardTitle,
                         description: VoiceBarHotkeyContract.readClipboardDescription) {
                 Button(VoiceBarHotkeyContract.readClipboardActionLabel) { onReadClipboard?() }
@@ -1444,36 +1464,39 @@ public struct SettingsView: View {
         }
     }
 
-    /// L105: the bindings on screen (the app's after the last change, else what the input reports).
-    private var currentHotkeyBindings: VoiceBarHotkeyBindings {
-        shownHotkeyBindings ?? hotkeyBindings?.current() ?? .defaults
+    /// L105: rows that show the bindings observe the one shared model, so every surface shows (and edits) the same
+    /// latest value. Without a model (fixtures) they show today's F5 wiring.
+    @ViewBuilder
+    private func withHotkeyBindings<Content: View>(
+        @ViewBuilder _ content: @escaping (VoiceBarHotkeyBindings, HotkeyBindingsModel?) -> Content
+    ) -> some View {
+        if let hotkeyBindings {
+            HotkeyBindingsReader(model: hotkeyBindings) { content($0.bindings, $0) }
+        } else {
+            content(.defaults, nil)
+        }
     }
 
-    private func updateHotkeyBindings(_ input: SettingsHotkeyBindingsInput,
-                                      _ change: (inout VoiceBarHotkeyBindings) -> Void) {
-        var next = currentHotkeyBindings
-        change(&next)
-        input.set(next)
-        shownHotkeyBindings = input.current() // a refused change reads back unchanged
-    }
-
-    /// One mouse side button: acts like the dictation key, sends Return, or does nothing.
-    private func mouseRoleRow(_ title: String, _ input: SettingsHotkeyBindingsInput,
+    /// One mouse side button: dictation, Return, or nothing. A dictation button works like the existing mouse
+    /// gesture (click for hands-free, click again to stop, hold to talk), which its description says.
+    private func mouseRoleRow(_ title: String, _ model: HotkeyBindingsModel,
                               role: WritableKeyPath<VoiceBarHotkeyBindings, VoiceBarHotkeyBindings.MouseRole>,
                               identifier: String) -> some View {
-        SettingsRow(title: title) {
+        let current = model.bindings[keyPath: role]
+        return SettingsRow(title: title,
+                           description: current == .dictation ? SettingsGeneralCopy.mouseDictationDescription : nil) {
             Picker(title, selection: Binding(
-                get: { currentHotkeyBindings[keyPath: role] },
-                set: { value in updateHotkeyBindings(input) { $0[keyPath: role] = value } }
+                get: { model.bindings[keyPath: role] },
+                set: { value in model.update { $0[keyPath: role] = value } }
             )) {
                 ForEach(VoiceBarHotkeyBindings.MouseRole.allCases, id: \.self) {
-                    Text(currentHotkeyBindings.roleTitle($0)).tag($0)
+                    Text(model.bindings.roleTitle($0)).tag($0)
                 }
             }
             .pickerStyle(.menu).labelsHidden().fixedSize()
-            .disabled(input.disabledReason() != nil)
-            .help(input.disabledReason() ?? title)
-            .accessibilityLabel("\(title): \(currentHotkeyBindings.roleTitle(currentHotkeyBindings[keyPath: role]))")
+            .disabled(model.isApplying || model.disabledReason() != nil)
+            .help(model.disabledReason() ?? title)
+            .accessibilityLabel("\(title): \(model.bindings.roleTitle(current))")
             .accessibilityIdentifier(identifier)
         }
     }
@@ -3834,4 +3857,12 @@ enum SettingsPermissionActions {
 
 private extension String {
     var lowercasedFirst: String { prefix(1).lowercased() + dropFirst() }
+}
+
+/// Re-renders its content whenever the shared binding model changes.
+private struct HotkeyBindingsReader<Content: View>: View {
+    @ObservedObject var model: HotkeyBindingsModel
+    let content: (HotkeyBindingsModel) -> Content
+
+    var body: some View { content(model) }
 }
