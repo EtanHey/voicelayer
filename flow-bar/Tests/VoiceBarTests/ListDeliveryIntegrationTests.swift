@@ -144,7 +144,7 @@ final class ListDeliveryIntegrationTests: XCTestCase {
         let k = Kit(); k.front = App("com.cmuxterm.app", 10001)
         k.state.listTypingHandler = { _, _, done in done(.posted) }
         let id = try k.start(); k.final(id, text: "1. Alpha\n2. Beta")
-        XCTAssertEqual(k.state.confirmationText, "1. Alpha\n2. Beta")
+        XCTAssertEqual(k.state.confirmationText, "1. Alpha 2. Beta")
     }
     func testListCannotOvertakeInFlightAXInsertion() throws {
         let k = Kit(); k.front = App("test.native", 10001)
