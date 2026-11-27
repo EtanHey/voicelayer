@@ -17,6 +17,7 @@
 // hashes only, never the paragraph text.
 
 import { createHash } from "crypto";
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import {
   closeSync,
   existsSync,
@@ -35,6 +36,28 @@ import {
 } from "fs";
 import { homedir, tmpdir } from "os";
 import { dirname, join, resolve } from "path";
+
+// Darwin sys/proc_info.h: PROC_PIDTBSDINFO returns proc_bsdinfo (136 bytes),
+// ending in uint64_t pbi_start_tvsec and pbi_start_tvusec at offsets 120/128.
+// Unlike ps lstart, this preserves ordering within the install second.
+export function darwinProcessStartMs(pid: number): number {
+  const library = dlopen("/usr/lib/libproc.dylib", {
+    proc_pidinfo: { args: [FFIType.i32, FFIType.i32, FFIType.u64, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
+  });
+  try {
+    const info = Buffer.alloc(136);
+    if (library.symbols.proc_pidinfo(pid, 3, 0, ptr(info), info.length) !== info.length
+        || info.readUInt32LE(12) !== pid) throw new Error(`cannot read process ${pid} start time`);
+    const seconds = Number(info.readBigUInt64LE(120));
+    const micros = Number(info.readBigUInt64LE(128));
+    if (!Number.isSafeInteger(seconds) || seconds <= 0 || micros >= 1_000_000) {
+      throw new Error(`invalid process ${pid} start time`);
+    }
+    return seconds * 1000 + micros / 1000;
+  } finally {
+    library.close();
+  }
+}
 
 export const PROOF_SCHEMA = "voicelayer.t3-optf5-proof.v2";
 const T3_BUNDLE_ID = "com.t3tools.t3code";
@@ -355,7 +378,7 @@ function requireRunningExecutable(pid: number, binary: string) {
   }
 }
 
-interface ProcessRow {
+export interface ProcessRow {
   pid: number;
   ppid: number;
   command: string;
@@ -373,7 +396,10 @@ function processRows(): ProcessRow[] {
     });
 }
 
-function processStartMs(pid: number): number {
+export function processStartMs(pid: number): number {
+  if (process.platform === "darwin") {
+    try { return darwinProcessStartMs(pid); } catch { fail(`cannot read the start time of process ${pid}`); }
+  }
   const out = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], {
     stdout: "pipe", stderr: "pipe",
     // Date.parse understands the C month/day names, not localized ps output.
@@ -388,18 +414,26 @@ function processStartMs(pid: number): number {
 // is not enough: a bundle swapped under a running VoiceBar would stamp the new GitCommit on
 // events the old binary produced. Installing (copy, unzip, or brew's extract) rewrites the
 // bundle files, so their ctime is the install time; both VoiceBar and its daemon child must
-// have started in a later whole second (`ps lstart` has one-second resolution, so a
-// same-second start cannot be proven to follow the install and fails closed).
-function installedRuntime(app: string): { voiceBarPid: number; daemonPids: number[] } {
+// have started after installation. Darwin uses kernel microsecond start times; other
+// hosts retain conservative whole-second ps timestamps. Missing evidence fails closed.
+// The process reads the gate uses, injectable so a test can drive the real freshness decision.
+export interface RuntimeProbe {
+  processRows: () => ProcessRow[];
+  processStartMs: (pid: number) => number;
+  requireRunningExecutable: (pid: number, binary: string) => void;
+}
+const liveProbe: RuntimeProbe = { processRows, processStartMs, requireRunningExecutable };
+
+export function installedRuntime(app: string, probe: RuntimeProbe = liveProbe): { voiceBarPid: number; daemonPids: number[] } {
   const binary = `${app}/Contents/MacOS/VoiceBar`;
-  const installedSecond = Math.floor(statSync(`${app}/Contents/Info.plist`).ctimeMs / 1000);
-  const rows = processRows();
+  const installedMs = statSync(`${app}/Contents/Info.plist`).ctimeMs;
+  const rows = probe.processRows();
   const voiceBars = rows.filter((row) => row.command === binary || row.command.startsWith(`${binary} `));
   if (voiceBars.length === 0) fail(`no running VoiceBar from ${binary}; launch the installed candidate first`);
   if (voiceBars.length > 1) fail(`${voiceBars.length} VoiceBar processes run from ${binary}; one resident only`);
   const voiceBarPid = voiceBars[0].pid;
-  requireRunningExecutable(voiceBarPid, binary);
-  if (Math.floor(processStartMs(voiceBarPid) / 1000) <= installedSecond) {
+  probe.requireRunningExecutable(voiceBarPid, binary);
+  if (probe.processStartMs(voiceBarPid) <= installedMs) {
     fail(`VoiceBar process ${voiceBarPid} is older than the installed bundle; relaunch VoiceBar after installing`);
   }
   const daemons = rows.filter((row) => row.ppid === voiceBarPid && row.command.includes("mcp-server-daemon"));
@@ -410,7 +444,7 @@ function installedRuntime(app: string): { voiceBarPid: number; daemonPids: numbe
   if (!existsSync(script) || !realpathSync(script).startsWith(`${resources}/`)) {
     fail("mcp-server-daemon script must be inside the installed bundle's Resources");
   }
-  const daemonInstalledSecond = Math.max(installedSecond, Math.floor(statSync(script).ctimeMs / 1000));
+  const daemonInstalledMs = Math.max(installedMs, statSync(script).ctimeMs);
   for (const daemon of daemons) {
     // ps prints argv joined with spaces (including spaces in the bundle path).
     const commandScript = daemon.command.match(/^(?:\S*\/)?bun run (.+)$/)?.[1];
@@ -419,7 +453,7 @@ function installedRuntime(app: string): { voiceBarPid: number; daemonPids: numbe
     }
     // Bun maps its executable, not the TypeScript it loaded. A rewritten script can leave
     // the old daemon running with an unchanged VoiceBar binary and Info.plist.
-    if (Math.floor(processStartMs(daemon.pid) / 1000) <= daemonInstalledSecond) {
+    if (probe.processStartMs(daemon.pid) <= daemonInstalledMs) {
       fail(`mcp-server-daemon process ${daemon.pid} is older than the installed daemon script; relaunch VoiceBar after installing`);
     }
   }
