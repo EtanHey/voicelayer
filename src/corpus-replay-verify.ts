@@ -3,7 +3,8 @@ import { systemDeadlineClock, type DeadlineClock } from "./deadline-clock";
 
 import { createHash } from "node:crypto";
 import {
-  chmodSync,
+  accessSync,
+  constants,
   copyFileSync,
   existsSync,
   lstatSync,
@@ -17,6 +18,7 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve } from "path";
 import { fileURLToPath } from "url";
 import { NDJSONByteFramer } from "./ndjson-byte-framer";
+import { resolveRecorderBinary } from "./recorder-binary";
 import { SocketOutboundQueue } from "./socket-outbound-queue";
 import { normalizeOutroKey } from "./stt-outro-gate";
 
@@ -626,9 +628,9 @@ export function stageSpecimen(
 }
 
 function createVerifyRecorderShim(workDir: string): string {
-  const binDirectory = join(workDir, "bin");
+  const binDirectory = resolve(workDir, "bin");
   const recorderPath = join(binDirectory, "rec");
-  mkdirSync(binDirectory, { recursive: true });
+  mkdirSync(binDirectory, { mode: 0o700 });
   writeFileSync(
     recorderPath,
     [
@@ -639,10 +641,9 @@ function createVerifyRecorderShim(workDir: string): string {
       "exec /bin/sleep 300",
       "",
     ].join("\n"),
-    { mode: 0o755 },
+    { flag: "wx", mode: 0o700 },
   );
-  chmodSync(recorderPath, 0o755);
-  return binDirectory;
+  return recorderPath;
 }
 
 // AIDEV-NOTE: The corpus daemon must never inherit the live whisper-server port.
@@ -680,7 +681,7 @@ export function buildCorpusDaemonEnvironment(options: {
   mcpSocketPath: string;
   stagedRoot: string;
   audioFixture: string;
-  recorderBinDirectory: string;
+  recorderPath: string;
   whisperServerPort: number;
   baseEnvironment?: NodeJS.ProcessEnv;
 }): NodeJS.ProcessEnv {
@@ -701,7 +702,9 @@ export function buildCorpusDaemonEnvironment(options: {
     QA_VOICE_RECORDINGS_DIR: options.stagedRoot,
     VOICELAYER_VERIFY_AUDIO_FIXTURE: options.audioFixture,
     QA_VOICE_WHISPER_SERVER_PORT: String(options.whisperServerPort),
-    PATH: `${options.recorderBinDirectory}:${baseEnvironment.PATH ?? "/usr/bin:/bin"}`,
+    VOICELAYER_TEST_FAKE_REC: "1",
+    VOICELAYER_TEST_FAKE_REC_BIN: options.recorderPath,
+    VOICELAYER_TEST_REAL_MIC: "0",
   };
 }
 
@@ -867,7 +870,7 @@ async function runCorpusReplay(options: {
   const staged = selected.map((item) =>
     stageSpecimen(item, options.corpusRoot, stagedRoot),
   );
-  const recorderBinDirectory = createVerifyRecorderShim(options.workDir);
+  const recorderPath = createVerifyRecorderShim(options.workDir);
   const whisperServerPort = await allocateFreeLocalhostPort();
   console.log(
     `[corpus-replay] isolated whisper-server port: ${whisperServerPort}`,
@@ -877,6 +880,21 @@ async function runCorpusReplay(options: {
   if (whisperPortProofPath) {
     writeFileSync(whisperPortProofPath, `${whisperServerPort}\n`);
   }
+  const daemonEnvironment = buildCorpusDaemonEnvironment({
+    workDir: options.workDir,
+    voiceBarSocketPath,
+    mcpSocketPath,
+    stagedRoot,
+    audioFixture: staged[0].audioPath,
+    recorderPath,
+    whisperServerPort,
+  });
+  const resolvedRecorder = resolveRecorderBinary(daemonEnvironment);
+  if (resolvedRecorder !== recorderPath) {
+    throw new Error("corpus daemon recorder did not resolve to the fixture shim");
+  }
+  accessSync(resolvedRecorder, constants.X_OK);
+  console.log(`[corpus-replay] resolved fixture recorder: ${resolvedRecorder}`);
   const bar = createVerifyBarServer(voiceBarSocketPath);
   const daemonLogPath = join(options.workDir, "daemon.log");
   const daemonProcess = Bun.spawn(
@@ -886,15 +904,7 @@ async function runCorpusReplay(options: {
       detached: true,
       stdout: "pipe",
       stderr: "pipe",
-      env: buildCorpusDaemonEnvironment({
-        workDir: options.workDir,
-        voiceBarSocketPath,
-        mcpSocketPath,
-        stagedRoot,
-        audioFixture: staged[0].audioPath,
-        recorderBinDirectory,
-        whisperServerPort,
-      }),
+      env: daemonEnvironment,
     },
   );
   const daemon: VerifyDaemonProcess = {

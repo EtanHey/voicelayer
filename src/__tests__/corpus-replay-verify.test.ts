@@ -31,6 +31,8 @@ import {
   waitForInteractionRunner,
   runDaemonInteractionLeg,
 } from "../corpus-replay-verify";
+import { resolveRecorderBinary } from "../recorder-binary";
+import { __resetBinarySpawnForTests, __setBinarySpawnForTests } from "../resolve-binary";
 import { createSpeakReceipt } from "../speak-archive";
 import { normalizeOutroKey } from "../stt-outro-gate";
 
@@ -513,7 +515,7 @@ describe("corpus replay verification", () => {
       mcpSocketPath: join(workDir, "mcp.sock"),
       stagedRoot: join(workDir, "recordings"),
       audioFixture: join(workDir, "audio.wav"),
-      recorderBinDirectory: join(workDir, "bin"),
+      recorderPath: join(workDir, "bin", "rec"),
       whisperServerPort: 18179,
       baseEnvironment: {
         HOME: "/real/user/home",
@@ -550,6 +552,37 @@ describe("corpus replay verification", () => {
     );
   });
 
+  test("pins the corpus recorder shim even when which fails and the parent opts into the mic", () => {
+    const workDir = makeTempRoot();
+    const recorderPath = join(workDir, "bin", "rec");
+    const environment = buildCorpusDaemonEnvironment({
+      workDir,
+      voiceBarSocketPath: join(workDir, "voicebar.sock"),
+      mcpSocketPath: join(workDir, "mcp.sock"),
+      stagedRoot: join(workDir, "recordings"),
+      audioFixture: join(workDir, "audio.wav"),
+      recorderPath,
+      whisperServerPort: 18179,
+      baseEnvironment: {
+        VOICELAYER_TEST_REAL_MIC: "1",
+        VOICELAYER_TEST_FAKE_REC: "0",
+        VOICELAYER_TEST_FAKE_REC_BIN: "/unrelated/recorder",
+      },
+    });
+
+    const probes: string[][] = [];
+    __setBinarySpawnForTests((command) => {
+      probes.push(command);
+      return { exitCode: command[0] === "/opt/homebrew/bin/rec" ? 0 : 1 };
+    });
+    try {
+      expect(resolveRecorderBinary(environment)).toBe(recorderPath);
+      expect(probes).toEqual([]);
+    } finally {
+      __resetBinarySpawnForTests();
+    }
+  });
+
   test("isolates the corpus daemon's whisper-server port off the live default", () => {
     const workDir = makeTempRoot();
     const environment = buildCorpusDaemonEnvironment({
@@ -558,7 +591,7 @@ describe("corpus replay verification", () => {
       mcpSocketPath: join(workDir, "mcp.sock"),
       stagedRoot: join(workDir, "recordings"),
       audioFixture: join(workDir, "audio.wav"),
-      recorderBinDirectory: join(workDir, "bin"),
+      recorderPath: join(workDir, "bin", "rec"),
       whisperServerPort: 18179,
       baseEnvironment: {
         PATH: "/usr/bin:/bin",
