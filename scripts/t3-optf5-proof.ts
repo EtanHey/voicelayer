@@ -353,7 +353,7 @@ function requireRunningExecutable(pid: number, binary: string) {
   }
 }
 
-interface ProcessRow {
+export interface ProcessRow {
   pid: number;
   ppid: number;
   command: string;
@@ -391,16 +391,24 @@ export function processStartMs(pid: number): number {
 // bundle files, so their ctime is the install time; both VoiceBar and its daemon child must
 // have started after installation. Darwin uses kernel microsecond start times; other
 // hosts retain conservative whole-second ps timestamps. Missing evidence fails closed.
-function installedRuntime(app: string): { voiceBarPid: number; daemonPids: number[] } {
+// The process reads the gate uses, injectable so a test can drive the real freshness decision.
+export interface RuntimeProbe {
+  processRows: () => ProcessRow[];
+  processStartMs: (pid: number) => number;
+  requireRunningExecutable: (pid: number, binary: string) => void;
+}
+const liveProbe: RuntimeProbe = { processRows, processStartMs, requireRunningExecutable };
+
+export function installedRuntime(app: string, probe: RuntimeProbe = liveProbe): { voiceBarPid: number; daemonPids: number[] } {
   const binary = `${app}/Contents/MacOS/VoiceBar`;
   const installedMs = statSync(`${app}/Contents/Info.plist`).ctimeMs;
-  const rows = processRows();
+  const rows = probe.processRows();
   const voiceBars = rows.filter((row) => row.command === binary || row.command.startsWith(`${binary} `));
   if (voiceBars.length === 0) fail(`no running VoiceBar from ${binary}; launch the installed candidate first`);
   if (voiceBars.length > 1) fail(`${voiceBars.length} VoiceBar processes run from ${binary}; one resident only`);
   const voiceBarPid = voiceBars[0].pid;
-  requireRunningExecutable(voiceBarPid, binary);
-  if (processStartMs(voiceBarPid) <= installedMs) {
+  probe.requireRunningExecutable(voiceBarPid, binary);
+  if (probe.processStartMs(voiceBarPid) <= installedMs) {
     fail(`VoiceBar process ${voiceBarPid} is older than the installed bundle; relaunch VoiceBar after installing`);
   }
   const daemons = rows.filter((row) => row.ppid === voiceBarPid && row.command.includes("mcp-server-daemon"));
@@ -420,7 +428,7 @@ function installedRuntime(app: string): { voiceBarPid: number; daemonPids: numbe
     }
     // Bun maps its executable, not the TypeScript it loaded. A rewritten script can leave
     // the old daemon running with an unchanged VoiceBar binary and Info.plist.
-    if (processStartMs(daemon.pid) <= daemonInstalledMs) {
+    if (probe.processStartMs(daemon.pid) <= daemonInstalledMs) {
       fail(`mcp-server-daemon process ${daemon.pid} is older than the installed daemon script; relaunch VoiceBar after installing`);
     }
   }
