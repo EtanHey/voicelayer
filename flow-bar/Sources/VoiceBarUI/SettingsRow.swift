@@ -13,6 +13,7 @@ struct SettingsRow<Lead: View, Trailing: View>: View {
     var isSelected = false
     // Small microphone buttons are 20 pt high; reserve that status-line height even with no badge/action.
     var controlsFollowStatus = false
+    var controlsFollowTitleCentre = false
     /// The text column's minimum before the controls wrap under it. A one-word title ("Rate") can give its wide
     /// control (a slider) the room instead (lane S PR 3).
     var textMinWidth: CGFloat = SettingsRowLabel.textMinWidth
@@ -20,7 +21,8 @@ struct SettingsRow<Lead: View, Trailing: View>: View {
     @ViewBuilder var trailing: () -> Trailing
 
     var body: some View {
-        SettingsRowLayout(controlsFollowStatus: controlsFollowStatus, textMinWidth: textMinWidth) {
+        SettingsRowLayout(controlsFollowStatus: controlsFollowStatus, controlsFollowTitleCentre: controlsFollowTitleCentre,
+                          textMinWidth: textMinWidth) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 lead()
                 SettingsRowLabel(title: title, description: description, badge: badge, titleBadge: titleBadge,
@@ -37,10 +39,12 @@ struct SettingsRow<Lead: View, Trailing: View>: View {
 
 extension SettingsRow where Lead == EmptyView {
     init(title: String, description: String? = nil, badge: String? = nil, titleBadge: SettingsPill? = nil,
-         isSelected: Bool = false, textMinWidth: CGFloat = SettingsRowLabel.textMinWidth,
+         isSelected: Bool = false, controlsFollowTitleCentre: Bool = false,
+         textMinWidth: CGFloat = SettingsRowLabel.textMinWidth,
          @ViewBuilder trailing: @escaping () -> Trailing) {
         self.init(title: title, description: description, badge: badge, titleBadge: titleBadge,
-                  isSelected: isSelected, textMinWidth: textMinWidth, lead: { EmptyView() }, trailing: trailing)
+                  isSelected: isSelected, controlsFollowTitleCentre: controlsFollowTitleCentre,
+                  textMinWidth: textMinWidth, lead: { EmptyView() }, trailing: trailing)
     }
 }
 
@@ -173,6 +177,14 @@ struct SettingsControlFrameKey: PreferenceKey {
     static let defaultValue: [String: CGRect] = [:]
     static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
         value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
+    }
+}
+
+extension View {
+    func settingsControlFrame(_ id: String) -> some View {
+        background(GeometryReader { proxy in
+            Color.clear.preference(key: SettingsControlFrameKey.self, value: [id: proxy.frame(in: .global)])
+        })
     }
 }
 

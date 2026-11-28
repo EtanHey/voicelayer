@@ -1370,7 +1370,8 @@ public struct SettingsView: View {
     private var dictationSection: some View {
         Section("Dictation") {
             SettingsRow(title: SettingsGeneralCopy.dictationKeyTitle,
-                        description: SettingsGeneralCopy.dictationKeyDescription) {
+                        description: SettingsGeneralCopy.dictationKeyDescription,
+                        controlsFollowTitleCentre: true) {
                 // The key itself; how macOS remaps it lives under Advanced › F5 key helper.
                 let key = "F5"
                 HStack(spacing: 8) {
@@ -1378,10 +1379,12 @@ public struct SettingsView: View {
                         .font(.system(size: 12, weight: .medium, design: .rounded))
                         .padding(.horizontal, 7).padding(.vertical, 2)
                         .background(RoundedRectangle(cornerRadius: 5).strokeBorder(.tertiary))
+                        .settingsControlFrame("dictation-key-cap")
                         .accessibilityLabel("Dictation key: \(key)")
                     // The F5 check moved here from the healthy F5 setup row, which permission health no longer shows.
                     Button(SettingsSetupFix.checkF5.title) { perform(.checkF5) }
                         .buttonStyle(.bordered)
+                        .settingsControlFrame("dictation-key-check")
                         .disabled(shortcutCheckRunning)
                         .accessibilityLabel("Check shortcut")
                 }
