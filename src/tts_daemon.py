@@ -22,6 +22,49 @@ Usage:
 # AIDEV-NOTE: This daemon runs as a separate process from the MCP server.
 # TypeScript side calls it over HTTP (src/tts/qwen3.ts).
 
+# Bound retained RSS. A single utterance may still exceed it while it generates.
+# Sample current resident memory, not resource.ru_maxrss (a lifetime peak).
+HIGH_WATER_BYTES = 8 * 1024**3
+RESTART_OWNER_ENV = "VOICELAYER_CLONE_RESTART_OWNER"
+RESTART_OWNER_PID_ENV = "VOICELAYER_CLONE_RESTART_OWNER_PID"
+RESTART_OWNER_EXIT_CODE = 75
+
+
+def current_rss_bytes():
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["/bin/ps", "-o", "rss=", "-p", str(os.getpid())],
+            capture_output=True, text=True, timeout=2, check=True)
+        return int(result.stdout.strip()) * 1024
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def restart_owner_confirmed(environ=None):
+    """An orphan loses retirement authority even if a new controller adopts it."""
+    env = os.environ if environ is None else environ
+    parent = os.getppid()
+    return (parent > 1 and env.get(RESTART_OWNER_ENV) == "voicebar"
+            and env.get(RESTART_OWNER_PID_ENV) == str(parent))
+
+
+def retire_over_high_water(read_rss=current_rss_bytes, request_retirement=None):
+    """Ask for a graceful retirement when retained memory is over the limit.
+
+    This never exits the process itself: the server stops taking connections, finishes every
+    response already in flight (including a queued synthesis), and only then exits with
+    RESTART_OWNER_EXIT_CODE. Returns True when retirement was requested.
+    """
+    if request_retirement is None:
+        return False
+    rss = read_rss()
+    if rss is not None and rss > HIGH_WATER_BYTES:
+        request_retirement()
+        return True
+    return False
+
+
 import gc
 import asyncio
 import json
@@ -320,8 +363,15 @@ def create_app(
     port: int = DEFAULT_PORT,
     auth_token_file: str | None = None,
     voices_root: str = str(DEFAULT_VOICES_DIR),
+    request_retirement=None,
+    read_rss=current_rss_bytes,
 ):
-    """Create the HTTP daemon without loading model weights."""
+    """Create the HTTP daemon without loading model weights.
+
+    request_retirement, when given, is called (once the daemon is over the memory limit,
+    after a synthesis finished) to start a graceful stop. None means this daemon has no
+    restart owner and never retires itself.
+    """
     try:
         from fastapi import FastAPI, HTTPException, Request
         from fastapi.middleware.cors import CORSMiddleware
@@ -481,16 +531,21 @@ def create_app(
 
     def synthesize_resident(req, request, cancelled):
         check_cancelled(cancelled)
-        with resident_model():
-            try:
-                check_cancelled(cancelled)
-                with cancellable_generation(model, cancelled):
-                    return synthesize_loaded(req, request)
-            except SynthesisCancelled:
-                gc.collect()
-                if "mlx.core" in sys.modules:
-                    sys.modules["mlx.core"].clear_cache()
-                raise
+        try:
+            with resident_model():
+                try:
+                    check_cancelled(cancelled)
+                    with cancellable_generation(model, cancelled):
+                        return synthesize_loaded(req, request)
+                except SynthesisCancelled:
+                    gc.collect()
+                    if "mlx.core" in sys.modules:
+                        sys.modules["mlx.core"].clear_cache()
+                    raise
+        finally:
+            # After the audio exists, never before: the HTTP layer still has to send it. The
+            # server finishes this response and every queued one before it exits.
+            retire_over_high_water(read_rss, request_retirement)
 
     def synthesize_loaded(req: SynthesizeRequest, request: Request):
         """Synthesize speech using a bearer-authenticated WAV under ~/.voicelayer/voices/."""
@@ -644,14 +699,32 @@ def main():
         except OSError:
             logger.error("TTS endpoint occupied or unavailable; refusing another engine")
             sys.exit(1)
+        retirement = threading.Event()
+        server_holder: list = []
+
+        def request_retirement():
+            # Check again at the threshold. The original controller may have died
+            # since startup, and adoption does not transfer its restart authority.
+            if not restart_owner_confirmed():
+                return
+            retirement.set()
+            if server_holder:
+                server_holder[0].should_exit = True  # uvicorn: graceful, waits for in-flight responses
+
         app = create_app(
             args.model,
             host=args.host,
             port=args.port,
             auth_token_file=args.auth_token_file,
+            request_retirement=request_retirement if restart_owner_confirmed() else None,
         )
         logger.info(f"Starting TTS daemon on {args.host}:{args.port}")
-        uvicorn.run(app, fd=listener.fileno(), log_level="warning")
+        server = uvicorn.Server(uvicorn.Config(app, fd=listener.fileno(), log_level="warning"))
+        server_holder.append(server)
+        server.run()
+    if retirement.is_set():
+        logger.warning("Retiring above the memory limit; the restart owner starts a fresh daemon")
+        sys.exit(RESTART_OWNER_EXIT_CODE)
 
 
 if __name__ == "__main__":

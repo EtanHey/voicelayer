@@ -22,6 +22,7 @@
 - Qwen3-TTS daemon runs on port 8880 and reads `~/.voicelayer/voices/{name}/profile.yaml`.
 - Profile fields: `engine`, `reference_clip(s)`, `fallback`.
 - `voice_speak` supports `replay_index` and `enabled` toggle.
+- Memory retirement: a clone daemon VoiceBar launched itself (it sets `VOICELAYER_CLONE_RESTART_OWNER=voicebar`) asks uvicorn for a graceful stop after a synthesis finishes with resident memory above 8 GiB; the server finishes every response in flight, including a queued one, then exits 75 and the engine controller restarts it. A standalone (`voicelayer daemon`) or adopted daemon has no restart owner and never retires itself. A single utterance can still exceed the limit while it generates.
 - Ring buffer size is 20 outputs.
 
 ## STT Backends
