@@ -52,9 +52,9 @@ import SwiftUI
     }
 
     /// The system cancelled the gesture: settle back on the tab it started from, so a cancel never changes tab.
-    func cancel(pager: GlassTabPager, at time: Double) {
+    func cancel(pager: GlassTabPager, at time: Double, suppressRowActions: Bool = true) {
         guard axis.end() else { return }
-        endedAt = time
+        endedAt = suppressRowActions ? time : -.infinity
         pager.cancel(at: time)
     }
 
@@ -147,8 +147,6 @@ struct NotchTabSlots: View {
 /// backdrop (the pixel and text-recognition tests). `usesGlassPill` turns the glass on once the installed app shows it
 /// reads well on the notch.
 struct NotchGlassTabBar: View {
-    static let usesGlassPill = false
-
     @Environment(\.glassTabSolidPill) private var forceSolidPill
 
     let pager: GlassTabPager
@@ -158,11 +156,12 @@ struct NotchGlassTabBar: View {
     let colors: GlassTabColors
     var identifier: (Int) -> String? = { _ in nil }
     var tooltip: (Int) -> String? = { _ in nil }
+    var usesGlassPill = false
 
     var body: some View {
         GlassTabBar(pager: pager, tabs: tabs, accessibilityLabel: accessibilityLabel, metrics: metrics, colors: colors,
                     handlesKeyboard: false)
-            .environment(\.glassTabSolidPill, forceSolidPill || !Self.usesGlassPill)
+            .environment(\.glassTabSolidPill, forceSolidPill || !usesGlassPill)
             .accessibilityHidden(true)
             .overlay(alignment: .topLeading) {
                 NotchTabSlots(pager: pager, tabs: tabs, metrics: metrics, identifier: identifier, tooltip: tooltip) {

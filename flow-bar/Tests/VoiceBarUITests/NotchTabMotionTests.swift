@@ -340,6 +340,112 @@ final class NotchTabMotionTests: XCTestCase {
         try assertFocus()
     }
 
+    func testLeavingDictationDuringHistorySwipeCancelsItAndReenablesRowActions() throws {
+        let settingsPager = GlassTabPager(count: SettingsTab.allCases.count)
+        let historyPager = GlassTabPager(count: SettingsHistoryScope.allCases.count)
+        let archive = NotchHistoryArchiveStore(loadAsk: { _ in [] }, loadSpeech: { _ in [] })
+        let entry = RecentTranscriptionEntry(text: "Synthetic dictation.")
+        var opens: [String] = []
+        let dictations = NotchHistoryPanel(
+            entries: [entry], activeRetranscriptionPath: nil, palette: .resolve(for: .dark),
+            onCopy: { _ in true }, onPaste: { _ in }, onRetranscribe: { _ in },
+            onOpen: { opens.append($0.text) }
+        )
+        let panel = NotchHistoryCategoryPanel(dictations: dictations, archive: archive, pager: historyPager)
+        let drawer = HistorySwipeTestDrawer(pager: settingsPager, history: AnyView(panel))
+        let host = hostView(drawer, size: NSSize(width: 404, height: 360))
+        let window = try XCTUnwrap(host.window)
+        let historyMonitor = try XCTUnwrap(descendant(NotchHistorySwipeMonitor.Probe.self, in: host))
+        let settingsMonitor = try XCTUnwrap(descendant(NotchSettingsTabSwipeMonitor.Probe.self, in: host))
+        settingsPager.isLive = { true }
+        settingsPager.onNeedsFrames = { _ in }
+        historyPager.isLive = { true }
+        historyPager.onNeedsFrames = { _ in }
+
+        func swipeEvent(_ phase: Int64, dx: Int32 = 0) throws -> Bool {
+            let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+                                           wheel1: 0, wheel2: dx, wheel3: 0))
+            cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+            cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
+            let point = historyMonitor.convert(NSPoint(x: historyMonitor.bounds.midX, y: historyMonitor.bounds.midY),
+                                               to: nil)
+            return historyMonitor.route(try XCTUnwrap(NSEvent(cgEvent: cg)), in: window, at: point)
+        }
+
+        func clickSettingsTab(_ tab: SettingsTab) throws {
+            let index = try XCTUnwrap(SettingsTab.allCases.firstIndex(of: tab))
+            let metrics = NotchSettingsDrawer.tabMetrics(width: settingsMonitor.bounds.width)
+            let slot = metrics.slotFrames(NotchSettingsDrawer.glassTabs)[index]
+            let point = NSPoint(x: slot.midX, y: NotchSettingsDrawerPresentation.tabBarHeight / 2)
+            click(at: settingsMonitor.convert(point, to: nil), in: window)
+            XCTAssertEqual(settingsPager.selection, index)
+            XCTAssertEqual(settingsPager.phase, .settling)
+        }
+
+        XCTAssertTrue(historyMonitor.canInteract)
+        _ = try swipeEvent(1)
+        XCTAssertTrue(try swipeEvent(2, dx: -260))
+        XCTAssertEqual(historyPager.phase, .tracking)
+        XCTAssertGreaterThan(historyPager.progress, 0.5, "releasing here would advance History without cancellation")
+
+        try clickSettingsTab(.speech)
+        var time = CACurrentMediaTime()
+        for _ in 0 ..< 30 where settingsPager.progress <= 0.55 {
+            time += frame
+            settingsPager.tick(at: time)
+        }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        render(host)
+        XCTAssertGreaterThan(settingsPager.progress, 0.5)
+        XCTAssertEqual(settingsPager.committed, 0, "Dictation is still the committed Settings tab when the fingers lift")
+        XCTAssertFalse(historyMonitor.canInteract, "the outgoing pane has already lost interaction")
+        XCTAssertFalse(try swipeEvent(4), "the disabled monitor no longer receives the release")
+
+        for _ in 0 ..< 120 {
+            time += frame
+            settingsPager.tick(at: time)
+            historyPager.tick(at: time)
+        }
+        XCTAssertEqual(settingsPager.committed, 1)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        render(host)
+
+        // A real click's clock starts at wall time, independently of the previous manually advanced settle.
+        try clickSettingsTab(.history)
+        time = CACurrentMediaTime()
+        for _ in 0 ..< 120 {
+            time += frame
+            settingsPager.tick(at: time)
+        }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        render(host)
+        XCTAssertEqual(settingsPager.committed, 0)
+        XCTAssertTrue(historyMonitor.canInteract)
+        XCTAssertEqual(archive.selectedScope, .recording)
+        XCTAssertEqual(historyPager.phase, .resting)
+        XCTAssertEqual(historyPager.progress, 0, "Dictations is at its exact resting position")
+        let rowID = NotchHistoryPresentation.rowAccessibilityIdentifier(index: 0)
+        let row = try XCTUnwrap(element(rowID, in: host), "the starting category's row is visible").frame
+        let point = window.convertPoint(fromScreen: NSPoint(x: row.minX + 30, y: row.midY))
+        click(at: point, in: window)
+        XCTAssertEqual(opens, [entry.text], "a reopened History row accepts its open action")
+    }
+
+    private struct HistorySwipeTestDrawer: View {
+        let pager: GlassTabPager
+        let history: AnyView
+        @State private var selectedTab: SettingsTab = .history
+
+        var body: some View {
+            NotchSettingsDrawer(
+                selectedTab: selectedTab, appearance: .dark,
+                context: NotchSettingsDrawerContext(updates: nil, pane: { _, _ in AnyView(EmptyView()) }),
+                history: { history }, pager: pager, onSelectTab: { selectedTab = $0 }
+            )
+            .frame(width: 404, height: 360)
+        }
+    }
+
     private struct FocusTestPane: View {
         @State private var text: String
 
@@ -371,6 +477,27 @@ final class NotchTabMotionTests: XCTestCase {
         window.makeFirstResponder(selectorHost)
         XCTAssertFalse(focus.owns(window.firstResponder))
     }
+
+    #if DEBUG
+    func testGlassEnabledNotchTabBarHonorsCallersSolidPillOverride() throws {
+        guard #available(macOS 26.0, *) else {
+            throw XCTSkip("testing the override requires a system that supports the glass pill")
+        }
+        for forceSolidPill in [true, false] {
+            var renderedGlass: Bool?
+            let bar = NotchGlassTabBar(
+                pager: GlassTabPager(count: historyTabs.count), tabs: historyTabs,
+                accessibilityLabel: "History categories", metrics: historyMetrics(),
+                colors: .notch(.resolve(for: .dark)), usesGlassPill: true
+            )
+            .environment(\.glassTabSolidPill, forceSolidPill)
+            .environment(\.glassTabPillStyleObserver, { renderedGlass = $0 })
+            _ = hostView(bar, size: NSSize(width: 404, height: NotchHistoryPresentation.categorySelectorHeight))
+            XCTAssertEqual(try XCTUnwrap(renderedGlass), !forceSolidPill,
+                           "the real bar draws a solid pill only when the caller overrides the flag")
+        }
+    }
+    #endif
 
     private struct SolidPillEnvironmentProbe: View {
         @Environment(\.glassTabSolidPill) private var solidPill
@@ -466,6 +593,14 @@ final class NotchTabMotionTests: XCTestCase {
                 window.sendEvent(event)
             }
         }
+    }
+
+    private func descendant<View: NSView>(_ type: View.Type, in root: NSView) -> View? {
+        if let match = root as? View { return match }
+        for subview in root.subviews {
+            if let match = descendant(type, in: subview) { return match }
+        }
+        return nil
     }
 
     /// The accessibility element with this identifier, with its frame in screen points.

@@ -66,6 +66,7 @@ struct NotchHistoryCategoryPanel: View {
                 onMove: { dx, dy, time in gesture.move(dx: dx, dy: dy, stride: stride, pager: tabs, at: time) },
                 onEnd: { time in gesture.release(pager: tabs, at: time) },
                 onCancel: { time in gesture.cancel(pager: tabs, at: time) },
+                onDeactivateSwipe: { time in gesture.cancel(pager: tabs, at: time, suppressRowActions: false) },
                 onStep: { select(tabs.selection + $0) },
                 cancellation: swipeCancellation, selectorFocus: selectorFocus, isActive: isPresented
             ))
@@ -221,6 +222,7 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
     let onMove: (CGFloat, CGFloat, Double) -> Bool
     let onEnd: (Double) -> Void
     let onCancel: (Double) -> Void
+    let onDeactivateSwipe: (Double) -> Void
     /// -1 for Left, +1 for Right.
     let onStep: (Int) -> Void
     /// A reference fence: a selector/key change invalidates pending events immediately, before view updates.
@@ -246,6 +248,11 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
         var canInteract = false {
             didSet {
                 guard oldValue, !canInteract else { return }
+                // The outgoing Settings pane can lose interaction before the fingers lift.
+                if let handlers, isTracking, isSideways,
+                   trackingGeneration == (handlers.cancellation?.generation ?? 0) {
+                    handlers.onDeactivateSwipe(CACurrentMediaTime())
+                }
                 resetTracking()
                 if window?.firstResponder === self { window?.makeFirstResponder(nil) }
             }

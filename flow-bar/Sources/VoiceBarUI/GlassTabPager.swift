@@ -427,6 +427,13 @@ struct GlassTabBar: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.glassTabSolidPill) private var solidPill
+    #if VOICEBAR_QA
+    @Environment(\.glassTabPillStyleObserver) private var pillStyleObserver
+    #endif
+    private var rendersGlassPill: Bool {
+        if #available(macOS 26.0, *) { return !solidPill }
+        return false
+    }
     @State private var livePress: GlassTabPress?
     /// True while the press gesture runs; SwiftUI resets it on the gesture's end AND on its cancellation (which never
     /// calls `onEnded`).
@@ -458,7 +465,12 @@ struct GlassTabBar: View {
             Task { @MainActor in GlassTabPress.gestureDidReset(&livePress, pager: pager, time: now()) }
         }
         .modifier(GlassTabKeyboard(isOn: handlesKeyboard, pager: pager, now: now))
-        .onAppear { pager.reduceMotion = reduceMotion }
+        .onAppear {
+            pager.reduceMotion = reduceMotion
+            #if VOICEBAR_QA
+            pillStyleObserver?(rendersGlassPill)
+            #endif
+        }
         .onChange(of: reduceMotion) { _, value in pager.reduceMotion = value }
         .accessibilityRepresentation {
             Picker(accessibilityLabel, selection: Binding(get: { pager.selection }, set: { pager.select($0, at: now()) })) {
@@ -471,7 +483,7 @@ struct GlassTabBar: View {
     @ViewBuilder private func glassPill(_ pill: CGRect) -> some View {
         let shape = Capsule()
         Group {
-            if #available(macOS 26.0, *), !solidPill {
+            if #available(macOS 26.0, *), rendersGlassPill {
                 // Not `.interactive()`: the pill never takes a hit (the bar's gesture does), so the press response is
                 // ours, below.
                 // The rim is a sibling below nothing interactive (the whole pill takes no hits), not an overlay.
@@ -640,6 +652,10 @@ extension EnvironmentValues {
     /// Draw the pill as a solid capsule instead of Liquid Glass. Offscreen renders only: `cacheDisplay` cannot capture
     /// glass, which the window server composites on screen.
     @Entry var glassTabSolidPill = false
+    #if VOICEBAR_QA
+    /// Observes the style drawn by the real bar on mount, including any host environment overrides.
+    @Entry var glassTabPillStyleObserver: ((Bool) -> Void)? = nil
+    #endif
     /// Renders only: draw the bar as if this press were held.
     @Entry var glassTabPreviewPress: GlassTabPress? = nil
 }
