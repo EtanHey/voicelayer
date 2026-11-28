@@ -166,7 +166,7 @@ final class WingsU2HostTests: XCTestCase {
         XCTAssertEqual(host.layout.presentation.visualState, .compactStatus)
         assertFixedWings(host, leading: 4, trailing: 2, trailingWidth: VoiceBarPresentation.readingTransportWingWidth,
                          leadingWidth: VoiceBarPresentation.readingTransportWingWidth)
-        assertDrawnControlsSitOnTheirHitRects(host, ["Next read", "Pause speech", "Previous read", "Playback speed",
+        assertDrawnControlsSitOnTheirHitRects(host, ["Next read", "Pause narration", "Previous read", "Playback speed",
                                                      "Stop speaking", "Show teleprompter"])
         firstClick(host, control: BarViewClickabilityTests.pauseIndex)
         XCTAssertEqual(sent, ["pause"])
@@ -190,7 +190,7 @@ final class WingsU2HostTests: XCTestCase {
         let host = makeHost(state: state, configuration: BarViewClickabilityTests.readingConfiguration(trailingFromOuter: 2))
         assertFixedWings(host, leading: 4, trailing: 2, trailingWidth: VoiceBarPresentation.readingTransportWingWidth,
                          leadingWidth: VoiceBarPresentation.readingTransportWingWidth)
-        assertDrawnControlsSitOnTheirHitRects(host, ["Next read", "Resume speech", "Previous read", "Playback speed",
+        assertDrawnControlsSitOnTheirHitRects(host, ["Next read", "Resume narration", "Previous read", "Playback speed",
                                                      "Close read", "Show teleprompter"])
         firstClick(host, control: BarViewClickabilityTests.pauseIndex)
         XCTAssertEqual(sent, ["resume"])
@@ -228,7 +228,7 @@ final class WingsU2HostTests: XCTestCase {
         XCTAssertTrue(host.layout.containsInteractiveContent(stopSlot), "the eye-row Stop's slot is live")
         guard let stopTarget = host.host.hitTest(stopSlot), let stopDown = event(.leftMouseDown, at: stopSlot, in: host.panel)
         else { return XCTFail("No Stop hit target") }
-        assertDrawnControlsSitOnTheirHitRects(host, ["Next read", "Pause speech", "Previous read", "Playback speed"],
+        assertDrawnControlsSitOnTheirHitRects(host, ["Next read", "Pause narration", "Previous read", "Playback speed"],
                                               leading: true)
         assertDrawnControlsSitOnTheirHitRects(host, ["Hide teleprompter", "Stop speaking"], at: [
             host.controlRects[host.controlRects.count - 3], stopRect])

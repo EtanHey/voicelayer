@@ -23,7 +23,7 @@ public struct SettingsHistoryMissingTranscript: Equatable, Sendable {
             guard let inputDbfs else { return "Not transcribed: the microphone sent only silence" }
             return String(format: "Not transcribed: the microphone sent only silence (%.1f dBFS)", inputDbfs)
         case "no-speech", "vad-no-speech":
-            return "Not transcribed: no speech detected"
+            return "Not transcribed: no spoken audio detected"
         case "too-short":
             return "Not transcribed: too short to transcribe"
         case "too-quiet":

@@ -106,7 +106,10 @@ final class SettingsViewContractTests: XCTestCase {
     }
 
     /// `speech`, `history` and `models` stay permanent aliases of the renamed tabs; the new titles route too.
-    func testSpeechURLRouting() {
+    func testNarrationTitlesAndURLRouting() throws {
+        XCTAssertEqual(SettingsTab.speech.title, "Narration")
+        XCTAssertEqual(SettingsHistoryScope.speech.title, "Narration")
+        XCTAssertTrue(try settingsViewSource().contains("settingsPage(title: SettingsTab.speech.title)"))
         XCTAssertEqual(SettingsTab(urlComponent: "SpEeCh"), .speech)
         XCTAssertEqual(SettingsTab(urlComponent: "narration"), .speech)
         XCTAssertEqual(SettingsTab(urlComponent: "NARRATION"), .speech)

@@ -57,7 +57,7 @@ final class UIE2EFixtureCommandTests: XCTestCase {
 
         model.fixture("preparing")
         XCTAssertEqual(model.voice.mode, .speaking)
-        XCTAssertEqual(model.voice.teleprompterText, "Preparing speech…")
+        XCTAssertEqual(model.voice.teleprompterText, "Preparing narration…")
         XCTAssertTrue(model.commands.contains { $0["cmd"] as? String == "speak_text" &&
             $0["text"] as? String == "QA original selection" })
         let commandsBeforeIdleCleanup = model.commands.count

@@ -18,7 +18,7 @@
     "src/socket-protocol.ts": "623d66641517514bdd85097b4d55067d6a55fd7cc36fa341a085527df0321330",
     "src/socket-handlers.ts": "1661715474c9e172abbff70ea5103b561eebf848cf6d51f219b9f06122a5b17b",
     "src/__tests__/tts-long-read-runtime.test.ts": "9f5b521d4ce260182e476e6b0c1e797f806a185278aa3096d25ea125d9feded1",
-    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "7abe28bdce68bfa7b3b6bdf20713c580b2b252827ad64fa325659816842cdee5",
+    "flow-bar/Sources/VoiceBarUI/VoiceState.swift": "cfdb39cea436c2595f2a72b50f27113d1b1dc94ab598da32c11502d0f14be505",
     "formal/receipt_support.py": "86169c3df5f68bde2345c16540b2f1d7679993910934466bfeed866867d515db"
   },
   "mutants": {

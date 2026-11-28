@@ -258,6 +258,6 @@ final class TeleprompterClockIntegrityTests: XCTestCase {
         state.handleEvent(["type": "ack", "command": "pause", "id": sent().last?["id"] as Any, "outcome": "noop",
                            "reason": "nothing playing"])
         XCTAssertEqual(state.mode, .speaking, "a scrub's gap is not the end of the read")
-        XCTAssertEqual(state.confirmationText, "Speech is loading. Try again")
+        XCTAssertEqual(state.confirmationText, "Narration is loading. Try again")
     }
 }

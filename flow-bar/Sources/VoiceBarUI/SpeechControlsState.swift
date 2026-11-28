@@ -34,7 +34,7 @@ public struct SpeechControlsState: Equatable, Sendable {
                 return "Not measured yet. Press Preview."
             }
             let name = SpeechControlsState.voiceKindLabel(engine)
-            let source = origin == "preview" ? "Last preview" : "Last speech"
+            let source = origin == "preview" ? "Last preview" : "Last narration"
             return String(format: "%@: first sound after %.1f s · %@%@", source, ms / 1000, name,
                           measurementFallback ? " (fallback)" : "")
         }
@@ -151,7 +151,7 @@ struct SpeechThresholdDraft: Equatable {
         if case .number(let value) = pending["short_limit_chars"] {
             return "Applying \(value) characters… Awaiting confirmation."
         }
-        if !pending.isEmpty { return "A speech request is pending." }
+        if !pending.isEmpty { return "A narration request is pending." }
         if busy { return "Voice session in progress." }
         return callbackAvailable ? nil : "Narration setting changes are unavailable."
     }

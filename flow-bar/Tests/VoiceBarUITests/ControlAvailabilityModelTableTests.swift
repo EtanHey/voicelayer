@@ -183,6 +183,10 @@ struct ModelExpectation {
         if ModelOracle.mediaSet.contains(name), x.agentAsk, text == "Finish capture or transcription before reading" {
             text = VoiceControlAvailability.answeringQuestion
         }
+        // The pinned model keeps its original reason text; VoiceBar uses the current UI term.
+        if text == "Finish speech or Ask before re-transcribing" {
+            text = "Finish narration or Ask before re-transcribing"
+        }
         reason = text.isEmpty ? nil : text
         handlerAccepts = ModelOracle.visible(name, x) && ModelOracle.localGuard(rules, r) && ModelOracle.daemonGuard(rules, r)
             || ModelOracle.emergencySet.contains(name) && ModelOracle.unfinished(x)

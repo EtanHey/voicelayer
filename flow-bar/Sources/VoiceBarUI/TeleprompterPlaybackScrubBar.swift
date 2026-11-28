@@ -38,7 +38,7 @@ struct TeleprompterPlaybackScrubBar: View {
         return SettingsPlaybackScrubBar(
             position: { state.teleprompterPlaybackPosition },
             seek: { seconds in state.seek(offsetMs: Int((seconds * 1000).rounded())) },
-            accessibilityNoun: "agent speech",
+            accessibilityNoun: "agent narration",
             isPlaying: playing,
             isGrowing: playing && state.isPlaybackDurationGrowing,
             allowsSeeking: state.isTeleprompterScrubSeekable,

@@ -230,7 +230,7 @@ final class SettingsSpeechHistoryTests: XCTestCase {
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/VoiceBarUI/SettingsView.swift"), encoding: .utf8)
         XCTAssertTrue(source.contains("speechTextDetail(\"Requested text\", text: entry.originalText)"))
-        XCTAssertTrue(source.contains("speechTextDetail(\"Generated speech text\", text: entry.spokenText)"))
+        XCTAssertTrue(source.contains("speechTextDetail(\"Generated narration text\", text: entry.spokenText)"))
         XCTAssertFalse(source.contains("Actually spoken"))
 
         XCTAssertEqual(record.audioPaths.map(\.lastPathComponent), ["first.mp3", "second.mp3"])

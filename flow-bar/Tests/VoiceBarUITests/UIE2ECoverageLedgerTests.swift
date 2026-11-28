@@ -301,8 +301,8 @@ final class UIE2ECoverageLedgerTests: XCTestCase {
         let contexts = [
             UIE2EControlContext(page: "History", scope: "Dictations", row: "qa-recording"),
             UIE2EControlContext(page: "History", scope: "Dictations", row: "qa-older"),
-            UIE2EControlContext(page: "Speech", profile: "short"),
-            UIE2EControlContext(page: "Speech", profile: "long"),
+            UIE2EControlContext(page: "Narration", profile: "short"),
+            UIE2EControlContext(page: "Narration", profile: "long"),
         ]
         XCTAssertEqual(Set(contexts.map { ledger.key(role: "button", identity: "Copy", context: $0) }).count, 4)
     }

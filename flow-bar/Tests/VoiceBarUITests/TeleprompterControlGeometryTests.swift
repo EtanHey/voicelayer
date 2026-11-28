@@ -187,7 +187,7 @@ final class TeleprompterControlGeometryTests: XCTestCase {
         let flipped = host.isFlipped
         func isBelow(_ a: CGRect, _ b: CGRect) -> Bool { flipped ? a.minY >= b.maxY : a.maxY <= b.minY }
         func gap(_ upper: CGRect, _ lower: CGRect) -> CGFloat { flipped ? lower.minY - upper.maxY : upper.minY - lower.maxY }
-        let pause = try frame("Pause speech", in: host)
+        let pause = try frame("Pause narration", in: host)
         let back = try frame("Previous read", in: host)
         let forward = try frame("Next read", in: host)
         XCTAssertEqual(back.midY, pause.midY, accuracy: 4, "[T1] Back beside Pause")
@@ -205,7 +205,7 @@ final class TeleprompterControlGeometryTests: XCTestCase {
         XCTAssertEqual(waveform.midY, time.midY, accuracy: 4, "[T5] waveform beside time")
         XCTAssertEqual(try frame("Playback speed", in: host).midY, pause.midY, accuracy: 4, "[T6] speed beside Pause")
         XCTAssertEqual(try frame("Stop speaking", in: host).midY, eye.midY, accuracy: 4, "[T7] red Stop in the eye row")
-        let scrub = try any("Playback position, agent speech")
+        let scrub = try any("Playback position, agent narration")
         XCTAssertLessThanOrEqual(gap(scrub, eye), 7, "[T8] at most 7 pt from scrubber to eye row")
         XCTAssertGreaterThanOrEqual(gap(scrub, eye), 0, "[T8] the scrubber stays above the eye row")
         print("ETANQA0510 pause=\(pause) back=\(back) forward=\(forward) eye=\(eye) handle=\(handle) "

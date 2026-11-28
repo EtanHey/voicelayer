@@ -118,7 +118,7 @@ Latency includes synthesis and queue wait; rejected, disabled, failed, or
 cancelled-before-playback requests do not replace the last successful value.
 This core change does not supply a Swift settings screen or native acceptance.
 
-VoiceBar Settings → Speech (also `voicebar://settings/speech`) presents separate
+VoiceBar Settings → Narration (`voicebar://settings/narration`, with `voicebar://settings/speech` as a permanent alias) presents separate
 Short speaks and Long reads cards. Each shows one Voice picker grouped into Fast and Cloned,
 rate, and the last first-audio latency. Selecting a voice writes engine and voice
 together; Theo labels `theo-c4s`. The selected pair persists independently for
@@ -140,7 +140,7 @@ voice operation, or another owner's booking rejects previews without speaking.
 Preview does not start the clone daemon. A clone-down warning explains the fast
 voice fallback; use `voicelayer daemon` to start the clone engine separately.
 
-Selecting a listed voice in Speech sends its engine and voice in a single atomic
+Selecting a listed voice in Narration sends its engine and voice in a single atomic
 `set_tts_setting` profile command, preserving the rate. The Voice picker waits for
 the matching acknowledgment; rejection keeps the daemon's prior pair.
 `engine.source: "environment"` locks the combined selection via

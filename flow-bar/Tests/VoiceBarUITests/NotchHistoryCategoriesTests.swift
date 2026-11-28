@@ -398,7 +398,7 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         field.removeFromSuperview()
     }
 
-    func testH2AccessibilityUsesAskAndSpeechNounsOnBothSurfaces() throws {
+    func testH2AccessibilityUsesAskAndNarrationNounsOnBothSurfaces() throws {
         for surface in [NotchSurfaceEvent.openHistory, .openSettings(.history)] {
             let harness = makeHarness()
             open(harness, surface)
@@ -406,8 +406,8 @@ final class NotchHistoryCategoriesTests: XCTestCase {
             for scope in [SettingsHistoryScope.ask, .speech] {
                 try swipe(harness, dx: -160)
                 let row = try XCTUnwrap(tree(harness).first { $0.id == "history-row-1" })
-                XCTAssertTrue(row.hint.localizedCaseInsensitiveContains(scope.rawValue), "hint identifies its category")
-                XCTAssertFalse(row.hint.localizedCaseInsensitiveContains("recording"), "Ask/Speech must not claim to be recordings")
+                XCTAssertTrue(row.hint.localizedCaseInsensitiveContains(scope.title), "hint identifies its category")
+                XCTAssertFalse(row.hint.localizedCaseInsensitiveContains("recording"), "Ask and Narration must not claim to be recordings")
                 XCTAssertTrue(row.label.hasPrefix(scope.title + ", "), "row label identifies its category")
             }
         }

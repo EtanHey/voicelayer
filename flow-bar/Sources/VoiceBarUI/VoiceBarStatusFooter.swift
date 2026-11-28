@@ -46,7 +46,7 @@ public struct VoiceBarFooterPresentation: Equatable {
 
         return Self(
             status: status,
-            remoteNotice: remoteSTTConfigured == true ? "Remote speech backend configured" : nil,
+            remoteNotice: remoteSTTConfigured == true ? "Remote transcription backend configured" : nil,
             isReady: status == "Ready",
             isHidden: showsHidden,
             errorDetails: status == "Error"

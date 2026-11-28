@@ -154,7 +154,7 @@ struct SettingsHistoryMediaPart: Equatable {
         case .recording: "recording audio"
         case .question: "question audio"
         case .response: "response audio"
-        case .speech: "speech audio"
+        case .speech: "narration audio"
         }
     }
 
@@ -1748,7 +1748,7 @@ public struct SettingsView: View {
         ScrollViewReader { proxy in
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text(speechEntries.isEmpty && speechLoading.isLoading ? "Loading…" : "\(speechEntries.count) speech record\(speechEntries.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
+                Text(speechEntries.isEmpty && speechLoading.isLoading ? "Loading…" : "\(speechEntries.count) narration record\(speechEntries.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Refresh") { selectedSpeechID = nil; speechReload.refresh() }
             }.padding(.horizontal, 18).padding(.vertical, 10)
@@ -1756,8 +1756,8 @@ public struct SettingsView: View {
             if speechEntries.isEmpty, speechLoading.isLoading {
                 VStack(spacing: 8) {
                     if speechLoading.showSpinner {
-                        ProgressView().controlSize(.small).accessibilityLabel("Loading speech history")
-                        Text("Loading speech history…").font(.caption).foregroundStyle(.secondary)
+                        ProgressView().controlSize(.small).accessibilityLabel("Loading narration history")
+                        Text("Loading narration history…").font(.caption).foregroundStyle(.secondary)
                     }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 .task(id: speechReload.taskID) {
@@ -1769,7 +1769,7 @@ public struct SettingsView: View {
             } else if speechEntries.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "speaker.wave.2").font(.system(size: 28)).foregroundStyle(.secondary)
-                    Text("No speech yet").font(.headline)
+                    Text("No narration yet").font(.headline)
                     Text("Spoken outputs will appear here.").font(.caption).foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -1802,7 +1802,7 @@ public struct SettingsView: View {
                                         if entry.textsDiffer {
                                             speechTextDetail("Requested text", text: entry.originalText)
                                         }
-                                        speechTextDetail("Generated speech text", text: entry.spokenText)
+                                        speechTextDetail("Generated narration text", text: entry.spokenText)
                                     }
                                     if let sentence = entry.reasonSentence {
                                         Text(sentence).font(.caption).foregroundStyle(.secondary)
@@ -2416,7 +2416,7 @@ public struct SettingsView: View {
         let micDisconnectLabel = part.micDisconnectLabel
         if let audioLabel {
             Label(audioLabel, systemImage: "waveform")
-                .help(part.role == .speech ? "Retained speech duration; playback time when generated duration is unavailable" : "Audio length: how long the mic was on")
+                .help(part.role == .speech ? "Retained narration duration; playback time when generated duration is unavailable" : "Audio length: how long the mic was on")
                 .accessibilityLabel("Audio length \(audioLabel)")
         }
         if let heardLabel {
@@ -2428,7 +2428,7 @@ public struct SettingsView: View {
         }
         if let spokenLabel {
             Label(spokenLabel, systemImage: "waveform.path")
-                .help("Spoken: speech time without pauses, estimated in quarter-second steps")
+                .help("Spoken: speaking time without pauses, estimated in quarter-second steps")
                 .accessibilityLabel("Spoken length about \(spokenLabel)")
         }
         if let processingLabel {

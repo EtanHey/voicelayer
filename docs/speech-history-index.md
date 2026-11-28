@@ -1,6 +1,6 @@
-# Speech History index
+# Narration History index
 
-Speech metadata remains in `recordings/<day>/<id>/metadata.json`. Speech History
+Speech metadata remains in `recordings/<day>/<id>/metadata.json`. The Narration history view
 uses a disposable sibling directory, `recordings.speech-history-v1/`, to avoid
 reading dictation metadata on each visit.
 

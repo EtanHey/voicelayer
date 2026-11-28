@@ -55,7 +55,7 @@ final class SpeechDrawerTrackSSnapshotTests: XCTestCase {
             modelsStatus: { .loading }, onRefreshModelsStatus: {},
             speechControls: { controls }, speechConnected: { true },
             speechBusyReason: { scenario == .lockedReason ? "Voice session in progress." : nil },
-            speechNotice: { scenario == .notice ? "Couldn't complete the speech request: provider unavailable." : nil },
+            speechNotice: { scenario == .notice ? "Couldn't complete the narration request: provider unavailable." : nil },
             onChangeSpeech: { _, _ in }, onSelectSpeechEngine: { _, _, _ in }, onPreviewSpeech: { _ in },
             cloneEngineControl: engine(scenario),
             vocabularyRevision: { 0 }, initialTab: .speech

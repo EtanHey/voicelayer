@@ -32,7 +32,7 @@ final class NotchNoteMorphShotsTests: XCTestCase {
           for growing in [true, false] {
             let bar = SettingsPlaybackScrubBar(
                 position: { SettingsAudioPlaybackPosition(currentTime: time, duration: duration) },
-                seek: { _ in }, accessibilityNoun: "agent speech", isPlaying: false, isGrowing: growing,
+                seek: { _ in }, accessibilityNoun: "agent narration", isPlaying: false, isGrowing: growing,
                 allowsSeeking: true, isTeleprompter: true
             )
             .frame(width: 437, height: 40)

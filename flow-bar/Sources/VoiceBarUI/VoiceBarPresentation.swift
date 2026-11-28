@@ -462,8 +462,8 @@ public enum VoiceBarPresentation {
         return VoiceBarReadingForwardControl(
             isEnabled: false,
             countLabel: speech > 0 ? "\(speech)" : nil,
-            countAccessibilityLabel: speech > 0 ? "\(speech) queued speeches" : nil,
-            accessibilityHint: speech > 0 ? "Agent speech plays after this read" : "Nothing queued after this read",
+            countAccessibilityLabel: speech > 0 ? "\(speech) queued narration requests" : nil,
+            accessibilityHint: speech > 0 ? "Agent narration plays after this read" : "Nothing queued after this read",
             showsProcessingSpinner: showsProcessingSpinner && speech == 0)
     }
 
@@ -730,12 +730,12 @@ public enum VoiceBarPresentation {
         return isPaused
             ? VoiceBarPlaybackPauseControl(
                 iconName: "play.fill",
-                accessibilityLabel: "Resume speech",
+                accessibilityLabel: "Resume narration",
                 accessibilityHint: "Continue reading from the paused word"
             )
             : VoiceBarPlaybackPauseControl(
                 iconName: "pause.fill",
-                accessibilityLabel: "Pause speech",
+                accessibilityLabel: "Pause narration",
                 accessibilityHint: "Pause reading; the teleprompter stays open"
             )
     }
@@ -883,6 +883,7 @@ public enum VoiceBarPresentation {
         case .transcribing:
             {
                 let trimmed = transcribingStatusText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if trimmed == "Loading speech model" { return "Loading transcription model" }
                 return trimmed.isEmpty ? "Transcribing…" : trimmed
             }()
         case .error:

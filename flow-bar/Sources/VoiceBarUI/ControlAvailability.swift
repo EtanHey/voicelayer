@@ -451,7 +451,7 @@ public enum VoiceControlAvailability {
             if !f.isConnected { return disconnected }
             if !f.gate.admitsNewVoice { return updateOwns }
             if f.hasUnfinishedTake { return "Finish or cancel the current take and re-transcription first" }
-            if f.speech || f.agentAsk { return "Finish speech or Ask before re-transcribing" }
+            if f.speech || f.agentAsk { return "Finish narration or Ask before re-transcribing" }
             if !f.voiceIdle { return "Recover VoiceBar before re-transcribing" }
             return nil
         case .historyPaste, .pasteLastTranscript:
@@ -481,7 +481,7 @@ public enum VoiceControlAvailability {
             return pending ? "Saving…" : nil
         case .speechSetting:
             if !f.isConnected { return disconnected }
-            return pending ? "Saving speech settings…" : nil
+            return pending ? "Saving narration settings…" : nil
         case .dictionaryEdit(let readOnly):
             return readOnly ? "Included terms are read-only" : nil
         case .dictionaryCommit:

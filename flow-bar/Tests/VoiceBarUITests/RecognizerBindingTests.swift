@@ -118,7 +118,7 @@ final class RecognizerBindingTests: XCTestCase {
         let p = Self.event(desired: "parakeet", effective: "parakeet", phase: "sleeping", whisper: "sleeping", fallback: "vad-no-speech")["recognizer_status"] as! [String: Any]
         let state = RecognizerPickerState(snapshot: try XCTUnwrap(RecognizerStatusSnapshot(payload: p)))
         XCTAssertEqual(state.effective, .parakeet); XCTAssertEqual(state.whisper, .unloaded)
-        XCTAssertEqual(state.explanation, "No speech detected.")
+        XCTAssertEqual(state.explanation, "No spoken audio detected.")
     }
     func testCorrelatedEqualRevisionRefreshUpdatesBusyPermissionInBothDirections() throws {
         let v = Self.voice(); var commands: [[String: Any]] = []; v.sendCommand = { commands.append($0) }

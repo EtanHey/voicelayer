@@ -193,7 +193,7 @@ final class TeleprompterPauseNeverSeeksTests: XCTestCase {
             let geometry = presentation.geometry
             let size = VoiceBarNotchContract.material.compactControlSize
             let originX = (bar.bounds.width - geometry.totalWidth) / 2
-            let pauseCenter = try controlCenter("Pause speech", in: bar)
+            let pauseCenter = try controlCenter("Pause narration", in: bar)
             let pauseMidX = pauseCenter.x
             let topRowMidY = pauseCenter.y
 

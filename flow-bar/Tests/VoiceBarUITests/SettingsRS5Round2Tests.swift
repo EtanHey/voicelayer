@@ -141,7 +141,7 @@ final class SettingsRS5Round2Tests: XCTestCase {
         XCTAssertEqual(SettingsGeneralCopy.microphoneNote, "Drag to reorder. The first connected one is used.")
         XCTAssertEqual(SettingsGeneralCopy.microphoneNoteDetail,
             "Drag to reorder. VoiceBar uses the first connected microphone. Disconnected ones keep their place.")
-        XCTAssertEqual(VoiceBarHotkeyContract.singleTapDescription, "Stop recording or speech; cancel transcription")
+        XCTAssertEqual(VoiceBarHotkeyContract.singleTapDescription, "Stop recording or narration; cancel transcription")
         XCTAssertEqual(VoiceBarHotkeyContract.readClipboardDescription,
             "Reads what you copied. New text queues; the same text again stops.")
     }

@@ -18,7 +18,7 @@ final class SpeechSettingsTests: XCTestCase {
         XCTAssertEqual(state.profiles[.short]?.rate.source, .environment)
         XCTAssertEqual(state.profiles[.short]?.rate.raw, .string("+10%"))
         XCTAssertEqual(state.voices(for: "clone"), ["theo-c4s"])
-        XCTAssertEqual(state.profiles[.short]?.latencyLabel, "Last speech: first sound after 0.8 s · Fast voice")
+        XCTAssertEqual(state.profiles[.short]?.latencyLabel, "Last narration: first sound after 0.8 s · Fast voice")
         XCTAssertEqual(state.lockReason(for: "short.rate"), "Set by QA_VOICE_TTS_RATE")
         XCTAssertTrue(SpeechSettingsView.fieldDisabled("short.rate", controls: state, pending: [:]))
         XCTAssertFalse(SpeechSettingsView.fieldDisabled("short.engine", controls: state, pending: [:]))
@@ -278,7 +278,7 @@ final class SpeechSettingsTests: XCTestCase {
         let noticeStart = try XCTUnwrap(source.range(of: "if let notice, pending[\"preview\"] == nil"))
         let footer = source[noticeStart.lowerBound...]
         XCTAssertTrue(footer.contains("Text(notice)"))
-        XCTAssertTrue(footer.contains("SettingsCopyButton(text: notice, label: \"speech error\")"),
+        XCTAssertTrue(footer.contains("SettingsCopyButton(text: notice, label: \"narration error\")"),
                       "Copy must receive the same full error under the same visibility gate")
         XCTAssertFalse(source.contains("Process("), "Showing or copying the command must never execute it")
     }

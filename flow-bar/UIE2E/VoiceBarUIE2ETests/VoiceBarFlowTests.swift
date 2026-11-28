@@ -1009,7 +1009,7 @@ extension VoiceBarFlowTests {
 
     func speechCopyFlow() {
         let command = app.buttons["Copy daemon command"].firstMatch
-        let error = app.buttons["Copy speech error"].firstMatch
+        let error = app.buttons["Copy narration error"].firstMatch
         // Inspect both edges first so a lazy Form cannot be mistaken for an absent feature.
         scrollFully(-1)
         let hasError = error.exists
@@ -1020,7 +1020,7 @@ extension VoiceBarFlowTests {
         for index in 0..<2 {
             assertCopy("Copy daemon command", equals: "voicelayer daemon", target: commands.element(boundBy: index))
         }
-        assertCopy("Copy speech error", equals: "Couldn't complete the speech request - provider unavailable\nFull diagnostic: connection refused · שלום 🎧")
+        assertCopy("Copy narration error", equals: "Couldn't complete the narration request - provider unavailable\nFull diagnostic: connection refused · שלום 🎧")
     }
 
     /// Native evidence: row selection, Refresh and Clear search replace detail views.
@@ -1346,7 +1346,7 @@ extension VoiceBarFlowTests {
         step("idle fixture clears the Preparing and readback presentation") {
             waitUntil {
                 let pill = self.app.dialogs["VoiceBar QA Pill"]
-                let preparing = pill.descendants(matching: .any).matching(UIE2EAXText.predicate("Preparing speech…",
+                let preparing = pill.descendants(matching: .any).matching(UIE2EAXText.predicate("Preparing narration…",
                     staticTextRole: XCUIElement.ElementType.staticText.rawValue)).firstMatch
                 return !preparing.exists && !pill.buttons["Stop speaking"].exists &&
                     !pill.buttons["Dismiss teleprompter"].exists && !pill.staticTexts["Teleprompter hidden"].exists
