@@ -103,10 +103,10 @@ struct NotchTabPage<Content: View>: View {
     }
 }
 
-/// The notch tab rows' per-tab accessibility elements and tooltips, laid over the glass bar at its fixed slots. The bar
-/// itself is hidden from VoiceOver: each tab here is a button with its own identifier (UI tests click it by frame),
-/// marked selected, and its press goes through the same pager path as a click. Never hit-tested: the bar takes the
-/// pointer.
+/// The notch tab rows' per-tab controls, laid over the bar at its fixed slots: a transparent plain button per tab, with
+/// its tooltip, its own identifier (UI tests click it by frame) and the selected trait. They keep what the old tab
+/// buttons gave: a key-view stop and an accessibility button per tab, whose press goes through the same pager path as
+/// a click. The bar itself is hidden from VoiceOver. Never hit-tested: the bar's own gesture takes the pointer.
 struct NotchTabSlots: View {
     @ObservedObject var pager: GlassTabPager
     let tabs: [GlassTab]
@@ -119,15 +119,15 @@ struct NotchTabSlots: View {
         let frames = metrics.slotFrames(tabs)
         ZStack(alignment: .topLeading) {
             ForEach(tabs.indices, id: \.self) { index in
-                Color.clear
-                    .frame(width: frames[index].width, height: metrics.height)
-                    .background(PillControlTooltip(text: tooltip(index)))
-                    .offset(x: frames[index].minX)
-                    .accessibilityElement()
-                    .accessibilityLabel(tabs[index].spokenLabel)
-                    .accessibilityIdentifier(identifier(index) ?? "")
-                    .accessibilityAddTraits(pager.selection == index ? [.isButton, .isSelected] : .isButton)
-                    .accessibilityAction { onSelect(index) }
+                Button { onSelect(index) } label: {
+                    Color.clear.frame(width: frames[index].width, height: metrics.height)
+                }
+                .buttonStyle(.plain)
+                .background(PillControlTooltip(text: tooltip(index)))
+                .accessibilityLabel(tabs[index].spokenLabel)
+                .accessibilityIdentifier(identifier(index) ?? "")
+                .accessibilityAddTraits(pager.selection == index ? .isSelected : [])
+                .offset(x: frames[index].minX)
             }
         }
         .frame(width: frames.last?.maxX ?? 0, height: metrics.height, alignment: .topLeading)
