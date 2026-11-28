@@ -171,8 +171,7 @@ extension GlassTabColors {
     /// The notch's own contrast palette: the old selection thumb's fill (primary at 14 %) tints the pill, no track.
     static func notch(_ palette: VoiceBarNotchContrastPalette) -> GlassTabColors {
         GlassTabColors(text: palette.secondary.color, selectedText: palette.primary.color, track: .clear,
-                       pill: palette.primary.color.opacity(0.14), pillRim: .clear,
-                       countFill: palette.primary.color.opacity(0.12), countText: palette.primary.color,
-                       pillShadow: .clear)
+                       pill: palette.primary.color.opacity(0.14), pillRim: .clear, pillShadow: .clear,
+                       countFill: palette.primary.color.opacity(0.12), countText: palette.primary.color)
     }
 }
