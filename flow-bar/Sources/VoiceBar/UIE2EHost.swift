@@ -1111,7 +1111,7 @@ private struct UIE2ESettings: View {
             historyPage: { await model.historyPage(limit: $0) }, initialHistoryPage: history, askHistoryPage: { await model.askHistoryPage(limit: $0) },
             historySearchPage: { _, query in history.groups[0].entries[0].transcript.localizedCaseInsensitiveContains(query) ? history : .init(groups: [], hasMore: false) },
             askHistorySearchPage: { _, query in "QA question QA response".localizedCaseInsensitiveContains(query) ? asks : .init(groups: [], hasMore: false) },
-            searchPrewarm: {}, initialAskHistoryPage: asks, onCopyHistoryTranscript: { _ = model.copy($0) },
+            searchPrewarm: {}, initialAskHistoryPage: asks, onCopyHistoryTranscript: { model.copy($0) },
             onPasteHistoryTranscript: { model.pasteHistoryTranscript($0) }, onRetranscribeHistoryEntry: { _ in model.receipt("history-retranscribe") },
             onRevealHistoryFile: { _ in model.receipt("history-finder") },
             footerPresentation: { .resolve(isConnected: model.voice.isConnected, mode: model.voice.mode, captureLive: false,

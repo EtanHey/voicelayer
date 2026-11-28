@@ -308,7 +308,7 @@ struct VoiceBarPillControlButton: View {
 
     /// No outline (owner r1): the glyph's own colour carries its contrast against the band.
     private var glyph: some View {
-        Image(systemName: icon)
+        VoiceBarSymbol.image(icon)
             .font(.system(size: optics.pointSize, weight: .medium))
             .foregroundStyle(isDestructive ? Color.white : foreground)
     }
@@ -1338,7 +1338,7 @@ public struct BarView: View {
                     ) {
                         state.setRecordingPaused(!state.isRecordingPaused)
                     }
-                    .contentTransition(.symbolEffect(.replace))
+                    .contentTransition(VoiceBarSymbolMotion.swap(reduceMotion: accessibilityReduceMotion))
                 } else if recordingHoldControl == nil {
                     // Optimistic F5 recording is PTT: reserve Pause's exact position until the type arrives.
                     // A VAD state event supplies its type before publishing recording, so Lock owns the core slot.
@@ -1513,7 +1513,7 @@ public struct BarView: View {
                 state.togglePlaybackPause()
             }
         }
-        .contentTransition(.symbolEffect(.replace))
+        .contentTransition(VoiceBarSymbolMotion.swap(reduceMotion: accessibilityReduceMotion))
     }
 
     @ViewBuilder
@@ -1665,7 +1665,7 @@ public struct BarView: View {
             commandRouter.handleStop()
         }
         .accessibilityHint(control.accessibilityHint)
-        .contentTransition(.symbolEffect(.replace))
+        .contentTransition(VoiceBarSymbolMotion.swap(reduceMotion: accessibilityReduceMotion))
         .background(playbackStopHostProbe)
     }
 
@@ -2179,7 +2179,7 @@ public struct BarView: View {
 
     private var historyButton: some View {
         notchButton(
-            icon: "clock.arrow.circlepath",
+            icon: VoiceBarSymbol.history,
             isSelected: surface.drawer?.isHistory == true,
             accessibilityLabel: surface.drawer?.isHistory == true ? "Close history" : "History"
         ) {

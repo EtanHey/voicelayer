@@ -1,3 +1,4 @@
+import { canonicalDeliveryInput, formatDeliveryDashes, joinAutomaticConditionalParagraphs } from "./stt-delivery-format";
 import { captureLifecycle } from "./capture-lifecycle";
 import { recordingAppBuild, tagTranscription, type RecordingAppBuild } from "./recording-build";
 import { TakeStageTimings, withTakeStageTimings, measureTakeStage, measureTakeStageAsync } from "./take-stage-timings";
@@ -565,19 +566,19 @@ export async function finalizeTranscriptionResultForSurface(
   env: STTFinalizeEnv = processingEnv(),
   boundaryContext?: BoundaryContext,
 ): Promise<FinalizedTranscriptionResult> {
-  const cleanedText = measureTakeStage("dictionary_rules", () => finalizeTranscriptionText(rawText, env));
+  const cleanedText = measureTakeStage("dictionary_rules", () => canonicalDeliveryInput(finalizeTranscriptionText(rawText, env)));
   // A long unformatted final needs paragraphs regardless of polish state.
   // Existing layout and safe acoustic boundaries win; the floor changes only whitespace.
   const paragraphText = (text: string): string => measureTakeStage("dictionary_rules", () => {
     // Code whitespace is content: abstain before either paragraph stage.
-    if (hasParagraphCodeBlock(text)) return text;
+    if (hasParagraphCodeBlock(text)) return formatDeliveryDashes(text);
     const candidate = !coherentParagraphsEnabled(env) && pauseParagraphsEnabled(env) && boundaryContext
       ? applyPauseParagraphs(text, boundaryContext.segments, boundaryContext.pauses)
       : text;
     const paused = preservesInlineCode(text, candidate) ? candidate : text;
     const formatted = applyCoherentParagraphFallback(paused);
     const strip = (value: string) => value.replace(/\s/gu, "");
-    return strip(formatted) === strip(text) ? formatted : text;
+    return formatDeliveryDashes(strip(formatted) === strip(text) ? formatted : text);
   });
   if (!surface) return { text: paragraphText(cleanedText) };
   const polished = await measureTakeStageAsync("polish", () => polishTranscriptionText({
@@ -609,12 +610,12 @@ export async function finalizeTranscriptionResultForSurface(
   if (polished.status === "rejected") console.error(`[voicelayer] ${JSON.stringify({
     event: "polish_rejected", reason: polished.reason ?? "unspecified", latency_ms: Math.round(polished.latencyMs),
   })}`);
-  if (polished.status === "failed" && polished.failureKind &&
+  if ((polished.status === "failed" || polished.status === "partial") && polished.failureKind &&
       polished.failureKind !== "timeout" && polished.failureKind !== "endpoint-error") {
     recoverDefaultSTTPolishServerAfterFailure(env, { failureKind: polished.failureKind });
   }
   return {
-    text: paragraphText(polished.text),
+    text: paragraphText(joinAutomaticConditionalParagraphs(cleanedText, polished.text)),
     polished: polished.polished,
     polishStatus: polished.status,
     ...(polished.reason ? { polishReason: polished.reason } : {}),

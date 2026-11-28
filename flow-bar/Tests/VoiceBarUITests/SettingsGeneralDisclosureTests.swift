@@ -33,7 +33,7 @@ final class SettingsGeneralDisclosureTests: XCTestCase {
         XCTAssertFalse(source.contains("All permissions granted"))
         XCTAssertFalse(source.contains("isPermissionsExpanded"))
         XCTAssertFalse(section.contains("DisclosureGroup"))
-        XCTAssertTrue(section.contains("ForEach(setup.steps, id: \\.id)"))
+        XCTAssertTrue(section.contains("ForEach(visibleSteps, id: \\.id)"))
     }
 
     func testGrantedSetupStepsDropTheirButton() throws {

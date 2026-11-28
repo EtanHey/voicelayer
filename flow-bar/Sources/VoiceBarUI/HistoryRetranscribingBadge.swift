@@ -49,16 +49,23 @@ extension HistoryRetranscribingBadge where Spinner == ProcessingSpinner {
 /// A symbol that turns while shown, driven by the clock rather than by a state change, so it spins from its first
 /// frame and never animates its own layout (Settings › History's in-flight Re-transcribe icon, QA 2.2.25 C7–C9).
 /// Its own view, so each tick re-evaluates only this symbol, never the Settings window around it.
+/// T19 (L67): with Reduce Motion on it never turns; it pulses in place instead (opacity only, the card-8 rule).
 struct HistorySpinningSymbol: View {
     /// One turn every 0.8 s, the speed the old repeatForever rotation had.
     static let degreesPerSecond = 450.0
 
     let systemName: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+        if reduceMotion {
             Image(systemName: systemName)
-                .rotationEffect(.degrees(timeline.date.timeIntervalSinceReferenceDate * Self.degreesPerSecond))
+                .symbolEffect(.pulse, options: .repeating)
+        } else {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+                Image(systemName: systemName)
+                    .rotationEffect(.degrees(timeline.date.timeIntervalSinceReferenceDate * Self.degreesPerSecond))
+            }
         }
     }
 }

@@ -111,17 +111,35 @@ struct SettingsPaneButton: View {
 struct SettingsSetupMark: View {
     enum Kind { case done, pending, attention }
     let kind: Kind
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// T19c (L69): counts the step's turns to done; each one bounces the tick once ("it works now").
+    @State private var doneArrivals = 0
 
     init(kind: Kind) { self.kind = kind }
     init(isDone: Bool) { kind = isDone ? .done : .attention }
 
     var body: some View {
-        Image(systemName: kind == .done ? "checkmark.circle.fill"
-            : kind == .pending ? "clock.fill" : "exclamationmark.triangle.fill")
+        Image(systemName: Self.symbolName(for: kind))
             .font(.system(size: 13))
             .foregroundStyle(kind == .done ? SettingsMarkPalette.done
                 : kind == .pending ? SettingsPanePalette.helper : SettingsPanePalette.warning)
+            // The broken mark turns into the tick instead of swapping; Reduce Motion fades and never bounces.
+            .contentTransition(VoiceBarSymbolMotion.swap(reduceMotion: reduceMotion))
+            .symbolEffect(.bounce, options: .nonRepeating, value: doneArrivals)
+            .animation(VoiceBarSymbolMotion.swapAnimation, value: kind)
+            .onChange(of: kind) { old, new in
+                if Self.bouncesOnChange(from: old, to: new, reduceMotion: reduceMotion) { doneArrivals += 1 }
+            }
             .accessibilityLabel(kind == .done ? "Done" : kind == .pending ? "In progress" : "Needs attention")
+    }
+
+    static func symbolName(for kind: Kind) -> String {
+        kind == .done ? "checkmark.circle.fill" : kind == .pending ? "clock.fill" : "exclamationmark.triangle.fill"
+    }
+
+    /// Only a step that becomes done bounces, once, and never with Reduce Motion on.
+    static func bouncesOnChange(from old: Kind, to new: Kind, reduceMotion: Bool) -> Bool {
+        new == .done && old != .done && !reduceMotion
     }
 }
 

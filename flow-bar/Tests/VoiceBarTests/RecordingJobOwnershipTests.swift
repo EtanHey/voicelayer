@@ -569,8 +569,8 @@ final class RecordingJobOwnershipTests: XCTestCase {
             XCTAssertEqual(TerminalPasteTargets.isTerminal(bundle), terminal)
             XCTAssertEqual(state.latestReusableTranscript, "whole fu…\nשלום", "History keeps the complete words and internal line break")
             if terminal {
-                // The 2.3 terminal contract keeps cmux's composer newlines and folds other terminals' breaks.
-                let delivered = bundle == "com.cmuxterm.app" ? "whole fu…\nשלום" : "whole fu… שלום"
+                // Every terminal, cmux included, folds line breaks to spaces (18 Nov shell-typing pty proof).
+                let delivered = "whole fu… שלום"
                 XCTAssertEqual(typed, [delivered], bundle)
                 XCTAssertEqual(ax, [], "A terminal must never use AX insertion")
             } else {

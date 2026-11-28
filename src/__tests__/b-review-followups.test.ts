@@ -80,7 +80,9 @@ for (const base of ["um", "uh", "er"]) for (const marker of ["…", "...", "..",
   const result = await finalizeTranscriptionResultForSurface(raw,"dictation",{
    ...process.env,QA_VOICE_CORRECTOR:undefined,QA_VOICE_STT_POLISH:"off",
   });
-  expect(result.text).toContain(fragment);
+  // An em-dash cut-off after a filler is delivered as the ellipsis fragment (raw-accurate cut-off rule,
+  // canonicalizeMarkedFillerFragments); every other marker is kept byte for byte.
+  expect(result.text).toContain(marker === "—" ? base + "…" : fragment);
  });
 }
 test("ordinary unmarked acoustic fillers are still removed by default", async () => {

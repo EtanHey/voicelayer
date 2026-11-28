@@ -50,7 +50,7 @@ final class VoiceStatePasteTests: XCTestCase {
         harness.begin(source: "auto")
         harness.activateThenMoveFocus(to: .unchanged)
         harness.deliver()
-        XCTAssertEqual(harness.typed, [TerminalDelayHarness.delivered], "the partial transcript is still delivered")
+        XCTAssertEqual(harness.typed, [harness.expectedTyped], "the partial transcript is still delivered")
         XCTAssertEqual(harness.state.confirmationText, "Mic lost\nat 0:42")
         XCTAssertTrue(TwoLineStatusFeedback.contains(harness.state.confirmationText))
 
@@ -127,7 +127,7 @@ final class VoiceStatePasteTests: XCTestCase {
         enum Focus: CaseIterable { case unchanged, sameBundleNewPID, otherApp, unavailable }
         static let raw = "ADD שלום 👩‍💻\nsecond line\n"
         static let delivered = "ADD שלום 👩‍💻\nsecond line"
-        var expectedTyped: String { target.bundleIdentifier == "com.cmuxterm.app" ? Self.delivered : "ADD שלום 👩‍💻 second line" }
+        var expectedTyped: String { "ADD שלום 👩‍💻 second line" }
         let state = VoiceState(
             recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
             recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in }
@@ -219,9 +219,7 @@ final class VoiceStatePasteTests: XCTestCase {
         func assertOneTypedDelivery(_ context: String) {
             XCTAssertEqual(guardedPIDs, ["auto", "settings_history"].contains(source) ? [51515] : [], context)
             XCTAssertEqual(typed, [expectedTyped], context)
-            if target.bundleIdentifier == "com.cmuxterm.app" {
-                XCTAssertEqual(keystrokes, [[.text("ADD שלום 👩‍💻"), .newline, .text("second line")]], context)
-            } else { XCTAssertFalse(keystrokes.flatMap { $0 }.contains(.newline), context) }
+            XCTAssertFalse(keystrokes.flatMap { $0 }.contains(.newline), context)
             XCTAssertEqual(outcomes, ["typed"], context)
             XCTAssertEqual(state.confirmationText, expectedTyped, context)
             assertRetainedWithoutSideEffects(context)
@@ -320,7 +318,7 @@ final class VoiceStatePasteTests: XCTestCase {
     func testKnownRichHostsAndEveryTerminalBypassNewEligibilityForAllDeliveryPlans() {
         let text = "ADD שלום 👩‍💻\nsecond line"
         for bundle in TerminalPasteTargets.bundleIdentifiers.union(["com.t3tools.t3code", "net.imput.helium"]) {
-            let delivered = TerminalPasteTargets.isTerminal(bundle) && bundle != "com.cmuxterm.app" ? "ADD שלום 👩‍💻 second line" : text
+            let delivered = TerminalPasteTargets.isTerminal(bundle) ? "ADD שלום 👩‍💻 second line" : text
             let state = deliveryState(bundleIdentifier: bundle)
             var typed: [String] = []
             state.focusedTargetEligibilityProvider = { XCTFail("Preserve known host: \(bundle)"); return nil }
@@ -2405,8 +2403,10 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(insertedTexts, [], "a terminal target must never take the AX path")
         XCTAssertEqual(clipboardWrites, [], "dictation must never write the pasteboard")
         XCTAssertFalse(pasteShortcutPosted, "and never posts Cmd+V")
-        XCTAssertEqual(typed, [Self.multiLineSpecimen])
-        XCTAssertEqual(state.confirmationText, Self.multiLineSpecimen)
+        // cmux folds line breaks to spaces like every other terminal (18 Nov shell-typing pty proof).
+        let folded = Self.multiLineSpecimen.replacingOccurrences(of: "\n", with: " ")
+        XCTAssertEqual(typed, [folded])
+        XCTAssertEqual(state.confirmationText, folded)
         XCTAssertEqual(state.latestDictationInsertionStatus, .typed)
     }
 

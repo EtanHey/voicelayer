@@ -1049,3 +1049,12 @@ test.each([false, true])("staged corpus permits private speech receipts (aliased
     process.env.QA_VOICE_RECORDINGS_DIR = redirected;
   }
 });
+
+
+test("partial polish is handled and owes the same polished flag and punctuation floor", () => {
+  const base = { specimenId: "partial-fixture", reference: "keep every spoken word here",
+    actual: "Keep every spoken word here.", polished: true, polishStatus: "partial" };
+  expect(() => assertCorpusReplayResult(base)).not.toThrow();
+  expect(() => assertCorpusReplayResult({ ...base, polished: false })).toThrow("polished=true");
+  expect(() => assertCorpusReplayResult({ ...base, actual: "keep every spoken word here" })).toThrow("punctuation floor");
+});

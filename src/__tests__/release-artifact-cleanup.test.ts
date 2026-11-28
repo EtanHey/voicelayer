@@ -139,7 +139,13 @@ swift() {
   command ln -s "$TEST_OUTSIDE" "$TEST_SELECTED"
   printf swapped > "$TEST_BASE/injected"
 }
-bash() { return 0; }
+xcrun() {
+  [[ "$1" == actool && "$3" == --compile && -d "$4" ]] || return 1
+  printf fixture > "$4/Assets.car"
+}
+bash() {
+  if [[ "$1" == */build-app.sh ]]; then command bash "$@"; fi
+}
 mkdir() { if [[ "$*" == *Contents/MacOS* ]]; then exit 77; fi; command mkdir "$@"; }
 `);
     const result = Bun.spawnSync(["/bin/bash", "flow-bar/build-app.sh", "--install-path", join(selected, "VoiceBar.app"), "--no-stop", "--no-relaunch"], {
