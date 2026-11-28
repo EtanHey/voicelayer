@@ -23,7 +23,7 @@ struct NotchHistoryCategoryPanel: View {
     @State private var gesture = NotchTabGesture()
     @State private var surface = NotchHistorySurfaceLease()
     @State private var selectorFocus = NotchHistorySelectorFocus()
-    @State private var swipeCancellation = NotchHistorySwipeCancellation()
+    @State private var swipeCancellation = NotchTabSwipeFence()
     private let initialSwipe: CGFloat
     /// False while the panel is built but not shown (the Settings drawer keeps every tab's page laid out): it reads no
     /// archive and takes no gestures or keys.
@@ -65,6 +65,7 @@ struct NotchHistoryCategoryPanel: View {
                 onBegin: { gesture.begin(at: CACurrentMediaTime()) },
                 onMove: { dx, dy, time in gesture.move(dx: dx, dy: dy, stride: stride, pager: tabs, at: time) },
                 onEnd: { time in gesture.release(pager: tabs, at: time) },
+                onCancel: { time in gesture.cancel(pager: tabs, at: time) },
                 onStep: { select(tabs.selection + $0) },
                 cancellation: swipeCancellation, selectorFocus: selectorFocus, isActive: isPresented
             ))
@@ -206,10 +207,6 @@ private extension Array {
     subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }
 
-final class NotchHistorySwipeCancellation {
-    var generation = 0
-}
-
 /// Feeds a trackpad's two-finger scroll over the lists to the pager. SwiftUI's vertical ScrollView would take these
 /// events whole, so a local monitor looks at each one first: until the gesture's axis is known, and for every
 /// vertical gesture, the event goes on to the list untouched; once it is a sideways swipe the list never sees it
@@ -223,18 +220,21 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
     /// A step's deltas and its event time (seconds, the `CACurrentMediaTime` clock).
     let onMove: (CGFloat, CGFloat, Double) -> Bool
     let onEnd: (Double) -> Void
+    let onCancel: (Double) -> Void
     /// -1 for Left, +1 for Right.
     let onStep: (Int) -> Void
     /// A reference fence: a selector/key change invalidates pending events immediately, before view updates.
-    var cancellation: NotchHistorySwipeCancellation? = nil
+    var cancellation: NotchTabSwipeFence? = nil
     var selectorFocus: NotchHistorySelectorFocus? = nil
     /// False while its History panel is built but not shown: it takes no swipes, keys or focus.
     var isActive = true
+    @Environment(\.isEnabled) private var isEnabled
 
     func makeNSView(context: Context) -> Probe { Probe() }
 
     func updateNSView(_ view: Probe, context: Context) {
         view.handlers = self
+        view.canInteract = isActive && isEnabled
     }
 
     static func dismantleNSView(_ view: Probe, coordinator: ()) {
@@ -243,13 +243,21 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
 
     final class Probe: NSView {
         var handlers: NotchHistorySwipeMonitor?
+        var canInteract = false {
+            didSet {
+                guard oldValue, !canInteract else { return }
+                resetTracking()
+                if window?.firstResponder === self { window?.makeFirstResponder(nil) }
+            }
+        }
         private var monitor: Any?
         private var isTracking = false
         private var isSideways = false
         private var swallowsMomentum = false
         private var trackingGeneration = 0
 
-        override var acceptsFirstResponder: Bool { true }
+        override var acceptsFirstResponder: Bool { canInteract }
+        override func becomeFirstResponder() -> Bool { canInteract && super.becomeFirstResponder() }
         // Focus ownership must not make the nonactivating notch steal the key window on a pointer press.
         override var needsPanelToBecomeKey: Bool { false }
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -289,7 +297,7 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
 
         /// A pointer press focuses only this History region, including its category selector.
         func handlePointer(_ event: NSEvent) {
-            guard let window, event.window === window, handlers?.isActive != false else { return }
+            guard let window, event.window === window, canInteract else { return }
             guard bounds.contains(convert(event.locationInWindow, from: nil)) else {
                 if window.firstResponder === self { window.makeFirstResponder(nil) }
                 return
@@ -310,7 +318,7 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
 
         /// `handleKey` with the key-window fact spelled out (an offscreen test panel cannot become key).
         func routeKey(_ event: NSEvent, isKeyWindow: Bool) -> Bool {
-            guard let window, event.window === window, isKeyWindow, handlers?.isActive != false,
+            guard let window, event.window === window, isKeyWindow, canInteract,
                   window.firstResponder === self || handlers?.selectorFocus?.owns(window.firstResponder) == true,
                   event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
                   let handlers else { return false }
@@ -332,7 +340,7 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
 
         /// `handle` with the event's window and place spelled out (a test's synthetic scroll event carries neither).
         func route(_ event: NSEvent, in eventWindow: NSWindow?, at location: NSPoint) -> Bool {
-            guard let window, eventWindow === window, let handlers, handlers.isActive else { return false }
+            guard let window, eventWindow === window, canInteract, let handlers else { return false }
             if trackingGeneration != (handlers.cancellation?.generation ?? 0) { resetTracking() }
             if !event.momentumPhase.isEmpty {
                 let swallow = swallowsMomentum
@@ -352,7 +360,12 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
             if phase.contains(.ended) || phase.contains(.cancelled) {
                 isTracking = false
                 swallowsMomentum = isSideways
-                handlers.onEnd(Self.time(of: event))
+                let time = Self.time(of: event)
+                if phase.contains(.cancelled) {
+                    handlers.onCancel(time)
+                } else {
+                    handlers.onEnd(time)
+                }
                 return false // the list's scroll view sees its gesture end
             }
             guard phase.contains(.began) || phase.contains(.changed) else { return false }

@@ -16,8 +16,7 @@ import SwiftUI
 // 6. Reduce Motion: the content cross-fades; the pill moves without overshoot.
 //
 // VoiceBar copy: ported from brainlayer main d7f08eff (brain-bar/Sources/BrainBar/NewDesign/GlassTabPager.swift, PR
-// #1896). The pager, the spring, the press rules and the clock are unchanged. The changes, each additive with a default
-// that keeps BrainBar's behaviour (see docs/tab-swipe.md):
+// #1896). The spring and the clock are shared. VoiceBar's changes (see docs/tab-swipe.md):
 // - `GlassTab.symbol`: the notch Settings tabs draw a glyph above the title.
 // - `GlassTabMetrics.fill`: VoiceBar's tab rows span their drawer, so every slot is the fill width over the count
 //   (equal slots, as the notch selectors already were). Still never a function of the selection.
@@ -26,6 +25,7 @@ import SwiftUI
 //   `.focusable()` once aborted the hosted notch panel on close, so the notch bars opt out of the bar's own focus.
 // - `GlassTabPager.onPick`: a click during a two-finger swipe ends that swipe (VoiceBar's monitor drops its tail).
 // - `GlassTabColors.pillShadow`: the notch draws no edge or shadow around its controls.
+// - A cancelled drag settles back to its captured start. The snap tolerances cover a four-slot Settings click.
 
 /// The one spring every settle uses: critically damped (damping ratio 1.0), response 0.30 s, velocity carried in.
 /// Solved exactly per step, so the result does not depend on the frame rate.
@@ -60,9 +60,9 @@ struct GlassTabSpring: Equatable {
     /// A settle never starts faster than this (tabs per second): one frame at 120 Hz moves under 1/3 of a tab. (A click
     /// on a tab two away peaks near 15 on its own, so a retarget mid-settle keeps its real velocity.)
     static let maximumSpeed = 20.0
-    /// Rest: closer than this (tabs) and slower than `restSpeed` snaps exactly to the target.
-    static let restDistance = 1e-3
-    static let restSpeed = 0.02
+    /// Snap the final subpixel tail. A four-slot click at 120 Hz reaches both tolerances by 500 ms.
+    static let restDistance = 0.0014 // tabs
+    static let restSpeed = 0.026 // tabs per second
     /// Rubber band past the first and last tab (Apple's constant; one tab is the dimension).
     static let rubberBand = 0.55
 
@@ -97,11 +97,10 @@ struct GlassTabSpring: Equatable {
     /// VoiceBar: a tab was picked (click, key, VoiceOver: `select`), before its settle starts. The host ends a swipe in
     /// progress here, so the rest of that swipe's events move nothing.
     var onPick: ((Int) -> Void)?
-    /// The tab the current motion started from (the selection when the pager last left rest).
-    private(set) var motionOrigin: Int
 
     private var raw: Double = 0
-    private var origin = 0
+    /// The selection at grab, shared by the release limit and the cancellation target.
+    private var gestureStart = 0
     private var samples: [(time: Double, raw: Double)] = []
     private var lastTick: Double = 0
 
@@ -112,7 +111,6 @@ struct GlassTabSpring: Equatable {
         let index = min(max(selection, 0), count - 1)
         self.selection = index
         committed = index
-        motionOrigin = index
         progress = Double(index)
     }
 
@@ -123,9 +121,8 @@ struct GlassTabSpring: Equatable {
 
     /// A gesture takes hold: from the presented position, interrupting any settle.
     func grab(at time: Double) {
-        if phase == .resting { motionOrigin = selection }
         raw = unrubber(progress)
-        origin = selection
+        gestureStart = selection
         samples = [(time, raw)]
         velocity = 0
         setPhase(.tracking)
@@ -151,9 +148,15 @@ struct GlassTabSpring: Equatable {
         guard phase == .tracking else { return }
         let v = measuredVelocity(at: time)
         var target = Int((progress + v * Self.projection).rounded())
-        if oneStep { target = min(max(target, origin - 1), origin + 1) }
+        if oneStep { target = min(max(target, gestureStart - 1), gestureStart + 1) }
         target = min(max(target, 0), lastIndex)
         settle(to: target, velocity: v, at: time)
+    }
+
+    /// The gesture was cancelled. Settle back to the tab captured by this grab.
+    func cancel(at time: Double) {
+        guard phase == .tracking else { return }
+        settle(to: gestureStart, velocity: measuredVelocity(at: time), at: time)
     }
 
     // MARK: Selection (click, keyboard, outside)
@@ -220,7 +223,6 @@ struct GlassTabSpring: Equatable {
     // MARK: Private
 
     private func settle(to index: Int, velocity v: Double, at time: Double) {
-        if phase == .resting { motionOrigin = selection }
         samples = []
         velocity = reduceMotion ? 0 : min(max(v, -Self.maximumSpeed), Self.maximumSpeed)
         // At the first and last tab there is nothing past the target to show: carried-in velocity toward it is capped
@@ -615,12 +617,12 @@ struct GlassTabPress: Equatable {
         pager.drag(to: metrics.progress(forPillCentre: pillCentre + translation, tabs), at: time)
     }
 
-    /// The press ended without a mouse-up (SwiftUI cancelled the gesture, so `end` never ran): let go of a held pill,
-    /// which settles on the nearest tab, and select nothing. After a normal mouse-up `end` has already cleared `live`.
+    /// SwiftUI cancelled the gesture before mouse-up. Return a held pill to its starting tab.
+    /// A normal mouse-up has already cleared `live`.
     @MainActor static func gestureDidReset(_ live: inout GlassTabPress?, pager: GlassTabPager, time: Double) {
         guard let press = live else { return }
         live = nil
-        if press.onPill { pager.release(at: time, oneStep: false) }
+        if press.onPill { pager.cancel(at: time) }
     }
 
     @MainActor func end(at location: CGPoint, pager: GlassTabPager, tabs: [GlassTab], metrics: GlassTabMetrics, time: Double) {

@@ -121,6 +121,7 @@ struct NotchSettingsDrawer: View {
     @State private var tabs: GlassTabPager
     /// GO-1126 W1: the tab swipe in progress (`NotchSettingsTabSwipe`).
     @State private var gesture = NotchTabGesture()
+    @State private var swipeFence = NotchTabSwipeFence()
 
     /// Room between neighbouring panes while they slide: a grouped Form is laid out `groupedFormInset` wider on each
     /// side, so this keeps one pane's overhang from ever showing over the next.
@@ -167,7 +168,8 @@ struct NotchSettingsDrawer: View {
                 onMove: { dx, dy, time in gesture.move(dx: dx, dy: dy, stride: stride, pager: tabs, at: time) },
                 onEnd: { time in gesture.release(pager: tabs, at: time) },
                 // Codex r1 on #976: a gesture the system cancels never changes tab.
-                onCancel: { time in gesture.cancel(pager: tabs, at: time) }
+                onCancel: { time in gesture.cancel(pager: tabs, at: time) },
+                swipeFence: swipeFence
             ))
             .background(GlassTabPagerClock(pager: tabs))
         }
@@ -175,7 +177,10 @@ struct NotchSettingsDrawer: View {
         .padding(.top, NotchSettingsDrawerPresentation.topInset)
         .onAppear {
             tabs.onSelect = { [onSelectTab] index in onSelectTab(SettingsTab.allCases[index]) }
-            tabs.onPick = { [gesture] _ in gesture.interrupt(at: CACurrentMediaTime()) }
+            tabs.onPick = { [gesture, swipeFence] _ in
+                gesture.interrupt(at: CACurrentMediaTime())
+                swipeFence.generation &+= 1
+            }
         }
         .onChange(of: selectedTab) { _, tab in
             tabs.onSelect = { [onSelectTab] index in onSelectTab(SettingsTab.allCases[index]) }

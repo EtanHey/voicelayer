@@ -14,24 +14,36 @@ final class NotchHistorySelectorFocus {
 struct NotchHistorySelectorHost: NSViewRepresentable {
     let content: AnyView
     let focus: NotchHistorySelectorFocus
+    @Environment(\.isEnabled) private var isEnabled
 
     func makeNSView(context: Context) -> Host {
-        let view = Host(rootView: content)
+        let view = Host(rootView: hostedContent)
+        view.isFocusEnabled = isEnabled
         view.identifier = NSUserInterfaceItemIdentifier("history-selector-keyboard-host")
         focus.host = view
         return view
     }
     func updateNSView(_ view: Host, context: Context) {
-        view.rootView = content
+        view.isFocusEnabled = isEnabled
+        view.rootView = hostedContent
         focus.host = view
     }
+    // Keep the nested buttons disabled with their pane.
+    private var hostedContent: AnyView { AnyView(content.disabled(!isEnabled)) }
+
     static func dismantleNSView(_ view: Host, coordinator: ()) {
         view.releaseOwnedFocus()
     }
 
     final class Host: NSHostingView<AnyView> {
-        override var acceptsFirstResponder: Bool { true }
-        override var canBecomeKeyView: Bool { true }
+        var isFocusEnabled = true {
+            didSet {
+                if !isFocusEnabled { releaseOwnedFocus() }
+            }
+        }
+        override var acceptsFirstResponder: Bool { isFocusEnabled }
+        override func becomeFirstResponder() -> Bool { isFocusEnabled && super.becomeFirstResponder() }
+        override var canBecomeKeyView: Bool { isFocusEnabled }
         override var needsPanelToBecomeKey: Bool { false }
         override var isOpaque: Bool { false }
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }

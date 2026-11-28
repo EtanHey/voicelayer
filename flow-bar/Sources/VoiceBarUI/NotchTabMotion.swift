@@ -55,7 +55,7 @@ import SwiftUI
     func cancel(pager: GlassTabPager, at time: Double) {
         guard axis.end() else { return }
         endedAt = time
-        pager.select(pager.motionOrigin, at: time)
+        pager.cancel(at: time)
     }
 
     /// A click or key chose a tab: the rest of the gesture in progress moves nothing.
@@ -80,8 +80,8 @@ import SwiftUI
 /// Only this wrapper observes the pager, so a frame of motion never rebuilds `content`.
 ///
 /// Each page is its own accessibility container: an outer page's visibility must not override a nested row's own
-/// (the Settings drawer's Dictation page holds the History category pages). A page a whole tab or more away is
-/// disabled, so its text fields and controls never take focus or keys; a page enters view enabled.
+/// (the Settings drawer's Dictation page holds the History category pages). Only the foreground page's controls
+/// can take keyboard focus.
 struct NotchTabPage<Content: View>: View {
     @ObservedObject var pager: GlassTabPager
     let index: Int
@@ -97,10 +97,15 @@ struct NotchTabPage<Content: View>: View {
             .offset(x: reduceMotion ? 0 : CGFloat(distance) * stride)
             .opacity(reduceMotion ? max(0, 1 - abs(distance)) : 1)
             .allowsHitTesting(onScreen && pager.phase != .tracking)
-            .disabled(abs(distance) >= 1)
+            .disabled(!onScreen)
             .accessibilityElement(children: .contain)
             .accessibilityHidden(!onScreen)
     }
+}
+
+/// A synchronous fence for AppKit scroll events that arrive before SwiftUI updates the monitor.
+final class NotchTabSwipeFence {
+    var generation = 0
 }
 
 /// The notch tab rows' per-tab controls, laid over the bar at its fixed slots: a transparent plain button per tab, with
@@ -144,6 +149,8 @@ struct NotchTabSlots: View {
 struct NotchGlassTabBar: View {
     static let usesGlassPill = false
 
+    @Environment(\.glassTabSolidPill) private var forceSolidPill
+
     let pager: GlassTabPager
     let tabs: [GlassTab]
     let accessibilityLabel: String
@@ -155,7 +162,7 @@ struct NotchGlassTabBar: View {
     var body: some View {
         GlassTabBar(pager: pager, tabs: tabs, accessibilityLabel: accessibilityLabel, metrics: metrics, colors: colors,
                     handlesKeyboard: false)
-            .environment(\.glassTabSolidPill, !Self.usesGlassPill)
+            .environment(\.glassTabSolidPill, forceSolidPill || !Self.usesGlassPill)
             .accessibilityHidden(true)
             .overlay(alignment: .topLeading) {
                 NotchTabSlots(pager: pager, tabs: tabs, metrics: metrics, identifier: identifier, tooltip: tooltip) {

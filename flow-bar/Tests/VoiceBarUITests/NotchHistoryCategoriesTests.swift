@@ -428,6 +428,19 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         return monitor.route(try XCTUnwrap(NSEvent(cgEvent: cg)), in: harness.panel, at: point)
     }
 
+    func testCancelledHistorySwipePastThresholdReturnsToStartingCategory() throws {
+        let harness = makeHarness()
+        open(harness, .openHistory)
+        let monitor = try XCTUnwrap(swipeMonitor(harness.host))
+        try partialSwipe(harness, monitor: monitor, phase: 1)
+        XCTAssertTrue(try partialSwipe(harness, monitor: monitor, phase: 2, dx: -260))
+        drain(0.15)
+        try partialSwipe(harness, monitor: monitor, phase: 8)
+        drain(0.6)
+        XCTAssertEqual(harness.archive.selectedScope, .recording)
+        XCTAssertEqual(shown(harness), [.recording])
+    }
+
     func testH2NewSwipeInterruptsGestureOrSettlementWithoutSticking() throws {
         let harness = makeHarness()
         open(harness, .openHistory)

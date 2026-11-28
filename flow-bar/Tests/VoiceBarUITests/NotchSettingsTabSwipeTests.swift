@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import SwiftUI
 @testable import VoiceBarUI
 import XCTest
@@ -109,6 +110,67 @@ final class NotchSettingsTabSwipeTests: XCTestCase {
         XCTAssertEqual(selected, [.transcription], "the next swipe still works")
     }
 
+    func testClickFencesTheOldSettingsSwipeUntilNextBegan() throws {
+        let pager = GlassTabPager(count: SettingsTab.allCases.count, selection: 2)
+        let (window, probe) = try host(tab: .dictionary, pager: pager) { _ in }
+        let bar = NSPoint(x: probe.bounds.midX, y: 20)
+        pager.isLive = { true }
+        pager.onNeedsFrames = { _ in }
+
+        _ = try route(1, probe, in: window, at: bar)
+        XCTAssertTrue(try route(2, probe, in: window, at: bar, dx: -70))
+        let metrics = NotchSettingsDrawer.tabMetrics(width: probe.bounds.width)
+        let general = try XCTUnwrap(metrics.slotFrames(NotchSettingsDrawer.glassTabs).last)
+        let tabBarHeight = NotchSettingsDrawerPresentation.tabBarHeight
+        let point = probe.convert(NSPoint(x: general.midX, y: tabBarHeight / 2), to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            window.sendEvent(try XCTUnwrap(NSEvent.mouseEvent(
+                with: type, location: point, modifierFlags: [], timestamp: CACurrentMediaTime(),
+                windowNumber: window.windowNumber, context: nil, eventNumber: 1,
+                clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1
+            )))
+        }
+        let presented = pager.progress
+        XCTAssertEqual(pager.phase, .settling)
+
+        XCTAssertFalse(try route(2, probe, in: window, at: bar, dx: 180))
+        XCTAssertFalse(try route(4, probe, in: window, at: bar))
+        XCTAssertEqual(pager.progress, presented)
+        XCTAssertEqual(pager.selection, 4)
+        XCTAssertEqual(pager.phase, .settling)
+
+        _ = try route(1, probe, in: window, at: bar)
+        XCTAssertTrue(try route(2, probe, in: window, at: bar, dx: -20))
+        XCTAssertEqual(pager.phase, .tracking)
+        _ = try route(8, probe, in: window, at: bar)
+    }
+
+    func testCancelledSettingsSwipeThatGrabsASettlingClickReturnsToItsOwnStart() throws {
+        let pager = GlassTabPager(count: SettingsTab.allCases.count)
+        var selected: [SettingsTab] = []
+        let (window, probe) = try host(tab: .history, pager: pager) { selected.append($0) }
+        let bar = NSPoint(x: probe.bounds.midX, y: 20)
+        pager.isLive = { true }
+        pager.onNeedsFrames = { _ in }
+        let time = CACurrentMediaTime() - 0.25
+        pager.select(4, at: time)
+        for step in 1 ... 30 { pager.tick(at: time + Double(step) / 120) }
+        XCTAssertGreaterThan(pager.progress, 3.5)
+        XCTAssertEqual(pager.phase, .settling)
+        XCTAssertEqual(selected, [])
+
+        _ = try route(1, probe, in: window, at: bar)
+        XCTAssertTrue(try route(2, probe, in: window, at: bar, dx: 260))
+        XCTAssertEqual(pager.phase, .tracking)
+        XCTAssertLessThan(pager.progress, 3.5)
+        _ = try route(8, probe, in: window, at: bar)
+        XCTAssertEqual(pager.selection, 4, "cancel returns to the tab captured when the swipe grabbed the pager")
+        let cancelTime = CACurrentMediaTime()
+        for step in 1 ... 120 { pager.tick(at: cancelTime + Double(step) / 120) }
+        XCTAssertEqual(pager.progress, 4)
+        XCTAssertEqual(selected, [.general])
+    }
+
     func testVerticalScrollOverTheDrawerReachesThePane() throws {
         var selected: [SettingsTab] = []
         let (window, probe) = try host(tab: .general) { selected.append($0) }
@@ -135,9 +197,11 @@ final class NotchSettingsTabSwipeTests: XCTestCase {
     private struct Host: View {
         @State var tab: SettingsTab
         let onSelect: (SettingsTab) -> Void
+        let pager: GlassTabPager?
 
-        init(initial: SettingsTab, onSelect: @escaping (SettingsTab) -> Void) {
+        init(initial: SettingsTab, pager: GlassTabPager?, onSelect: @escaping (SettingsTab) -> Void) {
             _tab = State(initialValue: initial)
+            self.pager = pager
             self.onSelect = onSelect
         }
 
@@ -148,14 +212,14 @@ final class NotchSettingsTabSwipeTests: XCTestCase {
                     AnyView(Text("\(tab.title) pane").frame(maxWidth: .infinity, maxHeight: .infinity))
                 }),
                 history: { AnyView(Text("history rows").frame(maxWidth: .infinity, maxHeight: .infinity)) },
-                onSelectTab: { tab = $0; onSelect($0) }
+                pager: pager, onSelectTab: { tab = $0; onSelect($0) }
             )
         }
     }
 
-    private func host(tab: SettingsTab, onSelect: @escaping (SettingsTab) -> Void) throws
+    private func host(tab: SettingsTab, pager: GlassTabPager? = nil, onSelect: @escaping (SettingsTab) -> Void) throws
         -> (NSWindow, NotchSettingsTabSwipeMonitor.Probe) {
-        let host = NSHostingView(rootView: Host(initial: tab, onSelect: onSelect).frame(width: 404, height: 360))
+        let host = NSHostingView(rootView: Host(initial: tab, pager: pager, onSelect: onSelect).frame(width: 404, height: 360))
         host.frame = NSRect(x: 0, y: 0, width: 404, height: 360)
         let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -174,20 +238,24 @@ final class NotchSettingsTabSwipeTests: XCTestCase {
     /// `finalPhase` 4 ends the gesture, 8 is the system cancelling it.
     private func swipe(_ probe: NotchSettingsTabSwipeMonitor.Probe, in window: NSWindow, from point: NSPoint,
                        dx: Int32, dy: Int32 = 0, steps: Int, finalPhase: Int64 = 4) throws -> Bool {
-        let location = probe.convert(point, to: nil)
         var kept = false
         let phases = [(Int64(1), Int32(0), Int32(0))] + Array(repeating: (Int64(2), dx, dy), count: steps)
             + [(finalPhase, Int32(0), Int32(0))]
         for (phase, x, y) in phases {
-            let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
-                                           wheel1: y, wheel2: x, wheel3: 0))
-            cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
-            cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
-            if probe.route(try XCTUnwrap(NSEvent(cgEvent: cg)), in: window, at: location) { kept = true }
+            if try route(phase, probe, in: window, at: point, dx: x, dy: y) { kept = true }
             // A trackpad reports about every 8 ms; the release reads the swipe's speed from these times.
             RunLoop.main.run(until: Date().addingTimeInterval(0.008))
         }
         return kept
+    }
+
+    private func route(_ phase: Int64, _ probe: NotchSettingsTabSwipeMonitor.Probe, in window: NSWindow,
+                       at point: NSPoint, dx: Int32 = 0, dy: Int32 = 0) throws -> Bool {
+        let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+                                       wheel1: dy, wheel2: dx, wheel3: 0))
+        cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+        cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
+        return probe.route(try XCTUnwrap(NSEvent(cgEvent: cg)), in: window, at: probe.convert(point, to: nil))
     }
 
     private static func find<T: NSView>(_ type: T.Type, in view: NSView) -> T? {

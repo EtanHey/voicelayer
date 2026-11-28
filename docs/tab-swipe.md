@@ -25,7 +25,8 @@ copy of it in `flow-bar/Sources/VoiceBarUI/GlassTabPager.swift`.
 
 - Spring: critically damped, response 0.30 s, damping fraction 1.0, initial velocity = gesture velocity at release
   (0 for a click from rest). Changed only by agreement of both leads, from measurements.
-- Pill: SwiftUI `GlassEffectContainer` + `.glassEffect` on an overlay view (macOS 26), a solid capsule before that.
+- BrainBar pill: SwiftUI `GlassEffectContainer` + `.glassEffect` on an overlay view (macOS 26), a solid capsule before
+  that. VoiceBar's notch uses the solid capsule by default (see below).
 
 ## Acceptance (both apps, on mains and on battery)
 
@@ -59,21 +60,22 @@ History drawer and on the Settings drawer's Dictation tab) and the Settings draw
   vertical, so a vertical scroll never switches tab. The step that decides hands over the whole travel so far.
   Each event's own timestamp feeds the velocity.
 - Release picks the tab at the presented position plus the projected velocity, at most one tab per swipe. The ends
-  stop with a rubber band. A gesture the system cancels settles back on the tab it began on (Settings) or is released
-  (History, as before).
+  stop with a rubber band. A cancelled trackpad swipe or pill drag settles back on the tab captured when it grabbed
+  the pager.
 - Clicks, Left/Right (focus rules unchanged: only while the History list or selector has focus in the key panel) and
   VoiceOver go through `GlassTabPager.select`, the same spring. A click during a swipe ends that swipe.
 - The selection reaches the app (`archive.selectedScope`, `onSelectTab`) only at rest.
 - Every Settings pane stays built and laid out side by side; panes slide with the pill. The Dictation pane's History
   panel reads the Ask and Narration archives only while its tab is the one shown, and takes no gestures, keys or focus
-  while hidden.
+  while hidden. Only the foreground pane's controls are eligible for focus.
 - The pill is the bar's solid capsule, tinted like the old selection fill (`NotchGlassTabBar.usesGlassPill` is false).
   The notch is already an AppKit glass surface. A SwiftUI glass pill inside it made every offscreen capture of the
-  drawer lose its backdrop. Turning the glass on is that one flag, once the installed app shows it reads well.
+  drawer lose its backdrop. Glass is behind that flag pending the owner's choice. Offscreen callers can force a solid
+  capsule with `glassTabSolidPill` even when the flag is on.
 - Slots are equal across the drawer's width (`GlassTabMetrics.fill`), one weight for every label; the selected
   colour is drawn only inside the pill. Each slot is exposed to VoiceOver as a button with its own identifier and
   tooltip (`NotchTabSlots`).
 - Reduce Motion: the pages stay in place and cross-fade by the same progress; no velocity is carried in.
 
-The VoiceBar copy's changes to BrainBar's file are listed at the top of `GlassTabPager.swift`. Each change is additive,
-with a default that keeps BrainBar's behaviour.
+The VoiceBar copy's changes to BrainBar's file are listed at the top of `GlassTabPager.swift`. The spring is shared.
+VoiceBar snaps the final subpixel tail within the 0.5 s target for a four-slot Settings click at 120 Hz.

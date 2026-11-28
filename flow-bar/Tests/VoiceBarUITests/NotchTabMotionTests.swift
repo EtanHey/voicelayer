@@ -153,6 +153,61 @@ final class NotchTabMotionTests: XCTestCase {
         XCTAssertLessThanOrEqual(click.firstIndex(of: 1) ?? .max, 60, "at rest within 0.5 s")
     }
 
+    func testCancelledPillDragPastThresholdReturnsToStartingTab() {
+        for (tabs, metrics) in [(historyTabs, historyMetrics()),
+                                (NotchSettingsDrawer.glassTabs, NotchSettingsDrawer.tabMetrics(width: 388))] {
+            let pager = GlassTabPager(count: tabs.count)
+            pager.isLive = { true }
+            var committed: [Int] = []
+            pager.onSelect = { committed.append($0) }
+            let pill = metrics.pillFrame(tabs, progress: 0)
+            let next = metrics.pillFrame(tabs, progress: 1)
+            var press: GlassTabPress? = GlassTabPress.begin(
+                at: CGPoint(x: pill.midX, y: pill.midY), pager: pager, tabs: tabs, metrics: metrics, time: 1
+            )
+            press?.move(translation: (next.midX - pill.midX) * 0.6, pager: pager, tabs: tabs, metrics: metrics, time: 1.02)
+            XCTAssertGreaterThan(pager.progress, 0.5)
+            GlassTabPress.gestureDidReset(&press, pager: pager, time: 1.2)
+            XCTAssertNil(press)
+            XCTAssertEqual(pager.phase, .settling)
+            XCTAssertEqual(pager.selection, 0)
+            for step in 1 ... 120 { pager.tick(at: 1.2 + Double(step) * frame) }
+            XCTAssertEqual(pager.phase, .resting)
+            XCTAssertEqual(pager.progress, 0)
+            XCTAssertEqual(committed, [])
+        }
+    }
+
+    func testFourSlotSettingsClickRestsWithinHalfASecond() {
+        let tabs = NotchSettingsDrawer.glassTabs
+        let metrics = NotchSettingsDrawer.tabMetrics(width: 388)
+        let pager = GlassTabPager(count: tabs.count)
+        pager.isLive = { true }
+        var committed: [Int] = []
+        pager.onSelect = { committed.append($0) }
+        let target = tabs.count - 1
+        let slot = metrics.pillFrame(tabs, progress: Double(target))
+        let point = CGPoint(x: slot.midX, y: slot.midY)
+        let press = GlassTabPress.begin(at: point, pager: pager, tabs: tabs, metrics: metrics, time: 0)
+        press.end(at: point, pager: pager, tabs: tabs, metrics: metrics, time: 0)
+        XCTAssertEqual(pager.selection, target)
+        XCTAssertEqual(pager.progress, 0)
+
+        var steps = 0
+        while pager.phase != .resting && steps < 120 {
+            let previous = pager.progress
+            steps += 1
+            pager.tick(at: Double(steps) * frame)
+            XCTAssertLessThanOrEqual(abs(pager.progress - previous), 1.0 / 3)
+            if pager.phase != .resting { XCTAssertTrue(committed.isEmpty) }
+        }
+        print("[tab-motion] click Dictation→General: \(steps) frames to rest at 120 Hz")
+        XCTAssertLessThanOrEqual(steps, 60)
+        XCTAssertEqual(metrics.pillFrame(tabs, progress: pager.progress), slot)
+        XCTAssertEqual(pager.progress, Double(target))
+        XCTAssertEqual(committed, [target])
+    }
+
     /// A click on a category in the real History panel: from the presented position, on the shared spring, the lists
     /// and the selector moving together; nothing is committed (no publish, no rebuilt row) until the motion rests.
     func testAClickOnACategoryMovesWithoutRebuildingAndCommitsAtRest() throws {
@@ -228,6 +283,102 @@ final class NotchTabMotionTests: XCTestCase {
         }
         XCTAssertEqual(built, [], "no pane is built while the panes move")
         XCTAssertEqual(selected, [.general], "committed once, at rest")
+    }
+
+    func testOffViewportSettingsControlsCannotBecomeFirstResponder() throws {
+        let pager = GlassTabPager(count: SettingsTab.allCases.count, selection: 1)
+        let drawer = NotchSettingsDrawer(
+            selectedTab: .speech, appearance: .dark,
+            context: NotchSettingsDrawerContext(updates: nil, pane: { tab, _ in
+                AnyView(FocusTestPane(title: tab.title))
+            }),
+            pager: pager, onSelectTab: { _ in }
+        )
+        let host = hostView(drawer.frame(width: 404, height: 360), size: NSSize(width: 404, height: 360))
+        let window = try XCTUnwrap(host.window)
+        let viewport = host.bounds.insetBy(dx: NotchSettingsDrawerPresentation.horizontalInset, dy: 0)
+        let fieldValues = Set(SettingsTab.allCases.dropFirst().map { "\($0.title) field" })
+        func fields(in view: NSView) -> [NSTextField] {
+            let controls = view.subviews.flatMap { fields(in: $0) }
+            guard let field = view as? NSTextField, fieldValues.contains(field.stringValue) else { return controls }
+            return [field] + controls
+        }
+        func ownsFocus(_ field: NSTextField) -> Bool {
+            if window.firstResponder === field { return true }
+            let editor = window.firstResponder as? NSTextView
+            return editor?.isFieldEditor == true && editor?.delegate === field
+        }
+        func assertFocus() throws {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            render(host)
+            let controls = fields(in: host)
+            let foreground = try XCTUnwrap(controls.first {
+                viewport.intersects($0.convert($0.bounds, to: host)) && $0.isEnabled
+            }, "the foreground field is enabled")
+            XCTAssertTrue(window.makeFirstResponder(foreground))
+            XCTAssertTrue(ownsFocus(foreground), "the foreground field can actually take focus")
+            for control in controls where !viewport.intersects(control.convert(control.bounds, to: host)) {
+                window.makeFirstResponder(nil)
+                window.makeFirstResponder(control)
+                XCTAssertFalse(control.isEnabled, "an off-viewport field must be disabled")
+                XCTAssertFalse(ownsFocus(control), "an off-viewport field cannot acquire first responder")
+            }
+            window.makeFirstResponder(nil)
+        }
+
+        try assertFocus()
+        pager.onNeedsFrames = { _ in }
+        pager.isLive = { true }
+        pager.select(2, at: 0)
+        pager.tick(at: 0.017) // Dictionary is less than one stride away, but still outside the viewport.
+        XCTAssertEqual(pager.phase, .settling)
+        XCTAssertGreaterThan(pager.progress, 1)
+        XCTAssertLessThan(pager.progress, 2 - 388.0 / 428.0)
+        try assertFocus()
+        for step in 3 ... 120 { pager.tick(at: Double(step) * frame) }
+        XCTAssertEqual(pager.phase, .resting)
+        try assertFocus()
+    }
+
+    private struct FocusTestPane: View {
+        @State private var text: String
+
+        init(title: String) {
+            _text = State(initialValue: "\(title) field")
+        }
+
+        var body: some View {
+            TextField("", text: $text)
+                .textFieldStyle(.plain)
+                .frame(width: 48)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    func testHostedHistorySelectorHonorsFocusAndSolidPillEnvironment() throws {
+        let focus = NotchHistorySelectorFocus()
+        var drewSolidPill = false
+        let selector = NotchHistorySelectorHost(
+            content: AnyView(SolidPillEnvironmentProbe { drewSolidPill = $0 }), focus: focus
+        )
+        .disabled(true)
+        .environment(\.glassTabSolidPill, true)
+        let host = hostView(selector, size: NSSize(width: 404, height: 40))
+        let selectorHost = try XCTUnwrap(focus.host)
+        let window = try XCTUnwrap(host.window)
+        XCTAssertTrue(drewSolidPill)
+        XCTAssertFalse(selectorHost.canBecomeKeyView)
+        window.makeFirstResponder(selectorHost)
+        XCTAssertFalse(focus.owns(window.firstResponder))
+    }
+
+    private struct SolidPillEnvironmentProbe: View {
+        @Environment(\.glassTabSolidPill) private var solidPill
+        let observed: (Bool) -> Void
+
+        var body: some View {
+            Color.clear.onAppear { observed(solidPill) }
+        }
     }
 
     // MARK: Reduce Motion

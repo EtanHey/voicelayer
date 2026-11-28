@@ -43,6 +43,7 @@ struct NotchSettingsTabSwipeMonitor: NSViewRepresentable {
     let onEnd: (Double) -> Void
     /// The system cancelled the gesture: it settles back on the tab it began on, so no tab changes (Codex r1 on #976).
     let onCancel: (Double) -> Void
+    let swipeFence: NotchTabSwipeFence
 
     func makeNSView(context: Context) -> Probe { Probe() }
 
@@ -56,6 +57,7 @@ struct NotchSettingsTabSwipeMonitor: NSViewRepresentable {
         private var isTracking = false
         private var isSideways = false
         private var swallowsMomentum = false
+        private var trackingGeneration = 0
 
         override var isFlipped: Bool { true }
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -73,6 +75,11 @@ struct NotchSettingsTabSwipeMonitor: NSViewRepresentable {
         func removeMonitor() {
             if let monitor { NSEvent.removeMonitor(monitor) }
             monitor = nil
+            resetTracking()
+        }
+
+        private func resetTracking() {
+            trackingGeneration = handlers?.swipeFence.generation ?? 0
             isTracking = false
             isSideways = false
             swallowsMomentum = false
@@ -82,6 +89,7 @@ struct NotchSettingsTabSwipeMonitor: NSViewRepresentable {
         /// out so a test's synthetic scroll event can be routed.
         func route(_ event: NSEvent, in eventWindow: NSWindow?, at location: NSPoint) -> Bool {
             guard let window, eventWindow === window, let handlers else { return false }
+            if trackingGeneration != handlers.swipeFence.generation { resetTracking() }
             if !event.momentumPhase.isEmpty {
                 let swallow = swallowsMomentum
                 if event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled) {
