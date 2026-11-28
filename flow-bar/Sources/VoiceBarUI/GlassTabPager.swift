@@ -427,7 +427,7 @@ struct GlassTabBar: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.glassTabSolidPill) private var solidPill
-    #if VOICEBAR_QA
+    #if DEBUG
     @Environment(\.glassTabPillStyleObserver) private var pillStyleObserver
     #endif
     private var rendersGlassPill: Bool {
@@ -467,7 +467,7 @@ struct GlassTabBar: View {
         .modifier(GlassTabKeyboard(isOn: handlesKeyboard, pager: pager, now: now))
         .onAppear {
             pager.reduceMotion = reduceMotion
-            #if VOICEBAR_QA
+            #if DEBUG
             pillStyleObserver?(rendersGlassPill)
             #endif
         }
@@ -652,7 +652,7 @@ extension EnvironmentValues {
     /// Draw the pill as a solid capsule instead of Liquid Glass. Offscreen renders only: `cacheDisplay` cannot capture
     /// glass, which the window server composites on screen.
     @Entry var glassTabSolidPill = false
-    #if VOICEBAR_QA
+    #if DEBUG
     /// Observes the style drawn by the real bar on mount, including any host environment overrides.
     @Entry var glassTabPillStyleObserver: ((Bool) -> Void)? = nil
     #endif
