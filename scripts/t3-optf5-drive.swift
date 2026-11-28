@@ -1,0 +1,166 @@
+#!/usr/bin/env swift
+// Verify one rendered selection before posting exactly one HID Option+F5 pair.
+import AppKit
+import ApplicationServices
+func refuse(_ reason: String) -> Never {
+    fputs("[t3-optf5-drive] REFUSED: \(reason); no Option+F5 posted\n", stderr); exit(1)
+}
+func check(_ expected: String, _ actual: String) {
+    guard !expected.isEmpty, expected == actual else { refuse("selection does not exactly match expected text") }
+}
+var args = Array(CommandLine.arguments.dropFirst())
+let dump = args.contains("--dump")
+args.removeAll { $0 == "--dump" }
+if args == ["--help"] {
+    print("Usage: swift scripts/t3-optf5-drive.swift --expected-text-file PATH [--dump]\n       ... --check-selection EXPECTED ACTUAL (no screen/input)"); exit(0)
+}
+if args.first == "--check-selection", args.count == 3 {
+    check(args[1], args[2]); print("selection matches; check only, no input posted"); exit(0)
+}
+guard args.count == 2, args[0] == "--expected-text-file" else { refuse("expected --expected-text-file PATH") }
+guard let contents = try? String(contentsOfFile: args[1], encoding: .utf8) else { refuse("cannot read expected file") }
+let expected = contents.hasSuffix("\n") ? String(contents.dropLast()) : contents
+guard !expected.isEmpty, AXIsProcessTrusted() else { refuse("empty text or Accessibility permission unavailable") }
+guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.t3tools.t3code").first else { refuse("T3 Code is not running") }
+// Never `open` a t3-thread:// link: no app on the proof host handles that scheme, and every call leaves a Finder
+// "no application set to open the URL" dialog on the screen (five were left on the M1 on 21 Nov). The thread is
+// reached through its sidebar row (AXPress) below.
+app.activate(options: [.activateIgnoringOtherApps]); Thread.sleep(forTimeInterval: 0.5)
+func frontmost() -> Bool { NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier }
+guard frontmost() else { refuse("T3 Code did not become frontmost") }
+let root = AXUIElementCreateApplication(app.processIdentifier)
+func value(_ node: AXUIElement, _ name: String) -> CFTypeRef? {
+    var result: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(node, name as CFString, &result) == .success else { return nil }; return result
+}
+let manual = AXUIElementSetAttributeValue(root, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+let enhanced = manual == .success ? nil : AXUIElementSetAttributeValue(root, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+print("AXManualAccessibility=\(manual.rawValue); AXEnhancedUserInterface=\(enhanced.map { String($0.rawValue) } ?? "not needed")")
+Thread.sleep(forTimeInterval: 1.5)
+func nodes() -> [AXUIElement] {
+    var result: [AXUIElement] = [], pending = (value(root, kAXWindowsAttribute) as? [AXUIElement] ?? [])
+    while let node = pending.popLast() {
+        result.append(node)
+        guard result.count < 50_000 else { refuse("AX traversal bound exceeded") }
+        pending.append(contentsOf: value(node, kAXChildrenAttribute) as? [AXUIElement] ?? [])
+    }
+    return result
+}
+var tree = nodes()
+func sentencePresent(_ tree: [AXUIElement]) -> Bool {
+    tree.contains { (value($0, kAXRoleAttribute) as? String) == kAXStaticTextRole && ((value($0, kAXValueAttribute) as? String) ?? "").contains(expected) }
+}
+if !sentencePresent(tree) {
+    let rows = tree.filter {
+        guard (value($0, kAXRoleAttribute) as? String) == kAXStaticTextRole,
+              let title = value($0, kAXValueAttribute) as? String else { return false }
+        return title.lowercased().contains("dictation") && title.lowercased().contains("lead")
+    }
+    guard rows.count == 1, let titleNode = rows.first else { refuse("dictation lead sidebar title missing or ambiguous") }
+    var target = titleNode, pressed = false
+    for _ in 0..<5 {
+        let role = value(target, kAXRoleAttribute) as? String ?? ""
+        var actions: CFArray?
+        if [kAXButtonRole, kAXRowRole, kAXStaticTextRole].contains(role),
+           AXUIElementCopyActionNames(target, &actions) == .success,
+           (actions as? [String] ?? []).contains(kAXPressAction) {
+            guard frontmost() else { refuse("focus changed before sidebar AXPress") }
+            guard AXUIElementPerformAction(target, kAXPressAction as CFString) == .success else { refuse("sidebar AXPress failed") }
+            pressed = true; print("opened dictation lead sidebar row by AXPress"); break
+        }
+        guard let parent = value(target, kAXParentAttribute), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
+        target = parent as! AXUIElement
+    }
+    if !pressed {
+        guard let position = value(titleNode, kAXPositionAttribute), let size = value(titleNode, kAXSizeAttribute),
+              CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID() else { refuse("sidebar title frame unavailable") }
+        var point = CGPoint.zero, dimensions = CGSize.zero
+        guard AXValueGetValue(position as! AXValue, .cgPoint, &point), AXValueGetValue(size as! AXValue, .cgSize, &dimensions),
+              dimensions.width > 0, dimensions.height > 0, frontmost() else { refuse("invalid sidebar frame or focus") }
+        point.x += dimensions.width/2; point.y += dimensions.height/2
+        guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
+              let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) else { refuse("cannot create sidebar click") }
+        down.post(tap: .cghidEventTap); up.post(tap: .cghidEventTap)
+        print("opened dictation lead sidebar row by ONE HID left click")
+    }
+    Thread.sleep(forTimeInterval: 2); tree = nodes()
+}
+for window in value(root, kAXWindowsAttribute) as? [AXUIElement] ?? [] {
+    print("window title: \(value(window, kAXTitleAttribute) as? String ?? "<unavailable>")")
+}
+if dump {
+    let texts = tree.filter { (value($0, kAXRoleAttribute) as? String) == kAXStaticTextRole }.prefix(40)
+    for (index, node) in texts.enumerated() { print("AXStaticText[\(index)]: \(value(node, kAXValueAttribute) as? String ?? "<no value>")") }
+    print("expected sentence present in AXStaticText=\(sentencePresent(tree))")
+    print("dump only; no key events posted; traversed \(tree.count) elements")
+    exit(0)
+}
+guard tree.count > 1 else { refuse("T3 accessibility tree unreadable; do not relaunch") }
+// Search rendered text/group values in every window, including AXWebArea descendants.
+guard let element = tree.first(where: {
+    [kAXStaticTextRole, kAXGroupRole].contains(value($0, kAXRoleAttribute) as? String ?? "") &&
+    ((value($0, kAXValueAttribute) as? String) ?? "").contains(expected)
+}) else { refuse("sentence not found in rendered static text/group values across T3 windows") }
+let range = ((value(element, kAXValueAttribute) as! String) as NSString).range(of: expected)
+func selectedText() -> String? {
+    for node in nodes() {
+        if let text = value(node, kAXSelectedTextAttribute) as? String, !text.isEmpty { return text }
+        if let marker = value(node, "AXSelectedTextMarkerRange") {
+            var output: CFTypeRef?
+            if AXUIElementCopyParameterizedAttributeValue(node, "AXStringForTextMarkerRange" as CFString, marker, &output) == .success,
+               let text = output as? String, !text.isEmpty { return text }
+        }
+    }; return nil
+}
+let source = CGEventSource(stateID: .hidSystemState)
+// Chromium AX-set ranges need not become DOM selections: always use a real HID drag.
+do {
+    func bounds(_ offset: Int) -> CGRect? {
+        var character = CFRange(location: offset, length: 1)
+        var output: CFTypeRef?
+        guard let parameter = AXValueCreate(.cfRange, &character),
+              AXUIElementCopyParameterizedAttributeValue(element, kAXBoundsForRangeParameterizedAttribute as CFString, parameter, &output) == .success,
+              let output, CFGetTypeID(output) == AXValueGetTypeID() else { return nil }
+        var rect = CGRect.zero
+        guard AXValueGetValue(output as! AXValue, .cgRect, &rect), rect.width > 0, rect.height > 0 else { return nil }; return rect
+    }
+    guard let first = bounds(range.location), let last = bounds(range.location + range.length - 1) else {
+        refuse("AX selection refused and exact character frames unavailable for HID drag")
+    }
+    guard frontmost() else { refuse("focus changed before drag") }
+    func mouse(_ type: CGEventType, _ point: CGPoint) {
+        guard let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: .left) else { refuse("cannot create mouse event") }
+        event.post(tap: .cghidEventTap)
+    }
+    let start = CGPoint(x: first.minX, y: first.midY), end = CGPoint(x: last.maxX, y: last.midY)
+    mouse(.mouseMoved, start); mouse(.leftMouseDown, start)
+    for step in 1...20 {
+        let t = CGFloat(step)/20
+        mouse(.leftMouseDragged, CGPoint(x: start.x+(end.x-start.x)*t, y: start.y+(end.y-start.y)*t)); Thread.sleep(forTimeInterval: 0.01)
+    }
+    mouse(.leftMouseUp, end); Thread.sleep(forTimeInterval: 0.2)
+    print("selected by primary HID drag using exact AX character frames")
+}
+if let actual = selectedText() {
+    check(expected, actual)
+    print("verified selection text through AX")
+} else {
+    refuse("AX cannot report the exact HID-selected text")
+}
+// Read only. Never copy or restore: VoiceBar owns the pasteboard during its own Copy.
+let board = NSPasteboard.general
+var previousCount = board.changeCount, stableSince = Date()
+let stabilityDeadline = Date().addingTimeInterval(10)
+while Date().timeIntervalSince(stableSince) < 1.5 {
+    guard Date() < stabilityDeadline else { refuse("pasteboard did not remain stable for 1.5 seconds") }
+    Thread.sleep(forTimeInterval: 0.05)
+    let count = board.changeCount
+    if count != previousCount { previousCount = count; stableSince = Date() }
+}
+print("pasteboard changeCount stable for 1.5 seconds; no writes performed")
+guard frontmost(), !app.isTerminated else { refuse("T3 focus/process changed before Option+F5") }
+guard let down = CGEvent(keyboardEventSource: source, virtualKey: 96, keyDown: true),
+      let up = CGEvent(keyboardEventSource: source, virtualKey: 96, keyDown: false) else { refuse("cannot create Option+F5") }
+down.flags = .maskAlternate; up.flags = .maskAlternate
+down.post(tap: .cghidEventTap); Thread.sleep(forTimeInterval: 0.05); up.post(tap: .cghidEventTap)
+print("selection admitted (\(expected.utf16.count) UTF-16 units); posted ONE Option+F5 down/up at cghidEventTap")

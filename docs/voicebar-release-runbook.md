@@ -136,7 +136,7 @@ The gate refuses, with a non-zero exit and a message naming the problem, when:
 The proof runs on the M1 Pro, never on Etan's daily Mac (R3). The M1 runs the same signed,
 notarized candidate bundle as the M4, so the bundle digest it proves is the one users get.
 
-**Preconditions (all checked by the lead before anyone is asked to press):**
+**Preconditions (all checked by the lead before the press):**
 
 - The candidate is installed at `/Applications/VoiceBar.app` through the M1's update gate
   (`src/update-gate-installer.ts COMMAND`, the way candidates 9 and 10 were installed), only
@@ -146,7 +146,7 @@ notarized candidate bundle as the M4, so the bundle digest it proves is the one 
 - `scripts/voicelayer-deploy-check.sh` → `DEPLOYED`; exactly one VoiceBar.
 - VoiceBar has Accessibility and Input Monitoring on the M1 (General shows no broken step).
   No microphone is used: Option+F5 reads a selection aloud.
-- System output is muted by Etan (the proof needs the TTS history entry, not sound).
+- System output is muted by the agent or Etan, with its previous mute state restored afterward (the proof needs the TTS history entry, not sound).
 - T3 Code on the M1 is `/Applications/T3 Code (Nightly).app` (`com.t3tools.t3code`).
 - The proof host is checked, not assumed: `run` (through `start`) and `record` refuse unless
   this Mac's `sysctl -n hw.model` and `sysctl -n machdep.cpu.brand_string` are listed in
@@ -172,33 +172,35 @@ notarized candidate bundle as the M4, so the bundle digest it proves is the one 
    `run` is `start`, then a wait of up to 9.5 minutes for one `selection_capture` and one new
    TTS history entry, then `finish`. The proof is written to
    `docs.local/<release>/t3-optf5-proof.json`; exit 0 is PASS.
-3. After PASS: `record`, commit, tag (Order, step 4).
+3. When `run` prints "now select", run the driver once on the proof host:
+   ```bash
+   swift scripts/t3-optf5-drive.swift --expected-text-file docs.local/<release>/synthetic.txt
+   ```
+   It opens the proof thread deep link, brings T3 frontmost, enables Chromium AX, and searches
+   every window. `--dump` prints window titles and up to 40 static text values without key
+   events; use it before arming. It selects rendered text by a HID drag using AX character frames, requires an exact
+   AXSelectedText or text-marker string match, waits for 1.5 seconds of pasteboard stability,
+   and posts one Option+F5 down/up at `.cghidEventTap` with `.maskAlternate`. A selection
+   mismatch refuses before Option+F5. The driver never copies or writes the pasteboard and
+   never touches it after posting. Never type or send a message through the driver.
+4. After PASS: `record`, commit, tag (Order, step 4).
 
-**The steps that need Etan (one sitting at the M1, about 3 minutes):**
+**The steps that need Etan:** none for the press. His own Option+F5 press remains allowed.
 
-- **Relaunch T3 Code on the M1** (step 0 below, T3AX1). Agents never quit T3 Code, and every
-  agent thread on the M1, the lead's included, runs inside that T3, so this happens only when
-  the lead reports every M1 turn idle. Threads survive the relaunch.
-- **The press:** with output muted, select the synthetic paragraph in the rendered assistant
-  message and press Option+F5 once, within 9 minutes of the lead starting `run`.
-
-Agents do not synthesize the selection or the key: computer use is allowed only on the
-agent browser, and a script cannot open a T3 thread. A remote press over Screen Sharing is
-not proven to reach the F5 relay; use the M1's own keyboard.
+Etan, 2026-11-21 (orc ruling, 23:07 IST): "why is it waiting for me to press a key again?"
+The former prohibition on agent selection/key synthesis is replaced by a real HID-level
+CGEvent at `.cghidEventTap` on a listed proof host, observed end to end by the collector.
+Exactly one press per collector run; all selection, frontmost-app, UTF-16 count, history hash,
+installed-candidate and machine checks remain required. Output stays muted.
 
 ## Producing the proof
 
-The helper reads the resident's real artifacts only. It never presses keys. For a release
-proof the Option+F5 is **one real press by a person at the proving Mac's own keyboard**; no
-synthesized key event (CGEvent or otherwise) counts. The repository has no key-sending
-harness. A synthesized press is acceptable only in a non-release experiment, and its output
-is never recorded or committed; automated tests use the preload's fixture paths, whose proofs
-are `test` receipts that every verifier refuses.
+The collector reads the resident's real artifacts only and never sends input. A person or
+`scripts/t3-optf5-drive.swift` may make the single HID Option+F5 press. Automated fixture tests
+still produce `test` receipts that every release verifier refuses.
 
-0. **Quit and relaunch T3 Code first** (RULINGS 2026-10-18T14:40:22Z). T3 is Electron, and
-   Chromium keeps its accessibility tree off until an assistive client turns it on. A T3
-   process whose tree an earlier AX inspection already enabled would hide exactly the
-   Option+F5 failure this proof exists to catch (T3AX1).
+0. Do not quit or relaunch T3 Code. VoiceBar's unreadable-app AX recovery (#950) enables the
+   Chromium accessibility tree and retries. If the app remains unreadable, stop and report it.
 1. Write a fresh synthetic paragraph to a file, and post the same paragraph so it renders in
    a T3 assistant message. Keep it to one short plain sentence with no markdown, so the TTS
    history text is the selection verbatim. Use only public text.
