@@ -1,13 +1,15 @@
 import AppKit
+import QuartzCore
 import SwiftUI
 
-/// Candidate-6 QA (N19/N20): provide Dictations, Ask, and Speech history with horizontal category navigation.
+/// Candidate-6 QA (N19/N20): provide Dictations, Ask, and Speech history with horizontal category navigation. The
 /// selector sits on top of the list, and a two-finger swipe or a sideways drag slides the lists with the finger.
 ///
-/// - Motion: the lists and the selector's thumb follow the finger 1:1, then settle on the drawer's own strong
-///   ease-out (`NotchDrawerMotion`): the content timing after a swipe, the quicker tab timing after a click or an
-///   arrow key. Only transforms move. Reduce Motion: nothing slides; the category crossfades when the gesture ends.
+/// - Motion (docs/tab-swipe.md): the selector's glass pill and the lists follow the fingers 1:1 and settle on one
+///   critically damped spring (`GlassTabPager`), the same after a swipe, a click on a category or an arrow key, from
+///   wherever they are drawn. Reduce Motion: nothing slides; the lists cross-fade by the same progress.
 /// - A gesture picks its axis once (`NotchHistoryCategoryPager`), so a vertical scroll stays the list's own.
+/// - The category reaches `archive.selectedScope` only when the motion comes to rest.
 /// - The selector takes its height from the list; the drawer's height and pull are unchanged.
 struct NotchHistoryCategoryPanel: View {
     /// The Dictations list as the notch builds it. Ask and Speech are the same list with their own rows.
@@ -16,27 +18,33 @@ struct NotchHistoryCategoryPanel: View {
 
     var onOpenArchive: (SettingsHistoryDestination) -> Void = { _ in }
 
-    @State private var pager: NotchHistoryCategoryPager
+    /// The pill and the lists' position. Held, not observed: only the bar and the page wrappers redraw per frame.
+    @State private var tabs: GlassTabPager
+    @State private var gesture = NotchTabGesture()
+    @State private var surface = NotchHistorySurfaceLease()
     @State private var selectorFocus = NotchHistorySelectorFocus()
     @State private var swipeCancellation = NotchHistorySwipeCancellation()
-    @State private var swipeEndedAt: TimeInterval = 0
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private let initialSwipe: CGFloat
+    /// False while the panel is built but not shown (the Settings drawer keeps every tab's page laid out): it reads no
+    /// archive and takes no gestures or keys.
+    @Environment(\.notchHistorySurfacePresented) private var isPresented
 
     /// Each list's scroll indicator sits just outside its right edge, so neighbouring lists keep this gap.
-    private static let pageGap: CGFloat = 12
+    static let pageGap: CGFloat = 12
     private static let bottomFade: CGFloat = 12
     private static let scopes = SettingsHistoryScope.allCases
 
-    /// `initialScope` and `initialSwipe` (points the lists are dragged, as mid-gesture) are for shots.
+    /// `initialScope` and `initialSwipe` (points the lists are dragged, as mid-gesture) are for shots; `pager` lets a
+    /// test drive the frames itself.
     init(dictations: NotchHistoryPanel, archive: NotchHistoryArchiveStore,
-         initialScope: SettingsHistoryScope? = nil, initialSwipe: CGFloat = 0,
+         initialScope: SettingsHistoryScope? = nil, initialSwipe: CGFloat = 0, pager: GlassTabPager? = nil,
          onOpenArchive: @escaping (SettingsHistoryDestination) -> Void = { _ in }) {
         self.dictations = dictations
         self.archive = archive
         self.onOpenArchive = onOpenArchive
-        var pager = NotchHistoryCategoryPager(count: Self.scopes.count, index: Self.scopes.firstIndex(of: initialScope ?? archive.selectedScope) ?? 0)
-        if initialSwipe != 0 { pager.move(dx: initialSwipe, dy: 0) }
-        _pager = State(initialValue: pager)
+        self.initialSwipe = initialSwipe
+        let index = Self.scopes.firstIndex(of: initialScope ?? archive.selectedScope) ?? 0
+        _tabs = State(initialValue: pager ?? GlassTabPager(count: Self.scopes.count, selection: index))
     }
 
     private var palette: VoiceBarNotchContrastPalette { dictations.palette }
@@ -48,88 +56,65 @@ struct NotchHistoryCategoryPanel: View {
     var body: some View {
         GeometryReader { proxy in
             let width = proxy.size.width
+            let stride = width + Self.pageGap
             VStack(spacing: NotchHistoryPresentation.categorySelectorGap) {
                 selector(width: width)
                 pages(width: width)
             }
             .background(NotchHistorySwipeMonitor(
-                onBegin: { beginSwipe() },
-                onMove: { dx, dy in follow { $0.move(dx: dx, dy: dy) } },
-                onEnd: { finish(width: width, flick: nil) },
-                onStep: { select(pager.index + $0) },
-                cancellation: swipeCancellation, selectorFocus: selectorFocus
+                onBegin: { gesture.begin(at: CACurrentMediaTime()) },
+                onMove: { dx, dy, time in gesture.move(dx: dx, dy: dy, stride: stride, pager: tabs, at: time) },
+                onEnd: { time in gesture.release(pager: tabs, at: time) },
+                onStep: { select(tabs.selection + $0) },
+                cancellation: swipeCancellation, selectorFocus: selectorFocus, isActive: isPresented
             ))
+            .background(GlassTabPagerClock(pager: tabs))
+            .onAppear {
+                if initialSwipe != 0 { tabs.present(Double(tabs.selection) - Double(initialSwipe / stride)) }
+            }
         }
         .frame(height: dictations.listHeight)
-        .onAppear { archive.surfaceOpened() }
-        .onChange(of: archive.selectedScope) { _, scope in
-            let index = Self.scopes.firstIndex(of: scope) ?? 0
-            if index != pager.index { select(index) }
+        .onAppear {
+            tabs.onSelect = { [archive] index in archive.selectedScope = Self.scopes[index] }
+            // A click on a category, like an arrow key, ends the swipe in progress first.
+            tabs.onPick = { [gesture, swipeCancellation] _ in
+                gesture.interrupt(at: CACurrentMediaTime())
+                swipeCancellation.generation &+= 1
+            }
+            surface.update(isPresented, archive)
         }
-        .onDisappear { archive.surfaceClosed() }
+        .onChange(of: isPresented) { _, presented in surface.update(presented, archive) }
+        .onChange(of: archive.selectedScope) { _, scope in
+            tabs.follow(Self.scopes.firstIndex(of: scope) ?? 0)
+        }
+        .onDisappear { surface.update(false, archive) }
     }
 
     // MARK: Selector
 
     private func selector(width: CGFloat) -> some View {
-        let segment = width / CGFloat(Self.scopes.count)
-        let position = reduceMotion ? CGFloat(pager.index) : pager.position(width: width)
-        let content = ZStack(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(palette.primary.color.opacity(0.14))
-                .frame(width: segment)
-                .offset(x: position * segment)
-            HStack(spacing: 0) {
-                ForEach(Array(Self.scopes.enumerated()), id: \.element) { index, scope in
-                    let isCurrent = Int(position.rounded()) == index
-                    Button { select(index) } label: {
-                        Text(scope.title)
-                            .font(.system(size: NotchHistoryPresentation.categorySelectorFontSize,
-                                          weight: isCurrent ? .semibold : .regular))
-                            .foregroundStyle(isCurrent ? palette.primary.color : palette.secondary.color)
-                            .frame(width: segment, height: NotchHistoryPresentation.categorySelectorHeight)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .background(PillControlTooltip(text: NotchHistoryPresentation.categoryTooltip(scope)))
-                    .accessibilityIdentifier(NotchHistoryPresentation.categoryIdentifier(scope))
-                    .accessibilityLabel(scope.title)
-                    .accessibilityAddTraits(isCurrent ? .isSelected : [])
-                }
-            }
-        }
-        .frame(width: width, height: NotchHistoryPresentation.categorySelectorHeight, alignment: .leading)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(NotchHistoryPresentation.categorySelectorLabel)
-        return NotchHistorySelectorHost(content: AnyView(content), focus: selectorFocus)
+        let tabs = Self.scopes.map { GlassTab(title: $0.title, spokenLabel: $0.title) }
+        var metrics = GlassTabMetrics()
+        metrics.fontSize = NotchHistoryPresentation.categorySelectorFontSize
+        metrics.height = NotchHistoryPresentation.categorySelectorHeight
+        metrics.fill = width
+        let bar = NotchGlassTabBar(
+            pager: self.tabs, tabs: tabs, accessibilityLabel: NotchHistoryPresentation.categorySelectorLabel,
+            metrics: metrics, colors: .notch(palette),
+            identifier: { NotchHistoryPresentation.categoryIdentifier(Self.scopes[$0]) },
+            tooltip: { NotchHistoryPresentation.categoryTooltip(Self.scopes[$0]) }
+        )
+        return NotchHistorySelectorHost(content: AnyView(bar), focus: selectorFocus)
             .frame(width: width, height: NotchHistoryPresentation.categorySelectorHeight)
     }
 
     // MARK: Lists
 
-    @ViewBuilder
     private func pages(width: CGFloat) -> some View {
-        Group {
-            if reduceMotion {
-                NotchDrawerCrossfade(
-                    key: pager.index,
-                    animation: NotchDrawerMotion.easeOut(NotchDrawerMotion.tabInDuration),
-                    transition: NotchDrawerMotion.tabTransition(reduceMotion: true)
-                ) { index in
-                    list(Self.scopes[index]).frame(width: width)
-                }
-            } else {
-                HStack(spacing: Self.pageGap) {
-                    ForEach(Array(Self.scopes.enumerated()), id: \.element) { index, scope in
-                        list(scope)
-                            .frame(width: width)
-                            // Only the category on screen takes input or shows in the accessibility tree.
-                            .allowsHitTesting(index == pager.index && !pager.isSwiping)
-                            .accessibilityHidden(index != pager.index)
-                    }
-                }
-                .frame(width: width, alignment: .leading)
-                .offset(x: -CGFloat(pager.index) * (width + Self.pageGap) + pager.offset(width: width))
+        let stride = width + Self.pageGap
+        return ZStack(alignment: .topLeading) {
+            ForEach(Array(Self.scopes.enumerated()), id: \.element) { index, scope in
+                NotchTabPage(pager: tabs, index: index, stride: stride, content: list(scope).frame(width: width))
             }
         }
         .frame(width: width, height: listHeight, alignment: .topLeading)
@@ -147,12 +132,10 @@ struct NotchHistoryCategoryPanel: View {
         .simultaneousGesture(
             DragGesture(minimumDistance: NotchHistoryCategoryPager.slop)
                 .onChanged { value in
-                    _ = follow { $0.move(to: value.translation) }
+                    guard isPresented else { return }
+                    gesture.drag(to: value.translation, stride: stride, pager: tabs, at: CACurrentMediaTime())
                 }
-                .onEnded { value in
-                    let throwDistance = value.predictedEndTranslation.width - value.translation.width
-                    finish(width: width, flick: abs(throwDistance) > 60 && (throwDistance > 0) == (value.translation.width > 0))
-                }
+                .onEnded { _ in gesture.release(pager: tabs, at: CACurrentMediaTime()) }
         )
     }
 
@@ -194,50 +177,28 @@ struct NotchHistoryCategoryPanel: View {
 
     // MARK: Gesture state
 
-    private var swipeJustHappened: Bool {
-        pager.isSwiping || ProcessInfo.processInfo.systemUptime - swipeEndedAt < 0.35
-    }
+    private var swipeJustHappened: Bool { gesture.justSwiped(pager: tabs, at: CACurrentMediaTime()) }
 
-    /// The lists track the finger on the same frame: never animated. Only a sideways swipe gets that transaction;
-    /// a vertical drag is the drawer's pull, whose own animations (the Settings hint) must not be switched off.
-    private func follow(_ move: (inout NotchHistoryCategoryPager) -> Bool) -> Bool {
-        var next = pager
-        let isSideways = move(&next)
-        guard isSideways else {
-            pager = next
-            return false
-        }
-        var instant = Transaction()
-        instant.disablesAnimations = true
-        withTransaction(instant) { pager = next }
-        return true
-    }
-
-    private func beginSwipe() {
-        if pager.isSwiping { swipeEndedAt = ProcessInfo.processInfo.systemUptime }
-        pager.begin()
-    }
-
-    private func finish(width: CGFloat, flick: Bool?) {
-        if pager.isSwiping { swipeEndedAt = ProcessInfo.processInfo.systemUptime }
-        settle(NotchDrawerMotion.contentInDuration) { $0.end(width: width, flick: flick) }
-    }
-
+    /// An arrow key: the same spring a click and a release use (`onPick` ends any swipe in progress).
     private func select(_ index: Int) {
-        if pager.isSwiping { swipeEndedAt = ProcessInfo.processInfo.systemUptime }
-        swipeCancellation.generation &+= 1
-        settle(NotchDrawerMotion.tabInDuration) { $0.select(index) }
+        tabs.select(index, at: CACurrentMediaTime())
     }
+}
 
-    private func settle(_ duration: Double, _ change: (inout NotchHistoryCategoryPager) -> Void) {
-        // Reduce Motion: no slide; `NotchDrawerCrossfade` fades the new category in by itself.
-        if reduceMotion {
-            change(&pager)
-        } else {
-            withAnimation(NotchDrawerMotion.easeOut(duration)) { change(&pager) }
-        }
-        archive.selectedScope = Self.scopes[pager.index]
+/// Whether this History surface holds the archive open: it reads Ask and Speech only while it is shown.
+@MainActor final class NotchHistorySurfaceLease {
+    private var isOpen = false
+
+    func update(_ presented: Bool, _ archive: NotchHistoryArchiveStore) {
+        guard presented != isOpen else { return }
+        isOpen = presented
+        if presented { archive.surfaceOpened() } else { archive.surfaceClosed() }
     }
+}
+
+extension EnvironmentValues {
+    /// False for a History panel built but not on screen (a Settings drawer tab other than Dictation).
+    @Entry var notchHistorySurfacePresented = true
 }
 
 private extension Array {
@@ -258,13 +219,16 @@ final class NotchHistorySwipeCancellation {
 /// deliberately avoided: it aborted the old hosted panel on close.
 struct NotchHistorySwipeMonitor: NSViewRepresentable {
     let onBegin: () -> Void
-    let onMove: (CGFloat, CGFloat) -> Bool
-    let onEnd: () -> Void
+    /// A step's deltas and its event time (seconds, the `CACurrentMediaTime` clock).
+    let onMove: (CGFloat, CGFloat, Double) -> Bool
+    let onEnd: (Double) -> Void
     /// -1 for Left, +1 for Right.
     let onStep: (Int) -> Void
     /// A reference fence: a selector/key change invalidates pending events immediately, before view updates.
     var cancellation: NotchHistorySwipeCancellation? = nil
     var selectorFocus: NotchHistorySelectorFocus? = nil
+    /// False while its History panel is built but not shown: it takes no swipes, keys or focus.
+    var isActive = true
 
     func makeNSView(context: Context) -> Probe { Probe() }
 
@@ -324,7 +288,7 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
 
         /// A pointer press focuses only this History region, including its category selector.
         func handlePointer(_ event: NSEvent) {
-            guard let window, event.window === window else { return }
+            guard let window, event.window === window, handlers?.isActive != false else { return }
             guard bounds.contains(convert(event.locationInWindow, from: nil)) else {
                 if window.firstResponder === self { window.makeFirstResponder(nil) }
                 return
@@ -345,7 +309,7 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
 
         /// `handleKey` with the key-window fact spelled out (an offscreen test panel cannot become key).
         func routeKey(_ event: NSEvent, isKeyWindow: Bool) -> Bool {
-            guard let window, event.window === window, isKeyWindow,
+            guard let window, event.window === window, isKeyWindow, handlers?.isActive != false,
                   window.firstResponder === self || handlers?.selectorFocus?.owns(window.firstResponder) == true,
                   event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
                   let handlers else { return false }
@@ -357,6 +321,9 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
             return true
         }
 
+        /// An event's own time; a synthesized event can carry none, and the clock's own is the same timebase.
+        static func time(of event: NSEvent) -> Double { event.timestamp > 0 ? event.timestamp : CACurrentMediaTime() }
+
         /// Whether the event belongs to a sideways swipe and must not reach the list.
         func handle(_ event: NSEvent) -> Bool {
             route(event, in: event.window, at: event.locationInWindow)
@@ -364,7 +331,7 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
 
         /// `handle` with the event's window and place spelled out (a test's synthetic scroll event carries neither).
         func route(_ event: NSEvent, in eventWindow: NSWindow?, at location: NSPoint) -> Bool {
-            guard let window, eventWindow === window, let handlers else { return false }
+            guard let window, eventWindow === window, let handlers, handlers.isActive else { return false }
             if trackingGeneration != (handlers.cancellation?.generation ?? 0) { resetTracking() }
             if !event.momentumPhase.isEmpty {
                 let swallow = swallowsMomentum
@@ -384,11 +351,11 @@ struct NotchHistorySwipeMonitor: NSViewRepresentable {
             if phase.contains(.ended) || phase.contains(.cancelled) {
                 isTracking = false
                 swallowsMomentum = isSideways
-                handlers.onEnd()
+                handlers.onEnd(Self.time(of: event))
                 return false // the list's scroll view sees its gesture end
             }
             guard phase.contains(.began) || phase.contains(.changed) else { return false }
-            isSideways = handlers.onMove(event.scrollingDeltaX, event.scrollingDeltaY)
+            isSideways = handlers.onMove(event.scrollingDeltaX, event.scrollingDeltaY, Self.time(of: event))
             return isSideways
         }
     }

@@ -1,16 +1,16 @@
 import AppKit
 import SwiftUI
 
-/// GO-1126 W1: a two-finger sideways swipe over the notch Settings drawer moves to the neighbouring tab, the way
-/// BrainBar's pages swipe (`NDPagePager`, itself VoiceBar's History category rules). The gesture state is
-/// `NotchHistoryCategoryPager`, unchanged:
+/// GO-1126 W1: a two-finger sideways swipe over the notch Settings drawer moves the tabs' glass pill and the panes with
+/// the fingers, 1:1, and the release settles on a tab (the shared tab-swipe spec, docs/tab-swipe.md; `GlassTabPager`
+/// does the moving, `NotchTabGesture` feeds it):
 ///
 /// - A gesture picks its axis once, from its first 6 pt: sideways only when it is 1.5 times more horizontal than
-///   vertical. A vertical gesture stays the pane's own scroll for its whole length and never changes tab.
-/// - It settles on release: past 0.22 of the drawer's width, or a flick (a last step of 14 pt or more in the same
-///   direction), moves one tab; anything shorter moves none. One gesture moves at most one tab. The ends stop.
-/// - The tab then changes through the same `onSelectTab` a tab click uses: the pane swaps with the drawer's own tab
-///   crossfade, so the swipe has no slide of its own and Reduce Motion keeps working as before.
+///   vertical (`NotchHistoryCategoryPager`). A vertical gesture stays the pane's own scroll for its whole length and
+///   never changes tab.
+/// - The release settles on the tab at the presented position plus the projected velocity, one tab at most per
+///   gesture. The ends stop (rubber band). A gesture the system cancels settles back on the tab it started from.
+/// - The tab reaches `onSelectTab` when the motion comes to rest, the same path a click takes.
 ///
 /// Precedence: the Dictation tab's list has its own sideways pager (Dictations / Ask / Narration), so there only a
 /// gesture that begins over the tab bar swipes tabs. A gesture that begins over a text field or over something that
@@ -28,21 +28,6 @@ enum NotchSettingsTabSwipe {
         guard tab == .history else { return true }
         return y <= NotchSettingsDrawerPresentation.topInset + NotchSettingsDrawerPresentation.tabBarHeight
     }
-
-    /// The pager for a gesture that begins on `tab`.
-    static func pager(on tab: SettingsTab) -> NotchHistoryCategoryPager {
-        NotchHistoryCategoryPager(count: SettingsTab.allCases.count,
-                                  index: SettingsTab.allCases.firstIndex(of: tab) ?? 0)
-    }
-
-    /// The tab a finished gesture settles on, or nil when it stays.
-    static func settle(_ pager: inout NotchHistoryCategoryPager, from tab: SettingsTab, width: CGFloat,
-                       flick: Bool? = nil) -> SettingsTab? {
-        let before = pager.index
-        pager.end(width: width, flick: flick)
-        guard pager.index != before else { return nil }
-        return SettingsTab.allCases[pager.index]
-    }
 }
 
 /// Watches scroll-wheel events over the drawer for a tab swipe. Scroll events only: it never takes first responder,
@@ -51,12 +36,13 @@ struct NotchSettingsTabSwipeMonitor: NSViewRepresentable {
     /// Whether a gesture beginning this many points below the drawer's top swipes tabs.
     let tracks: (CGFloat) -> Bool
     let onBegin: () -> Void
-    /// Returns whether the gesture is a tab swipe (the event is then kept from the pane).
-    let onMove: (CGFloat, CGFloat) -> Bool
-    /// The drawer's width, for the commit distance.
-    let onEnd: (CGFloat) -> Void
-    /// The system cancelled the gesture: forget it without settling, so no tab changes (Codex r1 on #976).
-    let onCancel: () -> Void
+    /// A step's deltas and its event time (seconds, the `CACurrentMediaTime` clock). Returns whether the gesture is a
+    /// tab swipe (the event is then kept from the pane).
+    let onMove: (CGFloat, CGFloat, Double) -> Bool
+    /// The fingers lifted, at this event time.
+    let onEnd: (Double) -> Void
+    /// The system cancelled the gesture: it settles back on the tab it began on, so no tab changes (Codex r1 on #976).
+    let onCancel: (Double) -> Void
 
     func makeNSView(context: Context) -> Probe { Probe() }
 
@@ -116,17 +102,18 @@ struct NotchSettingsTabSwipeMonitor: NSViewRepresentable {
             if phase.contains(.cancelled) {
                 isTracking = false
                 swallowsMomentum = isSideways
-                handlers.onCancel()
+                handlers.onCancel(NotchHistorySwipeMonitor.Probe.time(of: event))
                 return false
             }
             if phase.contains(.ended) {
                 isTracking = false
                 swallowsMomentum = isSideways
-                handlers.onEnd(bounds.width)
+                handlers.onEnd(NotchHistorySwipeMonitor.Probe.time(of: event))
                 return false
             }
             guard phase.contains(.began) || phase.contains(.changed) else { return false }
-            isSideways = handlers.onMove(event.scrollingDeltaX, event.scrollingDeltaY)
+            isSideways = handlers.onMove(event.scrollingDeltaX, event.scrollingDeltaY,
+                                         NotchHistorySwipeMonitor.Probe.time(of: event))
             return isSideways
         }
 

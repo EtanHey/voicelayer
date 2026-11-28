@@ -44,56 +44,56 @@ final class NotchHistoryCategoriesTests: XCTestCase {
 
     // MARK: Axis and settle rules (pure)
 
-    func testASidewaysGestureMovesOneCategoryAndAVerticalOneNever() {
-        var pager = NotchHistoryCategoryPager(count: 3)
-        pager.begin()
-        XCTAssertFalse(pager.move(dx: -3, dy: 0), "inside the slop no axis is chosen")
-        XCTAssertTrue(pager.move(dx: -60, dy: 4))
-        XCTAssertEqual(pager.offset(width: 400), -63, "the lists follow the finger 1:1")
-        XCTAssertEqual(pager.position(width: 400), 63.0 / 400, accuracy: 0.001, "and so does the selector thumb")
-        pager.move(dx: -40, dy: 0)
-        pager.end(width: 400)
-        XCTAssertEqual(pager.index, 1)
+    func testASidewaysGestureIsPickedOnceAndAVerticalOneNeverMovesTheLists() {
+        var axis = NotchHistoryCategoryPager()
+        axis.begin()
+        XCTAssertNil(axis.move(dx: -3, dy: 0), "inside the slop no axis is chosen")
+        XCTAssertEqual(axis.move(dx: -60, dy: 4), -63, "the step that decides hands over the whole travel so far")
+        XCTAssertEqual(axis.move(dx: -40, dy: 9), -40, "then every step as it comes, 1:1")
+        XCTAssertTrue(axis.end(), "a sideways swipe is released")
 
-        pager.begin()
-        XCTAssertFalse(pager.move(dx: 5, dy: -30), "a vertical gesture is the list's own scroll")
-        XCTAssertFalse(pager.move(dx: 300, dy: -5), "and stays vertical however far it then wanders sideways")
-        XCTAssertEqual(pager.offset(width: 400), 0)
-        pager.end(width: 400)
-        XCTAssertEqual(pager.index, 1)
+        axis.begin()
+        XCTAssertNil(axis.move(dx: 5, dy: -30), "a vertical gesture is the list's own scroll")
+        XCTAssertNil(axis.move(dx: 300, dy: -5), "and stays vertical however far it then wanders sideways")
+        XCTAssertFalse(axis.end(), "nothing to release")
 
-        pager.begin()
-        XCTAssertFalse(pager.move(dx: -20, dy: 18), "a diagonal is not clearly sideways")
-        pager.end(width: 400)
-        XCTAssertEqual(pager.index, 1)
+        axis.begin()
+        XCTAssertNil(axis.move(dx: -20, dy: 18), "a diagonal is not clearly sideways")
+        XCTAssertFalse(axis.end())
     }
 
-    func testAShortSwipeSpringsBackAFlickMovesOnAndTheEndsResist() {
-        var pager = NotchHistoryCategoryPager(count: 3)
-        pager.begin()
-        pager.move(dx: -40, dy: 0)
-        pager.move(dx: -2, dy: 0)
-        pager.end(width: 400)
-        XCTAssertEqual(pager.index, 0, "42 pt of 400 is under the commit share and was not a flick")
-
-        pager.begin()
-        pager.move(dx: -20, dy: 0)
-        pager.move(dx: -16, dy: 0)
-        pager.end(width: 400)
-        XCTAssertEqual(pager.index, 1, "a flick moves on however short")
-
-        pager.select(0)
-        pager.begin()
-        pager.move(dx: 200, dy: 0)
-        XCTAssertEqual(pager.offset(width: 400), 200 * NotchHistoryCategoryPager.edgeResistance,
-                       "before the first category the lists resist")
-        pager.end(width: 400)
-        XCTAssertEqual(pager.index, 0)
-        pager.select(7)
-        XCTAssertEqual(pager.index, 2, "an arrow key past the last category stays on it")
+    /// The release rules are the pager's (docs/tab-swipe.md): position plus projected velocity, one tab per gesture, the
+    /// ends stop. Scroll steps at 120 Hz over 416 pt pages, as `NotchTabGesture` feeds them.
+    func testAShortSlowSwipeSpringsBackAFlickMovesOnAndTheEndsStop() {
+        func swipe(from start: Int, steps: [CGFloat], pause: Double = 0) -> GlassTabPager {
+            let pager = GlassTabPager(count: 3, selection: start)
+            let gesture = NotchTabGesture()
+            var time = 10.0
+            gesture.begin(at: time)
+            for dx in steps {
+                time += 1.0 / 120
+                _ = gesture.move(dx: dx, dy: 0, stride: 416, pager: pager, at: time)
+            }
+            gesture.release(pager: pager, at: time + pause)
+            return pager
+        }
+        XCTAssertEqual(swipe(from: 0, steps: Array(repeating: -5, count: 30), pause: 0.2).selection, 0,
+                       "150 pt (a third of a page), then a pause: back where it was")
+        XCTAssertEqual(swipe(from: 0, steps: Array(repeating: -5, count: 50), pause: 0.2).selection, 1,
+                       "past half a page, even slowly, it moves on")
+        XCTAssertEqual(swipe(from: 0, steps: [-6, -12, -16, -20, -24]).selection, 1, "a short flick moves on")
+        XCTAssertEqual(swipe(from: 0, steps: Array(repeating: -60, count: 20)).selection, 1,
+                       "a hard, long flick moves one category only")
+        XCTAssertEqual(swipe(from: 0, steps: Array(repeating: 20, count: 10)).selection, 0, "nothing before Dictations")
+        XCTAssertEqual(swipe(from: 2, steps: Array(repeating: -20, count: 10)).selection, 2, "nothing after Narration")
+        let edge = GlassTabPager(count: 3, selection: 0)
+        let gesture = NotchTabGesture()
+        gesture.begin(at: 0)
+        _ = gesture.move(dx: 200, dy: 0, stride: 416, pager: edge, at: 0.01)
+        XCTAssertLessThan(edge.progress, 0, "past the first category the lists still follow, resisted")
+        XCTAssertGreaterThan(edge.progress, -200.0 / 416, "less than the fingers moved")
     }
 
-    /// A History test that injects no loaders must never read this Mac's recordings.
     func testTheDefaultStoreNeverReadsTheRealArchiveInATestProcess() {
         XCTAssertFalse(NotchHistoryArchiveStore.readsRealArchive)
     }
@@ -439,13 +439,15 @@ final class NotchHistoryCategoriesTests: XCTestCase {
         try partialSwipe(harness, monitor: monitor, phase: 2, dx: 120)
         try partialSwipe(harness, monitor: monitor, phase: 4)
         XCTAssertEqual(harness.archive.selectedScope, .recording)
+        // One step carries no velocity, so it commits on position alone: past half a page.
         try partialSwipe(harness, monitor: monitor, phase: 1)
-        try partialSwipe(harness, monitor: monitor, phase: 2, dx: -160)
+        try partialSwipe(harness, monitor: monitor, phase: 2, dx: -260)
         try partialSwipe(harness, monitor: monitor, phase: 4)
+        drain(0.6)
         XCTAssertEqual(harness.archive.selectedScope, .ask)
         // Start back immediately, while the first settlement animation is still in flight.
         try partialSwipe(harness, monitor: monitor, phase: 1)
-        try partialSwipe(harness, monitor: monitor, phase: 2, dx: 160)
+        try partialSwipe(harness, monitor: monitor, phase: 2, dx: 260)
         try partialSwipe(harness, monitor: monitor, phase: 4)
         drain(0.3)
         XCTAssertEqual(shown(harness), [.recording])
@@ -513,16 +515,22 @@ final class NotchHistoryCategoriesTests: XCTestCase {
     }
 
     func testR901CategorySelectionInvalidatesTheRestOfAPointerDrag() {
-        var pager=NotchHistoryCategoryPager(count:3)
-        XCTAssertTrue(pager.move(to:CGSize(width:-120,height:0)))
-        pager.select(1)
-        XCTAssertFalse(pager.move(to:CGSize(width:-180,height:0)),"do not restart at the old full translation")
-        XCTAssertEqual(pager.offset(width:400),0)
-        pager.end(width:400,flick:true)
-        XCTAssertEqual(pager.index,1,"release cannot advance beyond the explicitly selected category")
-        XCTAssertTrue(pager.move(to:CGSize(width:-140,height:0)),"the next physical drag still works")
-        pager.end(width:400)
-        XCTAssertEqual(pager.index,2)
+        let pager = GlassTabPager(count: 3)
+        let gesture = NotchTabGesture()
+        gesture.drag(to: CGSize(width: -120, height: 0), stride: 400, pager: pager, at: 1)
+        XCTAssertEqual(pager.phase, .tracking)
+        pager.select(1, at: 1.01)
+        gesture.interrupt(at: 1.01) // what the panel's `onPick` does
+        let presented = pager.progress
+        gesture.drag(to: CGSize(width: -180, height: 0), stride: 400, pager: pager, at: 1.02)
+        XCTAssertEqual(pager.progress, presented, "do not restart at the old full translation")
+        XCTAssertNotEqual(pager.phase, .tracking)
+        gesture.release(pager: pager, at: 1.03)
+        XCTAssertEqual(pager.selection, 1, "release cannot advance beyond the explicitly selected category")
+        // The button came up (that release): the next drag starts fresh.
+        gesture.drag(to: CGSize(width: -260, height: 0), stride: 400, pager: pager, at: 2)
+        gesture.release(pager: pager, at: 2.5)
+        XCTAssertEqual(pager.selection, 2, "the next physical drag still works")
     }
 
     func testR901TabIntoSelectorOwnsArrowKeysWithoutAPointerClick() throws {

@@ -28,40 +28,48 @@ final class NotchSettingsTabSwipeTests: XCTestCase {
         XCTAssertEqual(NotchSettingsTabSwipe.tab(from: .dictionary, step: -1), .speech)
     }
 
-    func testALongSidewaysSwipeMovesExactlyOneTab() {
-        var pager = NotchSettingsTabSwipe.pager(on: .dictionary)
-        for _ in 0 ..< 40 { pager.move(dx: -10, dy: 0) } // 400 pt left: far past the 0.22 commit
-        XCTAssertEqual(NotchSettingsTabSwipe.settle(&pager, from: .dictionary, width: 404), .transcription,
-                       "fingers moving left go to the next tab, one tab only")
-        var back = NotchSettingsTabSwipe.pager(on: .dictionary)
-        for _ in 0 ..< 40 { back.move(dx: 10, dy: 0) }
-        XCTAssertEqual(NotchSettingsTabSwipe.settle(&back, from: .dictionary, width: 404), .speech)
+    /// A swipe of `steps` scroll steps at 120 Hz over pages `stride` apart, starting on `tab`: the tab it rests on.
+    private func settle(from tab: SettingsTab, dx: CGFloat, dy: CGFloat = 0, steps: Int, pause: Double = 0,
+                        cancel: Bool = false) -> SettingsTab {
+        let pager = GlassTabPager(count: SettingsTab.allCases.count, selection: SettingsTab.allCases.firstIndex(of: tab)!)
+        let gesture = NotchTabGesture()
+        var time = 5.0
+        gesture.begin(at: time)
+        for _ in 0 ..< steps {
+            time += 1.0 / 120
+            _ = gesture.move(dx: dx, dy: dy, stride: 428, pager: pager, at: time)
+        }
+        if cancel { gesture.cancel(pager: pager, at: time) } else { gesture.release(pager: pager, at: time + pause) }
+        return SettingsTab.allCases[pager.selection]
     }
 
-    func testAShortSwipeStaysAndAFlickMoves() {
-        var short = NotchSettingsTabSwipe.pager(on: .speech)
-        for _ in 0 ..< 4 { short.move(dx: -5, dy: 0) } // 20 pt < 0.22 × 404, last step 5 pt: no flick
-        XCTAssertNil(NotchSettingsTabSwipe.settle(&short, from: .speech, width: 404))
-        var flick = NotchSettingsTabSwipe.pager(on: .speech)
-        flick.move(dx: -6, dy: 0)
-        flick.move(dx: -16, dy: 0)
-        XCTAssertEqual(NotchSettingsTabSwipe.settle(&flick, from: .speech, width: 404), .dictionary)
+    func testALongSidewaysSwipeMovesExactlyOneTab() {
+        XCTAssertEqual(settle(from: .dictionary, dx: -10, steps: 40), .transcription,
+                       "fingers moving left go to the next tab, one tab only")
+        XCTAssertEqual(settle(from: .dictionary, dx: 10, steps: 40), .speech)
+        XCTAssertEqual(settle(from: .speech, dx: -40, steps: 40), .dictionary, "a very long fast swipe still moves one")
+    }
+
+    func testAShortSlowSwipeStaysAndAFlickMoves() {
+        XCTAssertEqual(settle(from: .speech, dx: -5, steps: 20, pause: 0.2), .speech,
+                       "100 pt and a pause before lifting: back on the same tab")
+        XCTAssertEqual(settle(from: .speech, dx: -16, steps: 5), .dictionary, "80 pt still moving at release: a flick")
     }
 
     func testAVerticalScrollNeverChangesTab() {
-        var pager = NotchSettingsTabSwipe.pager(on: .general)
-        XCTAssertFalse(pager.move(dx: -1, dy: 8), "the axis is decided vertical in the first 6 pt")
-        for _ in 0 ..< 40 { XCTAssertFalse(pager.move(dx: -20, dy: 0), "a vertical gesture stays vertical") }
-        XCTAssertNil(NotchSettingsTabSwipe.settle(&pager, from: .general, width: 404))
+        var axis = NotchHistoryCategoryPager()
+        XCTAssertNil(axis.move(dx: -1, dy: 8), "the axis is decided vertical in the first 6 pt")
+        for _ in 0 ..< 40 { XCTAssertNil(axis.move(dx: -20, dy: 0), "a vertical gesture stays vertical") }
+        XCTAssertEqual(settle(from: .general, dx: -1, dy: 8, steps: 40), .general)
     }
 
     func testTheEndsStop() {
-        var pager = NotchSettingsTabSwipe.pager(on: .general)
-        for _ in 0 ..< 40 { pager.move(dx: -10, dy: 0) }
-        XCTAssertNil(NotchSettingsTabSwipe.settle(&pager, from: .general, width: 404), "past General stays")
-        var first = NotchSettingsTabSwipe.pager(on: .history)
-        for _ in 0 ..< 40 { first.move(dx: 10, dy: 0) }
-        XCTAssertNil(NotchSettingsTabSwipe.settle(&first, from: .history, width: 404), "before Dictation stays")
+        XCTAssertEqual(settle(from: .general, dx: -10, steps: 40), .general, "past General stays")
+        XCTAssertEqual(settle(from: .history, dx: 10, steps: 40), .history, "before Dictation stays")
+    }
+
+    func testACancelSettlesBackOnTheTabItBeganOn() {
+        XCTAssertEqual(settle(from: .dictionary, dx: -10, steps: 40, cancel: true), .dictionary)
     }
 
     func testDictationListKeepsItsOwnCategorySwipe() {
@@ -83,8 +91,10 @@ final class NotchSettingsTabSwipeTests: XCTestCase {
         XCTAssertTrue(try swipe(probe, in: window, from: pane, dx: -12, steps: 12), "a sideways swipe is kept from the pane")
         XCTAssertEqual(selected, [.transcription])
         selected = []
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         _ = try swipe(probe, in: window, from: pane, dx: 12, steps: 12)
-        XCTAssertEqual(selected, [.speech])
+        _ = try swipe(probe, in: window, from: pane, dx: 12, steps: 12)
+        XCTAssertEqual(selected, [.dictionary, .speech], "and back, one tab per swipe")
     }
 
     /// Codex r1 on #976: a gesture the system cancels after travelling past the commit distance must not change tab.
@@ -121,17 +131,31 @@ final class NotchSettingsTabSwipeTests: XCTestCase {
 
     // MARK: Helpers
 
+    /// The drawer with its tab held as the app holds it: a selection that comes to rest becomes the drawer's tab.
+    private struct Host: View {
+        @State var tab: SettingsTab
+        let onSelect: (SettingsTab) -> Void
+
+        init(initial: SettingsTab, onSelect: @escaping (SettingsTab) -> Void) {
+            _tab = State(initialValue: initial)
+            self.onSelect = onSelect
+        }
+
+        var body: some View {
+            NotchSettingsDrawer(
+                selectedTab: tab, appearance: .dark,
+                context: NotchSettingsDrawerContext(updates: nil, pane: { tab, _ in
+                    AnyView(Text("\(tab.title) pane").frame(maxWidth: .infinity, maxHeight: .infinity))
+                }),
+                history: { AnyView(Text("history rows").frame(maxWidth: .infinity, maxHeight: .infinity)) },
+                onSelectTab: { tab = $0; onSelect($0) }
+            )
+        }
+    }
+
     private func host(tab: SettingsTab, onSelect: @escaping (SettingsTab) -> Void) throws
         -> (NSWindow, NotchSettingsTabSwipeMonitor.Probe) {
-        let drawer = NotchSettingsDrawer(
-            selectedTab: tab, appearance: .dark,
-            context: NotchSettingsDrawerContext(updates: nil, pane: { tab, _ in
-                AnyView(Text("\(tab.title) pane").frame(maxWidth: .infinity, maxHeight: .infinity))
-            }),
-            history: { AnyView(Text("history rows").frame(maxWidth: .infinity, maxHeight: .infinity)) },
-            onSelectTab: onSelect
-        )
-        let host = NSHostingView(rootView: drawer.frame(width: 404, height: 360))
+        let host = NSHostingView(rootView: Host(initial: tab, onSelect: onSelect).frame(width: 404, height: 360))
         host.frame = NSRect(x: 0, y: 0, width: 404, height: 360)
         let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -160,6 +184,8 @@ final class NotchSettingsTabSwipeTests: XCTestCase {
             cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
             cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
             if probe.route(try XCTUnwrap(NSEvent(cgEvent: cg)), in: window, at: location) { kept = true }
+            // A trackpad reports about every 8 ms; the release reads the swipe's speed from these times.
+            RunLoop.main.run(until: Date().addingTimeInterval(0.008))
         }
         return kept
     }

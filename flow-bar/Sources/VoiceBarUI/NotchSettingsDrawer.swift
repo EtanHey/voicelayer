@@ -1,3 +1,4 @@
+import QuartzCore
 import SwiftUI
 
 /// What the Settings drawer shows that the notch view cannot build on its own. The app (and the UIE2E host) supply
@@ -101,6 +102,11 @@ struct NotchGlyph: View {
 /// 2.4 Lane A, Etan's QA 0510 N1: Settings as a notch drawer with the real settings in every tab. Pull History
 /// further down, or press the gear, and it hangs from the notch with its tabs. Each tab is the Settings window's
 /// own pane (it scrolls inside the drawer when it is taller); History is the notch's own History list.
+///
+/// Tabs move as the History categories do (docs/tab-swipe.md): the glass pill and the panes follow a two-finger swipe
+/// 1:1 and settle on one spring after it, a click or an outside change of tab, from where they are drawn. Every pane
+/// stays built and laid out side by side; the tab reaches `onSelectTab` only when the motion comes to rest. Reduce
+/// Motion: the panes cross-fade in place.
 struct NotchSettingsDrawer: View {
     let selectedTab: SettingsTab
     let appearance: VoiceBarNotchAppearance
@@ -111,49 +117,79 @@ struct NotchSettingsDrawer: View {
     var history: () -> AnyView = { AnyView(EmptyView()) }
     let onSelectTab: (SettingsTab) -> Void
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The pill and the panes' position. Held, not observed: only the bar and the page wrappers redraw per frame.
+    @State private var tabs: GlassTabPager
     /// GO-1126 W1: the tab swipe in progress (`NotchSettingsTabSwipe`).
-    @State private var tabSwipe = NotchSettingsTabSwipe.pager(on: .general)
+    @State private var gesture = NotchTabGesture()
+
+    /// Room between neighbouring panes while they slide: a grouped Form is laid out `groupedFormInset` wider on each
+    /// side, so this keeps one pane's overhang from ever showing over the next.
+    static let pageGap: CGFloat = 2 * NotchSettingsDrawerPresentation.groupedFormInset
+
+    init(selectedTab: SettingsTab, appearance: VoiceBarNotchAppearance, context: NotchSettingsDrawerContext,
+         request: SettingsTabRequest? = nil, history: @escaping () -> AnyView = { AnyView(EmptyView()) },
+         pager: GlassTabPager? = nil, onSelectTab: @escaping (SettingsTab) -> Void) {
+        self.selectedTab = selectedTab
+        self.appearance = appearance
+        self.context = context
+        self.request = request
+        self.history = history
+        self.onSelectTab = onSelectTab
+        _tabs = State(initialValue: pager ?? GlassTabPager(count: SettingsTab.allCases.count,
+                                                           selection: SettingsTab.allCases.firstIndex(of: selectedTab) ?? 0))
+    }
 
     private var palette: VoiceBarNotchContrastPalette { .resolve(for: appearance) }
 
     var body: some View {
-        VStack(spacing: 0) {
-            tabBar
-            // Always fills below the tabs, even for a pane that draws nothing, so the tabs never re-centre (N3).
-            // C6 L2 (S9): a tab switch crossfades its content (`NotchDrawerMotion.tabTransition`).
-            Color.clear
-                .overlay(alignment: .top) {
-                    NotchDrawerCrossfade(
-                        key: selectedTab,
-                        animation: NotchDrawerMotion.easeOut(NotchDrawerMotion.tabInDuration),
-                        transition: NotchDrawerMotion.tabTransition(reduceMotion: reduceMotion)
-                    ) { tab in
-                        content(tab)
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let stride = width + Self.pageGap
+            VStack(spacing: 0) {
+                tabBar(width: width)
+                // Always fills below the tabs, even for a pane that draws nothing, so the tabs never re-centre (N3).
+                ZStack(alignment: .topLeading) {
+                    ForEach(Array(SettingsTab.allCases.enumerated()), id: \.element) { index, tab in
+                        NotchTabPage(pager: tabs, index: index, stride: stride,
+                                     content: content(tab).frame(width: width).frame(maxHeight: .infinity, alignment: .top))
                     }
                 }
+                .frame(width: width, alignment: .topLeading)
+                .frame(maxHeight: .infinity, alignment: .top)
                 .clipped()
+            }
+            .background(NotchSettingsTabSwipeMonitor(
+                // The monitor sits inside the drawer's top inset; the rule measures from the drawer's top edge.
+                tracks: {
+                    NotchSettingsTabSwipe.swipesTabs(on: selectedTab, fromTop: $0 + NotchSettingsDrawerPresentation.topInset)
+                },
+                onBegin: { gesture.begin(at: CACurrentMediaTime()) },
+                onMove: { dx, dy, time in gesture.move(dx: dx, dy: dy, stride: stride, pager: tabs, at: time) },
+                onEnd: { time in gesture.release(pager: tabs, at: time) },
+                // Codex r1 on #976: a gesture the system cancels never changes tab.
+                onCancel: { time in gesture.cancel(pager: tabs, at: time) }
+            ))
+            .background(GlassTabPagerClock(pager: tabs))
         }
         .padding(.horizontal, NotchSettingsDrawerPresentation.horizontalInset)
         .padding(.top, NotchSettingsDrawerPresentation.topInset)
-        .background(NotchSettingsTabSwipeMonitor(
-            tracks: { NotchSettingsTabSwipe.swipesTabs(on: selectedTab, fromTop: $0) },
-            onBegin: { tabSwipe = NotchSettingsTabSwipe.pager(on: selectedTab); tabSwipe.begin() },
-            onMove: { dx, dy in tabSwipe.move(dx: dx, dy: dy) },
-            onEnd: { width in
-                if let tab = NotchSettingsTabSwipe.settle(&tabSwipe, from: selectedTab, width: width) {
-                    onSelectTab(tab)
-                }
-            },
-            onCancel: { tabSwipe.begin() }
-        ))
+        .onAppear {
+            tabs.onSelect = { [onSelectTab] index in onSelectTab(SettingsTab.allCases[index]) }
+            tabs.onPick = { [gesture] _ in gesture.interrupt(at: CACurrentMediaTime()) }
+        }
+        .onChange(of: selectedTab) { _, tab in
+            tabs.onSelect = { [onSelectTab] index in onSelectTab(SettingsTab.allCases[index]) }
+            tabs.follow(SettingsTab.allCases.firstIndex(of: tab) ?? 0)
+        }
     }
 
     @ViewBuilder
     private func content(_ tab: SettingsTab) -> some View {
         switch tab {
         case .history:
+            // Built with the other panes, but it reads the History archive only while its tab is the one shown.
             history()
+                .environment(\.notchHistorySurfacePresented, selectedTab == .history)
         case .general:
             VStack(spacing: 0) {
                 pane(.general)
@@ -175,37 +211,27 @@ struct NotchSettingsDrawer: View {
 
     // MARK: Tabs
 
-    private var tabBar: some View {
-        HStack(spacing: 2) {
-            ForEach(SettingsTab.allCases) { tab in
-                let isSelected = tab == selectedTab
-                let ink = isSelected ? palette.primary.color : palette.secondary.color
-                Button { onSelectTab(tab) } label: {
-                    VStack(spacing: 3) {
-                        NotchGlyph(systemName: tab.systemImage, color: ink)
-                        Text(tab.title)
-                            .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
-                            .foregroundStyle(ink)
-                            .lineLimit(1)
-                            .fixedSize()
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: NotchSettingsDrawerPresentation.tabBarHeight - 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(palette.primary.color.opacity(isSelected ? 0.14 : 0))
-                    )
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .background(PillControlTooltip(text: NotchSettingsDrawerPresentation.tabDescription(tab)))
-                .accessibilityLabel(tab.title)
-                .accessibilityAddTraits(isSelected ? .isSelected : [])
-            }
-        }
-        .frame(height: NotchSettingsDrawerPresentation.tabBarHeight)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Settings tabs")
+    static func tabMetrics(width: CGFloat) -> GlassTabMetrics {
+        var metrics = GlassTabMetrics()
+        metrics.fontSize = 10
+        metrics.symbolSize = NotchSettingsDrawerPresentation.tabGlyphSize
+        metrics.symbolGap = 3
+        metrics.height = NotchSettingsDrawerPresentation.tabBarHeight - 8
+        metrics.fill = width
+        return metrics
+    }
+
+    static var glassTabs: [GlassTab] {
+        SettingsTab.allCases.map { GlassTab(title: $0.title, spokenLabel: $0.title, symbol: $0.systemImage) }
+    }
+
+    private func tabBar(width: CGFloat) -> some View {
+        NotchGlassTabBar(
+            pager: tabs, tabs: Self.glassTabs, accessibilityLabel: "Settings tabs",
+            metrics: Self.tabMetrics(width: width), colors: .notch(palette),
+            tooltip: { NotchSettingsDrawerPresentation.tabDescription(SettingsTab.allCases[$0]) }
+        )
+        .frame(width: width, height: NotchSettingsDrawerPresentation.tabBarHeight)
     }
 }
 
