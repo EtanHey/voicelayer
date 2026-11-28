@@ -33,10 +33,9 @@ struct NotchHistoryPanel: View {
 
     @State private var hoveredIndex: Int?
     @State private var copyFeedback = CopyFeedback()
-    /// go-1126 vl-swipe: the scroll position lives in a reference the panel holds but does not observe. Only the
-    /// indicator observes it, so a scrolled frame redraws the indicator and never rebuilds the rows (it used to rebuild
-    /// every row on every scrolled frame: `NotchHistoryScrollCostTests`).
-    @State private var scroll = NotchHistoryScrollTracker()
+    @State private var scrollOffset: CGFloat = 0
+    @State private var isScrollIndicatorVisible = false
+    @State private var scrollIndicatorHideTask: Task<Void, Never>?
 
     private static let scrollSpace = "NotchHistoryPanel.scroll"
 
@@ -67,27 +66,63 @@ struct NotchHistoryPanel: View {
                 withTransaction(instant) {
                     switch phase {
                     case let .active(location):
-                        let index = NotchHistoryPresentation.rowIndex(atY: location.y, rowCount: entries.count)
-                        if index != hoveredIndex { hoveredIndex = index }
+                        hoveredIndex = NotchHistoryPresentation.rowIndex(atY: location.y, rowCount: entries.count)
                     case .ended:
-                        if hoveredIndex != nil { hoveredIndex = nil }
+                        hoveredIndex = nil
                     }
                 }
             }
         }
         .coordinateSpace(name: Self.scrollSpace)
         .scrollIndicators(.never)
-        .onPreferenceChange(NotchHistoryScrollOffsetKey.self) { [scroll] offset in
-            scroll.scrolled(to: offset)
+        .onPreferenceChange(NotchHistoryScrollOffsetKey.self) { offset in
+            scrolled(to: offset)
         }
         .frame(height: listHeight)
         .overlay(alignment: .topTrailing) {
-            NotchHistoryScrollIndicator(
-                tracker: scroll, forcedOffset: forcedScrollOffset, visibleHeight: listHeight,
-                contentHeight: NotchHistoryMorph.rowHeight * CGFloat(entries.count), palette: palette
-            )
+            scrollIndicator
         }
-        .onDisappear { scroll.stop() }
+        .onDisappear { scrollIndicatorHideTask?.cancel() }
+    }
+
+    // MARK: Scroll indicator
+
+    @ViewBuilder
+    private var scrollIndicator: some View {
+        let offset = forcedScrollOffset ?? scrollOffset
+        if let thumb = NotchHistoryPresentation.scrollThumb(
+            offset: offset,
+            visibleHeight: listHeight,
+            contentHeight: NotchHistoryMorph.rowHeight * CGFloat(entries.count)
+        ) {
+            RoundedRectangle(cornerRadius: NotchHistoryPresentation.scrollIndicatorWidth / 2, style: .continuous)
+                .fill(palette.primary.color.opacity(0.4))
+                .frame(width: NotchHistoryPresentation.scrollIndicatorWidth, height: thumb.height)
+                .offset(
+                    x: NotchHistoryPresentation.scrollIndicatorGap + NotchHistoryPresentation.scrollIndicatorWidth,
+                    y: thumb.minY
+                )
+                .opacity(forcedScrollOffset != nil || isScrollIndicatorVisible ? 1 : 0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// Shown the moment the list moves (80 ms in), hidden 700 ms after it stops (300 ms out), as in the mock.
+    private func scrolled(to offset: CGFloat) {
+        guard abs(offset - scrollOffset) > 0.25 else { return }
+        scrollOffset = offset
+        withAnimation(.easeOut(duration: NotchHistoryPresentation.scrollIndicatorFadeIn)) {
+            isScrollIndicatorVisible = true
+        }
+        scrollIndicatorHideTask?.cancel()
+        scrollIndicatorHideTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(NotchHistoryPresentation.scrollIndicatorLinger))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: NotchHistoryPresentation.scrollIndicatorFadeOut)) {
+                isScrollIndicatorVisible = false
+            }
+        }
     }
 
     // MARK: Rows
@@ -256,69 +291,6 @@ struct NotchHistoryPanel: View {
         case .retranscribe:
             guard retranscriptionAvailability().isEnabled else { return }
             if let path = entry.recordingPath { onRetranscribe(path) }
-        }
-    }
-}
-
-/// The list's scroll position and whether its indicator shows. Shown the moment the list moves (80 ms in), hidden
-/// 700 ms after it stops (300 ms out), as in the mock.
-@MainActor final class NotchHistoryScrollTracker: ObservableObject {
-    @Published private(set) var offset: CGFloat = 0
-    @Published private(set) var isVisible = false
-    private var hideTask: Task<Void, Never>?
-    /// When the list last moved; the hide waits for it to have been still for the linger.
-    private var lastMove: TimeInterval = 0
-
-    func scrolled(to next: CGFloat) {
-        guard abs(next - offset) > 0.25 else { return }
-        offset = next
-        lastMove = ProcessInfo.processInfo.systemUptime
-        if !isVisible {
-            withAnimation(.easeOut(duration: NotchHistoryPresentation.scrollIndicatorFadeIn)) { isVisible = true }
-        }
-        // One pending hide per scroll, not one task per frame: it re-checks how long the list has been still.
-        guard hideTask == nil else { return }
-        hideTask = Task { @MainActor [weak self] in
-            while let self, !Task.isCancelled {
-                let still = ProcessInfo.processInfo.systemUptime - self.lastMove
-                let linger = NotchHistoryPresentation.scrollIndicatorLinger
-                if still >= linger { break }
-                try? await Task.sleep(for: .seconds(linger - still))
-            }
-            guard let self, !Task.isCancelled else { return }
-            self.hideTask = nil
-            withAnimation(.easeOut(duration: NotchHistoryPresentation.scrollIndicatorFadeOut)) { self.isVisible = false }
-        }
-    }
-
-    func stop() {
-        hideTask?.cancel()
-        hideTask = nil
-    }
-}
-
-/// The thin scroll thumb, the only view that redraws per scrolled frame.
-private struct NotchHistoryScrollIndicator: View {
-    @ObservedObject var tracker: NotchHistoryScrollTracker
-    let forcedOffset: CGFloat?
-    let visibleHeight: CGFloat
-    let contentHeight: CGFloat
-    let palette: VoiceBarNotchContrastPalette
-
-    var body: some View {
-        if let thumb = NotchHistoryPresentation.scrollThumb(
-            offset: forcedOffset ?? tracker.offset, visibleHeight: visibleHeight, contentHeight: contentHeight
-        ) {
-            RoundedRectangle(cornerRadius: NotchHistoryPresentation.scrollIndicatorWidth / 2, style: .continuous)
-                .fill(palette.primary.color.opacity(0.4))
-                .frame(width: NotchHistoryPresentation.scrollIndicatorWidth, height: thumb.height)
-                .offset(
-                    x: NotchHistoryPresentation.scrollIndicatorGap + NotchHistoryPresentation.scrollIndicatorWidth,
-                    y: thumb.minY
-                )
-                .opacity(forcedOffset != nil || tracker.isVisible ? 1 : 0)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
         }
     }
 }

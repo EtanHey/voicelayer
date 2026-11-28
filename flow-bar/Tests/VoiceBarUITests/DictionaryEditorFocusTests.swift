@@ -63,7 +63,11 @@ final class DictionaryEditorFocusTests: XCTestCase {
 
     private func editableFields(in view: NSView) -> [NSTextField] {
         var found: [NSTextField] = []
-        if let field = view as? NSTextField, field.isEditable, !field.isHiddenOrHasHiddenAncestor { found.append(field) }
+        // Enabled too: since go-1126 vl-swipe every Settings pane stays laid out beside the one shown, and the ones a
+        // tab or more away are disabled, so their fields take no focus or keys.
+        if let field = view as? NSTextField, field.isEditable, field.isEnabled, !field.isHiddenOrHasHiddenAncestor {
+            found.append(field)
+        }
         for subview in view.subviews { found += editableFields(in: subview) }
         return found
     }

@@ -25,6 +25,7 @@ import SwiftUI
 // - `GlassTabBar.handlesKeyboard`: VoiceBar's Left/Right come from its own focus-gated monitor, and SwiftUI
 //   `.focusable()` once aborted the hosted notch panel on close, so the notch bars opt out of the bar's own focus.
 // - `GlassTabPager.onPick`: a click during a two-finger swipe ends that swipe (VoiceBar's monitor drops its tail).
+// - `GlassTabColors.pillShadow`: the notch draws no edge or shadow around its controls.
 
 /// The one spring every settle uses: critically damped (damping ratio 1.0), response 0.30 s, velocity carried in.
 /// Solved exactly per step, so the result does not depend on the frame rate.
@@ -401,6 +402,8 @@ struct GlassTabColors {
     var pill: Color = Color(nsColor: .controlBackgroundColor)
     /// A hairline around the pill, so its edge holds against the track in both appearances.
     var pillRim: Color = Color.primary.opacity(0.12)
+    /// VoiceBar: the solid pill's drop shadow (the notch draws no edge around its controls).
+    var pillShadow: Color = .black.opacity(0.12)
     var countFill: Color = Color.primary.opacity(0.12)
     var countText: Color = .primary
 }
@@ -481,7 +484,7 @@ struct GlassTabBar: View {
             } else {
                 ZStack {
                     shape.fill(colors.pill)
-                        .shadow(color: .black.opacity(0.12), radius: 1, y: 0.5)
+                        .shadow(color: colors.pillShadow, radius: 1, y: 0.5)
                     shape.strokeBorder(colors.pillRim, lineWidth: 0.5)
                 }
                 .frame(width: pill.width, height: pill.height)

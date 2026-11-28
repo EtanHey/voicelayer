@@ -67,6 +67,9 @@ History drawer and on the Settings drawer's Dictation tab) and the Settings draw
 - Every Settings pane stays built and laid out side by side; panes slide with the pill. The Dictation pane's History
   panel reads the Ask and Narration archives only while its tab is the one shown, and takes no gestures, keys or focus
   while hidden.
+- The pill is the bar's solid capsule, tinted like the old selection fill (`NotchGlassTabBar.usesGlassPill` is false).
+  The notch is already an AppKit glass surface. A SwiftUI glass pill inside it made every offscreen capture of the
+  drawer lose its backdrop. Turning the glass on is that one flag, once the installed app shows it reads well.
 - Slots are equal across the drawer's width (`GlassTabMetrics.fill`), one weight for every label; the selected
   colour is drawn only inside the pill. Each slot is exposed to VoiceOver as a button with its own identifier and
   tooltip (`NotchTabSlots`).

@@ -135,8 +135,15 @@ struct NotchTabSlots: View {
     }
 }
 
-/// A notch tab bar: the glass bar plus its accessible slots.
+/// A notch tab bar: the bar plus its accessible slots.
+///
+/// The pill is the bar's solid capsule, tinted like the old selection fill, not Liquid Glass: the notch is already an
+/// AppKit glass surface, and a SwiftUI glass pill inside it made every offscreen capture of the drawer lose its
+/// backdrop (the pixel and text-recognition tests). `usesGlassPill` turns the glass on once the installed app shows it
+/// reads well on the notch.
 struct NotchGlassTabBar: View {
+    static let usesGlassPill = false
+
     let pager: GlassTabPager
     let tabs: [GlassTab]
     let accessibilityLabel: String
@@ -148,6 +155,7 @@ struct NotchGlassTabBar: View {
     var body: some View {
         GlassTabBar(pager: pager, tabs: tabs, accessibilityLabel: accessibilityLabel, metrics: metrics, colors: colors,
                     handlesKeyboard: false)
+            .environment(\.glassTabSolidPill, !Self.usesGlassPill)
             .accessibilityHidden(true)
             .overlay(alignment: .topLeading) {
                 NotchTabSlots(pager: pager, tabs: tabs, metrics: metrics, identifier: identifier, tooltip: tooltip) {
@@ -163,7 +171,8 @@ extension GlassTabColors {
     /// The notch's own contrast palette: the old selection thumb's fill (primary at 14 %) tints the pill, no track.
     static func notch(_ palette: VoiceBarNotchContrastPalette) -> GlassTabColors {
         GlassTabColors(text: palette.secondary.color, selectedText: palette.primary.color, track: .clear,
-                       pill: palette.primary.color.opacity(0.14), pillRim: palette.primary.color.opacity(0.10),
-                       countFill: palette.primary.color.opacity(0.12), countText: palette.primary.color)
+                       pill: palette.primary.color.opacity(0.14), pillRim: .clear,
+                       countFill: palette.primary.color.opacity(0.12), countText: palette.primary.color,
+                       pillShadow: .clear)
     }
 }
