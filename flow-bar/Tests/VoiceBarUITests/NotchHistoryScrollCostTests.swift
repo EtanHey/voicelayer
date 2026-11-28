@@ -5,8 +5,8 @@ import XCTest
 
 /// go-1126 vl-swipe: the History list's vertical scroll must not rebuild its rows on every scrolled frame.
 ///
-/// A real `NotchHistoryPanel` in an offscreen window, twenty rows of long synthetic text, scrolled through AppKit's
-/// own scroll view one small step at a time (as a trackpad scroll arrives). Each row's second line comes from
+/// A real `NotchHistoryPanel` in an offscreen window, twenty rows of long synthetic text, scrolled by phased trackpad
+/// scroll events through AppKit's own scroll view, down and back over rows already built. Each row's second line comes from
 /// `rowHeader`, which a row build calls, so its call count is how many rows SwiftUI rebuilt while only the scroll
 /// offset changed. The per-step main-thread cost is printed as a frame-time probe (`[scroll-cost]`), not asserted.
 @MainActor
@@ -56,35 +56,47 @@ final class NotchHistoryScrollCostTests: XCTestCase {
         host.layoutSubtreeIfNeeded()
         let scroll = try XCTUnwrap(findScrollView(host), "the list is AppKit's scroll view")
 
-        // Settle any first-layout work, then count only what scrolling causes.
-        step(scroll, host, to: 1)
-        drain(0.1)
+        // Settle any first-layout work (the rows a scroll first brings into view are built once), then count only
+        // what scrolling causes: a trackpad gesture scrolls down and back over the same rows.
+        try wheel(scroll, host, phase: 1, dy: 0)
+        for _ in 0 ..< 30 { try wheel(scroll, host, phase: 2, dy: -4) }
+        for _ in 0 ..< 30 { try wheel(scroll, host, phase: 2, dy: 4) }
+        try wheel(scroll, host, phase: 4, dy: 0)
+        drain(0.2)
         counter.builds = 0
         var costs: [Double] = []
         let steps = 60
-        for index in 1...steps {
+        try wheel(scroll, host, phase: 1, dy: 0)
+        for index in 0 ..< steps {
             let start = CFAbsoluteTimeGetCurrent()
-            step(scroll, host, to: CGFloat(index) * 4)
+            try wheel(scroll, host, phase: 2, dy: index < steps / 2 ? -4 : 4)
             costs.append((CFAbsoluteTimeGetCurrent() - start) * 1000)
         }
+        try wheel(scroll, host, phase: 4, dy: 0)
         drain(0.05)
         let sorted = costs.sorted()
         let median = sorted[sorted.count / 2]
         let worst = sorted.last ?? 0
         print(String(format: "[scroll-cost] steps=%d rowBuilds=%d perStep=%.2f medianMs=%.3f maxMs=%.3f",
                      steps, counter.builds, Double(counter.builds) / Double(steps), median, worst))
-        XCTAssertGreaterThan(scroll.contentView.bounds.origin.y, 100, "the list really scrolled")
+        XCTAssertGreaterThan(maxOffset, 60, "the list really scrolled (\(maxOffset) pt)")
         XCTAssertEqual(counter.builds, 0, "a pure scroll must not rebuild rows (got \(counter.builds) over \(steps) steps)")
     }
 
-    /// One scrolled frame: move the clip view, then let SwiftUI run its update and draw, as a display cycle would.
-    private func step(_ scroll: NSScrollView, _ host: NSView, to y: CGFloat) {
-        scroll.contentView.scroll(to: NSPoint(x: 0, y: y))
-        scroll.reflectScrolledClipView(scroll.contentView)
-        RunLoop.main.run(until: Date())
+    private var maxOffset: CGFloat = 0
+
+    /// One trackpad scroll step through the scroll view's own event path, then SwiftUI's update and draw, as a
+    /// display cycle would.
+    private func wheel(_ scroll: NSScrollView, _ host: NSView, phase: Int64, dy: Int32) throws {
+        let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+                                       wheel1: dy, wheel2: 0, wheel3: 0))
+        cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+        cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
+        scroll.scrollWheel(with: try XCTUnwrap(NSEvent(cgEvent: cg)))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.008))
         host.layoutSubtreeIfNeeded()
         host.displayIfNeeded()
-        RunLoop.main.run(until: Date())
+        maxOffset = max(maxOffset, abs(scroll.contentView.bounds.origin.y))
     }
 
     private func drain(_ seconds: TimeInterval) {

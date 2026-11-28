@@ -307,26 +307,21 @@ final class NotchThresholdMotionTests: XCTestCase {
         XCTAssertFalse(harness.frames.midway(.resting).isEmpty, "General fades in across frames")
     }
 
-    /// A tab switch inside the drawer crossfades too (History tab → General).
-    func testATabSwitchCrossfadesTheDrawerContent() throws {
+    /// A tab switch inside the drawer (History tab → General). Since go-1126 vl-swipe the panes slide with the tab bar's
+    /// pill on one spring (docs/tab-swipe.md; `NotchTabMotionTests` pins the motion); the click lands on General and
+    /// History's list leaves the screen.
+    func testATabSwitchSlidesTheDrawerContentToTheClickedTab() throws {
         let harness = makeHarness()
         openDrawer(harness, .openSettings(.history))
         XCTAssertTrue(visible(harness).contains(firstRow), "the History tab shows History's list")
 
         let general = try XCTUnwrap(point(labelled: SettingsTab.general.title, harness), "the General tab")
-        harness.frames.reset()
         try send(.leftMouseDown, at: general, to: harness.panel)
         try send(.leftMouseUp, at: general, to: harness.panel)
-        drain(0.6)
+        drain(0.8)
         XCTAssertEqual(harness.surface.drawer, .settings(.general), "the click selected General")
-        assertAnimatedSwitch(harness, in: NotchDrawerMotion.tabInDuration, out: NotchDrawerMotion.tabOutDuration,
-                             "History tab -> General")
         XCTAssertTrue(visible(harness).contains("pane-general"))
         XCTAssertFalse(visible(harness).contains(firstRow))
-
-        try requireDrawnAnimationFrames()
-        XCTAssertFalse(harness.frames.midway(.leaving).isEmpty, "the History tab list fades out instead of vanishing")
-        XCTAssertFalse(harness.frames.midway(.resting).isEmpty, "General fades in")
     }
 
     /// Reduce Motion ON, as on #860's hosted runner. SwiftUI on macOS 26 then never runs the drawer's custom

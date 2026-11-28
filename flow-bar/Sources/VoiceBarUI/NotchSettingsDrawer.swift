@@ -218,6 +218,7 @@ struct NotchSettingsDrawer: View {
         metrics.symbolGap = 3
         metrics.height = NotchSettingsDrawerPresentation.tabBarHeight - 8
         metrics.fill = width
+        metrics.inset = 0 // the pill fills its slot, as the old selected tab's fill did
         return metrics
     }
 

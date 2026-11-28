@@ -140,13 +140,13 @@ final class NotchTabMotionTests: XCTestCase {
             return out
         }
         let click = trajectory { pager in
-            pager.present(0.4)
+            pager.present(0.6)
             pager.select(1, at: 1)
         }
         let release = trajectory { pager in
             pager.grab(at: 0.5)
-            pager.drag(to: 0.4, at: 0.5)
-            pager.release(at: 1) // half a second still: no velocity, the same start as the click
+            pager.drag(to: 0.6, at: 0.5)
+            pager.release(at: 1) // half a second still: no velocity, the same start as the click; 0.6 rounds to 1
         }
         XCTAssertEqual(click, release, "a click and a still release run frame for frame the same spring")
         XCTAssertEqual(click.last, 1)

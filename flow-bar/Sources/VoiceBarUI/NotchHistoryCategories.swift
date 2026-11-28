@@ -98,6 +98,7 @@ struct NotchHistoryCategoryPanel: View {
         metrics.fontSize = NotchHistoryPresentation.categorySelectorFontSize
         metrics.height = NotchHistoryPresentation.categorySelectorHeight
         metrics.fill = width
+        metrics.inset = 0 // the pill fills its slot, as the old selection did
         let bar = NotchGlassTabBar(
             pager: self.tabs, tabs: tabs, accessibilityLabel: NotchHistoryPresentation.categorySelectorLabel,
             metrics: metrics, colors: .notch(palette),

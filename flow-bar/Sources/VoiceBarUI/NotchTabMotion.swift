@@ -78,6 +78,10 @@ import SwiftUI
 /// One page of a tab row, placed by the pager's progress: `stride` points per tab. All pages exist at all times;
 /// off-screen ones take no hits and are hidden from VoiceOver. Reduce Motion: in place, cross-faded by the progress.
 /// Only this wrapper observes the pager, so a frame of motion never rebuilds `content`.
+///
+/// Each page is its own accessibility container: an outer page's visibility must not override a nested row's own
+/// (the Settings drawer's Dictation page holds the History category pages). A page a whole tab or more away is
+/// disabled, so its text fields and controls never take focus or keys; a page enters view enabled.
 struct NotchTabPage<Content: View>: View {
     @ObservedObject var pager: GlassTabPager
     let index: Int
@@ -93,6 +97,8 @@ struct NotchTabPage<Content: View>: View {
             .offset(x: reduceMotion ? 0 : CGFloat(distance) * stride)
             .opacity(reduceMotion ? max(0, 1 - abs(distance)) : 1)
             .allowsHitTesting(onScreen && pager.phase != .tracking)
+            .disabled(abs(distance) >= 1)
+            .accessibilityElement(children: .contain)
             .accessibilityHidden(!onScreen)
     }
 }
