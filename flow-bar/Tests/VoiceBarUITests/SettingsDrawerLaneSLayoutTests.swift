@@ -93,7 +93,10 @@ final class SettingsDrawerLaneSLayoutTests: XCTestCase {
         let tabEdge = NotchSettingsDrawerPresentation.horizontalInset
         let tabs = try SettingsDrawerLaneSSnapshotTests.render(
             SettingsDrawerLaneSSnapshotTests.drawer(.history, updates: nil), height: 470, name: "gutter-scratch-tabs")
-        XCTAssertEqual(try XCTUnwrap(Self.firstPaintedX(tabs, atY: 20)), tabEdge, accuracy: 1,
+        // Measured at the bar's mid-height: since go-1126 vl-swipe the selection is a capsule (docs/tab-swipe.md),
+        // whose rounded end starts inside the edge above and below its middle.
+        let barMiddle = NotchSettingsDrawerPresentation.topInset + NotchSettingsDrawerPresentation.tabBarHeight / 2
+        XCTAssertEqual(try XCTUnwrap(Self.firstPaintedX(tabs, atY: barMiddle)), tabEdge, accuracy: 1,
                        "fixture: the selected first tab's fill marks the tab bar's left edge")
         for tab in [SettingsTab.general, .transcription] {
             let view = SettingsDrawerLaneSSnapshotTests.drawer(tab, updates: tab == .general ? updates : nil)
